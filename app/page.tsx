@@ -125,7 +125,22 @@ export default function AIBillingApp() {
   const [activePage, setActivePage] = useState('dashboard');
   const [menuOpen, setMenuOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [selectedInvoice, setSelectedInvoice] = useState(null);
+  type InvoiceProduct = {
+  product: string;
+  quantity: number;
+  price: number;
+};
+
+type Invoice = {
+  id: string;
+  customer: string;
+  amount: number;
+  status: string;
+  due: string;
+  products: InvoiceProduct[];
+};
+
+const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
   const [showInvoiceModal, setShowInvoiceModal] = useState(false);
   const [showCustomerModal, setShowCustomerModal] = useState(false);
   const [openActionMenu, setOpenActionMenu] = useState(null);
