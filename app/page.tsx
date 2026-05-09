@@ -120,13 +120,7 @@ const formatDate = (date: string): string => {
   });
 };
 
-export default function AIBillingApp() {
-  const [invoices, setInvoices] = useState(initialInvoices);
-  const [customerList, setCustomerList] = useState(initialCustomers);
-  const [activePage, setActivePage] = useState('dashboard');
-  const [menuOpen, setMenuOpen] = useState(false);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  type InvoiceProduct = {
+type InvoiceProduct = {
   product: string;
   quantity: number;
   price: number;
@@ -141,12 +135,18 @@ type Invoice = {
   products: InvoiceProduct[];
 };
 
-const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
-  const [showInvoiceModal, setShowInvoiceModal] = useState(false);
-  const [showCustomerModal, setShowCustomerModal] = useState(false);
-  const [openActionMenu, setOpenActionMenu] = useState(null);
-  const [searchTerm, setSearchTerm] = useState('');
-  const [aiInput, setAiInput] = useState('');
+export default function AIBillingApp() {
+  const [invoices, setInvoices] = useState<Invoice[]>(initialInvoices);
+  const [customerList, setCustomerList] = useState(initialCustomers);
+  const [activePage, setActivePage] = useState<string>('dashboard');
+  const [menuOpen, setMenuOpen] = useState<boolean>(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(false);
+  const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
+  const [showInvoiceModal, setShowInvoiceModal] = useState<boolean>(false);
+  const [showCustomerModal, setShowCustomerModal] = useState<boolean>(false);
+  const [openActionMenu, setOpenActionMenu] = useState<string | null>(null);
+  const [searchTerm, setSearchTerm] = useState<string>('');
+  const [aiInput, setAiInput] = useState<string>('');
 
   const [aiMessages, setAiMessages] = useState([
     {
