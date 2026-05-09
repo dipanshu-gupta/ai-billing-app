@@ -101,7 +101,7 @@ const aiSuggestions = [
   'Show pending payment amount',
 ];
 
-const formatCurrency = (value) => {
+const formatCurrency = (value: number): string => {
   return new Intl.NumberFormat('en-IN', {
     style: 'currency',
     currency: 'INR',
@@ -109,7 +109,7 @@ const formatCurrency = (value) => {
   }).format(value || 0);
 };
 
-const formatDate = (date) => {
+const formatDate = (date: string): string => {
   if (!date) return '-';
 
   return new Date(date).toLocaleDateString('en-IN', {
@@ -172,7 +172,7 @@ export default function AIBillingApp() {
     (item) => item.status === 'Overdue'
   ).length;
 
-  const getAiResponse = (input) => {
+  const getAiResponse = (input: string): string => {
     const lower = input.toLowerCase();
 
     if (lower.includes('overdue')) {
@@ -198,7 +198,7 @@ export default function AIBillingApp() {
     return 'I can help with invoices, customers, products, payments, and reports.';
   };
 
-  const handleAiSend = (message) => {
+  const handleAiSend = (message?: string): void => {
     const content = message || aiInput;
 
     if (!content.trim()) return;
@@ -220,7 +220,9 @@ export default function AIBillingApp() {
     setAiInput('');
   };
 
-  const handleInvoiceSubmit = (e) => {
+  const handleInvoiceSubmit = (
+    e: React.FormEvent<HTMLFormElement>
+  ): void => {
     e.preventDefault();
 
     const products = invoiceForm.selectedProducts.map((productId) => {
@@ -255,7 +257,9 @@ export default function AIBillingApp() {
     setShowInvoiceModal(false);
   };
 
-  const handleCustomerSubmit = (e) => {
+  const handleCustomerSubmit = (
+    e: React.FormEvent<HTMLFormElement>
+  ): void => {
     e.preventDefault();
 
     const newCustomer = {
@@ -275,7 +279,10 @@ export default function AIBillingApp() {
     setShowCustomerModal(false);
   };
 
-  const handleStatusChange = (invoiceId, status) => {
+  const handleStatusChange = (
+    invoiceId: string,
+    status: string
+  ): void => {
     setInvoices((prev) =>
       prev.map((invoice) =>
         invoice.id === invoiceId
@@ -412,7 +419,9 @@ export default function AIBillingApp() {
                     <input
                       type="text"
                       value={searchTerm}
-                      onChange={(e) => setSearchTerm(e.target.value)}
+                      onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                        setSearchTerm(e.target.value)
+                      }
                       placeholder="Search invoice..."
                       className="border rounded-xl px-4 py-3 w-full md:w-72"
                     />
@@ -533,7 +542,9 @@ export default function AIBillingApp() {
                     <input
                       type="text"
                       value={aiInput}
-                      onChange={(e) => setAiInput(e.target.value)}
+                      onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                        setAiInput(e.target.value)
+                      }
                       onKeyDown={(e) => {
                         if (e.key === 'Enter') {
                           handleAiSend();
