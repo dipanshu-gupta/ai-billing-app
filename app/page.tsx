@@ -156,13 +156,19 @@ export default function AIBillingApp() {
     },
   ]);
 
-  const [invoiceForm, setInvoiceForm] = useState({
-    customer: initialCustomers[0]?.name || '',
-    amount: '',
-    due: '',
-    status: 'Pending',
-    selectedProducts: [],
-  });
+  const [invoiceForm, setInvoiceForm] = useState<{
+  customer: string;
+  amount: string;
+  due: string;
+  status: string;
+  selectedProducts: string[];
+}>({
+  customer: initialCustomers[0]?.name || '',
+  amount: '',
+  due: '',
+  status: 'Pending',
+  selectedProducts: [],
+});
 
   const [customerForm, setCustomerForm] = useState({
     name: '',
