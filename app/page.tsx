@@ -37,6 +37,7 @@ export default function AIBillingApp() {
   const [selectedRecord, setSelectedRecord] = useState<any | null>(null);
   const [editableRecord, setEditableRecord] = useState<any | null>(null);
   const [createModalOpen, setCreateModalOpen] = useState(false);
+  const [newRecord, setNewRecord] = useState<any>({});
   const actionMenuRef = useRef<HTMLDivElement | null>(null);
 
   const [customers] = useState([
@@ -286,6 +287,37 @@ export default function AIBillingApp() {
     ]);
 
     setOpenActionMenu(null);
+  };
+
+  const handleCreateRecord = () => {
+    const recordId = `${activePage.slice(0, 3).toUpperCase()}-${Date.now()}`;
+
+    const createdRecord = {
+      id: recordId,
+      ...newRecord,
+      products: newRecord.products || [],
+    };
+
+    switch (activePage) {
+      case 'leads':
+        setLeads((prev: any) => [...prev, createdRecord]);
+        break;
+
+      case 'opportunities':
+        setOpportunities((prev: any) => [...prev, createdRecord]);
+        break;
+
+      case 'orders':
+        setOrders((prev: any) => [...prev, createdRecord]);
+        break;
+
+      default:
+        break;
+    }
+
+    alert(`${getSingularLabel()} created successfully`);
+    setCreateModalOpen(false);
+    setNewRecord({});
   };
 
   const handleCreateOrder = (opportunityRecord: any) => {
@@ -649,6 +681,250 @@ export default function AIBillingApp() {
                   ))}
                 </tbody>
               </table>
+            </div>
+          </div>
+        )}
+
+        {createModalOpen && (
+          <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-[120] p-4">
+            <div className="bg-white rounded-3xl shadow-2xl w-full max-w-2xl border border-blue-100 overflow-hidden">
+              <div className="px-8 py-6 border-b border-blue-100 flex items-center justify-between">
+                <div>
+                  <h2 className="text-3xl font-bold text-[#0F172A]">
+                    Create {getSingularLabel()}
+                  </h2>
+
+                  <p className="text-sm text-gray-500 mt-1">
+                    Add a new {getSingularLabel().toLowerCase()} record.
+                  </p>
+                </div>
+
+                <button
+                  onClick={() => setCreateModalOpen(false)}
+                  className="w-10 h-10 rounded-full hover:bg-blue-50"
+                >
+                  ✕
+                </button>
+              </div>
+
+              <div className="p-8 grid grid-cols-1 md:grid-cols-2 gap-6">
+                {['leads', 'opportunities', 'orders', 'invoices'].includes(activePage) && (
+                  <div className="md:col-span-2 border border-blue-100 rounded-3xl p-6 bg-blue-50/30 space-y-4">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <h3 className="text-xl font-bold text-[#0F172A]">
+                          Product Line Items
+                        </h3>
+
+                        <p className="text-sm text-gray-500 mt-1">
+                          Add products for this {getSingularLabel().toLowerCase()}.
+                        </p>
+                      </div>
+
+                      <select
+                        onChange={(e) => {
+                          if (!e.target.value) return;
+
+                          const selectedProduct = products.find(
+                            (product: any) => product.name === e.target.value
+                          );
+
+                          if (!selectedProduct) return;
+
+                          setNewRecord((prev: any) => ({
+                            ...prev,
+                            products: [
+                              ...(prev.products || []),
+                              {
+                                productName: selectedProduct.name,
+                                quantity: 1,
+                                price: selectedProduct.price,
+                                lineTotal: selectedProduct.price,
+                              },
+                            ],
+                          }));
+
+                          e.target.value = '';
+                        }}
+                        className="border border-blue-200 rounded-2xl px-4 py-3 bg-white"
+                      >
+                        <option value="">+ Add Product</option>
+
+                        {products.map((product: any) => (
+                          <option key={product.id} value={product.name}>
+                            {product.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div className="space-y-4">
+                      {(newRecord.products || []).map(
+                        (productLine: any, index: number) => (
+                          <div
+                            key={index}
+                            className="grid grid-cols-1 md:grid-cols-5 gap-4 bg-white border border-blue-100 rounded-2xl p-4"
+                          >
+                            <input
+                              type="text"
+                              value={productLine.productName}
+                              disabled
+                              className="border border-blue-200 rounded-2xl px-4 py-3 bg-gray-100"
+                            />
+
+                            <input
+                              type="number"
+                              value={productLine.quantity}
+                              onChange={(e) => {
+                                const quantity = Number(e.target.value);
+
+                                setNewRecord((prev: any) => {
+                                  const updatedProducts = [...(prev.products || [])];
+
+                                  updatedProducts[index] = {
+                                    ...updatedProducts[index],
+                                    quantity,
+                                    lineTotal:
+                                      quantity * updatedProducts[index].price,
+                                  };
+
+                                  return {
+                                    ...prev,
+                                    products: updatedProducts,
+                                  };
+                                });
+                              }}
+                              className="border border-blue-200 rounded-2xl px-4 py-3"
+                            />
+
+                            <input
+                              type="number"
+                              value={productLine.price}
+                              onChange={(e) => {
+                                const price = Number(e.target.value);
+
+                                setNewRecord((prev: any) => {
+                                  const updatedProducts = [...(prev.products || [])];
+
+                                  updatedProducts[index] = {
+                                    ...updatedProducts[index],
+                                    price,
+                                    lineTotal:
+                                      updatedProducts[index].quantity * price,
+                                  };
+
+                                  return {
+                                    ...prev,
+                                    products: updatedProducts,
+                                  };
+                                });
+                              }}
+                              className="border border-blue-200 rounded-2xl px-4 py-3"
+                            />
+
+                            <input
+                              type="text"
+                              value={formatCurrency(productLine.lineTotal || 0)}
+                              disabled
+                              className="border border-blue-200 rounded-2xl px-4 py-3 bg-gray-100"
+                            />
+
+                            <button
+                              onClick={() => {
+                                setNewRecord((prev: any) => ({
+                                  ...prev,
+                                  products: (prev.products || []).filter(
+                                    (_: any, idx: number) => idx !== index
+                                  ),
+                                }));
+                              }}
+                              className="bg-red-50 hover:bg-red-100 text-red-600 rounded-2xl px-4 py-3"
+                            >
+                              Remove
+                            </button>
+                          </div>
+                        )
+                      )}
+                    </div>
+                  </div>
+                )}
+                <div className="space-y-2">
+                  <label className="text-sm font-semibold uppercase text-gray-500">
+                    Name
+                  </label>
+
+                  <input
+                    type="text"
+                    placeholder={`Enter ${getSingularLabel()} Name`}
+                    value={newRecord.name || ''}
+                    onChange={(e) =>
+                      setNewRecord((prev: any) => ({
+                        ...prev,
+                        name: e.target.value,
+                      }))
+                    }
+                    className="w-full border border-blue-200 rounded-2xl px-4 py-3"
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-sm font-semibold uppercase text-gray-500">
+                    Status
+                  </label>
+
+                  <select
+                    value={newRecord.status || ''}
+                    onChange={(e) =>
+                      setNewRecord((prev: any) => ({
+                        ...prev,
+                        status: e.target.value,
+                      }))
+                    }
+                    className="w-full border border-blue-200 rounded-2xl px-4 py-3 bg-white"
+                  >
+                    <option value="">Select Status</option>
+
+                    {getStatusOptions().map((status: string) => (
+                      <option key={status}>{status}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="md:col-span-2 space-y-2">
+                  <label className="text-sm font-semibold uppercase text-gray-500">
+                    Details
+                  </label>
+
+                  <textarea
+                    rows={4}
+                    placeholder="Enter details"
+                    value={newRecord.details || ''}
+                    onChange={(e) =>
+                      setNewRecord((prev: any) => ({
+                        ...prev,
+                        details: e.target.value,
+                      }))
+                    }
+                    className="w-full border border-blue-200 rounded-2xl px-4 py-3"
+                  />
+                </div>
+              </div>
+
+              <div className="px-8 py-6 border-t border-blue-100 flex items-center justify-end gap-4">
+                <button
+                  onClick={() => setCreateModalOpen(false)}
+                  className="px-5 py-3 rounded-2xl border border-blue-200 text-[#0F172A] font-semibold"
+                >
+                  Cancel
+                </button>
+
+                <button
+                  onClick={handleCreateRecord}
+                  className="bg-[#0F172A] text-white px-6 py-3 rounded-2xl font-semibold"
+                >
+                  Create {getSingularLabel()}
+                </button>
+              </div>
             </div>
           </div>
         )}
