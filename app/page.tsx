@@ -432,7 +432,6 @@ export default function AIBillingApp() {
                       <td className="px-6 py-4">{record.status}</td>
 
                       <td
-                        ref={openActionMenu === record.id ? actionMenuRef : null}
                         className="px-6 py-4 text-center relative"
                       >
                         <button
@@ -448,7 +447,10 @@ export default function AIBillingApp() {
                         </button>
 
                         {openActionMenu === record.id && (
-                          <div className="absolute right-6 top-16 bg-white border border-blue-100 shadow-2xl rounded-2xl p-2 z-50 min-w-[190px]">
+                          <div
+                            ref={actionMenuRef}
+                            className="absolute right-6 top-16 bg-white border border-blue-100 shadow-2xl rounded-2xl p-2 z-50 min-w-[190px]"
+                          >
                             <button className="w-full text-left px-4 py-3 rounded-xl hover:bg-blue-50">
                               Change Status
                             </button>
