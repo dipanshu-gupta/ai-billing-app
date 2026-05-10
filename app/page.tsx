@@ -78,7 +78,7 @@ export default function AIBillingApp() {
     dueDate: '',
     paymentTerms: '',
   });
-  const [lineItems, setLineItems] = useState<any[]>([]);
+  const [lineItems, setLineItems] = useState([]);
 
   const actionMenuRef = useRef<HTMLDivElement | null>(null);
   const navigatorRef = useRef<HTMLElement | null>(null);
@@ -852,14 +852,14 @@ export default function AIBillingApp() {
                       key={record.id}
                       className="border-t border-blue-100 hover:bg-blue-50/60 transition-all duration-200"
                     >
-                      <td className="px-6 py-4">{record.id}</td>
+                      <td className="px-6 py-4 font-bold text-[#0F172A]">{record.id}</td>
                       <td
                         onClick={() => openDetailsPage(record)}
-                        className="px-6 py-4 font-semibold text-[#0F172A] cursor-pointer hover:text-blue-700 transition-all"
+                        className="px-6 py-4 font-bold text-[#0F172A] underline cursor-pointer hover:text-blue-700 transition-all"
                       >
                         {record.name || record.customer}
                       </td>
-                      <td className="px-6 py-4">{record.status}</td>
+                      <td className="px-6 py-4 font-bold text-[#0F172A]">{record.status}</td>
 
                       <td className="px-6 py-4 text-center relative w-[160px] overflow-visible">
                         <button
