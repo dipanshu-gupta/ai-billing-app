@@ -78,7 +78,7 @@ export default function AIBillingApp() {
     dueDate: '',
     paymentTerms: '',
   });
-  const [lineItems, setLineItems] = useState([]);
+  const [lineItems, setLineItems] = useState<any[]>([]);
 
   const actionMenuRef = useRef<HTMLDivElement | null>(null);
   const navigatorRef = useRef<HTMLElement | null>(null);
