@@ -356,26 +356,185 @@ export default function AIBillingApp() {
 
       <main className="flex-1 p-6 overflow-hidden">
         {activePage === 'dashboard' ? (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div className="bg-white rounded-3xl p-6 shadow-xl h-[340px]">
-              <h2 className="text-xl font-bold mb-4 text-[#0F172A]">
-                CRM Records Overview
-              </h2>
+          <div className="space-y-6">
+            <div className="bg-white rounded-3xl p-6 shadow-xl border border-blue-100">
+              <div className="flex flex-col lg:flex-row gap-4 lg:items-end lg:justify-between">
+                <div>
+                  <h1 className="text-3xl font-bold text-[#0F172A]">
+                    CRM Analytics Dashboard
+                  </h1>
 
-              <ResponsiveContainer width="100%" height="85%">
-                <BarChart
-                  data={[
-                    { name: 'Customers', value: customers.length },
-                    { name: 'Leads', value: leads.length },
-                    { name: 'Orders', value: orders.length },
-                  ]}
-                >
-                  <XAxis dataKey="name" />
-                  <YAxis />
-                  <Tooltip />
-                  <Bar dataKey="value" fill="#0F172A" />
-                </BarChart>
-              </ResponsiveContainer>
+                  <p className="text-gray-500 mt-2 text-sm">
+                    Real-time sales, customer and billing insights.
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 w-full lg:w-auto">
+                  <select className="border border-blue-200 rounded-2xl px-4 py-3 bg-white">
+                    <option>Last 30 Days</option>
+                    <option>Last Quarter</option>
+                    <option>This Year</option>
+                  </select>
+
+                  <input
+                    type="date"
+                    className="border border-blue-200 rounded-2xl px-4 py-3 bg-white"
+                  />
+
+                  <input
+                    type="date"
+                    className="border border-blue-200 rounded-2xl px-4 py-3 bg-white"
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+              <div className="xl:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="bg-white rounded-3xl p-6 shadow-xl h-[360px] overflow-hidden">
+                  <h2 className="text-xl font-bold mb-6 text-[#0F172A]">
+                    CRM Records Overview
+                  </h2>
+
+                  <ResponsiveContainer width="100%" height="82%">
+                    <BarChart
+                      data={[
+                        { name: 'Customers', value: customers.length },
+                        { name: 'Products', value: products.length },
+                        { name: 'Leads', value: leads.length },
+                        { name: 'Orders', value: orders.length },
+                      ]}
+                    >
+                      <XAxis dataKey="name" />
+                      <YAxis />
+                      <Tooltip />
+                      <Bar dataKey="value" fill="#0F172A" radius={[8, 8, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+
+                <div className="bg-white rounded-3xl p-6 shadow-xl h-[360px] overflow-hidden">
+                  <div className="flex items-center justify-between mb-6">
+                    <h2 className="text-xl font-bold text-[#0F172A]">
+                      Sales Pipeline Report
+                    </h2>
+
+                    <select className="border border-blue-200 rounded-2xl px-4 py-2 bg-white text-sm">
+                      <option>Qualified Leads</option>
+                      <option>Converted Leads</option>
+                      <option>Won Opportunities</option>
+                    </select>
+                  </div>
+
+                  <ResponsiveContainer width="100%" height="82%">
+                    <BarChart
+                      data={[
+                        { stage: 'Prospecting', value: 18 },
+                        { stage: 'Qualified', value: 12 },
+                        { stage: 'Proposal', value: 7 },
+                        { stage: 'Won', value: 4 },
+                      ]}
+                    >
+                      <XAxis dataKey="stage" />
+                      <YAxis />
+                      <Tooltip />
+                      <Bar dataKey="value" fill="#0F172A" radius={[8, 8, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+
+              <div className="space-y-6">
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="bg-white rounded-3xl p-5 shadow-xl border border-blue-100">
+                    <div className="text-sm text-gray-500 mb-2">
+                      Total Customers
+                    </div>
+
+                    <div className="text-3xl font-bold text-[#0F172A]">
+                      {customers.length}
+                    </div>
+                  </div>
+
+                  <div className="bg-white rounded-3xl p-5 shadow-xl border border-blue-100">
+                    <div className="text-sm text-gray-500 mb-2">
+                      Open Opportunities
+                    </div>
+
+                    <div className="text-3xl font-bold text-[#0F172A]">
+                      {opportunities.length}
+                    </div>
+                  </div>
+
+                  <div className="bg-white rounded-3xl p-5 shadow-xl border border-blue-100">
+                    <div className="text-sm text-gray-500 mb-2">
+                      Total Orders
+                    </div>
+
+                    <div className="text-3xl font-bold text-[#0F172A]">
+                      {orders.length}
+                    </div>
+                  </div>
+
+                  <div className="bg-white rounded-3xl p-5 shadow-xl border border-blue-100">
+                    <div className="text-sm text-gray-500 mb-2">
+                      Revenue
+                    </div>
+
+                    <div className="text-2xl font-bold text-[#0F172A] break-words">
+                      {formatCurrency(
+                        invoices.reduce(
+                          (sum: number, invoice: any) =>
+                            sum + (invoice.amount || 0),
+                          0
+                        )
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="bg-gradient-to-br from-[#0F172A] via-blue-900 to-blue-950 text-white rounded-3xl p-6 shadow-2xl flex flex-col min-h-[420px] border border-blue-800/40">
+                  <div className="mb-5">
+                    <h2 className="text-2xl font-bold tracking-tight">
+                      AI Billing Agent
+                    </h2>
+
+                    <p className="text-blue-100 text-sm mt-1">
+                      AI powered CRM and billing assistant
+                    </p>
+                  </div>
+
+                  <div className="flex-1 space-y-4 overflow-y-auto pr-1">
+                    <div className="bg-blue-800/70 rounded-3xl p-4 text-white border border-blue-700/30 max-w-[90%]">
+                      Hello! I can help analyze customers, leads, revenue, invoices and opportunities.
+                    </div>
+
+                    <button className="w-full bg-white text-[#0F172A] rounded-2xl p-4 text-left hover:bg-blue-50 transition-all duration-200 font-medium">
+                      Show revenue summary
+                    </button>
+
+                    <button className="w-full bg-white text-[#0F172A] rounded-2xl p-4 text-left hover:bg-blue-50 transition-all duration-200 font-medium">
+                      Show qualified leads
+                    </button>
+
+                    <button className="w-full bg-white text-[#0F172A] rounded-2xl p-4 text-left hover:bg-blue-50 transition-all duration-200 font-medium">
+                      Show pending invoices
+                    </button>
+                  </div>
+
+                  <div className="mt-5 flex gap-3">
+                    <input
+                      type="text"
+                      placeholder="Ask AI about CRM analytics..."
+                      className="flex-1 rounded-2xl px-4 py-3 bg-white text-slate-900 border border-blue-200 outline-none"
+                    />
+
+                    <button className="bg-white text-[#0F172A] px-5 py-3 rounded-2xl font-semibold hover:bg-blue-50 transition-all duration-200">
+                      Send
+                    </button>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
         ) : (
