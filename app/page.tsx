@@ -46,19 +46,44 @@ export default function AIBillingApp() {
     },
   ]);
   const [selectedTimeline, setSelectedTimeline] = useState('Last 30 Days');
-  const [lineItems, setLineItems] = useState([
-    {
-      id: 1,
-      product: 'Cloud Subscription',
-      quantity: 2,
-      price: 25000,
-    },
-  ]);
+  const [editedRecord, setEditedRecord] = useState<any>({});
+  const [searchTerm, setSearchTerm] = useState('');
+  const [statusFilter, setStatusFilter] = useState('All');
+  const [timelineFilter, setTimelineFilter] = useState('All Time');
+
+  const [createFormData, setCreateFormData] = useState<any>({
+    name: '',
+    customer: '',
+    status: 'New',
+    amount: '',
+    email: '',
+    phone: '',
+    source: '',
+    category: '',
+    price: '',
+    company: '',
+    industry: '',
+    billingAddress: '',
+    shippingAddress: '',
+    city: '',
+    state: '',
+    postalCode: '',
+    country: '',
+    website: '',
+    gstNumber: '',
+    stage: '',
+    closeDate: '',
+    shippingAddressOrder: '',
+    deliveryDate: '',
+    dueDate: '',
+    paymentTerms: '',
+  });
+  const [lineItems, setLineItems] = useState([]);
 
   const actionMenuRef = useRef<HTMLDivElement | null>(null);
   const navigatorRef = useRef<HTMLElement | null>(null);
 
-  const [customers] = useState([
+  const [customers, setCustomers] = useState([
     {
       id: 'CUST-001',
       name: 'ABC Corp',
@@ -78,7 +103,7 @@ export default function AIBillingApp() {
     },
   ]);
 
-  const [products] = useState([
+  const [products, setProducts] = useState([
     {
       id: 'PROD-001',
       name: 'Cloud Subscription',
@@ -88,7 +113,7 @@ export default function AIBillingApp() {
     },
   ]);
 
-  const [leads] = useState([
+  const [leads, setLeads] = useState([
     {
       id: 'LEAD-001',
       name: 'Rahul Sharma',
@@ -98,7 +123,7 @@ export default function AIBillingApp() {
     },
   ]);
 
-  const [opportunities] = useState([
+  const [opportunities, setOpportunities] = useState([
     {
       id: 'OPP-001',
       name: 'Vision Tech Renewal',
@@ -108,7 +133,7 @@ export default function AIBillingApp() {
     },
   ]);
 
-  const [orders] = useState([
+  const [orders, setOrders] = useState([
     {
       id: 'ORD-001',
       customer: 'ABC Corp',
@@ -117,7 +142,7 @@ export default function AIBillingApp() {
     },
   ]);
 
-  const [invoices] = useState([
+  const [invoices, setInvoices] = useState([
     {
       id: 'INV-001',
       customer: 'ABC Corp',
@@ -214,6 +239,7 @@ export default function AIBillingApp() {
 
   const openDetailsPage = (record: any) => {
     setSelectedRecord(record);
+    setEditedRecord(record);
     setOpenActionMenu(null);
   };
 
@@ -249,6 +275,224 @@ export default function AIBillingApp() {
       default:
         return ['name', 'status'];
     }
+  };
+
+  const createNewRecord = () => {
+    const newRecord:any = {
+      id: `${activePage.toUpperCase().slice(0,3)}-${Date.now()}`,
+      name: createFormData.name || `New ${activePage === 'customers' ? 'Customer' : activePage === 'products' ? 'Product' : activePage === 'leads' ? 'Lead' : activePage === 'opportunities' ? 'Opportunity' : activePage === 'orders' ? 'Order' : activePage === 'invoices' ? 'Invoice' : 'Record'}`,
+      customer: createFormData.customer || customers[0]?.name || '',
+      status: createFormData.status || 'New',
+      amount: Number(createFormData.amount) || 0,
+      email: createFormData.email || '',
+      phone: createFormData.phone || '',
+      source: createFormData.source || '',
+      category: createFormData.category || '',
+      price: Number(createFormData.price) || 0,
+      company: createFormData.company || '',
+      industry: createFormData.industry || '',
+      billingAddress: createFormData.billingAddress || '',
+      shippingAddress: createFormData.shippingAddress || '',
+      city: createFormData.city || '',
+      state: createFormData.state || '',
+      postalCode: createFormData.postalCode || '',
+      country: createFormData.country || '',
+      website: createFormData.website || '',
+      gstNumber: createFormData.gstNumber || '',
+      stage: createFormData.stage || '',
+      closeDate: createFormData.closeDate || '',
+      deliveryDate: createFormData.deliveryDate || '',
+      dueDate: createFormData.dueDate || '',
+      paymentTerms: createFormData.paymentTerms || '',
+    };
+
+    if (activePage === 'customers') {
+      setCustomers((prev:any) => [...prev, newRecord]);
+    } else if (activePage === 'products') {
+      setProducts((prev:any) => [...prev, newRecord]);
+    } else if (activePage === 'leads') {
+      setLeads((prev:any) => [...prev, newRecord]);
+    } else if (activePage === 'opportunities') {
+      setOpportunities((prev:any) => [...prev, newRecord]);
+    } else if (activePage === 'orders') {
+      setOrders((prev:any) => [...prev, newRecord]);
+    } else if (activePage === 'invoices') {
+      setInvoices((prev:any) => [...prev, newRecord]);
+    }
+
+    setCreateModalOpen(false);
+
+    setCreateFormData({
+      name: '',
+      customer: '',
+      status: 'New',
+      amount: '',
+      email: '',
+      phone: '',
+      source: '',
+      category: '',
+      price: '',
+      company: '',
+      industry: '',
+      billingAddress: '',
+      shippingAddress: '',
+      city: '',
+      state: '',
+      postalCode: '',
+      country: '',
+      website: '',
+      gstNumber: '',
+      stage: '',
+      closeDate: '',
+      shippingAddressOrder: '',
+      deliveryDate: '',
+      dueDate: '',
+      paymentTerms: '',
+    });
+  };
+
+  const getStatusOptions = () => {
+    switch (activePage) {
+      case 'customers':
+        return ['Active', 'Inactive', 'Prospect'];
+      case 'products':
+        return ['Active', 'Inactive', 'Discontinued'];
+      case 'leads':
+        return ['New', 'Contacted', 'Qualified', 'Converted', 'Lost'];
+      case 'opportunities':
+        return ['Open', 'Proposal Sent', 'Negotiation', 'Closed Won', 'Closed Lost'];
+      case 'orders':
+        return ['Draft', 'Processing', 'Shipped', 'Delivered', 'Cancelled'];
+      case 'invoices':
+        return ['Draft', 'Pending', 'Paid', 'Overdue', 'Cancelled'];
+      default:
+        return ['New', 'Active'];
+    }
+  };
+
+  const saveRecordChanges = () => {
+    if (activePage === 'leads') {
+      setLeads((prev:any) =>
+        prev.map((item:any) =>
+          item.id === editedRecord.id ? editedRecord : item
+        )
+      );
+    } else if (activePage === 'opportunities') {
+      setOpportunities((prev:any) =>
+        prev.map((item:any) =>
+          item.id === editedRecord.id ? editedRecord : item
+        )
+      );
+    } else if (activePage === 'customers') {
+      setCustomers((prev:any) =>
+        prev.map((item:any) =>
+          item.id === editedRecord.id ? editedRecord : item
+        )
+      );
+    } else if (activePage === 'products') {
+      setProducts((prev:any) =>
+        prev.map((item:any) =>
+          item.id === editedRecord.id ? editedRecord : item
+        )
+      );
+    } else if (activePage === 'orders') {
+      setOrders((prev:any) =>
+        prev.map((item:any) =>
+          item.id === editedRecord.id ? editedRecord : item
+        )
+      );
+    } else if (activePage === 'invoices') {
+      setInvoices((prev:any) =>
+        prev.map((item:any) =>
+          item.id === editedRecord.id ? editedRecord : item
+        )
+      );
+    }
+
+    setSelectedRecord(editedRecord);
+  };
+
+  const convertLeadToOpportunity = (lead:any) => {
+    const updatedLead = {
+      ...lead,
+      status: 'Converted',
+    };
+
+    setLeads((prev:any) =>
+      prev.map((item:any) =>
+        item.id === lead.id ? updatedLead : item
+      )
+    );
+
+    const newOpportunity = {
+      id: `OPP-${Date.now()}`,
+      name: lead.name,
+      customer: lead.customer,
+      status: 'Open',
+      amount: lead.amount,
+      email: lead.email,
+      phone: lead.phone,
+      source: lead.source,
+      lineItems: [...lineItems],
+    };
+
+    setOpportunities((prev:any) => [...prev, newOpportunity]);
+    setOpenActionMenu(null);
+  };
+
+  const createOrderFromOpportunity = (opportunity:any) => {
+    const updatedOpportunity = {
+      ...opportunity,
+      status: 'Closed Won',
+    };
+
+    setOpportunities((prev:any) =>
+      prev.map((item:any) =>
+        item.id === opportunity.id ? updatedOpportunity : item
+      )
+    );
+
+    const newOrder = {
+      id: `ORD-${Date.now()}`,
+      customer: opportunity.customer,
+      name: opportunity.name,
+      status: 'Processing',
+      amount: opportunity.amount,
+      lineItems: [...lineItems],
+    };
+
+    setOrders((prev:any) => [...prev, newOrder]);
+    setOpenActionMenu(null);
+  };
+
+  const getFilteredData = () => {
+    let data:any[] = getCurrentData();
+
+    if (searchTerm.trim()) {
+      const lowerSearch = searchTerm.toLowerCase();
+
+      data = data.filter((record:any) => {
+        return (
+          String(record.name || '')
+            .toLowerCase()
+            .includes(lowerSearch) ||
+          String(record.id || '')
+            .toLowerCase()
+            .includes(lowerSearch) ||
+          String(record.customer || '')
+            .toLowerCase()
+            .includes(lowerSearch)
+        );
+      });
+    }
+
+    if (statusFilter !== 'All') {
+      data = data.filter(
+        (record:any) => record.status === statusFilter
+      );
+    }
+
+    return data;
   };
 
   const getCurrentData = () => {
@@ -553,6 +797,45 @@ export default function AIBillingApp() {
             </div>
           ) : (
             <div className="bg-gradient-to-br from-white to-blue-50 rounded-[32px] border border-blue-100 shadow-xl overflow-visible">
+              <div className="p-6 border-b border-blue-100 bg-white sticky top-0 z-10">
+                <div className="flex flex-col xl:flex-row gap-4 xl:items-center xl:justify-between">
+                  <div className="flex-1">
+                    <input
+                      type="text"
+                      value={searchTerm}
+                      onChange={(e) => setSearchTerm(e.target.value)}
+                      placeholder={`Search ${activePage} by Name, ID or Customer`}
+                      className="w-full xl:max-w-xl border border-blue-200 rounded-2xl px-5 py-3 text-[#0F172A] bg-white shadow-sm"
+                    />
+                  </div>
+
+                  <div className="flex flex-wrap gap-3">
+                    <select
+                      value={statusFilter}
+                      onChange={(e) => setStatusFilter(e.target.value)}
+                      className="border border-blue-200 rounded-2xl px-5 py-3 bg-white text-[#0F172A] font-medium"
+                    >
+                      <option>All</option>
+                      {getStatusOptions().map((status:string) => (
+                        <option key={status}>{status}</option>
+                      ))}
+                    </select>
+
+                    <select
+                      value={timelineFilter}
+                      onChange={(e) => setTimelineFilter(e.target.value)}
+                      className="border border-blue-200 rounded-2xl px-5 py-3 bg-white text-[#0F172A] font-medium"
+                    >
+                      <option>All Time</option>
+                      <option>Today</option>
+                      <option>Last 7 Days</option>
+                      <option>Last 30 Days</option>
+                      <option>This Year</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+
               <table className="w-full">
                 <thead className="bg-gradient-to-r from-[#0F172A] to-blue-900 text-white">
                   <tr>
@@ -564,7 +847,7 @@ export default function AIBillingApp() {
                 </thead>
 
                 <tbody>
-                  {getCurrentData().map((record: any) => (
+                  {getFilteredData().map((record: any) => (
                     <tr
                       key={record.id}
                       className="border-t border-blue-100 hover:bg-blue-50/60 transition-all duration-200"
@@ -607,15 +890,21 @@ export default function AIBillingApp() {
                             </button>
 
                             {activePage === 'leads' && record.status === 'Qualified' && (
-                              <button className="w-full text-left px-4 py-3 rounded-xl hover:bg-blue-800 text-white">
+                              <button
+                                onClick={() => convertLeadToOpportunity(record)}
+                                className="w-full text-left px-4 py-3 rounded-xl hover:bg-blue-800 text-white"
+                              >
                                 Convert to Opportunity
                               </button>
                             )}
 
                             {activePage === 'opportunities' && (
-                              <button className="w-full text-left px-4 py-3 rounded-xl hover:bg-blue-800 text-white">
-                                Create Order
-                              </button>
+                              <button
+                              onClick={() => createOrderFromOpportunity(record)}
+                              className="w-full text-left px-4 py-3 rounded-xl hover:bg-blue-800 text-white"
+                            >
+                              Create Order
+                            </button>
                             )}
 
                             <button className="w-full text-left px-4 py-3 rounded-xl hover:bg-red-500/20 text-red-300">
@@ -665,21 +954,29 @@ export default function AIBillingApp() {
 
                   {field === 'status' ? (
                     <select
-                      defaultValue={selectedRecord[field] || ''}
+                      value={editedRecord[field] || ''}
+                      onChange={(e) =>
+                        setEditedRecord((prev:any) => ({
+                          ...prev,
+                          [field]: e.target.value,
+                        }))
+                      }
                       className="w-full border border-blue-200 rounded-2xl px-4 py-3 text-[#0F172A] bg-white"
                     >
-                      <option>New</option>
-                      <option>Active</option>
-                      <option>Qualified</option>
-                      <option>Open</option>
-                      <option>Processing</option>
-                      <option>Pending</option>
-                      <option>Closed Won</option>
+                      {getStatusOptions().map((status:string) => (
+                        <option key={status}>{status}</option>
+                      ))}
                     </select>
                   ) : (
                     <input
                       type={field === 'amount' || field === 'price' ? 'number' : 'text'}
-                      defaultValue={selectedRecord[field] || ''}
+                      value={editedRecord[field] || ''}
+                      onChange={(e) =>
+                        setEditedRecord((prev:any) => ({
+                          ...prev,
+                          [field]: e.target.value,
+                        }))
+                      }
                       className="w-full border border-blue-200 rounded-2xl px-4 py-3 text-[#0F172A] bg-white"
                     />
                   )}
@@ -842,7 +1139,10 @@ export default function AIBillingApp() {
               </button>
 
               <button
-                onClick={() => setSelectedRecord(null)}
+                onClick={() => {
+                  saveRecordChanges();
+                  setSelectedRecord(null);
+                }}
                 className="bg-[#0F172A] text-white px-6 py-3 rounded-2xl font-semibold shadow-lg"
               >
                 Save Changes
@@ -867,7 +1167,7 @@ export default function AIBillingApp() {
               </div>
 
               <button
-                onClick={() => setCreateModalOpen(false)}
+                onClick={createNewRecord}
                 className="w-10 h-10 rounded-full bg-blue-50 text-[#0F172A] font-bold"
               >
                 ✕
@@ -882,6 +1182,13 @@ export default function AIBillingApp() {
 
                 <input
                   type="text"
+                  value={createFormData.name}
+                  onChange={(e) =>
+                    setCreateFormData((prev:any) => ({
+                      ...prev,
+                      name: e.target.value,
+                    }))
+                  }
                   placeholder={`Enter ${activePage === 'customers' ? 'customer' : activePage === 'products' ? 'product' : activePage === 'leads' ? 'lead' : activePage === 'opportunities' ? 'opportunity' : activePage === 'activities' ? 'activity' : activePage === 'contacts' ? 'contact' : activePage === 'orders' ? 'order' : activePage === 'invoices' ? 'invoice' : 'record'} name`}
                   className="w-full border border-blue-200 rounded-2xl px-4 py-3 text-[#0F172A]"
                 />
@@ -892,7 +1199,16 @@ export default function AIBillingApp() {
                   Status
                 </label>
 
-                <select className="w-full border border-blue-200 rounded-2xl px-4 py-3 text-[#0F172A] bg-white">
+                <select
+                  value={createFormData.status}
+                  onChange={(e) =>
+                    setCreateFormData((prev:any) => ({
+                      ...prev,
+                      status: e.target.value,
+                    }))
+                  }
+                  className="w-full border border-blue-200 rounded-2xl px-4 py-3 text-[#0F172A] bg-white"
+                >
                   <option>New</option>
                   <option>Active</option>
                 </select>
@@ -973,7 +1289,16 @@ export default function AIBillingApp() {
                       Customer
                     </label>
 
-                    <select className="w-full border border-blue-200 rounded-2xl px-4 py-3 bg-white text-[#0F172A]">
+                    <select
+                      value={createFormData.customer}
+                      onChange={(e) =>
+                        setCreateFormData((prev:any) => ({
+                          ...prev,
+                          customer: e.target.value,
+                        }))
+                      }
+                      className="w-full border border-blue-200 rounded-2xl px-4 py-3 bg-white text-[#0F172A]"
+                    >
                       {customers.map((customer:any) => (
                         <option key={customer.id}>{customer.name}</option>
                       ))}
@@ -987,6 +1312,13 @@ export default function AIBillingApp() {
 
                     <input
                       type="number"
+                      value={createFormData.amount}
+                      onChange={(e) =>
+                        setCreateFormData((prev:any) => ({
+                          ...prev,
+                          amount: e.target.value,
+                        }))
+                      }
                       placeholder="120000"
                       className="w-full border border-blue-200 rounded-2xl px-4 py-3 text-[#0F172A]"
                     />
@@ -1055,7 +1387,7 @@ export default function AIBillingApp() {
               </button>
 
               <button
-                onClick={() => setCreateModalOpen(false)}
+                onClick={createNewRecord}
                 className="bg-[#0F172A] text-white px-6 py-3 rounded-2xl font-semibold"
               >
                 Create {activePage === 'customers' ? 'Customer' : activePage === 'products' ? 'Product' : activePage === 'leads' ? 'Lead' : activePage === 'opportunities' ? 'Opportunity' : activePage === 'activities' ? 'Activity' : activePage === 'contacts' ? 'Contact' : activePage === 'orders' ? 'Order' : activePage === 'invoices' ? 'Invoice' : 'Record'}
