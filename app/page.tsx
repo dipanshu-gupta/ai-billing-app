@@ -1,330 +1,324 @@
 'use client';
 // @ts-nocheck
 
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
+import {
+  BarChart,
+  Bar,
+  ResponsiveContainer,
+  XAxis,
+  YAxis,
+  Tooltip,
+} from 'recharts';
 
-const initialCustomers = [
-  {
-    id: 'CUST-001',
-    name: 'ABC Corp',
-    email: 'finance@abccorp.com',
-    phone: '+91 9876543210',
-    address: 'Gurgaon, Haryana',
-  },
-  {
-    id: 'CUST-002',
-    name: 'Delta Pvt Ltd',
-    email: 'accounts@delta.com',
-    phone: '+91 9988776655',
-    address: 'Noida, Uttar Pradesh',
-  },
-  {
-    id: 'CUST-003',
-    name: 'Neo Systems',
-    email: 'billing@neosystems.com',
-    phone: '+91 9123456780',
-    address: 'Delhi, India',
-  },
+const navigationItems = [
+  { key: 'dashboard', label: 'Dashboard', icon: '📊' },
+  { key: 'customers', label: 'Customers', icon: '👥' },
+  { key: 'products', label: 'Products', icon: '📦' },
+  { key: 'leads', label: 'Leads', icon: '🎯' },
+  { key: 'opportunities', label: 'Opportunities', icon: '💼' },
+  { key: 'activities', label: 'Activities', icon: '📅' },
+  { key: 'contacts', label: 'Contacts', icon: '📇' },
+  { key: 'invoices', label: 'Invoices', icon: '🧾' },
+  { key: 'orders', label: 'Orders', icon: '🛒' },
 ];
 
-const pricebooks = [
-  {
-    id: 'PB-001',
-    product: 'Cloud Subscription',
-    unitPrice: 25000,
-  },
-  {
-    id: 'PB-002',
-    product: 'AI Analytics Add-on',
-    unitPrice: 12000,
-  },
-  {
-    id: 'PB-003',
-    product: 'Support Package',
-    unitPrice: 15000,
-  },
-  {
-    id: 'PB-004',
-    product: 'GST Filing Service',
-    unitPrice: 8500,
-  },
-];
-
-const initialInvoices = [
-  {
-    id: 'INV-1001',
-    customer: 'ABC Corp',
-    amount: 52000,
-    status: 'Pending',
-    due: '2026-05-12',
-    products: [
-      {
-        product: 'Cloud Subscription',
-        quantity: 1,
-        price: 25000,
-      },
-    ],
-  },
-  {
-    id: 'INV-1002',
-    customer: 'Delta Pvt Ltd',
-    amount: 124000,
-    status: 'Paid',
-    due: '2026-05-02',
-    products: [
-      {
-        product: 'Support Package',
-        quantity: 2,
-        price: 30000,
-      },
-    ],
-  },
-  {
-    id: 'INV-1003',
-    customer: 'Neo Systems',
-    amount: 18500,
-    status: 'Overdue',
-    due: '2026-04-28',
-    products: [
-      {
-        product: 'GST Filing Service',
-        quantity: 1,
-        price: 8500,
-      },
-    ],
-  },
-];
-
-const aiSuggestions = [
-  'Show overdue invoices',
-  'What is the current revenue?',
-  'How many customers exist?',
-  'Show pending payment amount',
-];
-
-const formatCurrency = (value: number): string => {
-  return new Intl.NumberFormat('en-IN', {
+const formatCurrency = (value: number) =>
+  new Intl.NumberFormat('en-IN', {
     style: 'currency',
     currency: 'INR',
     maximumFractionDigits: 0,
   }).format(value || 0);
-};
-
-const formatDate = (date: string): string => {
-  if (!date) return '-';
-
-  return new Date(date).toLocaleDateString('en-IN', {
-    day: '2-digit',
-    month: 'short',
-    year: 'numeric',
-  });
-};
-
-type InvoiceProduct = {
-  product: string;
-  quantity: number;
-  price: number;
-};
-
-type Invoice = {
-  id: string;
-  customer: string;
-  amount: number;
-  status: string;
-  due: string;
-  products: InvoiceProduct[];
-};
 
 export default function AIBillingApp() {
-  const [invoices, setInvoices] = useState<Invoice[]>(initialInvoices);
-  const [customerList, setCustomerList] = useState(initialCustomers);
-  const [activePage, setActivePage] = useState<string>('dashboard');
-  const [menuOpen, setMenuOpen] = useState<boolean>(false);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(false);
-  const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
-  const [showInvoiceModal, setShowInvoiceModal] = useState<boolean>(false);
-  const [showCustomerModal, setShowCustomerModal] = useState<boolean>(false);
+  const [activePage, setActivePage] = useState('dashboard');
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [openActionMenu, setOpenActionMenu] = useState<string | null>(null);
-  const [searchTerm, setSearchTerm] = useState<string>('');
-  const [aiInput, setAiInput] = useState<string>('');
+  const [selectedRecord, setSelectedRecord] = useState<any | null>(null);
+  const [editableRecord, setEditableRecord] = useState<any | null>(null);
+  const [createModalOpen, setCreateModalOpen] = useState(false);
+  const actionMenuRef = useRef<HTMLDivElement | null>(null);
 
-  const [aiMessages, setAiMessages] = useState([
+  const [customers] = useState([
+    { id: 'CUST-001', name: 'ABC Corp', email: 'finance@abccorp.com', status: 'Active' },
+  ]);
+
+  const [products] = useState([
     {
-      role: 'assistant',
-      content:
-        'Hello! I am your AI Billing Agent. Ask me about invoices, payments, customers, or reports.',
+      id: 'PROD-001',
+      name: 'Cloud Subscription',
+      category: 'Software',
+      status: 'Active',
+      price: 25000,
+    },
+    {
+      id: 'PROD-002',
+      name: 'AI Analytics Suite',
+      category: 'Analytics',
+      status: 'Active',
+      price: 45000,
     },
   ]);
 
-  const [invoiceForm, setInvoiceForm] = useState<{
-  customer: string;
-  amount: string;
-  due: string;
-  status: string;
-  selectedProducts: string[];
-}>({
-  customer: initialCustomers[0]?.name || '',
-  amount: '',
-  due: '',
-  status: 'Pending',
-  selectedProducts: [],
-});
+  const [leads, setLeads] = useState([
+    {
+      id: 'LEAD-001',
+      name: 'Rahul Sharma',
+      company: 'Vision Tech',
+      status: 'Qualified',
+      amount: 120000,
+      products: [],
+    },
+  ]);
 
-  const [customerForm, setCustomerForm] = useState({
-    name: '',
-    email: '',
-    phone: '',
-    address: '',
-  });
+  const [opportunities, setOpportunities] = useState([
+    {
+      id: 'OPP-001',
+      name: 'Vision Tech Renewal',
+      stage: 'Proposal',
+      status: 'Open',
+      amount: 200000,
+      products: [],
+    },
+  ]);
 
-  const filteredInvoices = useMemo(() => {
-    return invoices.filter((invoice) => {
-      const content = `${invoice.id} ${invoice.customer} ${invoice.status}`.toLowerCase();
-      return content.includes(searchTerm.toLowerCase());
-    });
-  }, [invoices, searchTerm]);
+  const [activities] = useState([
+    { id: 'ACT-001', subject: 'Follow Up Call', type: 'Call', status: 'Scheduled' },
+  ]);
 
-  const totalRevenue = invoices.reduce((sum, item) => sum + item.amount, 0);
+  const [contacts] = useState([
+    { id: 'CONT-001', name: 'Aman Verma', email: 'aman@abccorp.com', status: 'Active' },
+  ]);
 
-  const pendingPayments = invoices
-    .filter((item) => item.status !== 'Paid')
-    .reduce((sum, item) => sum + item.amount, 0);
+  const [invoices] = useState([
+    {
+      id: 'INV-1001',
+      customer: 'ABC Corp',
+      amount: 52000,
+      status: 'Pending',
+      products: [],
+    },
+  ]);
 
-  const overdueInvoices = invoices.filter(
-    (item) => item.status === 'Overdue'
-  ).length;
+  const [orders, setOrders] = useState([
+    {
+      id: 'ORD-001',
+      customer: 'ABC Corp',
+      total: 78000,
+      status: 'Processing',
+      products: [],
+    },
+  ]);
 
-  const getAiResponse = (input: string): string => {
-    const lower = input.toLowerCase();
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (
+        actionMenuRef.current &&
+        !actionMenuRef.current.contains(event.target as Node)
+      ) {
+        setOpenActionMenu(null);
+      }
+    };
 
-    if (lower.includes('overdue')) {
-      return `There are currently ${overdueInvoices} overdue invoices.`;
+    document.addEventListener('mousedown', handleClickOutside);
+
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, []);
+
+  const getCurrentData = () => {
+    switch (activePage) {
+      case 'customers':
+        return customers;
+      case 'products':
+        return products;
+      case 'leads':
+        return leads;
+      case 'opportunities':
+        return opportunities;
+      case 'activities':
+        return activities;
+      case 'contacts':
+        return contacts;
+      case 'invoices':
+        return invoices;
+      case 'orders':
+        return orders;
+      default:
+        return [];
     }
-
-    if (lower.includes('revenue')) {
-      return `Current total revenue is ${formatCurrency(totalRevenue)}.`;
-    }
-
-    if (lower.includes('pending')) {
-      return `Pending payment amount is ${formatCurrency(pendingPayments)}.`;
-    }
-
-    if (lower.includes('customer')) {
-      return `There are ${customerList.length} customer accounts.`;
-    }
-
-    if (lower.includes('invoice')) {
-      return `There are ${invoices.length} invoices in the system.`;
-    }
-
-    return 'I can help with invoices, customers, products, payments, and reports.';
   };
 
-  const handleAiSend = (message?: string): void => {
-    const content = message || aiInput;
+  const getStatusOptions = () => {
+    switch (activePage) {
+      case 'customers':
+        return ['Active', 'Inactive', 'Prospect'];
+      case 'products':
+        return ['Active', 'Inactive', 'Discontinued'];
+      case 'leads':
+        return ['New', 'Qualified', 'Converted', 'Lost'];
+      case 'opportunities':
+        return ['Open', 'Proposal', 'Negotiation', 'Closed Won'];
+      case 'activities':
+        return ['Scheduled', 'Completed', 'Cancelled'];
+      case 'contacts':
+        return ['Active', 'Inactive'];
+      case 'invoices':
+        return ['Draft', 'Pending', 'Paid'];
+      case 'orders':
+        return ['Processing', 'Shipped', 'Delivered'];
+      default:
+        return ['Active'];
+    }
+  };
 
-    if (!content.trim()) return;
+  const getSingularLabel = () => {
+    switch (activePage) {
+      case 'customers':
+        return 'Customer';
+      case 'products':
+        return 'Product';
+      case 'leads':
+        return 'Lead';
+      case 'opportunities':
+        return 'Opportunity';
+      case 'activities':
+        return 'Activity';
+      case 'contacts':
+        return 'Contact';
+      case 'invoices':
+        return 'Invoice';
+      case 'orders':
+        return 'Order';
+      default:
+        return 'Record';
+    }
+  };
 
-    const response = getAiResponse(content);
+  const openRecordDetails = (record: any) => {
+    setSelectedRecord(record);
+    setEditableRecord(record);
+  };
 
-    setAiMessages((prev) => [
+  const handleFieldChange = (field: string, value: string) => {
+    setEditableRecord((prev: any) => ({
+      ...prev,
+      [field]: value,
+    }));
+  };
+
+  const addProductToRecord = (productName: string) => {
+    const selectedProduct = products.find(
+      (product: any) => product.name === productName
+    );
+
+    if (!selectedProduct) return;
+
+    setEditableRecord((prev: any) => ({
+      ...prev,
+      products: [
+        ...(prev.products || []),
+        {
+          productName: selectedProduct.name,
+          quantity: 1,
+          price: selectedProduct.price,
+          lineTotal: selectedProduct.price,
+        },
+      ],
+    }));
+  };
+
+  const handleProductLineChange = (
+    index: number,
+    field: string,
+    value: any
+  ) => {
+    setEditableRecord((prev: any) => {
+      const updatedProducts = [...(prev.products || [])];
+
+      updatedProducts[index] = {
+        ...updatedProducts[index],
+        [field]: value,
+      };
+
+      updatedProducts[index].lineTotal =
+        updatedProducts[index].quantity * updatedProducts[index].price;
+
+      return {
+        ...prev,
+        products: updatedProducts,
+      };
+    });
+  };
+
+  const handleConvertLead = (leadRecord: any) => {
+    setLeads((prev: any) =>
+      prev.map((lead: any) =>
+        lead.id === leadRecord.id
+          ? { ...lead, status: 'Converted' }
+          : lead
+      )
+    );
+
+    setOpportunities((prev: any) => [
       ...prev,
       {
-        role: 'user',
-        content,
-      },
-      {
-        role: 'assistant',
-        content: response,
+        id: `OPP-${Date.now()}`,
+        name: leadRecord.name,
+        company: leadRecord.company || '',
+        details:
+          leadRecord.details ||
+          leadRecord.company ||
+          'Opportunity created from Lead',
+        stage: 'Qualification',
+        status: 'Open',
+        amount: leadRecord.amount || 0,
+        products: (leadRecord.products || []).map((product: any) => ({
+          productName: product.productName,
+          quantity: product.quantity || 1,
+          price: product.price || 0,
+          lineTotal:
+            product.lineTotal ||
+            (product.quantity || 1) * (product.price || 0),
+        })),
       },
     ]);
 
-    setAiInput('');
+    setOpenActionMenu(null);
   };
 
-  const handleInvoiceSubmit = (
-    e: React.FormEvent<HTMLFormElement>
-  ): void => {
-    e.preventDefault();
-
-    const products = invoiceForm.selectedProducts.map((productId) => {
-      const product = pricebooks.find((item) => item.id === productId);
-
-      return {
-        product: product?.product || '',
-        quantity: 1,
-        price: product?.unitPrice || 0,
-      };
-    });
-
-    const newInvoice = {
-      id: `INV-${1000 + invoices.length + 1}`,
-      customer: invoiceForm.customer,
-      amount: Number(invoiceForm.amount || 0),
-      due: invoiceForm.due,
-      status: invoiceForm.status,
-      products,
-    };
-
-    setInvoices((prev) => [newInvoice, ...prev]);
-
-    setInvoiceForm({
-      customer: customerList[0]?.name || '',
-      amount: '',
-      due: '',
-      status: 'Pending',
-      selectedProducts: [],
-    });
-
-    setShowInvoiceModal(false);
-  };
-
-  const handleCustomerSubmit = (
-    e: React.FormEvent<HTMLFormElement>
-  ): void => {
-    e.preventDefault();
-
-    const newCustomer = {
-      id: `CUST-${String(customerList.length + 1).padStart(3, '0')}`,
-      ...customerForm,
-    };
-
-    setCustomerList((prev) => [...prev, newCustomer]);
-
-    setCustomerForm({
-      name: '',
-      email: '',
-      phone: '',
-      address: '',
-    });
-
-    setShowCustomerModal(false);
-  };
-
-  const handleStatusChange = (
-    invoiceId: string,
-    status: string
-  ): void => {
-    setInvoices((prev) =>
-      prev.map((invoice) =>
-        invoice.id === invoiceId
+  const handleCreateOrder = (opportunityRecord: any) => {
+    setOpportunities((prev: any) =>
+      prev.map((opportunity: any) =>
+        opportunity.id === opportunityRecord.id
           ? {
-              ...invoice,
-              status,
+              ...opportunity,
+              status: 'Closed Won',
             }
-          : invoice
+          : opportunity
       )
     );
+
+    setOrders((prev: any) => [
+      ...prev,
+      {
+        id: `ORD-${Date.now()}`,
+        customer: opportunityRecord.name,
+        total: opportunityRecord.amount || 0,
+        status: 'Processing',
+        products: opportunityRecord.products || [],
+        details: opportunityRecord.stage || 'Order created from Opportunity',
+      },
+    ]);
 
     setOpenActionMenu(null);
   };
 
   return (
-    <div className="min-h-screen bg-gray-100 flex">
+    <div className="min-h-screen flex bg-gradient-to-br from-white via-blue-50 to-blue-100">
       <aside
-        className={`fixed lg:static top-0 left-0 h-full bg-black text-white z-50 transition-all duration-300 ${
-          sidebarCollapsed ? 'w-24' : 'w-72'
-        } ${menuOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}`}
+        className={`${sidebarCollapsed ? 'w-24' : 'w-72'} bg-[#0F172A] text-white transition-all duration-300 min-h-screen`}
       >
         <div className="p-6">
           <div className="flex items-center justify-between mb-8">
@@ -332,555 +326,322 @@ export default function AIBillingApp() {
               <h2 className="text-2xl font-bold">Navigator</h2>
             )}
 
-            <div className="flex gap-2">
-              <button
-                onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
-                className="hidden lg:block bg-white/10 px-3 py-2 rounded-xl"
-              >
-                {sidebarCollapsed ? '→' : '←'}
-              </button>
-
-              <button
-                className="lg:hidden text-2xl"
-                onClick={() => setMenuOpen(false)}
-              >
-                ✕
-              </button>
-            </div>
+            <button
+              onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+              className="bg-blue-800/60 hover:bg-blue-700 px-3 py-2 rounded-xl"
+            >
+              {sidebarCollapsed ? '→' : '←'}
+            </button>
           </div>
 
           <div className="space-y-3">
-            <button
-              onClick={() => setActivePage('dashboard')}
-              className="w-full text-left px-4 py-3 rounded-2xl bg-white/10 hover:bg-white/20"
-            >
-              {sidebarCollapsed ? '🏠' : 'Dashboard'}
-            </button>
+            {navigationItems.map((item) => (
+              <button
+                key={item.key}
+                onClick={() => setActivePage(item.key)}
+                className={`w-full flex items-center rounded-2xl bg-white/10 hover:bg-blue-700/60 transition-all duration-200 py-3 ${
+                  sidebarCollapsed ? 'justify-center px-2' : 'justify-start px-4'
+                }`}
+              >
+                <span className="text-xl">{item.icon}</span>
 
-            <button
-              onClick={() => setActivePage('customers')}
-              className="w-full text-left px-4 py-3 rounded-2xl bg-white/10 hover:bg-white/20"
-            >
-              {sidebarCollapsed ? '👥' : 'Customer Accounts'}
-            </button>
-
-            <button
-              onClick={() => setActivePage('products')}
-              className="w-full text-left px-4 py-3 rounded-2xl bg-white/10 hover:bg-white/20"
-            >
-              {sidebarCollapsed ? '📦' : 'Products'}
-            </button>
+                {!sidebarCollapsed && (
+                  <span className="ml-3 font-medium">{item.label}</span>
+                )}
+              </button>
+            ))}
           </div>
         </div>
       </aside>
 
-      <main className="flex-1 p-4 md:p-6 overflow-hidden">
-        <div className="max-w-7xl mx-auto space-y-6">
-          <div className="lg:hidden">
-            <button
-              onClick={() => setMenuOpen(true)}
-              className="bg-black text-white px-4 py-3 rounded-2xl"
-            >
-              ☰
-            </button>
-          </div>
+      <main className="flex-1 p-6 overflow-hidden">
+        {activePage === 'dashboard' ? (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="bg-white rounded-3xl p-6 shadow-xl h-[340px]">
+              <h2 className="text-xl font-bold mb-4 text-[#0F172A]">
+                CRM Records Overview
+              </h2>
 
-          {activePage === 'dashboard' && (
-            <>
-              <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
-                <div>
-                  <h1 className="text-4xl font-bold">AI Billing Platform</h1>
-                  <p className="text-gray-600 mt-2">
-                    Smart billing software with embedded AI assistant
-                  </p>
-                </div>
-
-                <button
-                  onClick={() => setShowInvoiceModal(true)}
-                  className="bg-black text-white px-5 py-3 rounded-2xl"
+              <ResponsiveContainer width="100%" height="85%">
+                <BarChart
+                  data={[
+                    { name: 'Customers', value: customers.length },
+                    { name: 'Leads', value: leads.length },
+                    { name: 'Orders', value: orders.length },
+                  ]}
                 >
-                  + Create Invoice
-                </button>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
-                <div className="bg-white rounded-3xl p-6">
-                  <p className="text-gray-500">Total Revenue</p>
-                  <h2 className="text-3xl font-bold mt-2">
-                    {formatCurrency(totalRevenue)}
-                  </h2>
-                </div>
-
-                <div className="bg-white rounded-3xl p-6">
-                  <p className="text-gray-500">Pending Payments</p>
-                  <h2 className="text-3xl font-bold mt-2">
-                    {formatCurrency(pendingPayments)}
-                  </h2>
-                </div>
-
-                <div className="bg-white rounded-3xl p-6">
-                  <p className="text-gray-500">Overdue Invoices</p>
-                  <h2 className="text-3xl font-bold mt-2">
-                    {overdueInvoices}
-                  </h2>
-                </div>
-
-                <div className="bg-white rounded-3xl p-6">
-                  <p className="text-gray-500">Customers</p>
-                  <h2 className="text-3xl font-bold mt-2">
-                    {customerList.length}
-                  </h2>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
-                <div className="xl:col-span-2 bg-white rounded-3xl p-6 overflow-hidden">
-                  <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-4">
-                    <h2 className="text-2xl font-semibold">Recent Invoices</h2>
-
-                    <input
-                      type="text"
-                      value={searchTerm}
-                      onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-                        setSearchTerm(e.target.value)
-                      }
-                      placeholder="Search invoice..."
-                      className="border rounded-xl px-4 py-3 w-full md:w-72"
-                    />
-                  </div>
-
-                  <div className="overflow-x-auto">
-                    <table className="w-full min-w-[700px] text-left">
-                      <thead>
-                        <tr className="border-b">
-                          <th className="py-3">Invoice ID</th>
-                          <th>Customer</th>
-                          <th>Amount</th>
-                          <th>Status</th>
-                          <th>Due Date</th>
-                          <th className="text-center">Actions</th>
-                        </tr>
-                      </thead>
-
-                      <tbody>
-                        {filteredInvoices.map((invoice) => (
-                          <tr
-                            key={invoice.id}
-                            className="border-b hover:bg-gray-50 cursor-pointer"
-                            onClick={() => setSelectedInvoice(invoice)}
-                          >
-                            <td className="py-4 font-medium">{invoice.id}</td>
-                            <td>{invoice.customer}</td>
-                            <td>{formatCurrency(invoice.amount)}</td>
-                            <td>{invoice.status}</td>
-                            <td>{formatDate(invoice.due)}</td>
-                            <td
-                              className="relative text-center"
-                              onClick={(e) => e.stopPropagation()}
-                            >
-                              <button
-                                className="w-10 h-10 rounded-full hover:bg-gray-100"
-                                onClick={() =>
-                                  setOpenActionMenu(
-                                    openActionMenu === invoice.id
-                                      ? null
-                                      : invoice.id
-                                  )
-                                }
-                              >
-                                ⋮
-                              </button>
-
-                              {openActionMenu === invoice.id && (
-                                <div className="absolute right-0 top-12 bg-white border rounded-2xl shadow-xl p-2 z-20 min-w-[170px]">
-                                  <button
-                                    className="w-full text-left px-4 py-2 rounded-xl hover:bg-gray-100"
-                                    onClick={() =>
-                                      handleStatusChange(invoice.id, 'Pending')
-                                    }
-                                  >
-                                    Mark as Pending
-                                  </button>
-
-                                  <button
-                                    className="w-full text-left px-4 py-2 rounded-xl hover:bg-gray-100"
-                                    onClick={() =>
-                                      handleStatusChange(invoice.id, 'Paid')
-                                    }
-                                  >
-                                    Mark as Paid
-                                  </button>
-
-                                  <button
-                                    className="w-full text-left px-4 py-2 rounded-xl hover:bg-gray-100"
-                                    onClick={() =>
-                                      handleStatusChange(invoice.id, 'Overdue')
-                                    }
-                                  >
-                                    Mark as Overdue
-                                  </button>
-                                </div>
-                              )}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-
-                <div className="bg-black text-white rounded-3xl p-6 flex flex-col min-h-[500px]">
-                  <div className="flex items-center justify-between mb-4">
-                    <h2 className="text-2xl font-semibold">AI Billing Agent</h2>
-                    <div className="w-3 h-3 rounded-full bg-green-500 animate-pulse"></div>
-                  </div>
-
-                  <div className="flex-1 overflow-y-auto space-y-3">
-                    {aiMessages.map((message, index) => (
-                      <div
-                        key={index}
-                        className={`rounded-2xl p-4 max-w-[90%] ${
-                          message.role === 'user'
-                            ? 'bg-white text-black ml-auto'
-                            : 'bg-white/10 text-white'
-                        }`}
-                      >
-                        {message.content}
-                      </div>
-                    ))}
-
-                    {aiSuggestions.map((suggestion) => (
-                      <button
-                        key={suggestion}
-                        onClick={() => handleAiSend(suggestion)}
-                        className="w-full bg-white text-black text-left rounded-2xl p-3 hover:bg-gray-100 transition"
-                      >
-                        {suggestion}
-                      </button>
-                    ))}
-                  </div>
-
-                  <div className="mt-4 flex flex-col sm:flex-row gap-2">
-                    <input
-                      type="text"
-                      value={aiInput}
-                      onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-                        setAiInput(e.target.value)
-                      }
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') {
-                          handleAiSend();
-                        }
-                      }}
-                      placeholder="Ask AI anything..."
-                      className="flex-1 rounded-2xl px-4 py-3 bg-white text-black"
-                    />
-
-                    <button
-                      onClick={() => handleAiSend()}
-                      className="bg-white text-black px-5 py-3 rounded-2xl font-semibold"
-                    >
-                      Send
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </>
-          )}
-
-          {activePage === 'customers' && (
-            <div className="bg-white rounded-3xl p-6 overflow-x-auto">
-              <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
-                <h1 className="text-3xl font-bold">Customer Accounts</h1>
-
-                <button
-                  onClick={() => setShowCustomerModal(true)}
-                  className="bg-black text-white px-5 py-3 rounded-2xl"
-                >
-                  + Create Customer Account
-                </button>
-              </div>
-
-              <table className="w-full min-w-[700px] text-left">
-                <thead className="bg-gray-100">
-                  <tr>
-                    <th className="p-4">Customer ID</th>
-                    <th className="p-4">Name</th>
-                    <th className="p-4">Email</th>
-                    <th className="p-4">Phone</th>
-                    <th className="p-4">Address</th>
-                  </tr>
-                </thead>
-
-                <tbody>
-                  {customerList.map((customer) => (
-                    <tr key={customer.id} className="border-t">
-                      <td className="p-4">{customer.id}</td>
-                      <td className="p-4">{customer.name}</td>
-                      <td className="p-4">{customer.email}</td>
-                      <td className="p-4">{customer.phone}</td>
-                      <td className="p-4">{customer.address}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+                  <XAxis dataKey="name" />
+                  <YAxis />
+                  <Tooltip />
+                  <Bar dataKey="value" fill="#0F172A" />
+                </BarChart>
+              </ResponsiveContainer>
             </div>
-          )}
+          </div>
+        ) : (
+          <div className="bg-white rounded-3xl p-6 shadow-xl overflow-hidden">
+            <div className="flex items-center justify-between mb-6">
+              <div>
+                <h1 className="text-3xl font-bold capitalize text-[#0F172A]">
+                  {activePage}
+                </h1>
+              </div>
 
-          {activePage === 'products' && (
-            <div className="bg-white rounded-3xl p-6 overflow-x-auto">
-              <h1 className="text-3xl font-bold mb-6">Products & Pricebooks</h1>
+              <button
+                onClick={() => setCreateModalOpen(true)}
+                className="bg-[#0F172A] text-white px-5 py-3 rounded-2xl font-semibold"
+              >
+                + Create {getSingularLabel()}
+              </button>
+            </div>
 
-              <table className="w-full min-w-[700px] text-left">
-                <thead className="bg-gray-100">
+            <div className="overflow-x-auto rounded-2xl border border-blue-100">
+              <table className="w-full min-w-[900px]">
+                <thead className="bg-blue-50 text-[#0F172A]">
                   <tr>
-                    <th className="p-4">Pricebook ID</th>
-                    <th className="p-4">Product</th>
-                    <th className="p-4">Unit Price</th>
+                    <th className="text-left px-6 py-4 font-semibold">Record ID</th>
+                    <th className="text-left px-6 py-4 font-semibold">Name</th>
+                    <th className="text-left px-6 py-4 font-semibold">Details</th>
+                    <th className="text-left px-6 py-4 font-semibold">Status</th>
+                    <th className="text-center px-6 py-4 font-semibold">Actions</th>
                   </tr>
                 </thead>
 
                 <tbody>
-                  {pricebooks.map((product) => (
-                    <tr key={product.id} className="border-t">
-                      <td className="p-4">{product.id}</td>
-                      <td className="p-4">{product.product}</td>
-                      <td className="p-4">
-                        {formatCurrency(product.unitPrice)}
+                  {getCurrentData().map((record: any, index: number) => (
+                    <tr
+                      key={record.id || index}
+                      onClick={() => openRecordDetails(record)}
+                      className="border-t border-blue-50 hover:bg-blue-50/50 cursor-pointer"
+                    >
+                      <td className="px-6 py-4">{record.id}</td>
+
+                      <td className="px-6 py-4">
+                        {record.name || record.customer || record.subject}
+                      </td>
+
+                      <td className="px-6 py-4">
+                        {record.email ||
+                          record.company ||
+                          record.category ||
+                          record.stage ||
+                          record.type ||
+                          formatCurrency(record.amount || record.total || 0)}
+                      </td>
+
+                      <td className="px-6 py-4">{record.status}</td>
+
+                      <td
+                        ref={openActionMenu === record.id ? actionMenuRef : null}
+                        className="px-6 py-4 text-center relative"
+                      >
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setOpenActionMenu(
+                              openActionMenu === record.id ? null : record.id
+                            );
+                          }}
+                          className="w-10 h-10 rounded-full hover:bg-blue-100"
+                        >
+                          ⋮
+                        </button>
+
+                        {openActionMenu === record.id && (
+                          <div className="absolute right-6 top-16 bg-white border border-blue-100 shadow-2xl rounded-2xl p-2 z-50 min-w-[190px]">
+                            <button className="w-full text-left px-4 py-3 rounded-xl hover:bg-blue-50">
+                              Change Status
+                            </button>
+
+                            {activePage === 'opportunities' && (
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleCreateOrder(record);
+                                }}
+                                className="w-full text-left px-4 py-3 rounded-xl hover:bg-indigo-50 text-indigo-700"
+                              >
+                                Create Order
+                              </button>
+                            )}
+
+                            {activePage === 'leads' &&
+                              record.status === 'Qualified' && (
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleConvertLead(record);
+                                  }}
+                                  className="w-full text-left px-4 py-3 rounded-xl hover:bg-green-50 text-green-700"
+                                >
+                                  Convert to Opportunity
+                                </button>
+                              )}
+
+                            <button className="w-full text-left px-4 py-3 rounded-xl hover:bg-red-50 text-red-600">
+                              Delete Record
+                            </button>
+                          </div>
+                        )}
                       </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
-          )}
-        </div>
-
-        {selectedInvoice && (
-          <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
-            <div className="bg-white rounded-3xl p-6 w-full max-w-3xl max-h-[90vh] overflow-auto">
-              <div className="flex items-center justify-between mb-6">
-                <h2 className="text-2xl font-bold">Invoice Details</h2>
-
-                <button
-                  onClick={() => setSelectedInvoice(null)}
-                  className="border px-4 py-2 rounded-xl"
-                >
-                  Close
-                </button>
-              </div>
-
-              <div className="overflow-x-auto border rounded-2xl">
-                <table className="w-full text-left min-w-[500px]">
-                  <thead className="bg-gray-100">
-                    <tr>
-                      <th className="p-4">Product</th>
-                      <th className="p-4">Quantity</th>
-                      <th className="p-4">Price</th>
-                    </tr>
-                  </thead>
-
-                  <tbody>
-                    {selectedInvoice.products.map((product, index) => (
-                      <tr key={index} className="border-t">
-                        <td className="p-4">{product.product}</td>
-                        <td className="p-4">{product.quantity}</td>
-                        <td className="p-4">
-                          {formatCurrency(product.price)}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
           </div>
         )}
 
-        {showCustomerModal && (
-          <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
-            <div className="bg-white rounded-3xl p-6 w-full max-w-2xl">
-              <div className="flex items-center justify-between mb-6">
-                <h2 className="text-2xl font-bold">Create Customer Account</h2>
+        {selectedRecord && editableRecord && (
+          <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-[100] p-4">
+            <div className="bg-white rounded-3xl shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-y-auto border border-blue-100">
+              <div className="sticky top-0 bg-white border-b border-blue-100 px-8 py-6 flex items-center justify-between">
+                <h2 className="text-3xl font-bold text-[#0F172A]">
+                  Record Details
+                </h2>
 
                 <button
-                  onClick={() => setShowCustomerModal(false)}
-                  className="text-xl"
-                >
-                  ✕
-                </button>
-              </div>
-
-              <form onSubmit={handleCustomerSubmit} className="space-y-4">
-                <input
-                  type="text"
-                  placeholder="Customer Name"
-                  value={customerForm.name}
-                  onChange={(e) =>
-                    setCustomerForm((prev) => ({
-                      ...prev,
-                      name: e.target.value,
-                    }))
-                  }
-                  className="w-full border rounded-xl px-4 py-3"
-                  required
-                />
-
-                <input
-                  type="email"
-                  placeholder="Email"
-                  value={customerForm.email}
-                  onChange={(e) =>
-                    setCustomerForm((prev) => ({
-                      ...prev,
-                      email: e.target.value,
-                    }))
-                  }
-                  className="w-full border rounded-xl px-4 py-3"
-                  required
-                />
-
-                <input
-                  type="text"
-                  placeholder="Phone"
-                  value={customerForm.phone}
-                  onChange={(e) =>
-                    setCustomerForm((prev) => ({
-                      ...prev,
-                      phone: e.target.value,
-                    }))
-                  }
-                  className="w-full border rounded-xl px-4 py-3"
-                  required
-                />
-
-                <textarea
-                  placeholder="Address"
-                  value={customerForm.address}
-                  onChange={(e) =>
-                    setCustomerForm((prev) => ({
-                      ...prev,
-                      address: e.target.value,
-                    }))
-                  }
-                  className="w-full border rounded-xl px-4 py-3"
-                  rows={4}
-                  required
-                />
-
-                <button
-                  type="submit"
-                  className="w-full bg-black text-white px-5 py-3 rounded-2xl"
-                >
-                  Save Customer
-                </button>
-              </form>
-            </div>
-          </div>
-        )}
-
-        {showInvoiceModal && (
-          <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
-            <div className="bg-white rounded-3xl p-6 w-full max-w-lg max-h-[90vh] overflow-auto">
-              <div className="flex items-center justify-between mb-6">
-                <h2 className="text-2xl font-bold">Create Invoice</h2>
-
-                <button
-                  onClick={() => setShowInvoiceModal(false)}
-                  className="text-xl"
-                >
-                  ✕
-                </button>
-              </div>
-
-              <form onSubmit={handleInvoiceSubmit} className="space-y-4">
-                <select
-                  value={invoiceForm.customer}
-                  onChange={(e) =>
-                    setInvoiceForm((prev) => ({
-                      ...prev,
-                      customer: e.target.value,
-                    }))
-                  }
-                  className="w-full border rounded-xl px-4 py-3"
-                >
-                  {customerList.map((customer) => (
-                    <option key={customer.id} value={customer.name}>
-                      {customer.name}
-                    </option>
-                  ))}
-                </select>
-
-                <input
-                  type="number"
-                  placeholder="Invoice Amount"
-                  value={invoiceForm.amount}
-                  onChange={(e) =>
-                    setInvoiceForm((prev) => ({
-                      ...prev,
-                      amount: e.target.value,
-                    }))
-                  }
-                  className="w-full border rounded-xl px-4 py-3"
-                />
-
-                <input
-                  type="date"
-                  value={invoiceForm.due}
-                  onChange={(e) =>
-                    setInvoiceForm((prev) => ({
-                      ...prev,
-                      due: e.target.value,
-                    }))
-                  }
-                  className="w-full border rounded-xl px-4 py-3"
-                />
-
-                <select
-                  multiple
-                  value={invoiceForm.selectedProducts}
-                  onChange={(e) => {
-                    const values = Array.from(
-                      e.target.selectedOptions,
-                      (option) => option.value
-                    );
-
-                    setInvoiceForm((prev) => ({
-                      ...prev,
-                      selectedProducts: values,
-                    }));
+                  onClick={() => {
+                    setSelectedRecord(null);
+                    setEditableRecord(null);
                   }}
-                  className="w-full border rounded-xl px-4 py-3 min-h-[140px]"
+                  className="w-10 h-10 rounded-full hover:bg-blue-50"
                 >
-                  {pricebooks.map((product) => (
-                    <option key={product.id} value={product.id}>
-                      {product.product} - {formatCurrency(product.unitPrice)}
-                    </option>
-                  ))}
-                </select>
-
-                <select
-                  value={invoiceForm.status}
-                  onChange={(e) =>
-                    setInvoiceForm((prev) => ({
-                      ...prev,
-                      status: e.target.value,
-                    }))
-                  }
-                  className="w-full border rounded-xl px-4 py-3"
-                >
-                  <option value="Pending">Pending</option>
-                  <option value="Paid">Paid</option>
-                  <option value="Overdue">Overdue</option>
-                </select>
-
-                <button
-                  type="submit"
-                  className="w-full bg-black text-white px-5 py-3 rounded-2xl"
-                >
-                  Save Invoice
+                  ✕
                 </button>
-              </form>
+              </div>
+
+              <div className="p-8 grid grid-cols-1 md:grid-cols-2 gap-6">
+                {Object.entries(editableRecord).map(([key, value]: any) => {
+                  if (key === 'products') return null;
+
+                  return (
+                    <div key={key} className="space-y-2">
+                      <label className="text-sm font-semibold uppercase text-gray-500">
+                        {key}
+                      </label>
+
+                      {key.toLowerCase() === 'status' ? (
+                        <select
+                          value={String(value)}
+                          onChange={(e) =>
+                            handleFieldChange(key, e.target.value)
+                          }
+                          className="w-full border border-blue-200 rounded-2xl px-4 py-3"
+                        >
+                          {getStatusOptions().map((statusOption) => (
+                            <option key={statusOption}>{statusOption}</option>
+                          ))}
+                        </select>
+                      ) : (
+                        <input
+                          type="text"
+                          value={String(value)}
+                          onChange={(e) =>
+                            handleFieldChange(key, e.target.value)
+                          }
+                          className="w-full border border-blue-200 rounded-2xl px-4 py-3"
+                        />
+                      )}
+                    </div>
+                  );
+                })}
+
+                {['leads', 'opportunities', 'orders', 'invoices'].includes(activePage) && (
+                  <div className="md:col-span-2 mt-4 space-y-4 border border-blue-100 rounded-3xl p-6 bg-blue-50/30">
+                    <div className="flex items-center justify-between">
+                      <h3 className="text-xl font-bold text-[#0F172A]">
+                        Product Line Items
+                      </h3>
+
+                      <select
+                        onChange={(e) => {
+                          if (e.target.value) {
+                            addProductToRecord(e.target.value);
+                            e.target.value = '';
+                          }
+                        }}
+                        className="border border-blue-200 rounded-2xl px-4 py-3 bg-white"
+                      >
+                        <option value="">+ Add Product</option>
+
+                        {products.map((product: any) => (
+                          <option key={product.id} value={product.name}>
+                            {product.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div className="space-y-4">
+                      {(editableRecord.products || []).map(
+                        (productLine: any, productIndex: number) => (
+                          <div
+                            key={productIndex}
+                            className="border border-blue-100 rounded-2xl p-5 bg-white"
+                          >
+                            <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+                              <input
+                                type="text"
+                                value={productLine.productName}
+                                disabled
+                                className="border border-blue-200 rounded-2xl px-4 py-3 bg-gray-100"
+                              />
+
+                              <input
+                                type="number"
+                                value={productLine.quantity}
+                                onChange={(e) =>
+                                  handleProductLineChange(
+                                    productIndex,
+                                    'quantity',
+                                    Number(e.target.value)
+                                  )
+                                }
+                                className="border border-blue-200 rounded-2xl px-4 py-3"
+                              />
+
+                              <input
+                                type="number"
+                                value={productLine.price}
+                                onChange={(e) =>
+                                  handleProductLineChange(
+                                    productIndex,
+                                    'price',
+                                    Number(e.target.value)
+                                  )
+                                }
+                                className="border border-blue-200 rounded-2xl px-4 py-3"
+                              />
+
+                              <input
+                                type="text"
+                                value={formatCurrency(productLine.lineTotal || 0)}
+                                disabled
+                                className="border border-blue-200 rounded-2xl px-4 py-3 bg-gray-100"
+                              />
+
+                              <button
+                                onClick={() => {
+                                  setEditableRecord((prev: any) => ({
+                                    ...prev,
+                                    products: prev.products.filter(
+                                      (_: any, idx: number) => idx !== productIndex
+                                    ),
+                                  }));
+                                }}
+                                className="bg-red-50 hover:bg-red-100 text-red-600 rounded-2xl px-4 py-3"
+                              >
+                                Remove
+                              </button>
+                            </div>
+                          </div>
+                        )
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         )}
