@@ -2,6 +2,7 @@
 // @ts-nocheck
 
 import React, { useEffect, useRef, useState } from 'react';
+import { supabase } from '@/app/lib/supabase';
 import {
   BarChart,
   Bar,
@@ -102,6 +103,29 @@ export default function AIBillingApp() {
       status: 'Active',
     },
   ]);
+
+  const addCustomer = async () => {
+  const { data, error } = await supabase
+    .from('customers')
+    .insert([
+      {
+        name: 'Test Customer',
+        company: 'ABC Corp',
+        email: 'test@test.com',
+        phone: '9999999999',
+        status: 'Active',
+      },
+    ]);
+
+  console.log('DATA:', data);
+  console.log('ERROR:', error);
+
+  if (!error) {
+    alert('Customer inserted successfully');
+  } else {
+    alert('Supabase insert failed');
+  }
+};
 
   const [products, setProducts] = useState([
     {
@@ -607,6 +631,12 @@ export default function AIBillingApp() {
                     >
                       Generate Report
                     </button>
+                    <button
+  onClick={addCustomer}
+  className="bg-green-600 text-white px-6 py-3 rounded-2xl font-semibold"
+>
+  Test Supabase
+</button>
                   </div>
                 </div>
               </div>
