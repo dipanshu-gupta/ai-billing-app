@@ -2,7 +2,7 @@
 // @ts-nocheck
 
 import React, { useEffect, useRef, useState } from 'react';
-import { supabase } from '@/app/lib/supabase';
+import { supabase } from '@/lib/supabase';
 import {
   BarChart,
   Bar,
@@ -52,6 +52,22 @@ export default function AIBillingApp() {
   const [statusFilter, setStatusFilter] = useState('All');
   const [timelineFilter, setTimelineFilter] = useState('All Time');
 
+  const fetchCustomers = async () => {
+  const { data, error } = await supabase
+    .from('customers')
+    .select('*')
+    .order('created_at', { ascending: false });
+
+  if (!error && data) {
+    setCustomers(data);
+  }
+
+  console.log(error);
+};
+useEffect(() => {
+  fetchCustomers();
+}, []);
+
   const [createFormData, setCreateFormData] = useState<any>({
     name: '',
     customer: '',
@@ -84,25 +100,7 @@ export default function AIBillingApp() {
   const actionMenuRef = useRef<HTMLDivElement | null>(null);
   const navigatorRef = useRef<HTMLElement | null>(null);
 
-  const [customers, setCustomers] = useState([
-    {
-      id: 'CUST-001',
-      name: 'ABC Corp',
-      email: 'finance@abccorp.com',
-      phone: '+91 9876543210',
-      company: 'ABC Corporation Pvt Ltd',
-      industry: 'Technology',
-      billingAddress: 'Tower A, Cyber City',
-      shippingAddress: 'Warehouse 12, Gurgaon',
-      city: 'Gurgaon',
-      state: 'Haryana',
-      postalCode: '122002',
-      country: 'India',
-      website: 'www.abccorp.com',
-      gstNumber: '07ABCDE1234F1Z5',
-      status: 'Active',
-    },
-  ]);
+const [customers, setCustomers] = useState<any[]>([]);
 
   const addCustomer = async () => {
   const { data, error } = await supabase
@@ -300,80 +298,61 @@ export default function AIBillingApp() {
         return ['name', 'status'];
     }
   };
+const createNewRecord = async () => {
+  if (activePage === 'customers') {
+    const { error } = await supabase
+      .from('customers')
+      .insert([
+        {
+          customer_number: `CUST-${Date.now()}`,
+          name: createFormData.name,
+          company: createFormData.company,
+          industry: createFormData.industry,
+          email: createFormData.email,
+          phone: createFormData.phone,
+          website: createFormData.website,
+          billing_address: createFormData.billingAddress,
+          shipping_address: createFormData.shippingAddress,
+          city: createFormData.city,
+          state: createFormData.state,
+          postal_code: createFormData.postalCode,
+          country: createFormData.country,
+          gst_number: createFormData.gstNumber,
+          status: createFormData.status || 'Active',
+        },
+      ]);
 
-  const createNewRecord = () => {
-    const newRecord:any = {
-      id: `${activePage.toUpperCase().slice(0,3)}-${Date.now()}`,
-      name: createFormData.name || `New ${activePage === 'customers' ? 'Customer' : activePage === 'products' ? 'Product' : activePage === 'leads' ? 'Lead' : activePage === 'opportunities' ? 'Opportunity' : activePage === 'orders' ? 'Order' : activePage === 'invoices' ? 'Invoice' : 'Record'}`,
-      customer: createFormData.customer || customers[0]?.name || '',
-      status: createFormData.status || 'New',
-      amount: Number(createFormData.amount) || 0,
-      email: createFormData.email || '',
-      phone: createFormData.phone || '',
-      source: createFormData.source || '',
-      category: createFormData.category || '',
-      price: Number(createFormData.price) || 0,
-      company: createFormData.company || '',
-      industry: createFormData.industry || '',
-      billingAddress: createFormData.billingAddress || '',
-      shippingAddress: createFormData.shippingAddress || '',
-      city: createFormData.city || '',
-      state: createFormData.state || '',
-      postalCode: createFormData.postalCode || '',
-      country: createFormData.country || '',
-      website: createFormData.website || '',
-      gstNumber: createFormData.gstNumber || '',
-      stage: createFormData.stage || '',
-      closeDate: createFormData.closeDate || '',
-      deliveryDate: createFormData.deliveryDate || '',
-      dueDate: createFormData.dueDate || '',
-      paymentTerms: createFormData.paymentTerms || '',
-    };
+    if (!error) {
+      await fetchCustomers();
 
-    if (activePage === 'customers') {
-      setCustomers((prev:any) => [...prev, newRecord]);
-    } else if (activePage === 'products') {
-      setProducts((prev:any) => [...prev, newRecord]);
-    } else if (activePage === 'leads') {
-      setLeads((prev:any) => [...prev, newRecord]);
-    } else if (activePage === 'opportunities') {
-      setOpportunities((prev:any) => [...prev, newRecord]);
-    } else if (activePage === 'orders') {
-      setOrders((prev:any) => [...prev, newRecord]);
-    } else if (activePage === 'invoices') {
-      setInvoices((prev:any) => [...prev, newRecord]);
+      setCreateModalOpen(false);
+
+      setCreateFormData(emptyForm);
     }
 
-    setCreateModalOpen(false);
+    console.log(error);
 
-    setCreateFormData({
-      name: '',
-      customer: '',
-      status: 'New',
-      amount: '',
-      email: '',
-      phone: '',
-      source: '',
-      category: '',
-      price: '',
-      company: '',
-      industry: '',
-      billingAddress: '',
-      shippingAddress: '',
-      city: '',
-      state: '',
-      postalCode: '',
-      country: '',
-      website: '',
-      gstNumber: '',
-      stage: '',
-      closeDate: '',
-      shippingAddressOrder: '',
-      deliveryDate: '',
-      dueDate: '',
-      paymentTerms: '',
-    });
+    return;
+  }
+
+  const newRecord = {
+    id: `${activePage.slice(0, 3).toUpperCase()}-${Date.now()}`,
+    ...createFormData,
+    amount: Number(createFormData.amount || 0),
+    price: Number(createFormData.price || 0),
+    status: createFormData.status || getStatusOptions()[0],
+    lineItems: [],
   };
+
+  updateDataset(activePage, (prev: any[]) => [
+    ...prev,
+    newRecord,
+  ]);
+
+  setCreateFormData(emptyForm);
+
+  setCreateModalOpen(false);
+};
 
   const getStatusOptions = () => {
     switch (activePage) {
