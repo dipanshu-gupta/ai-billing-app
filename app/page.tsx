@@ -53,7 +53,8 @@ export default function AIBillingApp() {
   const [timelineFilter, setTimelineFilter] = useState('All Time');
 
   const fetchCustomers = async () => {
-  const { data, error } = await supabase?
+    if (!supabase) return;
+  const { data, error } = await supabase
     .from('customers')
     .select('*')
     .order('created_at', { ascending: false });
@@ -103,7 +104,8 @@ useEffect(() => {
 const [customers, setCustomers] = useState<any[]>([]);
 
   const addCustomer = async () => {
-  const { data, error } = await supabase?
+if (!supabase) return;
+  const { data, error } = await supabase
     .from('customers')
     .insert([
       {
@@ -300,7 +302,8 @@ const [customers, setCustomers] = useState<any[]>([]);
   };
 const createNewRecord = async () => {
   if (activePage === 'customers') {
-    const { error } = await supabase?
+    if (!supabase) return;
+    const { error } = await supabase
       .from('customers')
       .insert([
         {
