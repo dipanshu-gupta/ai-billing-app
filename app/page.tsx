@@ -327,7 +327,7 @@ const createNewRecord = async () => {
 
       setCreateModalOpen(false);
 
-      setCreateFormData(emptyForm);
+      setCreateFormData({});
     }
 
     console.log(error);
@@ -344,12 +344,21 @@ const createNewRecord = async () => {
     lineItems: [],
   };
 
-  updateDataset(activePage, (prev: any[]) => [
-    ...prev,
-    newRecord,
-  ]);
+if (activePage === 'leads') {
+  setLeads((prev: any[]) => [...prev, newRecord]);
+} else if (activePage === 'opportunities') {
+  setOpportunities((prev: any[]) => [...prev, newRecord]);
+} else if (activePage === 'orders') {
+  setOrders((prev: any[]) => [...prev, newRecord]);
+} else if (activePage === 'invoices') {
+  setInvoices((prev: any[]) => [...prev, newRecord]);
+} else if (activePage === 'products') {
+  setProducts((prev: any[]) => [...prev, newRecord]);
+} else if (activePage === 'customers') {
+  setCustomers((prev: any[]) => [...prev, newRecord]);
+}
 
-  setCreateFormData(emptyForm);
+  setCreateFormData({});
 
   setCreateModalOpen(false);
 };
