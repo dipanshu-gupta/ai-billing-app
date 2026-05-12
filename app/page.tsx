@@ -213,6 +213,62 @@ const fetchOpportunityLineItems = async (
 
   console.log(error);
 };
+const fetchOrders = async () => {
+
+  if (!supabase) return;
+
+  const { data, error } = await supabase
+    .from('orders')
+    .select('*')
+    .order('created_at', { ascending: false });
+
+  if (!error && data) {
+
+    setOrders(
+      data.map((order:any) => ({
+        id: order.order_number,
+        customer: order.customer,
+        name: order.name,
+        amount: Number(order.amount || 0),
+        shippingAddress: order.shipping_address,
+        deliveryDate: order.delivery_date,
+        status: order.status,
+      }))
+    );
+  }
+
+  console.log(error);
+};
+
+const fetchOrderLineItems = async (
+  orderNumber:string
+) => {
+
+  if (!supabase) return;
+
+  const { data, error } = await supabase
+    .from('order_line_items')
+    .select('*')
+    .eq('order_number', orderNumber);
+
+  if (!error && data && data.length > 0) {
+
+    setLineItems(
+      data.map((item:any) => ({
+        id: item.id,
+        product: item.product_name,
+        quantity: Number(item.quantity || 1),
+        price: Number(item.price || 0),
+      }))
+    );
+
+  } else {
+
+    setLineItems([]);
+  }
+
+  console.log(error);
+};
 
 
 useEffect(() => {
@@ -220,6 +276,7 @@ useEffect(() => {
   fetchProducts();
   fetchLeads();
   fetchOpportunities();
+  fetchOrders();
 }, []);
 
   const [createFormData, setCreateFormData] = useState<any>({
@@ -396,10 +453,14 @@ const openDetailsPage = async (record: any) => {
 
     await fetchOpportunityLineItems(record.id);
 
-  } else {
+  } else if (activePage === 'orders') {
 
-    setLineItems([]);
-  }
+  await fetchOrderLineItems(record.id);
+
+} else {
+
+  setLineItems([]);
+}
 
   setOpenActionMenu(null);
 };
@@ -567,6 +628,64 @@ if (activePage === 'opportunities') {
 
     await fetchOpportunities();
     setLineItems([]);
+    setCreateModalOpen(false);
+
+    setCreateFormData({});
+
+    return;
+  }
+
+  console.log(error);
+}
+if (activePage === 'orders') {
+
+  if (!supabase) return;
+
+  const orderNumber = `ORD-${Date.now()}`;
+
+  const calculatedAmount = lineItems.reduce(
+    (sum:number, item:any) =>
+      sum + (
+        Number(item.quantity || 0) *
+        Number(item.price || 0)
+      ),
+    0
+  );
+
+  const { error } = await supabase
+    .from('orders')
+    .insert([
+      {
+        order_number: orderNumber,
+        customer: createFormData.customer,
+        name: createFormData.name,
+        amount: calculatedAmount,
+        shipping_address: createFormData.shippingAddressOrder,
+        delivery_date: createFormData.deliveryDate,
+        status: createFormData.status || 'Processing',
+      },
+    ]);
+
+  if (!error) {
+
+    if (lineItems.length > 0) {
+
+      await supabase
+        .from('order_line_items')
+        .insert(
+          lineItems.map((item:any) => ({
+            order_number: orderNumber,
+            product_name: item.product,
+            quantity: item.quantity,
+            price: item.price,
+          }))
+        );
+    }
+
+    await fetchOrders();
+
+    setLineItems([]);
+
     setCreateModalOpen(false);
 
     setCreateFormData({});
@@ -758,12 +877,64 @@ if (supabase && editedRecord.id) {
         )
       );
     } else if (activePage === 'orders') {
-      setOrders((prev:any) =>
-        prev.map((item:any) =>
-          item.id === editedRecord.id ? editedRecord : item
-        )
-      );
-    } else if (activePage === 'invoices') {
+
+  const calculatedAmount = lineItems.reduce(
+    (sum:number, item:any) =>
+      sum + (
+        Number(item.quantity || 0) *
+        Number(item.price || 0)
+      ),
+    0
+  );
+
+  const updatedOrder = {
+    ...editedRecord,
+    amount: calculatedAmount,
+  };
+
+  setOrders((prev:any) =>
+    prev.map((item:any) =>
+      item.id === updatedOrder.id ? updatedOrder : item
+    )
+  );
+
+  if (supabase && updatedOrder.id) {
+
+    await supabase
+      .from('orders')
+      .update({
+        customer: updatedOrder.customer,
+        name: updatedOrder.name,
+        amount: Number(updatedOrder.amount || 0),
+        shipping_address: updatedOrder.shippingAddress,
+        delivery_date: updatedOrder.deliveryDate,
+        status: updatedOrder.status,
+      })
+      .eq('order_number', updatedOrder.id);
+
+    await supabase
+      .from('order_line_items')
+      .delete()
+      .eq('order_number', updatedOrder.id);
+
+    if (lineItems.length > 0) {
+
+      await supabase
+        .from('order_line_items')
+        .insert(
+          lineItems.map((item:any) => ({
+            order_number: updatedOrder.id,
+            product_name: item.product,
+            quantity: item.quantity,
+            price: item.price,
+          }))
+        );
+    }
+  }
+
+  setSelectedRecord(updatedOrder);
+  setEditedRecord(updatedOrder);
+} else if (activePage === 'invoices') {
       setInvoices((prev:any) =>
         prev.map((item:any) =>
           item.id === editedRecord.id ? editedRecord : item
@@ -771,7 +942,9 @@ if (supabase && editedRecord.id) {
       );
     }
 
-    setSelectedRecord(editedRecord);
+    if (activePage !== 'orders') {
+  setSelectedRecord(editedRecord);
+}
   };
 
   const convertLeadToOpportunity = async (lead:any) => {
@@ -862,30 +1035,102 @@ amount: totalAmount,
     setOpenActionMenu(null);
   };
 
-  const createOrderFromOpportunity = (opportunity:any) => {
-    const updatedOpportunity = {
-      ...opportunity,
-      status: 'Closed Won',
-    };
+const createOrderFromOpportunity = async (
+  opportunity:any
+) => {
 
-    setOpportunities((prev:any) =>
-      prev.map((item:any) =>
-        item.id === opportunity.id ? updatedOpportunity : item
-      )
-    );
-
-    const newOrder = {
-      id: `ORD-${Date.now()}`,
-      customer: opportunity.customer,
-      name: opportunity.name,
-      status: 'Processing',
-      amount: opportunity.amount,
-      lineItems: [...lineItems],
-    };
-
-    setOrders((prev:any) => [...prev, newOrder]);
-    setOpenActionMenu(null);
+  const updatedOpportunity = {
+    ...opportunity,
+    status: 'Closed Won',
   };
+
+  setOpportunities((prev:any) =>
+    prev.map((item:any) =>
+      item.id === opportunity.id
+        ? updatedOpportunity
+        : item
+    )
+  );
+
+  let opportunityItems:any[] = [];
+
+  if (supabase) {
+
+    await supabase
+      .from('opportunities')
+      .update({
+        status: 'Closed Won',
+      })
+      .eq('opportunity_number', opportunity.id);
+
+    const { data } = await supabase
+      .from('opportunity_line_items')
+      .select('*')
+      .eq('opportunity_number', opportunity.id);
+
+    opportunityItems =
+      data?.map((item:any) => ({
+        product: item.product_name,
+        quantity: item.quantity,
+        price: item.price,
+      })) || [];
+  }
+
+  const totalAmount = opportunityItems.reduce(
+    (sum:number, item:any) =>
+      sum + (
+        Number(item.quantity || 0) *
+        Number(item.price || 0)
+      ),
+    0
+  );
+
+  const newOrder = {
+    id: `ORD-${Date.now()}`,
+    customer: opportunity.customer,
+    name: opportunity.name,
+    status: 'Processing',
+    amount: totalAmount,
+    shippingAddress: '',
+    deliveryDate: '',
+    lineItems: [...opportunityItems],
+  };
+
+  if (supabase) {
+
+    await supabase
+      .from('orders')
+      .insert([
+        {
+          order_number: newOrder.id,
+          customer: newOrder.customer,
+          name: newOrder.name,
+          amount: Number(newOrder.amount || 0),
+          shipping_address: '',
+          delivery_date: '',
+          status: newOrder.status,
+        },
+      ]);
+
+    if (opportunityItems.length > 0) {
+
+      await supabase
+        .from('order_line_items')
+        .insert(
+          opportunityItems.map((item:any) => ({
+            order_number: newOrder.id,
+            product_name: item.product,
+            quantity: item.quantity,
+            price: item.price,
+          }))
+        );
+    }
+  }
+
+  setOrders((prev:any) => [...prev, newOrder]);
+
+  setOpenActionMenu(null);
+};
 
   const getFilteredData = () => {
     let data:any[] = getCurrentData();
@@ -990,7 +1235,40 @@ amount: totalAmount,
 
             {activePage !== 'dashboard' && (
               <button
-                onClick={() => setCreateModalOpen(true)}
+                onClick={() => {
+
+  setLineItems([]);
+
+  setCreateFormData({
+    name: '',
+    customer: '',
+    status: 'New',
+    amount: '',
+    email: '',
+    phone: '',
+    source: '',
+    category: '',
+    price: '',
+    company: '',
+    industry: '',
+    billingAddress: '',
+    shippingAddress: '',
+    city: '',
+    state: '',
+    postalCode: '',
+    country: '',
+    website: '',
+    gstNumber: '',
+    stage: 'Qualification',
+    closeDate: '',
+    shippingAddressOrder: '',
+    deliveryDate: '',
+    dueDate: '',
+    paymentTerms: '',
+  });
+
+  setCreateModalOpen(true);
+}}
                 className="bg-[#0F172A] text-white px-5 py-3 rounded-2xl font-semibold"
               >
                 Create {activePage === 'customers' ? 'Customer' : activePage === 'products' ? 'Product' : activePage === 'leads' ? 'Lead' : activePage === 'opportunities' ? 'Opportunity' : activePage === 'activities' ? 'Activity' : activePage === 'contacts' ? 'Contact' : activePage === 'orders' ? 'Order' : activePage === 'invoices' ? 'Invoice' : 'Record'}
@@ -2062,6 +2340,74 @@ amount: totalAmount,
 </div>
                 </>
               )}
+            {activePage === 'orders' && (
+  <>
+    <div className="space-y-2">
+      <label className="text-sm font-semibold uppercase text-gray-700">
+        Customer
+      </label>
+
+      <select
+        value={createFormData.customer || ''}
+        onChange={(e) =>
+          setCreateFormData((prev:any) => ({
+            ...prev,
+            customer: e.target.value,
+          }))
+        }
+        className="w-full border border-blue-200 rounded-2xl px-4 py-3 bg-white text-[#0F172A]"
+      >
+        <option value="">Select Customer</option>
+
+        {customers.map((customer:any) => (
+          <option
+            key={customer.id}
+            value={customer.name}
+          >
+            {customer.name}
+          </option>
+        ))}
+      </select>
+    </div>
+
+    <div className="space-y-2">
+      <label className="text-sm font-semibold uppercase text-gray-700">
+        Delivery Date
+      </label>
+
+      <input
+        type="date"
+        value={createFormData.deliveryDate || ''}
+        onChange={(e) =>
+          setCreateFormData((prev:any) => ({
+            ...prev,
+            deliveryDate: e.target.value,
+          }))
+        }
+        className="w-full border border-blue-200 rounded-2xl px-4 py-3 text-[#0F172A]"
+      />
+    </div>
+
+    <div className="space-y-2 md:col-span-2">
+      <label className="text-sm font-semibold uppercase text-gray-700">
+        Shipping Address
+      </label>
+
+      <input
+        type="text"
+        value={createFormData.shippingAddressOrder || ''}
+        onChange={(e) =>
+          setCreateFormData((prev:any) => ({
+            ...prev,
+            shippingAddressOrder: e.target.value,
+          }))
+        }
+        placeholder="Enter shipping address"
+        className="w-full border border-blue-200 rounded-2xl px-4 py-3 text-[#0F172A]"
+      />
+    </div>
+  </>
+)}
             </div>
 
             <div className="px-8 py-6 border-t border-blue-100 flex justify-end gap-4">
