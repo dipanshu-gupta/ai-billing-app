@@ -325,17 +325,17 @@ const createNewRecord = async () => {
         },
       ]);
 
-    if (!error) {
-      await fetchCustomers();
+if (!error) {
+  await fetchCustomers();
 
-      setCreateModalOpen(false);
+  setCreateModalOpen(false);
 
-      setCreateFormData({});
-    }
+  setCreateFormData({});
 
-    console.log(error);
+  return;
+}
 
-    return;
+console.log(error);
   }
 
   const newRecord = {
@@ -1213,7 +1213,8 @@ if (activePage === 'leads') {
                   placeholder={`Enter ${activePage === 'customers' ? 'customer' : activePage === 'products' ? 'product' : activePage === 'leads' ? 'lead' : activePage === 'opportunities' ? 'opportunity' : activePage === 'activities' ? 'activity' : activePage === 'contacts' ? 'contact' : activePage === 'orders' ? 'order' : activePage === 'invoices' ? 'invoice' : 'record'} name`}
                   className="w-full border border-blue-200 rounded-2xl px-4 py-3 text-[#0F172A]"
                 />
-              </div>
+                
+                  </div>
 
               <div className="space-y-2">
                 <label className="text-sm font-semibold uppercase text-gray-700">
@@ -1243,10 +1244,16 @@ if (activePage === 'leads') {
                     </label>
 
                     <input
-                      type="email"
-                      placeholder="customer@company.com"
-                      className="w-full border border-blue-200 rounded-2xl px-4 py-3 text-[#0F172A]"
-                    />
+                       type="email"
+                        value={createFormData.email || ''}
+                         onChange={(e) =>
+                          setCreateFormData((prev: any) => ({
+                              ...prev,
+                         email: e.target.value,
+                        }))
+                         }
+               className="w-full mt-2 border border-blue-200 rounded-2xl px-4 py-3 text-[#0F172A]"
+                     />
                   </div>
 
                   <div className="space-y-2">
@@ -1256,9 +1263,16 @@ if (activePage === 'leads') {
 
                     <input
                       type="text"
-                      placeholder="+91 9876543210"
-                      className="w-full border border-blue-200 rounded-2xl px-4 py-3 text-[#0F172A]"
-                    />
+                       value={createFormData.phone || ''}
+                       onChange={(e) =>
+                       setCreateFormData((prev:any) => ({
+                        ...prev,
+                         phone: e.target.value,
+                         }))
+                         }
+                        placeholder="+91 9876543210"
+                     className="w-full border border-blue-200 rounded-2xl px-4 py-3 text-[#0F172A]"
+                     />
                   </div>
 
                   <div className="space-y-2 md:col-span-2">
@@ -1267,11 +1281,76 @@ if (activePage === 'leads') {
                     </label>
 
                     <input
-                      type="text"
-                      placeholder="Enter billing address"
-                      className="w-full border border-blue-200 rounded-2xl px-4 py-3 text-[#0F172A]"
-                    />
+                     type="text"
+                     value={createFormData.billingAddress || ''}
+                     onChange={(e) =>
+                    setCreateFormData((prev:any) => ({
+                      ...prev,
+                      billingAddress: e.target.value,
+                       }))
+                       }
+                       placeholder="Enter billing address"
+                       className="w-full border border-blue-200 rounded-2xl px-4 py-3 text-[#0F172A]"
+                     />
                   </div>
+                   <div className="space-y-2">
+                    <label className="text-sm font-semibold uppercase text-gray-700">
+                        Website
+                      </label>
+
+                       <input
+                        type="text"
+                         value={createFormData.website || ''}
+                        onChange={(e) =>
+                         setCreateFormData((prev:any) => ({
+                         ...prev,
+                          website: e.target.value,
+                          }))
+                       }
+                         placeholder="https://example.com"
+                         className="w-full border border-blue-200 rounded-2xl px-4 py-3 text-[#0F172A]"
+                       />
+                      </div>
+
+                      <div className="space-y-2">
+  <label className="text-sm font-semibold uppercase text-gray-700">
+    Company
+  </label>
+
+  <input
+    type="text"
+    value={createFormData.company || ''}
+    onChange={(e) =>
+      setCreateFormData((prev:any) => ({
+        ...prev,
+        company: e.target.value,
+      }))
+    }
+    placeholder="Enter company"
+    className="w-full border border-blue-200 rounded-2xl px-4 py-3 text-[#0F172A]"
+  />
+</div>
+
+<div className="space-y-2">
+  <label className="text-sm font-semibold uppercase text-gray-700">
+    Industry
+  </label>
+
+  <input
+    type="text"
+    value={createFormData.industry || ''}
+    onChange={(e) =>
+      setCreateFormData((prev:any) => ({
+        ...prev,
+        industry: e.target.value,
+      }))
+    }
+    placeholder="Technology"
+    className="w-full border border-blue-200 rounded-2xl px-4 py-3 text-[#0F172A]"
+  />
+</div>
+
+
                 </>
               )}
 
