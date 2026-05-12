@@ -60,7 +60,25 @@ export default function AIBillingApp() {
     .order('created_at', { ascending: false });
 
   if (!error && data) {
-    setCustomers(data);
+    setCustomers(
+  data.map((customer:any) => ({
+    id: customer.customer_number,
+    name: customer.name,
+    email: customer.email,
+    phone: customer.phone,
+    company: customer.company,
+    industry: customer.industry,
+    billingAddress: customer.billing_address,
+    shippingAddress: customer.shipping_address,
+    city: customer.city,
+    state: customer.state,
+    postalCode: customer.postal_code,
+    country: customer.country,
+    website: customer.website,
+    gstNumber: customer.gst_number,
+    status: customer.status,
+  }))
+);
   }
 
   console.log(error);
