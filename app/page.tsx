@@ -214,6 +214,7 @@ const fetchOpportunityLineItems = async (
   console.log(error);
 };
 
+
 useEffect(() => {
   fetchCustomers();
   fetchProducts();
@@ -248,8 +249,7 @@ useEffect(() => {
     dueDate: '',
     paymentTerms: '',
   });
-  const [lineItems, setLineItems] = useState<any[]>([]);
-
+const [lineItems, setLineItems] = useState<any[]>([]);
   const actionMenuRef = useRef<HTMLDivElement | null>(null);
   const navigatorRef = useRef<HTMLElement | null>(null);
 
@@ -285,14 +285,7 @@ const [leads, setLeads] = useState<any[]>([]);
 
 const [opportunities, setOpportunities] = useState<any[]>([]);
 
-  const [orders, setOrders] = useState([
-    {
-      id: 'ORD-001',
-      customer: 'ABC Corp',
-      status: 'Processing',
-      amount: 78000,
-    },
-  ]);
+const [orders, setOrders] = useState<any[]>([]);
 
   const [invoices, setInvoices] = useState([
     {
@@ -632,6 +625,22 @@ if (activePage === 'leads') {
   };
 
   const saveRecordChanges = async () => {
+    const calculatedAmount = lineItems.reduce(
+  (sum:number, item:any) =>
+    sum + (
+      Number(item.quantity || 0) *
+      Number(item.price || 0)
+    ),
+  0
+);
+
+if (
+  activePage === 'leads' ||
+  activePage === 'opportunities'
+) {
+
+  editedRecord.amount = calculatedAmount;
+}
     if (activePage === 'leads') {
       setLeads((prev:any) =>
         prev.map((item:any) =>
@@ -801,6 +810,11 @@ if (supabase) {
       price: item.price,
     })) || [];
 }
+ const totalAmount = leadItems.reduce(
+  (sum:number, item:any) =>
+    sum + (Number(item.quantity || 0) * Number(item.price || 0)),
+  0
+);
     const newOpportunity = {
   id: `OPP-${Date.now()}`,
   name: lead.name,
@@ -808,7 +822,7 @@ if (supabase) {
   stage: 'Qualification',
   closeDate: '',
   status: 'Open',
-  amount: lead.amount || 0,
+amount: totalAmount,
   email: lead.email,
   phone: lead.phone,
   source: lead.source,
@@ -1492,8 +1506,8 @@ if (supabase) {
                           ...prev,
                           {
                             id: Date.now(),
-                            product: products[0]?.name || 'Product',
-                            price: products[0]?.price || 0,
+                            product: '',
+                            price: 0,
                             quantity: 1,
                             
                           },
@@ -1545,6 +1559,7 @@ if (supabase) {
                                 }}
                                 className="w-full border border-blue-200 rounded-xl px-3 py-3 text-[#0F172A] bg-white"
                               >
+                                <option value="">Select Product</option>
                                 {products.map((product:any) => (
                                   <option key={product.id} value={product.name}>
                                     {product.name}
