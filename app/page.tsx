@@ -83,8 +83,33 @@ export default function AIBillingApp() {
 
   console.log(error);
 };
+
+const fetchProducts = async () => {
+  if (!supabase) return;
+
+  const { data, error } = await supabase
+    .from('products')
+    .select('*')
+    .order('created_at', { ascending: false });
+
+  if (!error && data) {
+    setProducts(
+      data.map((product:any) => ({
+        id: product.product_number,
+        name: product.name,
+        category: product.category,
+        price: Number(product.price || 0),
+        status: product.status,
+      }))
+    );
+  }
+
+  console.log(error);
+};
+
 useEffect(() => {
   fetchCustomers();
+  fetchProducts();
 }, []);
 
   const [createFormData, setCreateFormData] = useState<any>({
@@ -145,15 +170,7 @@ if (!supabase) return;
   }
 };
 
-  const [products, setProducts] = useState([
-    {
-      id: 'PROD-001',
-      name: 'Cloud Subscription',
-      category: 'Software',
-      status: 'Active',
-      price: 25000,
-    },
-  ]);
+const [products, setProducts] = useState<any[]>([]);
 
   const [leads, setLeads] = useState([
     {
@@ -355,6 +372,34 @@ if (!error) {
 
 console.log(error);
   }
+
+  if (activePage === 'products') {
+  if (!supabase) return;
+
+  const { error } = await supabase
+    .from('products')
+    .insert([
+      {
+        product_number: `PROD-${Date.now()}`,
+        name: createFormData.name,
+        category: createFormData.category,
+        price: Number(createFormData.price || 0),
+        status: createFormData.status || 'Active',
+      },
+    ]);
+
+  if (!error) {
+    await fetchProducts();
+
+    setCreateModalOpen(false);
+
+    setCreateFormData({});
+
+    return;
+  }
+
+  console.log(error);
+}
 
   const newRecord = {
     id: `${activePage.slice(0, 3).toUpperCase()}-${Date.now()}`,
@@ -1381,9 +1426,16 @@ if (activePage === 'leads') {
 
                     <input
                       type="text"
-                      placeholder="Software / Service"
-                      className="w-full border border-blue-200 rounded-2xl px-4 py-3 text-[#0F172A]"
-                    />
+                       value={createFormData.category || ''}
+  onChange={(e) =>
+    setCreateFormData((prev:any) => ({
+      ...prev,
+      category: e.target.value,
+    }))
+  }
+  placeholder="Software / Service"
+  className="w-full border border-blue-200 rounded-2xl px-4 py-3 text-[#0F172A]"
+/>
                   </div>
 
                   <div className="space-y-2">
@@ -1393,6 +1445,13 @@ if (activePage === 'leads') {
 
                     <input
                       type="number"
+                      value={createFormData.price || ''}
+                      onChange={(e) =>
+                        setCreateFormData((prev:any) => ({
+                          ...prev,
+                          price: e.target.value,
+                        }))
+                      }
                       placeholder="25000"
                       className="w-full border border-blue-200 rounded-2xl px-4 py-3 text-[#0F172A]"
                     />
