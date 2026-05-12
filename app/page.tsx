@@ -140,7 +140,7 @@ const fetchLeadLineItems = async (leadNumber:string) => {
     .select('*')
     .eq('lead_number', leadNumber);
 
-  if (!error && data) {
+  if (!error && data && data.length > 0) {
 
     setLineItems(
       data.map((item:any) => ({
@@ -150,6 +150,10 @@ const fetchLeadLineItems = async (leadNumber:string) => {
         price: Number(item.price || 0),
       }))
     );
+
+  } else {
+
+    setLineItems([]);
   }
 
   console.log(error);
@@ -191,7 +195,7 @@ const fetchOpportunityLineItems = async (
     .select('*')
     .eq('opportunity_number', opportunityNumber);
 
-  if (!error && data) {
+  if (!error && data && data.length > 0) {
 
     setLineItems(
       data.map((item:any) => ({
@@ -201,6 +205,10 @@ const fetchOpportunityLineItems = async (
         price: Number(item.price || 0),
       }))
     );
+
+  } else {
+
+    setLineItems([]);
   }
 
   console.log(error);
@@ -233,7 +241,7 @@ useEffect(() => {
     country: '',
     website: '',
     gstNumber: '',
-    stage: '',
+    stage: 'Qualification',
     closeDate: '',
     shippingAddressOrder: '',
     deliveryDate: '',
@@ -532,7 +540,7 @@ if (activePage === 'leads') {
     }))
   );
     await fetchLeads();
-
+    setLineItems([]);
     setCreateModalOpen(false);
 
     setCreateFormData({});
@@ -565,7 +573,7 @@ if (activePage === 'opportunities') {
   if (!error) {
 
     await fetchOpportunities();
-
+    setLineItems([]);
     setCreateModalOpen(false);
 
     setCreateFormData({});
@@ -762,6 +770,15 @@ if (supabase && editedRecord.id) {
       ...lead,
       status: 'Converted',
     };
+    if (supabase) {
+
+  await supabase
+    .from('leads')
+    .update({
+      status: 'Converted',
+    })
+    .eq('lead_number', lead.id);
+}
 
     setLeads((prev:any) =>
       prev.map((item:any) =>
@@ -1349,22 +1366,96 @@ if (supabase) {
                     {field}
                   </label>
 
-                  {field === 'status' ? (
-                    <select
-                      value={editedRecord[field] || ''}
-                      onChange={(e) =>
-                        setEditedRecord((prev:any) => ({
-                          ...prev,
-                          [field]: e.target.value,
-                        }))
-                      }
-                      className="w-full border border-blue-200 rounded-2xl px-4 py-3 text-[#0F172A] bg-white"
-                    >
-                      {getStatusOptions().map((status:string) => (
-                        <option key={status}>{status}</option>
-                      ))}
-                    </select>
-                  ) : (
+                 {field === 'status' ? (
+
+  <select
+    value={editedRecord[field] || ''}
+    onChange={(e) =>
+      setEditedRecord((prev:any) => ({
+        ...prev,
+        [field]: e.target.value,
+      }))
+    }
+    className="w-full border border-blue-200 rounded-2xl px-4 py-3 text-[#0F172A] bg-white"
+  >
+    {getStatusOptions().map((status:string) => (
+      <option key={status}>{status}</option>
+    ))}
+  </select>
+
+) : field === 'source' ? (
+
+  <select
+    value={editedRecord[field] || ''}
+    onChange={(e) =>
+      setEditedRecord((prev:any) => ({
+        ...prev,
+        [field]: e.target.value,
+      }))
+    }
+    className="w-full border border-blue-200 rounded-2xl px-4 py-3 text-[#0F172A] bg-white"
+  >
+    <option>Website</option>
+    <option>Campaign</option>
+    <option>Referral</option>
+  </select>
+
+) : field === 'customer' ? (
+
+  <select
+    value={editedRecord[field] || ''}
+    onChange={(e) =>
+      setEditedRecord((prev:any) => ({
+        ...prev,
+        [field]: e.target.value,
+      }))
+    }
+    className="w-full border border-blue-200 rounded-2xl px-4 py-3 text-[#0F172A] bg-white"
+  >
+    {customers.map((customer:any) => (
+      <option
+        key={customer.id}
+        value={customer.name}
+      >
+        {customer.name}
+      </option>
+    ))}
+  </select>
+
+) : field === 'stage' ? (
+
+  <select
+    value={editedRecord[field] || 'Qualification'}
+    onChange={(e) =>
+      setEditedRecord((prev:any) => ({
+        ...prev,
+        [field]: e.target.value,
+      }))
+    }
+    className="w-full border border-blue-200 rounded-2xl px-4 py-3 text-[#0F172A] bg-white"
+  >
+    <option>Qualification</option>
+    <option>Proposal Sent</option>
+    <option>Negotiation</option>
+    <option>Closed Won</option>
+    <option>Closed Lost</option>
+  </select>
+
+) : field === 'closeDate' ? (
+
+  <input
+    type="date"
+    value={editedRecord[field] || ''}
+    onChange={(e) =>
+      setEditedRecord((prev:any) => ({
+        ...prev,
+        [field]: e.target.value,
+      }))
+    }
+    className="w-full border border-blue-200 rounded-2xl px-4 py-3 text-[#0F172A] bg-white"
+  />
+
+) : (
                     <input
                       type={field === 'amount' || field === 'price' ? 'number' : 'text'}
                       value={editedRecord[field] || ''}
@@ -1932,6 +2023,28 @@ if (supabase) {
   className="w-full border border-blue-200 rounded-2xl px-4 py-3 text-[#0F172A]"
 />
                   </div>
+                  <div className="space-y-2">
+  <label className="text-sm font-semibold uppercase text-gray-700">
+    Stage
+  </label>
+
+  <select
+    value={createFormData.stage || 'Qualification'}
+    onChange={(e) =>
+      setCreateFormData((prev:any) => ({
+        ...prev,
+        stage: e.target.value,
+      }))
+    }
+    className="w-full border border-blue-200 rounded-2xl px-4 py-3 bg-white text-[#0F172A]"
+  >
+    <option>Qualification</option>
+    <option>Proposal Sent</option>
+    <option>Negotiation</option>
+    <option>Closed Won</option>
+    <option>Closed Lost</option>
+  </select>
+</div>
                 </>
               )}
             </div>
