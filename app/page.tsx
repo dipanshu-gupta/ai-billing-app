@@ -106,10 +106,59 @@ const fetchProducts = async () => {
 
   console.log(error);
 };
+const fetchLeads = async () => {
+  if (!supabase) return;
+
+  const { data, error } = await supabase
+    .from('leads')
+    .select('*')
+    .order('created_at', { ascending: false });
+
+  if (!error && data) {
+    setLeads(
+      data.map((lead:any) => ({
+        id: lead.lead_number,
+        name: lead.name,
+        customer: lead.customer,
+        email: lead.email,
+        phone: lead.phone,
+        source: lead.source,
+        amount: Number(lead.amount || 0),
+        status: lead.status,
+      }))
+    );
+  }
+
+  console.log(error);
+};
+const fetchLeadLineItems = async (leadNumber:string) => {
+
+  if (!supabase) return;
+
+  const { data, error } = await supabase
+    .from('lead_line_items')
+    .select('*')
+    .eq('lead_number', leadNumber);
+
+  if (!error && data) {
+
+    setLineItems(
+      data.map((item:any) => ({
+        id: item.id,
+        product: item.product_name,
+        quantity: Number(item.quantity || 1),
+        price: Number(item.price || 0),
+      }))
+    );
+  }
+
+  console.log(error);
+};
 
 useEffect(() => {
   fetchCustomers();
   fetchProducts();
+  fetchLeads();
 }, []);
 
   const [createFormData, setCreateFormData] = useState<any>({
@@ -172,15 +221,7 @@ if (!supabase) return;
 
 const [products, setProducts] = useState<any[]>([]);
 
-  const [leads, setLeads] = useState([
-    {
-      id: 'LEAD-001',
-      name: 'Rahul Sharma',
-      customer: 'ABC Corp',
-      status: 'Qualified',
-      amount: 120000,
-    },
-  ]);
+const [leads, setLeads] = useState<any[]>([]);
 
   const [opportunities, setOpportunities] = useState([
     {
@@ -296,11 +337,20 @@ const [products, setProducts] = useState<any[]>([]);
     ]);
   };
 
-  const openDetailsPage = (record: any) => {
-    setSelectedRecord(record);
-    setEditedRecord(record);
-    setOpenActionMenu(null);
-  };
+ const openDetailsPage = async (record: any) => {
+
+  setSelectedRecord(record);
+
+  setEditedRecord(record);
+
+  if (activePage === 'leads') {
+    await fetchLeadLineItems(record.id);
+  } else {
+    setLineItems([]);
+  }
+
+  setOpenActionMenu(null);
+};
 
   const getObjectFields = () => {
     switch (activePage) {
@@ -400,6 +450,47 @@ console.log(error);
 
   console.log(error);
 }
+if (activePage === 'leads') {
+  const leadNumber = `LEAD-${Date.now()}`;
+  if (!supabase) return;
+
+  const { error } = await supabase
+    .from('leads')
+    .insert([
+      {
+        lead_number: leadNumber,
+        name: createFormData.name,
+        customer: createFormData.customer,
+        email: createFormData.email,
+        phone: createFormData.phone,
+        source: createFormData.source,
+        amount: Number(createFormData.amount || 0),
+        status: createFormData.status || 'New',
+      },
+    ]);
+
+  if (!error) {
+    await supabase
+  .from('lead_line_items')
+  .insert(
+    lineItems.map((item:any) => ({
+      lead_number: leadNumber,
+      product_name: item.product,
+      quantity: item.quantity,
+      price: item.price,
+    }))
+  );
+    await fetchLeads();
+
+    setCreateModalOpen(false);
+
+    setCreateFormData({});
+
+    return;
+  }
+
+  console.log(error);
+}
 
   const newRecord = {
     id: `${activePage.slice(0, 3).toUpperCase()}-${Date.now()}`,
@@ -448,13 +539,48 @@ if (activePage === 'leads') {
     }
   };
 
-  const saveRecordChanges = () => {
+  const saveRecordChanges = async () => {
     if (activePage === 'leads') {
       setLeads((prev:any) =>
         prev.map((item:any) =>
           item.id === editedRecord.id ? editedRecord : item
         )
       );
+      if (supabase && editedRecord.id) {
+
+  await supabase
+    .from('leads')
+    .update({
+      name: editedRecord.name,
+      customer: editedRecord.customer,
+      email: editedRecord.email,
+      phone: editedRecord.phone,
+      source: editedRecord.source,
+      amount: Number(editedRecord.amount || 0),
+      status: editedRecord.status,
+    })
+    .eq('lead_number', editedRecord.id);
+}
+      if (supabase && editedRecord.id) {
+
+  await supabase
+    .from('lead_line_items')
+    .delete()
+    .eq('lead_number', editedRecord.id);
+
+  if (lineItems.length > 0) {
+    await supabase
+      .from('lead_line_items')
+      .insert(
+        lineItems.map((item:any) => ({
+          lead_number: editedRecord.id,
+          product_name: item.product,
+          quantity: item.quantity,
+          price: item.price,
+        }))
+      );
+  }
+}
     } else if (activePage === 'opportunities') {
       setOpportunities((prev:any) =>
         prev.map((item:any) =>
@@ -467,6 +593,28 @@ if (activePage === 'leads') {
           item.id === editedRecord.id ? editedRecord : item
         )
       );
+      if (supabase && editedRecord.id) {
+
+  await supabase
+    .from('customers')
+    .update({
+      name: editedRecord.name,
+      email: editedRecord.email,
+      phone: editedRecord.phone,
+      company: editedRecord.company,
+      industry: editedRecord.industry,
+      billing_address: editedRecord.billingAddress,
+      shipping_address: editedRecord.shippingAddress,
+      city: editedRecord.city,
+      state: editedRecord.state,
+      postal_code: editedRecord.postalCode,
+      country: editedRecord.country,
+      website: editedRecord.website,
+      gst_number: editedRecord.gstNumber,
+      status: editedRecord.status,
+    })
+    .eq('customer_number', editedRecord.id);
+}
     } else if (activePage === 'products') {
       setProducts((prev:any) =>
         prev.map((item:any) =>
@@ -1500,17 +1648,62 @@ if (activePage === 'leads') {
                       className="w-full border border-blue-200 rounded-2xl px-4 py-3 text-[#0F172A]"
                     />
                   </div>
+                  <div className="space-y-2">
+  <label className="text-sm font-semibold uppercase text-gray-700">
+    Email
+  </label>
+
+  <input
+    type="email"
+    value={createFormData.email || ''}
+    onChange={(e) =>
+      setCreateFormData((prev:any) => ({
+        ...prev,
+        email: e.target.value,
+      }))
+    }
+    placeholder="lead@example.com"
+    className="w-full border border-blue-200 rounded-2xl px-4 py-3 text-[#0F172A]"
+  />
+</div>
+<div className="space-y-2">
+  <label className="text-sm font-semibold uppercase text-gray-700">
+    Phone
+  </label>
+
+  <input
+    type="text"
+    value={createFormData.phone || ''}
+    onChange={(e) =>
+      setCreateFormData((prev:any) => ({
+        ...prev,
+        phone: e.target.value,
+      }))
+    }
+    placeholder="+91 9876543210"
+    className="w-full border border-blue-200 rounded-2xl px-4 py-3 text-[#0F172A]"
+  />
+</div>
 
                   <div className="space-y-2">
                     <label className="text-sm font-semibold uppercase text-gray-700">
                       Source
                     </label>
 
-                    <select className="w-full border border-blue-200 rounded-2xl px-4 py-3 bg-white text-[#0F172A]">
-                      <option>Website</option>
-                      <option>Campaign</option>
-                      <option>Referral</option>
-                    </select>
+                    <select
+  value={createFormData.source || ''}
+  onChange={(e) =>
+    setCreateFormData((prev:any) => ({
+      ...prev,
+      source: e.target.value,
+    }))
+  }
+  className="w-full border border-blue-200 rounded-2xl px-4 py-3 bg-white text-[#0F172A]"
+>
+  <option>Website</option>
+  <option>Campaign</option>
+  <option>Referral</option>
+</select>
                   </div>
                 </>
               )}
