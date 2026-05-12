@@ -154,11 +154,63 @@ const fetchLeadLineItems = async (leadNumber:string) => {
 
   console.log(error);
 };
+const fetchOpportunities = async () => {
+
+  if (!supabase) return;
+
+  const { data, error } = await supabase
+    .from('opportunities')
+    .select('*')
+    .order('created_at', { ascending: false });
+
+  if (!error && data) {
+
+    setOpportunities(
+      data.map((opp:any) => ({
+        id: opp.opportunity_number,
+        name: opp.name,
+        customer: opp.customer,
+        stage: opp.stage,
+        amount: Number(opp.amount || 0),
+        closeDate: opp.close_date,
+        status: opp.status,
+      }))
+    );
+  }
+
+  console.log(error);
+};
+const fetchOpportunityLineItems = async (
+  opportunityNumber:string
+) => {
+
+  if (!supabase) return;
+
+  const { data, error } = await supabase
+    .from('opportunity_line_items')
+    .select('*')
+    .eq('opportunity_number', opportunityNumber);
+
+  if (!error && data) {
+
+    setLineItems(
+      data.map((item:any) => ({
+        id: item.id,
+        product: item.product_name,
+        quantity: Number(item.quantity || 1),
+        price: Number(item.price || 0),
+      }))
+    );
+  }
+
+  console.log(error);
+};
 
 useEffect(() => {
   fetchCustomers();
   fetchProducts();
   fetchLeads();
+  fetchOpportunities();
 }, []);
 
   const [createFormData, setCreateFormData] = useState<any>({
@@ -223,15 +275,7 @@ const [products, setProducts] = useState<any[]>([]);
 
 const [leads, setLeads] = useState<any[]>([]);
 
-  const [opportunities, setOpportunities] = useState([
-    {
-      id: 'OPP-001',
-      name: 'Vision Tech Renewal',
-      customer: 'ABC Corp',
-      status: 'Open',
-      amount: 200000,
-    },
-  ]);
+const [opportunities, setOpportunities] = useState<any[]>([]);
 
   const [orders, setOrders] = useState([
     {
@@ -337,15 +381,22 @@ const [leads, setLeads] = useState<any[]>([]);
     ]);
   };
 
- const openDetailsPage = async (record: any) => {
+const openDetailsPage = async (record: any) => {
 
   setSelectedRecord(record);
 
   setEditedRecord(record);
 
   if (activePage === 'leads') {
+
     await fetchLeadLineItems(record.id);
+
+  } else if (activePage === 'opportunities') {
+
+    await fetchOpportunityLineItems(record.id);
+
   } else {
+
     setLineItems([]);
   }
 
@@ -491,6 +542,39 @@ if (activePage === 'leads') {
 
   console.log(error);
 }
+if (activePage === 'opportunities') {
+
+  if (!supabase) return;
+
+  const opportunityNumber = `OPP-${Date.now()}`;
+
+  const { error } = await supabase
+    .from('opportunities')
+    .insert([
+      {
+        opportunity_number: opportunityNumber,
+        name: createFormData.name,
+        customer: createFormData.customer,
+        stage: createFormData.stage,
+        amount: Number(createFormData.amount || 0),
+        close_date: createFormData.closeDate,
+        status: createFormData.status || 'Open',
+      },
+    ]);
+
+  if (!error) {
+
+    await fetchOpportunities();
+
+    setCreateModalOpen(false);
+
+    setCreateFormData({});
+
+    return;
+  }
+
+  console.log(error);
+}
 
   const newRecord = {
     id: `${activePage.slice(0, 3).toUpperCase()}-${Date.now()}`,
@@ -587,6 +671,41 @@ if (activePage === 'leads') {
           item.id === editedRecord.id ? editedRecord : item
         )
       );
+      if (supabase && editedRecord.id) {
+
+  await supabase
+    .from('opportunities')
+    .update({
+      name: editedRecord.name,
+      customer: editedRecord.customer,
+      stage: editedRecord.stage,
+      amount: Number(editedRecord.amount || 0),
+      close_date: editedRecord.closeDate,
+      status: editedRecord.status,
+    })
+    .eq('opportunity_number', editedRecord.id);
+}
+if (supabase && editedRecord.id) {
+
+  await supabase
+    .from('opportunity_line_items')
+    .delete()
+    .eq('opportunity_number', editedRecord.id);
+
+  if (lineItems.length > 0) {
+
+    await supabase
+      .from('opportunity_line_items')
+      .insert(
+        lineItems.map((item:any) => ({
+          opportunity_number: editedRecord.id,
+          product_name: item.product,
+          quantity: item.quantity,
+          price: item.price,
+        }))
+      );
+  }
+}
     } else if (activePage === 'customers') {
       setCustomers((prev:any) =>
         prev.map((item:any) =>
@@ -638,7 +757,7 @@ if (activePage === 'leads') {
     setSelectedRecord(editedRecord);
   };
 
-  const convertLeadToOpportunity = (lead:any) => {
+  const convertLeadToOpportunity = async (lead:any) => {
     const updatedLead = {
       ...lead,
       status: 'Converted',
@@ -649,19 +768,65 @@ if (activePage === 'leads') {
         item.id === lead.id ? updatedLead : item
       )
     );
+let leadItems:any[] = [];
 
+if (supabase) {
+
+  const { data } = await supabase
+    .from('lead_line_items')
+    .select('*')
+    .eq('lead_number', lead.id);
+
+  leadItems =
+    data?.map((item:any) => ({
+      product: item.product_name,
+      quantity: item.quantity,
+      price: item.price,
+    })) || [];
+}
     const newOpportunity = {
-      id: `OPP-${Date.now()}`,
-      name: lead.name,
-      customer: lead.customer,
-      status: 'Open',
-      amount: lead.amount,
-      email: lead.email,
-      phone: lead.phone,
-      source: lead.source,
-      lineItems: [...lineItems],
-    };
+  id: `OPP-${Date.now()}`,
+  name: lead.name,
+  customer: lead.customer || '',
+  stage: 'Qualification',
+  closeDate: '',
+  status: 'Open',
+  amount: lead.amount || 0,
+  email: lead.email,
+  phone: lead.phone,
+  source: lead.source,
+  lineItems: [...lineItems],
+};
+    if (supabase) {
 
+  await supabase
+    .from('opportunities')
+    .insert([
+      {
+        opportunity_number: newOpportunity.id,
+        name: newOpportunity.name,
+        customer: newOpportunity.customer,
+        stage: newOpportunity.stage,
+        amount: Number(newOpportunity.amount || 0),
+        close_date: newOpportunity.closeDate,
+        status: newOpportunity.status,
+      },
+    ]);
+
+  if (leadItems.length > 0) {
+
+    await supabase
+      .from('opportunity_line_items')
+      .insert(
+        leadItems.map((item:any) => ({
+          opportunity_number: newOpportunity.id,
+          product_name: item.product,
+          quantity: item.quantity,
+          price: item.price,
+        }))
+      );
+  }
+}
     setOpportunities((prev:any) => [...prev, newOpportunity]);
     setOpenActionMenu(null);
   };
@@ -1715,11 +1880,20 @@ if (activePage === 'leads') {
                       Customer
                     </label>
 
-                    <select className="w-full border border-blue-200 rounded-2xl px-4 py-3 bg-white text-[#0F172A]">
-                      {customers.map((customer:any) => (
-                        <option key={customer.id}>{customer.name}</option>
-                      ))}
-                    </select>
+<select
+  value={createFormData.customer || ''}
+  onChange={(e) =>
+    setCreateFormData((prev:any) => ({
+      ...prev,
+      customer: e.target.value,
+    }))
+  }
+  className="w-full border border-blue-200 rounded-2xl px-4 py-3 bg-white text-[#0F172A]"
+>
+  {customers.map((customer:any) => (
+    <option key={customer.id}>{customer.name}</option>
+  ))}
+</select>
                   </div>
 
                   <div className="space-y-2">
@@ -1728,10 +1902,17 @@ if (activePage === 'leads') {
                     </label>
 
                     <input
-                      type="number"
-                      placeholder="200000"
-                      className="w-full border border-blue-200 rounded-2xl px-4 py-3 text-[#0F172A]"
-                    />
+  type="number"
+  value={createFormData.amount || ''}
+  onChange={(e) =>
+    setCreateFormData((prev:any) => ({
+      ...prev,
+      amount: e.target.value,
+    }))
+  }
+  placeholder="200000"
+  className="w-full border border-blue-200 rounded-2xl px-4 py-3 text-[#0F172A]"
+/>
                   </div>
 
                   <div className="space-y-2">
@@ -1740,9 +1921,16 @@ if (activePage === 'leads') {
                     </label>
 
                     <input
-                      type="date"
-                      className="w-full border border-blue-200 rounded-2xl px-4 py-3 text-[#0F172A]"
-                    />
+  type="date"
+  value={createFormData.closeDate || ''}
+  onChange={(e) =>
+    setCreateFormData((prev:any) => ({
+      ...prev,
+      closeDate: e.target.value,
+    }))
+  }
+  className="w-full border border-blue-200 rounded-2xl px-4 py-3 text-[#0F172A]"
+/>
                   </div>
                 </>
               )}
