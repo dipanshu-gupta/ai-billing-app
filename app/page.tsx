@@ -120,6 +120,9 @@ const fetchLeads = async () => {
         id: lead.lead_number,
         name: lead.name,
         customer: lead.customer,
+customerId: lead.customer_id,
+contact: lead.contact,
+contactId: lead.contact_id,
         email: lead.email,
         phone: lead.phone,
         source: lead.source,
@@ -174,6 +177,9 @@ const fetchOpportunities = async () => {
         id: opp.opportunity_number,
         name: opp.name,
         customer: opp.customer,
+customerId: opp.customer_id,
+contact: opp.contact,
+contactId: opp.contact_id,
         stage: opp.stage,
         amount: Number(opp.amount || 0),
         closeDate: opp.close_date,
@@ -228,6 +234,9 @@ const fetchOrders = async () => {
       data.map((order:any) => ({
         id: order.order_number,
         customer: order.customer,
+customerId: order.customer_id,
+contact: order.contact,
+contactId: order.contact_id,
         name: order.name,
         amount: Number(order.amount || 0),
         shippingAddress: order.shipping_address,
@@ -283,7 +292,10 @@ const fetchInvoices = async () => {
     setInvoices(
       data.map((invoice:any) => ({
         id: invoice.invoice_number,
-        customer: invoice.customer,
+       customer: invoice.customer,
+customerId: invoice.customer_id,
+contact: invoice.contact,
+contactId: invoice.contact_id,
         name: invoice.name,
         amount: Number(invoice.amount || 0),
         dueDate: invoice.due_date,
@@ -296,6 +308,7 @@ const fetchInvoices = async () => {
 
   console.log(error);
 };
+
 
 const fetchInvoiceLineItems = async (
   invoiceNumber:string
@@ -326,6 +339,64 @@ const fetchInvoiceLineItems = async (
 
   console.log(error);
 };
+const fetchContacts = async () => {
+
+  if (!supabase) return;
+
+  const { data, error } = await supabase
+    .from('contacts')
+    .select('*')
+    .order('created_at', { ascending: false });
+
+  if (!error && data) {
+
+    setContacts(
+      data.map((contact:any) => ({
+        id: contact.contact_number,
+        customerId: contact.customer_id,
+        isPrimary: contact.is_primary,
+        customer: contact.customer,
+        name: contact.name,
+        email: contact.email,
+        phone: contact.phone,
+        designation: contact.designation,
+        department: contact.department,
+        status: contact.status,
+      }))
+    );
+  }
+
+  console.log(error);
+};
+
+const fetchActivities = async () => {
+
+  if (!supabase) return;
+
+  const { data, error } = await supabase
+    .from('activities')
+    .select('*')
+    .order('created_at', { ascending: false });
+
+  if (!error && data) {
+
+    setActivities(
+      data.map((activity:any) => ({
+        id: activity.activity_number,
+        name: activity.name,
+        customer: activity.customer,
+        contact: activity.contact,
+        subject: activity.subject,
+        activityType: activity.activity_type,
+        activityDate: activity.activity_date,
+        notes: activity.notes,
+        status: activity.status,
+      }))
+    );
+  }
+
+  console.log(error);
+};
 
 
 useEffect(() => {
@@ -335,6 +406,8 @@ useEffect(() => {
   fetchOpportunities();
   fetchOrders();
   fetchInvoices();
+  fetchContacts();
+  fetchActivities();
 }, []);
 
   const [createFormData, setCreateFormData] = useState<any>({
@@ -403,6 +476,9 @@ const [opportunities, setOpportunities] = useState<any[]>([]);
 const [orders, setOrders] = useState<any[]>([]);
 
  const [invoices, setInvoices] = useState<any[]>([]);
+ const [contacts, setContacts] = useState<any[]>([]);
+
+const [activities, setActivities] = useState<any[]>([]);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -542,13 +618,70 @@ const openDetailsPage = async (record: any) => {
       case 'products':
         return ['name', 'category', 'price', 'status'];
       case 'leads':
-        return ['name', 'customer', 'email', 'phone', 'source', 'amount', 'status'];
+  return [
+    'leadNumber',
+    'customer',
+    'contact',
+    'name',
+    'email',
+    'phone',
+    'source',
+    'status',
+    'amount',
+  ];
       case 'opportunities':
-        return ['name', 'customer', 'stage', 'amount', 'closeDate', 'status'];
+  return [
+    'customer',
+    'contact',
+    'name',
+    'stage',
+    'closeDate',
+    'status',
+    'amount',
+  ];
       case 'orders':
-        return ['customer', 'amount', 'shippingAddress', 'deliveryDate', 'status'];
+  return [
+    'customer',
+    'contact',
+    'name',
+    'shippingAddress',
+    'deliveryDate',
+    'status',
+    'amount',
+  ];
       case 'invoices':
-        return ['customer', 'amount', 'dueDate', 'paymentTerms', 'status'];
+  return [
+    'customer',
+    'contact',
+    'name',
+    'dueDate',
+    'paymentTerms',
+    'billingAddress',
+    'status',
+    'amount',
+  ];
+        case 'contacts':
+  return [
+    'customer',
+    'name',
+    'email',
+    'phone',
+    'designation',
+    'department',
+    'status',
+  ];
+
+case 'activities':
+  return [
+    'name',
+    'customer',
+    'contact',
+    'subject',
+    'activityType',
+    'activityDate',
+    'notes',
+    'status',
+  ];
       default:
         return ['name', 'status'];
     }
@@ -629,6 +762,9 @@ if (activePage === 'leads') {
         lead_number: leadNumber,
         name: createFormData.name,
         customer: createFormData.customer,
+customer_id: createFormData.customerId,
+contact: createFormData.contact,
+contact_id: createFormData.contactId,
         email: createFormData.email,
         phone: createFormData.phone,
         source: createFormData.source,
@@ -672,6 +808,9 @@ if (activePage === 'opportunities') {
         opportunity_number: opportunityNumber,
         name: createFormData.name,
         customer: createFormData.customer,
+customer_id: createFormData.customerId,
+contact: createFormData.contact,
+contact_id: createFormData.contactId,
         stage: createFormData.stage,
         amount: Number(createFormData.amount || 0),
         close_date: createFormData.closeDate,
@@ -713,6 +852,9 @@ if (activePage === 'orders') {
       {
         order_number: orderNumber,
         customer: createFormData.customer,
+customer_id: createFormData.customerId,
+contact: createFormData.contact,
+contact_id: createFormData.contactId,
         name: createFormData.name,
         amount: calculatedAmount,
         shipping_address: createFormData.shippingAddressOrder,
@@ -771,6 +913,9 @@ if (activePage === 'invoices') {
       {
         invoice_number: invoiceNumber,
         customer: createFormData.customer,
+customer_id: createFormData.customerId,
+contact: createFormData.contact,
+contact_id: createFormData.contactId,
         name: createFormData.name,
         amount: calculatedAmount,
         due_date: createFormData.dueDate,
@@ -799,6 +944,79 @@ if (activePage === 'invoices') {
     await fetchInvoices();
 
     setLineItems([]);
+
+    setCreateModalOpen(false);
+
+    setCreateFormData({});
+
+    return;
+  }
+
+  console.log(error);
+}
+if (activePage === 'contacts') {
+
+  if (!supabase) return;
+
+  const contactNumber = `CONT-${Date.now()}`;
+
+  const { error } = await supabase
+    .from('contacts')
+    .insert([
+      {
+        contact_number: contactNumber,
+        customer: createFormData.customer,
+        customer_id: createFormData.customerId,
+        name: createFormData.name,
+        email: createFormData.email,
+        phone: createFormData.phone,
+        designation: createFormData.designation,
+        department: createFormData.department,
+        status: createFormData.status || 'Active',
+      },
+    ]);
+
+  if (!error) {
+
+    await fetchContacts();
+
+    setCreateModalOpen(false);
+
+    setCreateFormData({});
+
+    return;
+  }
+
+  console.log(error);
+}
+
+if (activePage === 'activities') {
+
+  if (!supabase) return;
+
+  const activityNumber = `ACT-${Date.now()}`;
+
+  const { error } = await supabase
+    .from('activities')
+    .insert([
+      {
+        activity_number: activityNumber,
+        name: createFormData.name,
+        customer: createFormData.customer,
+        customer_id: createFormData.customerId,
+        contact: createFormData.contact,
+        contact_id: createFormData.contactId,
+        subject: createFormData.subject,
+        activity_type: createFormData.activityType,
+        activity_date: createFormData.activityDate,
+        notes: createFormData.notes,
+        status: createFormData.status || 'Open',
+      },
+    ]);
+
+  if (!error) {
+
+    await fetchActivities();
 
     setCreateModalOpen(false);
 
@@ -984,6 +1202,58 @@ if (supabase && editedRecord.id) {
     })
     .eq('customer_number', editedRecord.id);
 }
+} else if (activePage === 'contacts') {
+
+  setContacts((prev:any) =>
+    prev.map((item:any) =>
+      item.id === editedRecord.id
+        ? editedRecord
+        : item
+    )
+  );
+
+  if (supabase && editedRecord.id) {
+
+    await supabase
+      .from('contacts')
+      .update({
+        customer: editedRecord.customer,
+        name: editedRecord.name,
+        email: editedRecord.email,
+        phone: editedRecord.phone,
+        designation: editedRecord.designation,
+        department: editedRecord.department,
+        status: editedRecord.status,
+      })
+      .eq('contact_number', editedRecord.id);
+  }
+
+} else if (activePage === 'activities') {
+
+  setActivities((prev:any) =>
+    prev.map((item:any) =>
+      item.id === editedRecord.id
+        ? editedRecord
+        : item
+    )
+  );
+
+  if (supabase && editedRecord.id) {
+
+    await supabase
+      .from('activities')
+      .update({
+        name: editedRecord.name,
+        customer: editedRecord.customer,
+        contact: editedRecord.contact,
+        subject: editedRecord.subject,
+        activity_type: editedRecord.activityType,
+        activity_date: editedRecord.activityDate,
+        notes: editedRecord.notes,
+        status: editedRecord.status,
+      })
+      .eq('activity_number', editedRecord.id);
+  }
     } else if (activePage === 'products') {
       setProducts((prev:any) =>
         prev.map((item:any) =>
@@ -1301,6 +1571,104 @@ const createOrderFromOpportunity = async (
 
   setOpenActionMenu(null);
 };
+const createInvoiceFromOrder = async (
+  order:any
+) => {
+
+  const updatedOrder = {
+    ...order,
+    status: 'Delivered',
+  };
+
+  setOrders((prev:any) =>
+    prev.map((item:any) =>
+      item.id === order.id
+        ? updatedOrder
+        : item
+    )
+  );
+
+  let orderItems:any[] = [];
+
+  if (supabase) {
+
+    await supabase
+      .from('orders')
+      .update({
+        status: 'Delivered',
+      })
+      .eq('order_number', order.id);
+
+    const { data } = await supabase
+      .from('order_line_items')
+      .select('*')
+      .eq('order_number', order.id);
+
+    orderItems =
+      data?.map((item:any) => ({
+        product: item.product_name,
+        quantity: item.quantity,
+        price: item.price,
+      })) || [];
+  }
+
+  const totalAmount = orderItems.reduce(
+    (sum:number, item:any) =>
+      sum + (
+        Number(item.quantity || 0) *
+        Number(item.price || 0)
+      ),
+    0
+  );
+
+  const newInvoice = {
+    id: `INV-${Date.now()}`,
+    customer: order.customer,
+    name: order.name,
+    status: 'Pending',
+    amount: totalAmount,
+    dueDate: '',
+    paymentTerms: '',
+    billingAddress: '',
+    lineItems: [...orderItems],
+  };
+
+  if (supabase) {
+
+    await supabase
+      .from('invoices')
+      .insert([
+        {
+          invoice_number: newInvoice.id,
+          customer: newInvoice.customer,
+          name: newInvoice.name,
+          amount: Number(newInvoice.amount || 0),
+          due_date: '',
+          payment_terms: '',
+          billing_address: '',
+          status: newInvoice.status,
+        },
+      ]);
+
+    if (orderItems.length > 0) {
+
+      await supabase
+        .from('invoice_line_items')
+        .insert(
+          orderItems.map((item:any) => ({
+            invoice_number: newInvoice.id,
+            product_name: item.product,
+            quantity: item.quantity,
+            price: item.price,
+          }))
+        );
+    }
+  }
+
+  setInvoices((prev:any) => [...prev, newInvoice]);
+
+  setOpenActionMenu(null);
+};
 
   const getFilteredData = () => {
     let data:any[] = getCurrentData();
@@ -1346,6 +1714,11 @@ const createOrderFromOpportunity = async (
         return orders;
       case 'invoices':
         return invoices;
+        case 'contacts':
+  return contacts;
+
+case 'activities':
+  return activities;
       default:
         return [];
     }
@@ -1782,6 +2155,14 @@ const createOrderFromOpportunity = async (
                               Create Order
                             </button>
                             )}
+                            {activePage === 'orders' && (
+  <button
+    onClick={() => createInvoiceFromOrder(record)}
+    className="w-full text-left px-4 py-3 rounded-xl hover:bg-blue-800 text-white"
+  >
+    Create Invoice
+  </button>
+)}
 
                             <button className="w-full text-left px-4 py-3 rounded-xl hover:bg-red-500/20 text-red-300">
                               Delete Record
@@ -1865,6 +2246,70 @@ const createOrderFromOpportunity = async (
 ) : field === 'customer' ? (
 
   <select
+    value={editedRecord.customerId || ''}
+    onChange={(e) => {
+
+      const selectedCustomer =
+        customers.find(
+          (c:any) => c.id === e.target.value
+        );
+
+      setEditedRecord((prev:any) => ({
+        ...prev,
+        customerId: selectedCustomer?.id || '',
+        customer: selectedCustomer?.name || '',
+      }));
+    }}
+    className="w-full border border-blue-200 rounded-2xl px-4 py-3 text-[#0F172A] bg-white"
+  >
+    <option value="">Select Customer</option>
+
+    {customers.map((customer:any) => (
+      <option
+        key={customer.id}
+        value={customer.id}
+      >
+        {customer.name}
+      </option>
+    ))}
+  </select>
+) : field === 'contact' ? (
+
+  <select
+    value={editedRecord.contactId || ''}
+    onChange={(e) => {
+
+      const selectedContact =
+        contacts.find(
+          (c:any) => c.id === e.target.value
+        );
+
+      setEditedRecord((prev:any) => ({
+        ...prev,
+        contactId: selectedContact?.id || '',
+        contact: selectedContact?.name || '',
+      }));
+    }}
+    className="w-full border border-blue-200 rounded-2xl px-4 py-3 text-[#0F172A] bg-white"
+  >
+    <option value="">Select Contact</option>
+
+    {contacts.map((contact:any) => (
+      <option
+        key={contact.id}
+        value={contact.id}
+      >
+        {contact.name}
+        {contact.customer
+          ? ` — ${contact.customer}`
+          : ''}
+      </option>
+    ))}
+  </select>
+
+) : field === 'activityType' ? (
+
+  <select
     value={editedRecord[field] || ''}
     onChange={(e) =>
       setEditedRecord((prev:any) => ({
@@ -1874,17 +2319,40 @@ const createOrderFromOpportunity = async (
     }
     className="w-full border border-blue-200 rounded-2xl px-4 py-3 text-[#0F172A] bg-white"
   >
-<option value="">Select Customer</option>
-
-{customers.map((customer:any) => (
-  <option
-    key={customer.id}
-    value={customer.name}
-  >
-    {customer.name}
-  </option>
-))}
+    <option>Call</option>
+    <option>Meeting</option>
+    <option>Email</option>
+    <option>Task</option>
+    <option>Demo</option>
   </select>
+
+) : field === 'activityDate' ? (
+
+  <input
+    type="date"
+    value={editedRecord[field] || ''}
+    onChange={(e) =>
+      setEditedRecord((prev:any) => ({
+        ...prev,
+        [field]: e.target.value,
+      }))
+    }
+    className="w-full border border-blue-200 rounded-2xl px-4 py-3 text-[#0F172A] bg-white"
+  />
+
+) : field === 'notes' ? (
+
+  <textarea
+    value={editedRecord[field] || ''}
+    onChange={(e) =>
+      setEditedRecord((prev:any) => ({
+        ...prev,
+        [field]: e.target.value,
+      }))
+    }
+    rows={4}
+    className="w-full border border-blue-200 rounded-2xl px-4 py-3 text-[#0F172A] bg-white"
+  />
 
 ) : field === 'stage' ? (
 
@@ -2327,29 +2795,344 @@ const createOrderFromOpportunity = async (
                   </div>
                 </>
               )}
+              {activePage === 'contacts' && (
+  <>
+    <div className="space-y-2">
+      <label className="text-sm font-semibold uppercase text-gray-700">
+        Customer
+      </label>
+
+      <select
+        value={createFormData.customerId || ''}
+        onChange={(e) => {
+
+  const selectedCustomer =
+    customers.find(
+      (c:any) => c.id === e.target.value
+    );
+
+  setCreateFormData((prev:any) => ({
+    ...prev,
+    customerId: selectedCustomer?.id || '',
+    customer: selectedCustomer?.name || '',
+  }));
+}}
+        className="w-full border border-blue-200 rounded-2xl px-4 py-3 bg-white text-[#0F172A]"
+      >
+        <option value="">Select Customer</option>
+
+        {customers.map((customer:any) => (
+          <option
+            key={customer.id}
+            value={customer.id}
+          >
+            {customer.name}
+          </option>
+        ))}
+      </select>
+    </div>
+
+    <div className="space-y-2">
+      <label className="text-sm font-semibold uppercase text-gray-700">
+        Email
+      </label>
+
+      <input
+        type="email"
+        value={createFormData.email || ''}
+        onChange={(e) =>
+          setCreateFormData((prev:any) => ({
+            ...prev,
+            email: e.target.value,
+          }))
+        }
+        className="w-full border border-blue-200 rounded-2xl px-4 py-3 text-[#0F172A]"
+      />
+    </div>
+
+    <div className="space-y-2">
+      <label className="text-sm font-semibold uppercase text-gray-700">
+        Phone
+      </label>
+
+      <input
+        type="text"
+        value={createFormData.phone || ''}
+        onChange={(e) =>
+          setCreateFormData((prev:any) => ({
+            ...prev,
+            phone: e.target.value,
+          }))
+        }
+        className="w-full border border-blue-200 rounded-2xl px-4 py-3 text-[#0F172A]"
+      />
+    </div>
+
+    <div className="space-y-2">
+      <label className="text-sm font-semibold uppercase text-gray-700">
+        Designation
+      </label>
+
+      <input
+        type="text"
+        value={createFormData.designation || ''}
+        onChange={(e) =>
+          setCreateFormData((prev:any) => ({
+            ...prev,
+            designation: e.target.value,
+          }))
+        }
+        className="w-full border border-blue-200 rounded-2xl px-4 py-3 text-[#0F172A]"
+      />
+    </div>
+
+    <div className="space-y-2">
+      <label className="text-sm font-semibold uppercase text-gray-700">
+        Department
+      </label>
+
+      <input
+        type="text"
+        value={createFormData.department || ''}
+        onChange={(e) =>
+          setCreateFormData((prev:any) => ({
+            ...prev,
+            department: e.target.value,
+          }))
+        }
+        className="w-full border border-blue-200 rounded-2xl px-4 py-3 text-[#0F172A]"
+      />
+    </div>
+  </>
+)}
+{activePage === 'activities' && (
+  <>
+    <div className="space-y-2">
+      <label className="text-sm font-semibold uppercase text-gray-700">
+        Customer
+      </label>
+
+      <select
+        value={createFormData.customerId || ''}
+        onChange={(e) => {
+
+  const selectedCustomer =
+    customers.find(
+      (c:any) => c.id === e.target.value
+    );
+
+  setCreateFormData((prev:any) => ({
+    ...prev,
+    customerId: selectedCustomer?.id || '',
+    customer: selectedCustomer?.name || '',
+  }));
+}}
+        className="w-full border border-blue-200 rounded-2xl px-4 py-3 bg-white text-[#0F172A]"
+      >
+        <option value="">Select Customer</option>
+
+        {customers.map((customer:any) => (
+          <option
+            key={customer.id}
+            value={customer.id}
+          >
+            {customer.name}
+          </option>
+        ))}
+      </select>
+    </div>
+
+    <div className="space-y-2">
+      <label className="text-sm font-semibold uppercase text-gray-700">
+        Contact
+      </label>
+
+      <select
+        value={createFormData.contactId || ''}
+        onChange={(e) => {
+
+  const selectedContact =
+    contacts.find(
+      (c:any) => c.id === e.target.value
+    );
+
+  setCreateFormData((prev:any) => ({
+    ...prev,
+    contactId: selectedContact?.id || '',
+    contact: selectedContact?.name || '',
+  }));
+}}
+        className="w-full border border-blue-200 rounded-2xl px-4 py-3 bg-white text-[#0F172A]"
+      >
+        <option value="">Select Contact</option>
+
+        {contacts.map((contact:any) => (
+  <option
+    key={contact.id}
+    value={contact.id}
+  >
+    {contact.name}
+    {contact.customer
+      ? ` — ${contact.customer}`
+      : ''}
+  </option>
+))}
+      </select>
+    </div>
+
+    <div className="space-y-2">
+      <label className="text-sm font-semibold uppercase text-gray-700">
+        Subject
+      </label>
+
+      <input
+        type="text"
+        value={createFormData.subject || ''}
+        onChange={(e) =>
+          setCreateFormData((prev:any) => ({
+            ...prev,
+            subject: e.target.value,
+          }))
+        }
+        className="w-full border border-blue-200 rounded-2xl px-4 py-3 text-[#0F172A]"
+      />
+    </div>
+
+    <div className="space-y-2">
+      <label className="text-sm font-semibold uppercase text-gray-700">
+        Activity Type
+      </label>
+
+      <select
+        value={createFormData.activityType || ''}
+        onChange={(e) =>
+          setCreateFormData((prev:any) => ({
+            ...prev,
+            activityType: e.target.value,
+          }))
+        }
+        className="w-full border border-blue-200 rounded-2xl px-4 py-3 bg-white text-[#0F172A]"
+      >
+        <option value="">Select Type</option>
+        <option>Call</option>
+        <option>Meeting</option>
+        <option>Email</option>
+        <option>Task</option>
+        <option>Demo</option>
+      </select>
+    </div>
+
+    <div className="space-y-2">
+      <label className="text-sm font-semibold uppercase text-gray-700">
+        Activity Date
+      </label>
+
+      <input
+        type="date"
+        value={createFormData.activityDate || ''}
+        onChange={(e) =>
+          setCreateFormData((prev:any) => ({
+            ...prev,
+            activityDate: e.target.value,
+          }))
+        }
+        className="w-full border border-blue-200 rounded-2xl px-4 py-3 text-[#0F172A]"
+      />
+    </div>
+
+    <div className="space-y-2 md:col-span-2">
+      <label className="text-sm font-semibold uppercase text-gray-700">
+        Notes
+      </label>
+
+      <textarea
+        value={createFormData.notes || ''}
+        onChange={(e) =>
+          setCreateFormData((prev:any) => ({
+            ...prev,
+            notes: e.target.value,
+          }))
+        }
+        rows={4}
+        className="w-full border border-blue-200 rounded-2xl px-4 py-3 text-[#0F172A]"
+      />
+    </div>
+  </>
+)}
 
               {activePage === 'leads' && (
                 <>
                   <div className="space-y-2">
-                    <label className="text-sm font-semibold uppercase text-gray-700">
-                      Customer
-                    </label>
+  <label className="text-sm font-semibold uppercase text-gray-700">
+    Customer
+  </label>
 
-                    <select
-                      value={createFormData.customer}
-                      onChange={(e) =>
-                        setCreateFormData((prev:any) => ({
-                          ...prev,
-                          customer: e.target.value,
-                        }))
-                      }
-                      className="w-full border border-blue-200 rounded-2xl px-4 py-3 bg-white text-[#0F172A]"
-                    >
-                      {customers.map((customer:any) => (
-                        <option key={customer.id}>{customer.name}</option>
-                      ))}
-                    </select>
-                  </div>
+  <select
+    value={createFormData.customerId || ''}
+    onChange={(e) => {
+
+      const selectedCustomer =
+        customers.find(
+          (c:any) => c.id === e.target.value
+        );
+
+      setCreateFormData((prev:any) => ({
+        ...prev,
+        customerId: selectedCustomer?.id || '',
+        customer: selectedCustomer?.name || '',
+      }));
+    }}
+    className="w-full border border-blue-200 rounded-2xl px-4 py-3 bg-white text-[#0F172A]"
+  >
+    <option value="">Select Customer</option>
+
+    {customers.map((customer:any) => (
+      <option
+        key={customer.id}
+        value={customer.id}
+      >
+        {customer.name}
+      </option>
+    ))}
+  </select>
+</div>
+                  <div className="space-y-2">
+  <label className="text-sm font-semibold uppercase text-gray-700">
+    Contact
+  </label>
+
+  <select
+    value={createFormData.contactId || ''}
+    onChange={(e) => {
+
+      const selectedContact =
+        contacts.find(
+          (c:any) => c.id === e.target.value
+        );
+
+      setCreateFormData((prev:any) => ({
+        ...prev,
+        contactId: selectedContact?.id || '',
+        contact: selectedContact?.name || '',
+      }));
+    }}
+    className="w-full border border-blue-200 rounded-2xl px-4 py-3 bg-white text-[#0F172A]"
+  >
+    <option value="">Select Contact</option>
+
+    {contacts.map((contact:any) => (
+      <option
+        key={contact.id}
+        value={contact.id}
+      >
+        {contact.name}
+        {contact.customer
+          ? ` — ${contact.customer}`
+          : ''}
+      </option>
+    ))}
+  </select>
+</div>
 
                   <div className="space-y-2">
                     <label className="text-sm font-semibold uppercase text-gray-700">
@@ -2432,25 +3215,76 @@ const createOrderFromOpportunity = async (
               {activePage === 'opportunities' && (
                 <>
                   <div className="space-y-2">
-                    <label className="text-sm font-semibold uppercase text-gray-700">
-                      Customer
-                    </label>
+  <label className="text-sm font-semibold uppercase text-gray-700">
+    Customer
+  </label>
 
-<select
-  value={createFormData.customer || ''}
-  onChange={(e) =>
-    setCreateFormData((prev:any) => ({
-      ...prev,
-      customer: e.target.value,
-    }))
-  }
-  className="w-full border border-blue-200 rounded-2xl px-4 py-3 bg-white text-[#0F172A]"
->
-  {customers.map((customer:any) => (
-    <option key={customer.id}>{customer.name}</option>
-  ))}
-</select>
-                  </div>
+  <select
+    value={createFormData.customerId || ''}
+    onChange={(e) => {
+
+      const selectedCustomer =
+        customers.find(
+          (c:any) => c.id === e.target.value
+        );
+
+      setCreateFormData((prev:any) => ({
+        ...prev,
+        customerId: selectedCustomer?.id || '',
+        customer: selectedCustomer?.name || '',
+      }));
+    }}
+    className="w-full border border-blue-200 rounded-2xl px-4 py-3 bg-white text-[#0F172A]"
+  >
+    <option value="">Select Customer</option>
+
+    {customers.map((customer:any) => (
+      <option
+        key={customer.id}
+        value={customer.id}
+      >
+        {customer.name}
+      </option>
+    ))}
+  </select>
+</div>
+                  <div className="space-y-2">
+  <label className="text-sm font-semibold uppercase text-gray-700">
+    Contact
+  </label>
+
+  <select
+    value={createFormData.contactId || ''}
+    onChange={(e) => {
+
+      const selectedContact =
+        contacts.find(
+          (c:any) => c.id === e.target.value
+        );
+
+      setCreateFormData((prev:any) => ({
+        ...prev,
+        contactId: selectedContact?.id || '',
+        contact: selectedContact?.name || '',
+      }));
+    }}
+    className="w-full border border-blue-200 rounded-2xl px-4 py-3 bg-white text-[#0F172A]"
+  >
+    <option value="">Select Contact</option>
+
+    {contacts.map((contact:any) => (
+      <option
+        key={contact.id}
+        value={contact.id}
+      >
+        {contact.name}
+        {contact.customer
+          ? ` — ${contact.customer}`
+          : ''}
+      </option>
+    ))}
+  </select>
+</div>
 
                   <div className="space-y-2">
                     <label className="text-sm font-semibold uppercase text-gray-700">
@@ -2520,13 +3354,20 @@ const createOrderFromOpportunity = async (
       </label>
 
       <select
-        value={createFormData.customer || ''}
-        onChange={(e) =>
-          setCreateFormData((prev:any) => ({
-            ...prev,
-            customer: e.target.value,
-          }))
-        }
+       value={createFormData.customerId || ''}
+        onChange={(e) => {
+
+  const selectedCustomer =
+    customers.find(
+      (c:any) => c.id === e.target.value
+    );
+
+  setCreateFormData((prev:any) => ({
+    ...prev,
+    customerId: selectedCustomer?.id || '',
+    customer: selectedCustomer?.name || '',
+  }));
+}}
         className="w-full border border-blue-200 rounded-2xl px-4 py-3 bg-white text-[#0F172A]"
       >
         <option value="">Select Customer</option>
@@ -2534,13 +3375,50 @@ const createOrderFromOpportunity = async (
         {customers.map((customer:any) => (
           <option
             key={customer.id}
-            value={customer.name}
+            value={customer.id}
           >
             {customer.name}
           </option>
         ))}
       </select>
     </div>
+    <div className="space-y-2">
+  <label className="text-sm font-semibold uppercase text-gray-700">
+    Contact
+  </label>
+
+  <select
+    value={createFormData.contactId || ''}
+    onChange={(e) => {
+
+      const selectedContact =
+        contacts.find(
+          (c:any) => c.id === e.target.value
+        );
+
+      setCreateFormData((prev:any) => ({
+        ...prev,
+        contactId: selectedContact?.id || '',
+        contact: selectedContact?.name || '',
+      }));
+    }}
+    className="w-full border border-blue-200 rounded-2xl px-4 py-3 bg-white text-[#0F172A]"
+  >
+    <option value="">Select Contact</option>
+
+    {contacts.map((contact:any) => (
+      <option
+        key={contact.id}
+        value={contact.id}
+      >
+        {contact.name}
+        {contact.customer
+          ? ` — ${contact.customer}`
+          : ''}
+      </option>
+    ))}
+  </select>
+</div>
 
     <div className="space-y-2">
       <label className="text-sm font-semibold uppercase text-gray-700">
@@ -2588,13 +3466,20 @@ const createOrderFromOpportunity = async (
       </label>
 
       <select
-        value={createFormData.customer || ''}
-        onChange={(e) =>
-          setCreateFormData((prev:any) => ({
-            ...prev,
-            customer: e.target.value,
-          }))
-        }
+       value={createFormData.customerId || ''}
+        onChange={(e) => {
+
+  const selectedCustomer =
+    customers.find(
+      (c:any) => c.id === e.target.value
+    );
+
+  setCreateFormData((prev:any) => ({
+    ...prev,
+    customerId: selectedCustomer?.id || '',
+    customer: selectedCustomer?.name || '',
+  }));
+}}
         className="w-full border border-blue-200 rounded-2xl px-4 py-3 bg-white text-[#0F172A]"
       >
         <option value="">Select Customer</option>
@@ -2602,13 +3487,50 @@ const createOrderFromOpportunity = async (
         {customers.map((customer:any) => (
           <option
             key={customer.id}
-            value={customer.name}
+            value={customer.id}
           >
             {customer.name}
           </option>
         ))}
       </select>
     </div>
+    <div className="space-y-2">
+  <label className="text-sm font-semibold uppercase text-gray-700">
+    Contact
+  </label>
+
+  <select
+    value={createFormData.contactId || ''}
+    onChange={(e) => {
+
+      const selectedContact =
+        contacts.find(
+          (c:any) => c.id === e.target.value
+        );
+
+      setCreateFormData((prev:any) => ({
+        ...prev,
+        contactId: selectedContact?.id || '',
+        contact: selectedContact?.name || '',
+      }));
+    }}
+    className="w-full border border-blue-200 rounded-2xl px-4 py-3 bg-white text-[#0F172A]"
+  >
+    <option value="">Select Contact</option>
+
+    {contacts.map((contact:any) => (
+      <option
+        key={contact.id}
+        value={contact.id}
+      >
+        {contact.name}
+        {contact.customer
+          ? ` — ${contact.customer}`
+          : ''}
+      </option>
+    ))}
+  </select>
+</div>
 
     <div className="space-y-2">
       <label className="text-sm font-semibold uppercase text-gray-700">
