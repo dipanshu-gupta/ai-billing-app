@@ -1874,16 +1874,16 @@ const createOrderFromOpportunity = async (
     }
     className="w-full border border-blue-200 rounded-2xl px-4 py-3 text-[#0F172A] bg-white"
   >
-    {
-    <option value="">Select Customer</option>
-    customers.map((customer:any) => (
-      <option
-        key={customer.id}
-        value={customer.name}
-      >
-        {customer.name}
-      </option>
-    ))}
+<option value="">Select Customer</option>
+
+{customers.map((customer:any) => (
+  <option
+    key={customer.id}
+    value={customer.name}
+  >
+    {customer.name}
+  </option>
+))}
   </select>
 
 ) : field === 'stage' ? (
