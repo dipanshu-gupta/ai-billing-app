@@ -269,6 +269,63 @@ const fetchOrderLineItems = async (
 
   console.log(error);
 };
+const fetchInvoices = async () => {
+
+  if (!supabase) return;
+
+  const { data, error } = await supabase
+    .from('invoices')
+    .select('*')
+    .order('created_at', { ascending: false });
+
+  if (!error && data) {
+
+    setInvoices(
+      data.map((invoice:any) => ({
+        id: invoice.invoice_number,
+        customer: invoice.customer,
+        name: invoice.name,
+        amount: Number(invoice.amount || 0),
+        dueDate: invoice.due_date,
+        paymentTerms: invoice.payment_terms,
+        billingAddress: invoice.billing_address,
+        status: invoice.status,
+      }))
+    );
+  }
+
+  console.log(error);
+};
+
+const fetchInvoiceLineItems = async (
+  invoiceNumber:string
+) => {
+
+  if (!supabase) return;
+
+  const { data, error } = await supabase
+    .from('invoice_line_items')
+    .select('*')
+    .eq('invoice_number', invoiceNumber);
+
+  if (!error && data && data.length > 0) {
+
+    setLineItems(
+      data.map((item:any) => ({
+        id: item.id,
+        product: item.product_name,
+        quantity: Number(item.quantity || 1),
+        price: Number(item.price || 0),
+      }))
+    );
+
+  } else {
+
+    setLineItems([]);
+  }
+
+  console.log(error);
+};
 
 
 useEffect(() => {
@@ -277,6 +334,7 @@ useEffect(() => {
   fetchLeads();
   fetchOpportunities();
   fetchOrders();
+  fetchInvoices();
 }, []);
 
   const [createFormData, setCreateFormData] = useState<any>({
@@ -344,14 +402,7 @@ const [opportunities, setOpportunities] = useState<any[]>([]);
 
 const [orders, setOrders] = useState<any[]>([]);
 
-  const [invoices, setInvoices] = useState([
-    {
-      id: 'INV-001',
-      customer: 'ABC Corp',
-      status: 'Pending',
-      amount: 52000,
-    },
-  ]);
+ const [invoices, setInvoices] = useState<any[]>([]);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -445,17 +496,21 @@ const openDetailsPage = async (record: any) => {
 
   setEditedRecord(record);
 
-  if (activePage === 'leads') {
+ if (activePage === 'leads') {
 
-    await fetchLeadLineItems(record.id);
+  await fetchLeadLineItems(record.id);
 
-  } else if (activePage === 'opportunities') {
+} else if (activePage === 'opportunities') {
 
-    await fetchOpportunityLineItems(record.id);
+  await fetchOpportunityLineItems(record.id);
 
-  } else if (activePage === 'orders') {
+} else if (activePage === 'orders') {
 
   await fetchOrderLineItems(record.id);
+
+} else if (activePage === 'invoices') {
+
+  await fetchInvoiceLineItems(record.id);
 
 } else {
 
@@ -683,6 +738,65 @@ if (activePage === 'orders') {
     }
 
     await fetchOrders();
+
+    setLineItems([]);
+
+    setCreateModalOpen(false);
+
+    setCreateFormData({});
+
+    return;
+  }
+
+  console.log(error);
+}
+if (activePage === 'invoices') {
+
+  if (!supabase) return;
+
+  const invoiceNumber = `INV-${Date.now()}`;
+
+  const calculatedAmount = lineItems.reduce(
+    (sum:number, item:any) =>
+      sum + (
+        Number(item.quantity || 0) *
+        Number(item.price || 0)
+      ),
+    0
+  );
+
+  const { error } = await supabase
+    .from('invoices')
+    .insert([
+      {
+        invoice_number: invoiceNumber,
+        customer: createFormData.customer,
+        name: createFormData.name,
+        amount: calculatedAmount,
+        due_date: createFormData.dueDate,
+        payment_terms: createFormData.paymentTerms,
+        billing_address: createFormData.billingAddressInvoice,
+        status: createFormData.status || 'Pending',
+      },
+    ]);
+
+  if (!error) {
+
+    if (lineItems.length > 0) {
+
+      await supabase
+        .from('invoice_line_items')
+        .insert(
+          lineItems.map((item:any) => ({
+            invoice_number: invoiceNumber,
+            product_name: item.product,
+            quantity: item.quantity,
+            price: item.price,
+          }))
+        );
+    }
+
+    await fetchInvoices();
 
     setLineItems([]);
 
@@ -935,12 +1049,68 @@ if (supabase && editedRecord.id) {
   setSelectedRecord(updatedOrder);
   setEditedRecord(updatedOrder);
 } else if (activePage === 'invoices') {
-      setInvoices((prev:any) =>
-        prev.map((item:any) =>
-          item.id === editedRecord.id ? editedRecord : item
-        )
-      );
+
+  const calculatedAmount = lineItems.reduce(
+    (sum:number, item:any) =>
+      sum + (
+        Number(item.quantity || 0) *
+        Number(item.price || 0)
+      ),
+    0
+  );
+
+  const updatedInvoice = {
+    ...editedRecord,
+    amount: calculatedAmount,
+  };
+
+  setInvoices((prev:any) =>
+    prev.map((item:any) =>
+      item.id === updatedInvoice.id
+        ? updatedInvoice
+        : item
+    )
+  );
+
+  if (supabase && updatedInvoice.id) {
+
+    await supabase
+      .from('invoices')
+      .update({
+        customer: updatedInvoice.customer,
+        name: updatedInvoice.name,
+        amount: Number(updatedInvoice.amount || 0),
+        due_date: updatedInvoice.dueDate,
+        payment_terms: updatedInvoice.paymentTerms,
+        billing_address: updatedInvoice.billingAddress,
+        status: updatedInvoice.status,
+      })
+      .eq('invoice_number', updatedInvoice.id);
+
+    await supabase
+      .from('invoice_line_items')
+      .delete()
+      .eq('invoice_number', updatedInvoice.id);
+
+    if (lineItems.length > 0) {
+
+      await supabase
+        .from('invoice_line_items')
+        .insert(
+          lineItems.map((item:any) => ({
+            invoice_number: updatedInvoice.id,
+            product_name: item.product,
+            quantity: item.quantity,
+            price: item.price,
+          }))
+        );
     }
+  }
+
+  setSelectedRecord(updatedInvoice);
+
+  setEditedRecord(updatedInvoice);
+}
 
     if (activePage !== 'orders') {
   setSelectedRecord(editedRecord);
@@ -1704,7 +1874,9 @@ const createOrderFromOpportunity = async (
     }
     className="w-full border border-blue-200 rounded-2xl px-4 py-3 text-[#0F172A] bg-white"
   >
-    {customers.map((customer:any) => (
+    {
+    <option value="">Select Customer</option>
+    customers.map((customer:any) => (
       <option
         key={customer.id}
         value={customer.name}
@@ -2403,6 +2575,97 @@ const createOrderFromOpportunity = async (
           }))
         }
         placeholder="Enter shipping address"
+        className="w-full border border-blue-200 rounded-2xl px-4 py-3 text-[#0F172A]"
+      />
+    </div>
+  </>
+)}
+{activePage === 'invoices' && (
+  <>
+    <div className="space-y-2">
+      <label className="text-sm font-semibold uppercase text-gray-700">
+        Customer
+      </label>
+
+      <select
+        value={createFormData.customer || ''}
+        onChange={(e) =>
+          setCreateFormData((prev:any) => ({
+            ...prev,
+            customer: e.target.value,
+          }))
+        }
+        className="w-full border border-blue-200 rounded-2xl px-4 py-3 bg-white text-[#0F172A]"
+      >
+        <option value="">Select Customer</option>
+
+        {customers.map((customer:any) => (
+          <option
+            key={customer.id}
+            value={customer.name}
+          >
+            {customer.name}
+          </option>
+        ))}
+      </select>
+    </div>
+
+    <div className="space-y-2">
+      <label className="text-sm font-semibold uppercase text-gray-700">
+        Due Date
+      </label>
+
+      <input
+        type="date"
+        value={createFormData.dueDate || ''}
+        onChange={(e) =>
+          setCreateFormData((prev:any) => ({
+            ...prev,
+            dueDate: e.target.value,
+          }))
+        }
+        className="w-full border border-blue-200 rounded-2xl px-4 py-3 text-[#0F172A]"
+      />
+    </div>
+
+    <div className="space-y-2">
+      <label className="text-sm font-semibold uppercase text-gray-700">
+        Payment Terms
+      </label>
+
+      <select
+        value={createFormData.paymentTerms || ''}
+        onChange={(e) =>
+          setCreateFormData((prev:any) => ({
+            ...prev,
+            paymentTerms: e.target.value,
+          }))
+        }
+        className="w-full border border-blue-200 rounded-2xl px-4 py-3 bg-white text-[#0F172A]"
+      >
+        <option value="">Select Terms</option>
+        <option>Due on Receipt</option>
+        <option>Net 15</option>
+        <option>Net 30</option>
+        <option>Net 45</option>
+      </select>
+    </div>
+
+    <div className="space-y-2 md:col-span-2">
+      <label className="text-sm font-semibold uppercase text-gray-700">
+        Billing Address
+      </label>
+
+      <input
+        type="text"
+        value={createFormData.billingAddressInvoice || ''}
+        onChange={(e) =>
+          setCreateFormData((prev:any) => ({
+            ...prev,
+            billingAddressInvoice: e.target.value,
+          }))
+        }
+        placeholder="Enter billing address"
         className="w-full border border-blue-200 rounded-2xl px-4 py-3 text-[#0F172A]"
       />
     </div>
