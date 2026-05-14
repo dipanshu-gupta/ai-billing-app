@@ -1336,12 +1336,16 @@ if (
   }
 }
 
+  if (supabase) {
+
   await supabase
     .from('customers')
     .update({
       primary_contact_id: editedRecord.id,
     })
     .eq('customer_number', editedRecord.customerId);
+
+}
     setCustomers((prev:any) =>
   prev.map((customer:any) =>
     customer.id === editedRecord.customerId
@@ -1368,13 +1372,16 @@ if (
     customer?.primaryContactId === editedRecord.id
   ) {
 
-    await supabase
-      .from('customers')
-      .update({
-        primary_contact_id: null,
-      })
-      .eq('customer_number', editedRecord.customerId);
-  }
+    if (supabase) {
+
+  await supabase
+    .from('customers')
+    .update({
+      primary_contact_id: null,
+    })
+    .eq('customer_number', editedRecord.customerId);
+
+}
 }
   if (supabase && editedRecord.id) {
 
