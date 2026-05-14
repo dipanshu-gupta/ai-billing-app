@@ -1323,12 +1323,16 @@ if (
       )
     );
 
-    await supabase
-      .from('contacts')
-      .update({
-        is_primary: false,
-      })
-      .eq('contact_number', existingPrimary.id);
+    if (supabase) {
+
+  await supabase
+    .from('contacts')
+    .update({
+      is_primary: false,
+    })
+    .eq('contact_number', existingPrimary.id);
+
+}
   }
 }
 
