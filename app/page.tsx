@@ -51,6 +51,7 @@ export default function AIBillingApp() {
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('All');
   const [timelineFilter, setTimelineFilter] = useState('All Time');
+  const [detailsTab, setDetailsTab] = useState('details');
 
   const fetchCustomers = async () => {
     if (!supabase) return;
@@ -63,6 +64,12 @@ export default function AIBillingApp() {
     setCustomers(
   data.map((customer:any) => ({
     id: customer.customer_number,
+    primaryContactId: customer.primary_contact_id,
+    primaryContact:
+  contacts.find(
+    (c:any) =>
+      c.id === customer.primary_contact_id
+  )?.name || '',
     name: customer.name,
     email: customer.email,
     phone: customer.phone,
@@ -354,7 +361,7 @@ const fetchContacts = async () => {
       data.map((contact:any) => ({
         id: contact.contact_number,
         customerId: contact.customer_id,
-        isPrimary: contact.is_primary,
+        isPrimary: contact.is_primary || false,
         customer: contact.customer,
         name: contact.name,
         email: contact.email,
@@ -380,19 +387,21 @@ const fetchActivities = async () => {
 
   if (!error && data) {
 
-    setActivities(
-      data.map((activity:any) => ({
-        id: activity.activity_number,
-        name: activity.name,
-        customer: activity.customer,
-        contact: activity.contact,
-        subject: activity.subject,
-        activityType: activity.activity_type,
-        activityDate: activity.activity_date,
-        notes: activity.notes,
-        status: activity.status,
-      }))
-    );
+   setActivities(
+  data.map((activity:any) => ({
+    id: activity.activity_number,
+    customerId: activity.customer_id,
+    contactId: activity.contact_id,
+    name: activity.name,
+    customer: activity.customer,
+    contact: activity.contact,
+    subject: activity.subject,
+    activityType: activity.activity_type,
+    activityDate: activity.activity_date,
+    notes: activity.notes,
+    status: activity.status,
+  }))
+);
   }
 
   console.log(error);
@@ -569,6 +578,7 @@ const [activities, setActivities] = useState<any[]>([]);
 const openDetailsPage = async (record: any) => {
 
   setSelectedRecord(record);
+  setDetailsTab('details');
 
   setEditedRecord(record);
 
@@ -613,6 +623,7 @@ const openDetailsPage = async (record: any) => {
           'country',
           'website',
           'gstNumber',
+          'primaryContact',
           'status',
         ];
       case 'products':
@@ -668,6 +679,7 @@ const openDetailsPage = async (record: any) => {
     'phone',
     'designation',
     'department',
+    'isPrimary',
     'status',
   ];
 
@@ -1180,6 +1192,71 @@ if (supabase && editedRecord.id) {
           item.id === editedRecord.id ? editedRecord : item
         )
       );
+      if (
+  editedRecord.primaryContactId
+) {
+
+  setContacts((prev:any) =>
+    prev.map((contact:any) => {
+
+      if (
+        contact.customerId === editedRecord.id
+      ) {
+
+        return {
+          ...contact,
+          isPrimary:
+            contact.id ===
+            editedRecord.primaryContactId,
+            customer: editedRecord.name,
+        };
+      }
+
+      return contact;
+    })
+  );
+
+  if (supabase) {
+
+  await supabase
+    .from('contacts')
+    .update({
+      is_primary: false,
+    })
+    .eq('customer_id', editedRecord.id);
+
+  await supabase
+    .from('contacts')
+    .update({
+      is_primary: true,
+    })
+    
+    .eq(
+      'contact_number',
+      editedRecord.primaryContactId
+    );
+    const selectedPrimaryContact =
+  contacts.find(
+    (c:any) =>
+      c.id === editedRecord.primaryContactId
+  );
+
+setCustomers((prev:any) =>
+  prev.map((customer:any) =>
+    customer.id === editedRecord.id
+      ? {
+          ...customer,
+          primaryContactId:
+            editedRecord.primaryContactId,
+          primaryContact:
+            selectedPrimaryContact?.name || '',
+        }
+      : customer
+  )
+);
+    
+}
+
       if (supabase && editedRecord.id) {
 
   await supabase
@@ -1190,6 +1267,7 @@ if (supabase && editedRecord.id) {
       phone: editedRecord.phone,
       company: editedRecord.company,
       industry: editedRecord.industry,
+      primary_contact_id: editedRecord.primaryContactId,
       billing_address: editedRecord.billingAddress,
       shipping_address: editedRecord.shippingAddress,
       city: editedRecord.city,
@@ -1211,7 +1289,90 @@ if (supabase && editedRecord.id) {
         : item
     )
   );
+if (
+  editedRecord.isPrimary &&
+  editedRecord.customerId
+) {
 
+  const existingPrimary =
+    contacts.find(
+      (c:any) =>
+        c.customerId === editedRecord.customerId &&
+        c.isPrimary &&
+        c.id !== editedRecord.id
+    );
+
+  if (existingPrimary) {
+
+    const confirmed = window.confirm(
+      `This customer already has a primary contact (${existingPrimary.name}). Replace it?`
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    setContacts((prev:any) =>
+      prev.map((contact:any) =>
+        contact.id === existingPrimary.id
+          ? {
+              ...contact,
+              isPrimary: false,
+            }
+          : contact
+      )
+    );
+
+    await supabase
+      .from('contacts')
+      .update({
+        is_primary: false,
+      })
+      .eq('contact_number', existingPrimary.id);
+  }
+}
+
+  await supabase
+    .from('customers')
+    .update({
+      primary_contact_id: editedRecord.id,
+    })
+    .eq('customer_number', editedRecord.customerId);
+    setCustomers((prev:any) =>
+  prev.map((customer:any) =>
+    customer.id === editedRecord.customerId
+      ? {
+          ...customer,
+          primaryContactId: editedRecord.id,
+          primaryContact: editedRecord.name,
+        }
+      : customer
+  )
+);
+}
+if (
+  !editedRecord.isPrimary &&
+  editedRecord.customerId
+) {
+
+  const customer =
+    customers.find(
+      (c:any) =>
+        c.id === editedRecord.customerId
+    );
+
+  if (
+    customer?.primaryContactId === editedRecord.id
+  ) {
+
+    await supabase
+      .from('customers')
+      .update({
+        primary_contact_id: null,
+      })
+      .eq('customer_number', editedRecord.customerId);
+  }
+}
   if (supabase && editedRecord.id) {
 
     await supabase
@@ -1431,7 +1592,10 @@ if (supabase) {
     const newOpportunity = {
   id: `OPP-${Date.now()}`,
   name: lead.name,
-  customer: lead.customer || '',
+  customer: lead.customer,
+customerId: lead.customerId,
+contact: lead.contact,
+contactId: lead.contactId,
   stage: 'Qualification',
   closeDate: '',
   status: 'Open',
@@ -1450,6 +1614,9 @@ amount: totalAmount,
         opportunity_number: newOpportunity.id,
         name: newOpportunity.name,
         customer: newOpportunity.customer,
+customer_id: newOpportunity.customerId,
+contact: newOpportunity.contact,
+contact_id: newOpportunity.contactId,
         stage: newOpportunity.stage,
         amount: Number(newOpportunity.amount || 0),
         close_date: newOpportunity.closeDate,
@@ -1528,6 +1695,9 @@ const createOrderFromOpportunity = async (
   const newOrder = {
     id: `ORD-${Date.now()}`,
     customer: opportunity.customer,
+customerId: opportunity.customerId,
+contact: opportunity.contact,
+contactId: opportunity.contactId,
     name: opportunity.name,
     status: 'Processing',
     amount: totalAmount,
@@ -1544,6 +1714,9 @@ const createOrderFromOpportunity = async (
         {
           order_number: newOrder.id,
           customer: newOrder.customer,
+customer_id: newOrder.customerId,
+contact: newOrder.contact,
+contact_id: newOrder.contactId,
           name: newOrder.name,
           amount: Number(newOrder.amount || 0),
           shipping_address: '',
@@ -1624,6 +1797,9 @@ const createInvoiceFromOrder = async (
   const newInvoice = {
     id: `INV-${Date.now()}`,
     customer: order.customer,
+customerId: order.customerId,
+contact: order.contact,
+contactId: order.contactId,
     name: order.name,
     status: 'Pending',
     amount: totalAmount,
@@ -1641,6 +1817,9 @@ const createInvoiceFromOrder = async (
         {
           invoice_number: newInvoice.id,
           customer: newInvoice.customer,
+customer_id: newInvoice.customerId,
+contact: newInvoice.contact,
+contact_id: newInvoice.contactId,
           name: newInvoice.name,
           amount: Number(newInvoice.amount || 0),
           due_date: '',
@@ -2198,8 +2377,726 @@ case 'activities':
                 ✕
               </button>
             </div>
+            {activePage === 'customers' && (
 
-            <div className="p-8 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 bg-gradient-to-br from-white to-blue-50">
+  <div className="px-8 pt-6 bg-gradient-to-br from-white to-blue-50">
+
+    <div className="flex gap-3 border-b border-blue-100 pb-4">
+
+      <button
+        onClick={() => setDetailsTab('details')}
+        className={`px-5 py-3 rounded-2xl font-semibold transition-all ${
+          detailsTab === 'details'
+            ? 'bg-[#0F172A] text-white'
+            : 'bg-white border border-blue-200 text-[#0F172A]'
+        }`}
+      >
+        Details
+      </button>
+
+      <button
+        onClick={() => setDetailsTab('contacts')}
+        className={`px-5 py-3 rounded-2xl font-semibold transition-all ${
+          detailsTab === 'contacts'
+            ? 'bg-[#0F172A] text-white'
+            : 'bg-white border border-blue-200 text-[#0F172A]'
+        }`}
+      >
+        Contacts
+      </button>
+      <button
+  onClick={() => setDetailsTab('leads')}
+  className={`px-5 py-3 rounded-2xl font-semibold transition-all ${
+    detailsTab === 'leads'
+      ? 'bg-[#0F172A] text-white'
+      : 'bg-white border border-blue-200 text-[#0F172A]'
+  }`}
+>
+  Leads
+</button>
+      <button
+  onClick={() => setDetailsTab('opportunities')}
+  className={`px-5 py-3 rounded-2xl font-semibold transition-all ${
+    detailsTab === 'opportunities'
+      ? 'bg-[#0F172A] text-white'
+      : 'bg-white border border-blue-200 text-[#0F172A]'
+  }`}
+>
+  Opportunities
+</button>
+
+<button
+  onClick={() => setDetailsTab('orders')}
+  className={`px-5 py-3 rounded-2xl font-semibold transition-all ${
+    detailsTab === 'orders'
+      ? 'bg-[#0F172A] text-white'
+      : 'bg-white border border-blue-200 text-[#0F172A]'
+  }`}
+>
+  Orders
+</button>
+
+<button
+  onClick={() => setDetailsTab('invoices')}
+  className={`px-5 py-3 rounded-2xl font-semibold transition-all ${
+    detailsTab === 'invoices'
+      ? 'bg-[#0F172A] text-white'
+      : 'bg-white border border-blue-200 text-[#0F172A]'
+  }`}
+>
+  Invoices
+</button>
+
+<button
+  onClick={() => setDetailsTab('activities')}
+  className={`px-5 py-3 rounded-2xl font-semibold transition-all ${
+    detailsTab === 'activities'
+      ? 'bg-[#0F172A] text-white'
+      : 'bg-white border border-blue-200 text-[#0F172A]'
+  }`}
+>
+  Activities
+</button>
+
+    </div>
+
+  </div>
+
+)}
+{activePage === 'customers' &&
+ detailsTab === 'contacts' && (
+
+  <div className="p-8 bg-gradient-to-br from-white to-blue-50">
+
+    <div className="bg-white rounded-3xl border border-blue-100 shadow-sm overflow-hidden">
+
+      <div className="bg-gradient-to-r from-[#0F172A] to-blue-900 px-6 py-4 text-white">
+        <h3 className="text-xl font-bold">
+          Associated Contacts
+        </h3>
+
+        <p className="text-blue-100 text-sm mt-1">
+          Contacts related to this customer account
+        </p>
+      </div>
+
+      {contacts.filter(
+        (contact:any) =>
+          contact.customerId === selectedRecord.id ||
+contact.customer === selectedRecord.name
+      ).length === 0 ? (
+
+        <div className="p-6 text-gray-500">
+          No associated contacts found.
+        </div>
+
+      ) : (
+
+        <table className="w-full">
+
+          <thead className="bg-blue-50">
+            <tr>
+              <th className="px-6 py-4 text-left">
+                Contact Name
+              </th>
+
+              <th className="px-6 py-4 text-left">
+                Email
+              </th>
+
+              <th className="px-6 py-4 text-left">
+                Phone
+              </th>
+
+              <th className="px-6 py-4 text-left">
+                Primary
+              </th>
+
+              <th className="px-6 py-4 text-left">
+                Status
+              </th>
+            </tr>
+          </thead>
+
+          <tbody>
+
+            {contacts
+              .filter(
+                (contact:any) =>
+                  contact.customerId === selectedRecord.id ||
+contact.customer === selectedRecord.name
+              )
+              .map((contact:any) => (
+
+                <tr
+                  key={contact.id}
+                  className="border-t border-blue-100 hover:bg-blue-50/50"
+                >
+
+                  <td className="px-6 py-4 font-semibold">
+
+                    <button
+                      onClick={() => {
+                        setActivePage('contacts');
+                        openDetailsPage(contact);
+                      }}
+                      className="text-blue-700 underline hover:text-blue-900"
+                    >
+                      {contact.name}
+                    </button>
+
+                  </td>
+
+                  <td className="px-6 py-4">
+                    {contact.email}
+                  </td>
+
+                  <td className="px-6 py-4">
+                    {contact.phone}
+                  </td>
+
+                  <td className="px-6 py-4">
+
+                    {selectedRecord.primaryContactId === contact.id ? (
+
+                      <span className="bg-green-100 text-green-700 px-3 py-1 rounded-full text-sm font-semibold">
+                        Primary
+                      </span>
+
+                    ) : (
+
+                      <span className="bg-gray-100 text-gray-600 px-3 py-1 rounded-full text-sm">
+                        Secondary
+                      </span>
+
+                    )}
+
+                  </td>
+
+                  <td className="px-6 py-4">
+                    {contact.status}
+                  </td>
+
+                </tr>
+
+              ))}
+
+          </tbody>
+
+        </table>
+
+      )}
+
+    </div>
+
+  </div>
+
+)}
+{activePage === 'customers' &&
+ detailsTab === 'leads' && (
+
+  <div className="p-8 bg-gradient-to-br from-white to-blue-50">
+
+    <div className="bg-white rounded-3xl border border-blue-100 shadow-sm overflow-hidden">
+
+      <div className="bg-gradient-to-r from-[#0F172A] to-blue-900 px-6 py-4 text-white">
+        <h3 className="text-xl font-bold">
+          Associated Leads
+        </h3>
+      </div>
+
+      {leads.filter(
+        (lead:any) =>
+          lead.customerId === selectedRecord.id ||
+lead.customer === selectedRecord.name
+      ).length === 0 ? (
+
+        <div className="p-6 text-gray-500">
+          No associated leads found.
+        </div>
+
+      ) : (
+
+        <table className="w-full">
+
+          <thead className="bg-blue-50">
+            <tr>
+              <th className="px-6 py-4 text-left">
+                Lead
+              </th>
+
+              <th className="px-6 py-4 text-left">
+                Source
+              </th>
+
+              <th className="px-6 py-4 text-left">
+                Amount
+              </th>
+
+              <th className="px-6 py-4 text-left">
+                Status
+              </th>
+            </tr>
+          </thead>
+
+          <tbody>
+
+            {leads
+              .filter(
+                (lead:any) =>
+                  lead.customerId === selectedRecord.id ||
+lead.customer === selectedRecord.name
+              )
+              .map((lead:any) => (
+
+                <tr
+                  key={lead.id}
+                  className="border-t border-blue-100 hover:bg-blue-50/50"
+                >
+
+                  <td className="px-6 py-4 font-semibold">
+
+                    <button
+                      onClick={() => {
+                        setActivePage('leads');
+                        openDetailsPage(lead);
+                      }}
+                      className="text-blue-700 underline hover:text-blue-900"
+                    >
+                      {lead.name}
+                    </button>
+
+                  </td>
+
+                  <td className="px-6 py-4">
+                    {lead.source}
+                  </td>
+
+                  <td className="px-6 py-4">
+                    ₹{Number(lead.amount || 0).toLocaleString()}
+                  </td>
+
+                  <td className="px-6 py-4">
+                    {lead.status}
+                  </td>
+
+                </tr>
+
+              ))}
+
+          </tbody>
+
+        </table>
+
+      )}
+
+    </div>
+
+  </div>
+
+)}
+{activePage === 'customers' &&
+ detailsTab === 'opportunities' && (
+
+  <div className="p-8 bg-gradient-to-br from-white to-blue-50">
+
+    <div className="bg-white rounded-3xl border border-blue-100 shadow-sm overflow-hidden">
+
+      <div className="bg-gradient-to-r from-[#0F172A] to-blue-900 px-6 py-4 text-white">
+        <h3 className="text-xl font-bold">
+          Associated Opportunities
+        </h3>
+      </div>
+
+      {opportunities.filter(
+        (opportunity:any) =>
+          opportunity.customerId === selectedRecord.id ||
+opportunity.customer === selectedRecord.name
+      ).length === 0 ? (
+
+        <div className="p-6 text-gray-500">
+          No associated opportunities found.
+        </div>
+
+      ) : (
+
+        <table className="w-full">
+
+          <thead className="bg-blue-50">
+            <tr>
+              <th className="px-6 py-4 text-left">
+                Opportunity
+              </th>
+
+              <th className="px-6 py-4 text-left">
+                Stage
+              </th>
+
+              <th className="px-6 py-4 text-left">
+                Amount
+              </th>
+
+              <th className="px-6 py-4 text-left">
+                Status
+              </th>
+            </tr>
+          </thead>
+
+          <tbody>
+
+            {opportunities
+              .filter(
+                (opportunity:any) =>
+                  opportunity.customerId === selectedRecord.id ||
+                  opportunity.customer === selectedRecord.name
+              )
+              .map((opportunity:any) => (
+
+                <tr
+                  key={opportunity.id}
+                  className="border-t border-blue-100 hover:bg-blue-50/50"
+                >
+
+                  <td className="px-6 py-4 font-semibold">
+
+                    <button
+                      onClick={() => {
+                        setActivePage('opportunities');
+                        openDetailsPage(opportunity);
+                      }}
+                      className="text-blue-700 underline hover:text-blue-900"
+                    >
+                      {opportunity.name}
+                    </button>
+
+                  </td>
+
+                  <td className="px-6 py-4">
+                    {opportunity.stage}
+                  </td>
+
+                  <td className="px-6 py-4">
+                    ₹{Number(opportunity.amount || 0).toLocaleString()}
+                  </td>
+
+                  <td className="px-6 py-4">
+                    {opportunity.status}
+                  </td>
+
+                </tr>
+
+              ))}
+
+          </tbody>
+
+        </table>
+
+      )}
+
+    </div>
+
+  </div>
+
+)}
+{activePage === 'customers' &&
+ detailsTab === 'orders' && (
+
+  <div className="p-8 bg-gradient-to-br from-white to-blue-50">
+
+    <div className="bg-white rounded-3xl border border-blue-100 shadow-sm overflow-hidden">
+
+      <div className="bg-gradient-to-r from-[#0F172A] to-blue-900 px-6 py-4 text-white">
+        <h3 className="text-xl font-bold">
+          Associated Orders
+        </h3>
+      </div>
+
+      {orders.filter(
+        (order:any) =>
+          order.customerId === selectedRecord.id ||
+order.customer === selectedRecord.name
+      ).length === 0 ? (
+
+        <div className="p-6 text-gray-500">
+          No associated orders found.
+        </div>
+
+      ) : (
+
+        <table className="w-full">
+
+          <thead className="bg-blue-50">
+            <tr>
+              <th className="px-6 py-4 text-left">
+                Order
+              </th>
+
+              <th className="px-6 py-4 text-left">
+                Amount
+              </th>
+
+              <th className="px-6 py-4 text-left">
+                Status
+              </th>
+            </tr>
+          </thead>
+
+          <tbody>
+
+            {orders
+              .filter(
+                (order:any) =>
+                  order.customerId === selectedRecord.id ||
+order.customer === selectedRecord.name
+              )
+              .map((order:any) => (
+
+                <tr
+                  key={order.id}
+                  className="border-t border-blue-100 hover:bg-blue-50/50"
+                >
+
+                  <td className="px-6 py-4 font-semibold">
+
+                    <button
+                      onClick={() => {
+                        setActivePage('orders');
+                        openDetailsPage(order);
+                      }}
+                      className="text-blue-700 underline hover:text-blue-900"
+                    >
+                      {order.name}
+                    </button>
+
+                  </td>
+
+                  <td className="px-6 py-4">
+                    ₹{Number(order.amount || 0).toLocaleString()}
+                  </td>
+
+                  <td className="px-6 py-4">
+                    {order.status}
+                  </td>
+
+                </tr>
+
+              ))}
+
+          </tbody>
+
+        </table>
+
+      )}
+
+    </div>
+
+  </div>
+
+)}
+{activePage === 'customers' &&
+ detailsTab === 'invoices' && (
+
+  <div className="p-8 bg-gradient-to-br from-white to-blue-50">
+
+    <div className="bg-white rounded-3xl border border-blue-100 shadow-sm overflow-hidden">
+
+      <div className="bg-gradient-to-r from-[#0F172A] to-blue-900 px-6 py-4 text-white">
+        <h3 className="text-xl font-bold">
+          Associated Invoices
+        </h3>
+      </div>
+
+      {invoices.filter(
+        (invoice:any) =>
+          invoice.customerId === selectedRecord.id ||
+invoice.customer === selectedRecord.name
+      ).length === 0 ? (
+
+        <div className="p-6 text-gray-500">
+          No associated invoices found.
+        </div>
+
+      ) : (
+
+        <table className="w-full">
+
+          <thead className="bg-blue-50">
+            <tr>
+              <th className="px-6 py-4 text-left">
+                Invoice
+              </th>
+
+              <th className="px-6 py-4 text-left">
+                Amount
+              </th>
+
+              <th className="px-6 py-4 text-left">
+                Status
+              </th>
+            </tr>
+          </thead>
+
+          <tbody>
+
+            {invoices
+              .filter(
+                (invoice:any) =>
+                  invoice.customerId === selectedRecord.id
+              )
+              .map((invoice:any) => (
+
+                <tr
+                  key={invoice.id}
+                  className="border-t border-blue-100 hover:bg-blue-50/50"
+                >
+
+                  <td className="px-6 py-4 font-semibold">
+
+                    <button
+                      onClick={() => {
+                        setActivePage('invoices');
+                        openDetailsPage(invoice);
+                      }}
+                      className="text-blue-700 underline hover:text-blue-900"
+                    >
+                      {invoice.name}
+                    </button>
+
+                  </td>
+
+                  <td className="px-6 py-4">
+                    ₹{Number(invoice.amount || 0).toLocaleString()}
+                  </td>
+
+                  <td className="px-6 py-4">
+                    {invoice.status}
+                  </td>
+
+                </tr>
+
+              ))}
+
+          </tbody>
+
+        </table>
+
+      )}
+
+    </div>
+
+  </div>
+
+)}
+{activePage === 'customers' &&
+ detailsTab === 'activities' && (
+
+  <div className="p-8 bg-gradient-to-br from-white to-blue-50">
+
+    <div className="bg-white rounded-3xl border border-blue-100 shadow-sm overflow-hidden">
+
+      <div className="bg-gradient-to-r from-[#0F172A] to-blue-900 px-6 py-4 text-white">
+        <h3 className="text-xl font-bold">
+          Associated Activities
+        </h3>
+      </div>
+
+      {activities.filter(
+        (activity:any) =>
+          activity.customerId === selectedRecord.id ||
+          activity.customer === selectedRecord.name
+      ).length === 0 ? (
+
+        <div className="p-6 text-gray-500">
+          No associated activities found.
+        </div>
+
+      ) : (
+
+        <table className="w-full">
+
+          <thead className="bg-blue-50">
+            <tr>
+              <th className="px-6 py-4 text-left">
+                Activity
+              </th>
+
+              <th className="px-6 py-4 text-left">
+                Type
+              </th>
+
+              <th className="px-6 py-4 text-left">
+                Date
+              </th>
+
+              <th className="px-6 py-4 text-left">
+                Status
+              </th>
+            </tr>
+          </thead>
+
+          <tbody>
+
+            {activities
+              .filter(
+                (activity:any) =>
+                  activity.customerId === selectedRecord.id ||
+                  activity.customer === selectedRecord.name
+              )
+              .map((activity:any) => (
+
+                <tr
+                  key={activity.id}
+                  className="border-t border-blue-100 hover:bg-blue-50/50"
+                >
+
+                  <td className="px-6 py-4 font-semibold">
+
+                    <button
+                      onClick={() => {
+                        setActivePage('activities');
+                        openDetailsPage(activity);
+                      }}
+                      className="text-blue-700 underline hover:text-blue-900"
+                    >
+                      {activity.name}
+                    </button>
+
+                  </td>
+
+                  <td className="px-6 py-4">
+                    {activity.activityType}
+                  </td>
+
+                  <td className="px-6 py-4">
+                    {activity.activityDate}
+                  </td>
+
+                  <td className="px-6 py-4">
+                    {activity.status}
+                  </td>
+
+                </tr>
+
+              ))}
+
+          </tbody>
+
+        </table>
+
+      )}
+
+    </div>
+
+  </div>
+
+)}
+
+            {(
+  activePage !== 'customers' ||
+  detailsTab === 'details'
+) && (
+
+<div className="p-8 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 bg-gradient-to-br from-white to-blue-50">
               {getObjectFields().map((field: string) => (
                 <div
                   key={field}
@@ -2258,6 +3155,8 @@ case 'activities':
         ...prev,
         customerId: selectedCustomer?.id || '',
         customer: selectedCustomer?.name || '',
+        contact: '',
+        contactId: '',
       }));
     }}
     className="w-full border border-blue-200 rounded-2xl px-4 py-3 text-[#0F172A] bg-white"
@@ -2273,6 +3172,44 @@ case 'activities':
       </option>
     ))}
   </select>
+
+
+) : field === 'primaryContact' ? (
+
+  <select
+    value={editedRecord.primaryContactId || ''}
+    onChange={(e) => {
+
+      const selectedContact =
+        contacts.find(
+          (c:any) => c.id === e.target.value
+        );
+
+      setEditedRecord((prev:any) => ({
+        ...prev,
+        primaryContactId: selectedContact?.id || '',
+        primaryContact: selectedContact?.name || '',
+      }));
+    }}
+    className="w-full border border-blue-200 rounded-2xl px-4 py-3 text-[#0F172A] bg-white"
+  >
+    <option value="">Select Primary Contact</option>
+
+    {contacts
+      .filter(
+        (contact:any) =>
+          contact.customerId === editedRecord.id
+      )
+      .map((contact:any) => (
+        <option
+          key={contact.id}
+          value={contact.id}
+        >
+          {contact.name}
+        </option>
+      ))}
+  </select>
+
 ) : field === 'contact' ? (
 
   <select
@@ -2294,17 +3231,23 @@ case 'activities':
   >
     <option value="">Select Contact</option>
 
-    {contacts.map((contact:any) => (
-      <option
-        key={contact.id}
-        value={contact.id}
-      >
-        {contact.name}
-        {contact.customer
-          ? ` — ${contact.customer}`
-          : ''}
-      </option>
-    ))}
+    {contacts
+      .filter(
+        (contact:any) =>
+          !editedRecord.customerId ||
+          contact.customerId === editedRecord.customerId
+      )
+      .map((contact:any) => (
+        <option
+          key={contact.id}
+          value={contact.id}
+        >
+          {contact.name}
+          {contact.customer
+            ? ` — ${contact.customer}`
+            : ''}
+        </option>
+      ))}
   </select>
 
 ) : field === 'activityType' ? (
@@ -2386,7 +3329,25 @@ case 'activities':
     }
     className="w-full border border-blue-200 rounded-2xl px-4 py-3 text-[#0F172A] bg-white"
   />
+) : field === 'isPrimary' ? (
 
+  <select
+    value={
+      editedRecord.isPrimary
+        ? 'Yes'
+        : 'No'
+    }
+    onChange={(e) =>
+      setEditedRecord((prev:any) => ({
+        ...prev,
+        isPrimary: e.target.value === 'Yes',
+      }))
+    }
+    className="w-full border border-blue-200 rounded-2xl px-4 py-3 bg-white text-[#0F172A]"
+  >
+    <option>No</option>
+    <option>Yes</option>
+  </select>
 ) : (
                     <input
                       type={field === 'amount' || field === 'price' ? 'number' : 'text'}
@@ -2402,7 +3363,9 @@ case 'activities':
                   )}
                 </div>
               ))}
+              
             </div>
+)}
 
             {['leads','opportunities','orders','invoices'].includes(activePage) && (
               <div className="px-8 pb-8 bg-gradient-to-br from-white to-blue-50">
@@ -2815,6 +3778,8 @@ case 'activities':
     ...prev,
     customerId: selectedCustomer?.id || '',
     customer: selectedCustomer?.name || '',
+    contact: '',
+    contactId: '',
   }));
 }}
         className="w-full border border-blue-200 rounded-2xl px-4 py-3 bg-white text-[#0F172A]"
@@ -2925,6 +3890,8 @@ case 'activities':
     ...prev,
     customerId: selectedCustomer?.id || '',
     customer: selectedCustomer?.name || '',
+    contact: '',
+    contactId: '',
   }));
 }}
         className="w-full border border-blue-200 rounded-2xl px-4 py-3 bg-white text-[#0F172A]"
@@ -2966,16 +3933,22 @@ case 'activities':
       >
         <option value="">Select Contact</option>
 
-        {contacts.map((contact:any) => (
-  <option
-    key={contact.id}
-    value={contact.id}
-  >
-    {contact.name}
-    {contact.customer
-      ? ` — ${contact.customer}`
-      : ''}
-  </option>
+        {contacts
+  .filter(
+    (contact:any) =>
+      !createFormData.customerId ||
+      contact.customerId === createFormData.customerId
+  )
+  .map((contact:any) => (
+    <option
+      key={contact.id}
+      value={contact.id}
+    >
+      {contact.name}
+      {contact.customer
+        ? ` — ${contact.customer}`
+        : ''}
+    </option>
 ))}
       </select>
     </div>
@@ -3080,6 +4053,8 @@ case 'activities':
         ...prev,
         customerId: selectedCustomer?.id || '',
         customer: selectedCustomer?.name || '',
+contact: '',
+contactId: '',
       }));
     }}
     className="w-full border border-blue-200 rounded-2xl px-4 py-3 bg-white text-[#0F172A]"
@@ -3120,17 +4095,23 @@ case 'activities':
   >
     <option value="">Select Contact</option>
 
-    {contacts.map((contact:any) => (
-      <option
-        key={contact.id}
-        value={contact.id}
-      >
-        {contact.name}
-        {contact.customer
-          ? ` — ${contact.customer}`
-          : ''}
-      </option>
-    ))}
+    {contacts
+  .filter(
+    (contact:any) =>
+      !createFormData.customerId ||
+      contact.customerId === createFormData.customerId
+  )
+  .map((contact:any) => (
+    <option
+      key={contact.id}
+      value={contact.id}
+    >
+      {contact.name}
+      {contact.customer
+        ? ` — ${contact.customer}`
+        : ''}
+    </option>
+))}
   </select>
 </div>
 
@@ -3232,6 +4213,8 @@ case 'activities':
         ...prev,
         customerId: selectedCustomer?.id || '',
         customer: selectedCustomer?.name || '',
+contact: '',
+contactId: '',
       }));
     }}
     className="w-full border border-blue-200 rounded-2xl px-4 py-3 bg-white text-[#0F172A]"
@@ -3239,13 +4222,13 @@ case 'activities':
     <option value="">Select Customer</option>
 
     {customers.map((customer:any) => (
-      <option
-        key={customer.id}
-        value={customer.id}
-      >
-        {customer.name}
-      </option>
-    ))}
+  <option
+    key={customer.id}
+    value={customer.id}
+  >
+    {customer.name}
+  </option>
+))}
   </select>
 </div>
                   <div className="space-y-2">
@@ -3272,17 +4255,23 @@ case 'activities':
   >
     <option value="">Select Contact</option>
 
-    {contacts.map((contact:any) => (
-      <option
-        key={contact.id}
-        value={contact.id}
-      >
-        {contact.name}
-        {contact.customer
-          ? ` — ${contact.customer}`
-          : ''}
-      </option>
-    ))}
+    {contacts
+  .filter(
+    (contact:any) =>
+      !createFormData.customerId ||
+      contact.customerId === createFormData.customerId
+  )
+  .map((contact:any) => (
+    <option
+      key={contact.id}
+      value={contact.id}
+    >
+      {contact.name}
+      {contact.customer
+        ? ` — ${contact.customer}`
+        : ''}
+    </option>
+))}
   </select>
 </div>
 
@@ -3366,6 +4355,8 @@ case 'activities':
     ...prev,
     customerId: selectedCustomer?.id || '',
     customer: selectedCustomer?.name || '',
+    contact: '',
+    contactId: '',
   }));
 }}
         className="w-full border border-blue-200 rounded-2xl px-4 py-3 bg-white text-[#0F172A]"
@@ -3406,17 +4397,23 @@ case 'activities':
   >
     <option value="">Select Contact</option>
 
-    {contacts.map((contact:any) => (
-      <option
-        key={contact.id}
-        value={contact.id}
-      >
-        {contact.name}
-        {contact.customer
-          ? ` — ${contact.customer}`
-          : ''}
-      </option>
-    ))}
+    {contacts
+  .filter(
+    (contact:any) =>
+      !createFormData.customerId ||
+      contact.customerId === createFormData.customerId
+  )
+  .map((contact:any) => (
+    <option
+      key={contact.id}
+      value={contact.id}
+    >
+      {contact.name}
+      {contact.customer
+        ? ` — ${contact.customer}`
+        : ''}
+    </option>
+))}
   </select>
 </div>
 
@@ -3478,6 +4475,8 @@ case 'activities':
     ...prev,
     customerId: selectedCustomer?.id || '',
     customer: selectedCustomer?.name || '',
+    contact: '',
+    contactId: '',
   }));
 }}
         className="w-full border border-blue-200 rounded-2xl px-4 py-3 bg-white text-[#0F172A]"
@@ -3518,7 +4517,13 @@ case 'activities':
   >
     <option value="">Select Contact</option>
 
-    {contacts.map((contact:any) => (
+    {contacts
+  .filter(
+    (contact:any) =>
+      !createFormData.customerId ||
+      contact.customerId === createFormData.customerId
+  )
+  .map((contact:any) => (
       <option
         key={contact.id}
         value={contact.id}
