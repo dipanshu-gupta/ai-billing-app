@@ -2595,6 +2595,7 @@ case 'activities':
       <button
         onClick={async () => {
           if (editingTemplateId) {
+            if (!supabase) return;
 
   await supabase
     .from('quote_templates')
