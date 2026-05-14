@@ -1876,20 +1876,22 @@ const createQuoteFromOpportunity = async (
         template.isDefault
     ) || quoteTemplates[0];
 
+  setSelectedQuoteOpportunity(
+    opportunity
+  );
 
- setSelectedQuoteOpportunity(
-  opportunity
-);
+  setSelectedQuoteTemplate(
+    defaultTemplate
+  );
 
-setSelectedQuoteTemplate(
-  defaultTemplate
-);
+  setQuoteLineItems(
+    opportunityItems
+  );
 
-setQuoteLineItems(
-  opportunityItems
-);
+  setQuotePreviewOpen(true);
 
-setQuotePreviewOpen(true);
+  setOpenActionMenu(null);
+
 };
 const downloadQuotePDF = async () => {
 
@@ -2949,15 +2951,15 @@ setTemplateFormData(template);
   <>
 
     <button
-  onClick={(e) => {
+  onClick={async (e) => {
 
     e.preventDefault();
 
     e.stopPropagation();
 
-    createQuoteFromOpportunity(record);
-
-    setOpenActionMenu(null);
+    createQuoteFromOpportunity(
+      record
+    );
 
   }}
   className="w-full text-left px-4 py-3 rounded-xl hover:bg-blue-800 text-white"
@@ -2977,284 +2979,7 @@ setTemplateFormData(template);
   </>
 
 )}
-                            {quotePreviewOpen &&
- selectedQuoteOpportunity &&
- selectedQuoteTemplate && (
-
-  <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-[120] p-6 overflow-auto">
-
-    <div className="bg-white rounded-[32px] shadow-2xl border border-blue-100 w-full max-w-6xl overflow-hidden">
-
-      <div className="bg-gradient-to-r from-[#0F172A] to-blue-900 px-8 py-6 text-white flex items-center justify-between">
-
-        <div>
-
-          <h2 className="text-3xl font-bold">
-            Quote Preview
-          </h2>
-
-          <p className="text-blue-100 mt-1">
-            Opportunity:
-            {' '}
-            {selectedQuoteOpportunity.name}
-          </p>
-
-        </div>
-
-        <div className="flex items-center gap-3">
-
-  <button
-    onClick={() =>
-      window.print()
-    }
-    className="bg-white/10 hover:bg-white/20 px-5 py-3 rounded-2xl font-semibold"
-  >
-    Print
-  </button>
-
-  <button
-    onClick={() =>
-      downloadQuotePDF()
-    }
-    className="bg-white text-[#0F172A] px-5 py-3 rounded-2xl font-bold"
-  >
-    Download PDF
-  </button>
-
-  <button
-    onClick={() =>
-      setQuotePreviewOpen(false)
-    }
-    className="w-10 h-10 rounded-full bg-white/10 hover:bg-white/20"
-  >
-    ✕
-  </button>
-
-</div>
-
-      </div>
-
-      <div className="p-10 bg-gray-100 overflow-auto max-h-[80vh] print:bg-white">
-
-        <div
-  ref={quotePreviewRef}
-  style={{
-    background: '#ffffff',
-    color: '#000000',
-  }}
-  className="bg-white rounded-[24px] p-12 max-w-4xl mx-auto"
->
-
-          <div className="flex items-start justify-between border-b pb-8">
-
-            <div>
-
-              <h1 className="text-4xl font-bold text-[#0F172A]">
-                {selectedQuoteTemplate.quoteTitle}
-              </h1>
-
-              <div className="mt-4 text-gray-600 space-y-1">
-
-                <div>
-                  {selectedQuoteTemplate.companyName}
-                </div>
-
-                <div>
-                  {selectedQuoteTemplate.companyEmail}
-                </div>
-
-                <div>
-                  {selectedQuoteTemplate.companyPhone}
-                </div>
-
-                <div>
-                  {selectedQuoteTemplate.companyAddress}
-                </div>
-
-              </div>
-
-            </div>
-
-            <div className="text-right">
-
-              <div className="text-sm text-gray-500">
-                Quote Date
-              </div>
-
-              <div className="font-semibold mt-1">
-                {new Date().toLocaleDateString()}
-              </div>
-
-              <div className="text-sm text-gray-500 mt-5">
-                Opportunity
-              </div>
-
-              <div className="font-semibold mt-1">
-                {selectedQuoteOpportunity.id}
-              </div>
-
-            </div>
-
-          </div>
-
-          <div className="grid grid-cols-2 gap-8 mt-10">
-
-            <div>
-
-              <div className="text-sm text-gray-500 mb-2">
-                Customer
-              </div>
-
-              <div className="text-xl font-bold text-[#0F172A]">
-                {selectedQuoteOpportunity.customer}
-              </div>
-
-            </div>
-
-            <div>
-
-              <div className="text-sm text-gray-500 mb-2">
-                Contact
-              </div>
-
-              <div className="text-xl font-bold text-[#0F172A]">
-                {selectedQuoteOpportunity.contact}
-              </div>
-
-            </div>
-
-          </div>
-
-          <div className="mt-10 overflow-hidden rounded-2xl border border-blue-100">
-
-            <table className="w-full">
-
-              <thead className="bg-[#0F172A] text-white">
-
-                <tr>
-
-                  <th className="px-6 py-4 text-left">
-                    Product
-                  </th>
-
-                  <th className="px-6 py-4 text-left">
-                    Quantity
-                  </th>
-
-                  <th className="px-6 py-4 text-left">
-                    Price
-                  </th>
-
-                  <th className="px-6 py-4 text-left">
-                    Amount
-                  </th>
-
-                </tr>
-
-              </thead>
-
-              <tbody>
-
-                {quoteLineItems.map(
-                  (item:any, index:number) => (
-
-                    <tr
-                      key={index}
-                      className="border-t border-blue-100"
-                    >
-
-                      <td className="px-6 py-4">
-                        {item.product}
-                      </td>
-
-                      <td className="px-6 py-4">
-                        {item.quantity}
-                      </td>
-
-                      <td className="px-6 py-4">
-                        {formatCurrency(item.price)}
-                      </td>
-
-                      <td className="px-6 py-4 font-semibold">
-                        {formatCurrency(
-                          item.quantity * item.price
-                        )}
-                      </td>
-
-                    </tr>
-
-                  )
-                )}
-
-              </tbody>
-
-            </table>
-
-          </div>
-
-          <div className="flex justify-end mt-8">
-
-            <div className="bg-blue-50 rounded-2xl px-8 py-6 w-[320px]">
-
-              <div className="flex justify-between text-lg">
-
-                <span>
-                  Total
-                </span>
-
-                <span className="font-bold text-[#0F172A]">
-
-                  {formatCurrency(
-                    quoteLineItems.reduce(
-                      (sum:number, item:any) =>
-                        sum +
-                        (
-                          item.quantity *
-                          item.price
-                        ),
-                      0
-                    )
-                  )}
-
-                </span>
-
-              </div>
-
-            </div>
-
-          </div>
-
-          <div className="mt-12">
-
-            <div className="text-lg font-bold text-[#0F172A] mb-3">
-              Terms & Conditions
-            </div>
-
-            <div className="text-gray-600 leading-relaxed">
-              {
-                selectedQuoteTemplate.termsAndConditions
-              }
-            </div>
-
-          </div>
-
-          <div className="mt-12 border-t pt-6 text-gray-500 text-sm">
-
-            {
-              selectedQuoteTemplate.footerText
-            }
-
-          </div>
-
-        </div>
-
-      </div>
-
-    </div>
-
-  </div>
-
-)}
+                            
                             {activePage === 'orders' && (
   <button
     onClick={() => createInvoiceFromOrder(record)}
@@ -5722,6 +5447,284 @@ contactId: '',
   </div>
 
 </div>
+{quotePreviewOpen &&
+ selectedQuoteOpportunity &&
+ selectedQuoteTemplate && (
+
+  <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-[120] p-6 overflow-auto">
+
+    <div className="bg-white rounded-[32px] shadow-2xl border border-blue-100 w-full max-w-6xl overflow-hidden">
+
+      <div className="bg-gradient-to-r from-[#0F172A] to-blue-900 px-8 py-6 text-white flex items-center justify-between">
+
+        <div>
+
+          <h2 className="text-3xl font-bold">
+            Quote Preview
+          </h2>
+
+          <p className="text-blue-100 mt-1">
+            Opportunity:
+            {' '}
+            {selectedQuoteOpportunity.name}
+          </p>
+
+        </div>
+
+        <div className="flex items-center gap-3">
+
+  <button
+    onClick={() =>
+      window.print()
+    }
+    className="bg-white/10 hover:bg-white/20 px-5 py-3 rounded-2xl font-semibold"
+  >
+    Print
+  </button>
+
+  <button
+    onClick={() =>
+      downloadQuotePDF()
+    }
+    className="bg-white text-[#0F172A] px-5 py-3 rounded-2xl font-bold"
+  >
+    Download PDF
+  </button>
+
+  <button
+    onClick={() =>
+      setQuotePreviewOpen(false)
+    }
+    className="w-10 h-10 rounded-full bg-white/10 hover:bg-white/20"
+  >
+    ✕
+  </button>
+
+</div>
+
+      </div>
+
+      <div className="p-10 bg-gray-100 overflow-auto max-h-[80vh] print:bg-white">
+
+        <div
+  ref={quotePreviewRef}
+  style={{
+    background: '#ffffff',
+    color: '#000000',
+  }}
+  className="bg-white rounded-[24px] p-12 max-w-4xl mx-auto"
+>
+
+          <div className="flex items-start justify-between border-b pb-8">
+
+            <div>
+
+              <h1 className="text-4xl font-bold text-[#0F172A]">
+                {selectedQuoteTemplate.quoteTitle}
+              </h1>
+
+              <div className="mt-4 text-gray-600 space-y-1">
+
+                <div>
+                  {selectedQuoteTemplate.companyName}
+                </div>
+
+                <div>
+                  {selectedQuoteTemplate.companyEmail}
+                </div>
+
+                <div>
+                  {selectedQuoteTemplate.companyPhone}
+                </div>
+
+                <div>
+                  {selectedQuoteTemplate.companyAddress}
+                </div>
+
+              </div>
+
+            </div>
+
+            <div className="text-right">
+
+              <div className="text-sm text-gray-500">
+                Quote Date
+              </div>
+
+              <div className="font-semibold mt-1">
+                {new Date().toLocaleDateString()}
+              </div>
+
+              <div className="text-sm text-gray-500 mt-5">
+                Opportunity
+              </div>
+
+              <div className="font-semibold mt-1">
+                {selectedQuoteOpportunity.id}
+              </div>
+
+            </div>
+
+          </div>
+
+          <div className="grid grid-cols-2 gap-8 mt-10">
+
+            <div>
+
+              <div className="text-sm text-gray-500 mb-2">
+                Customer
+              </div>
+
+              <div className="text-xl font-bold text-[#0F172A]">
+                {selectedQuoteOpportunity.customer}
+              </div>
+
+            </div>
+
+            <div>
+
+              <div className="text-sm text-gray-500 mb-2">
+                Contact
+              </div>
+
+              <div className="text-xl font-bold text-[#0F172A]">
+                {selectedQuoteOpportunity.contact}
+              </div>
+
+            </div>
+
+          </div>
+
+          <div className="mt-10 overflow-hidden rounded-2xl border border-blue-100">
+
+            <table className="w-full">
+
+              <thead className="bg-[#0F172A] text-white">
+
+                <tr>
+
+                  <th className="px-6 py-4 text-left">
+                    Product
+                  </th>
+
+                  <th className="px-6 py-4 text-left">
+                    Quantity
+                  </th>
+
+                  <th className="px-6 py-4 text-left">
+                    Price
+                  </th>
+
+                  <th className="px-6 py-4 text-left">
+                    Amount
+                  </th>
+
+                </tr>
+
+              </thead>
+
+              <tbody>
+
+                {quoteLineItems.map(
+                  (item:any, index:number) => (
+
+                    <tr
+                      key={index}
+                      className="border-t border-blue-100"
+                    >
+
+                      <td className="px-6 py-4">
+                        {item.product}
+                      </td>
+
+                      <td className="px-6 py-4">
+                        {item.quantity}
+                      </td>
+
+                      <td className="px-6 py-4">
+                        {formatCurrency(item.price)}
+                      </td>
+
+                      <td className="px-6 py-4 font-semibold">
+                        {formatCurrency(
+                          item.quantity * item.price
+                        )}
+                      </td>
+
+                    </tr>
+
+                  )
+                )}
+
+              </tbody>
+
+            </table>
+
+          </div>
+
+          <div className="flex justify-end mt-8">
+
+            <div className="bg-blue-50 rounded-2xl px-8 py-6 w-[320px]">
+
+              <div className="flex justify-between text-lg">
+
+                <span>
+                  Total
+                </span>
+
+                <span className="font-bold text-[#0F172A]">
+
+                  {formatCurrency(
+                    quoteLineItems.reduce(
+                      (sum:number, item:any) =>
+                        sum +
+                        (
+                          item.quantity *
+                          item.price
+                        ),
+                      0
+                    )
+                  )}
+
+                </span>
+
+              </div>
+
+            </div>
+
+          </div>
+
+          <div className="mt-12">
+
+            <div className="text-lg font-bold text-[#0F172A] mb-3">
+              Terms & Conditions
+            </div>
+
+            <div className="text-gray-600 leading-relaxed">
+              {
+                selectedQuoteTemplate.termsAndConditions
+              }
+            </div>
+
+          </div>
+
+          <div className="mt-12 border-t pt-6 text-gray-500 text-sm">
+
+            {
+              selectedQuoteTemplate.footerText
+            }
+
+          </div>
+
+        </div>
+
+      </div>
+
+    </div>
+
+  </div>
+
+)}
 
     </div>
   );
