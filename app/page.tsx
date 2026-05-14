@@ -1323,7 +1323,6 @@ if (
       )
     );
 
-    if (supabase) {
 
   if (supabase) {
 
@@ -1336,7 +1335,7 @@ if (
 
 }
 
-}
+
   }
 }
 
@@ -1387,6 +1386,9 @@ if (
 
 }
 }
+}
+
+
   if (supabase && editedRecord.id) {
 
     await supabase
