@@ -1208,7 +1208,7 @@ if (supabase && editedRecord.id) {
           isPrimary:
             contact.id ===
             editedRecord.primaryContactId,
-            customer: editedRecord.name,
+          customer: editedRecord.name,
         };
       }
 
@@ -1218,43 +1218,43 @@ if (supabase && editedRecord.id) {
 
   if (supabase) {
 
-  await supabase
-    .from('contacts')
-    .update({
-      is_primary: false,
-    })
-    .eq('customer_id', editedRecord.id);
+    await supabase
+      .from('contacts')
+      .update({
+        is_primary: false,
+      })
+      .eq('customer_id', editedRecord.id);
 
-  await supabase
-    .from('contacts')
-    .update({
-      is_primary: true,
-    })
-    
-    .eq(
-      'contact_number',
-      editedRecord.primaryContactId
+    await supabase
+      .from('contacts')
+      .update({
+        is_primary: true,
+      })
+      .eq(
+        'contact_number',
+        editedRecord.primaryContactId
+      );
+  }
+
+  const selectedPrimaryContact =
+    contacts.find(
+      (c:any) =>
+        c.id === editedRecord.primaryContactId
     );
-    const selectedPrimaryContact =
-  contacts.find(
-    (c:any) =>
-      c.id === editedRecord.primaryContactId
-  );
 
-setCustomers((prev:any) =>
-  prev.map((customer:any) =>
-    customer.id === editedRecord.id
-      ? {
-          ...customer,
-          primaryContactId:
-            editedRecord.primaryContactId,
-          primaryContact:
-            selectedPrimaryContact?.name || '',
-        }
-      : customer
-  )
-);
-    
+  setCustomers((prev:any) =>
+    prev.map((customer:any) =>
+      customer.id === editedRecord.id
+        ? {
+            ...customer,
+            primaryContactId:
+              editedRecord.primaryContactId,
+            primaryContact:
+              selectedPrimaryContact?.name || '',
+          }
+        : customer
+    )
+  );
 }
 
       if (supabase && editedRecord.id) {
