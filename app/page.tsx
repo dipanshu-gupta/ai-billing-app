@@ -1325,12 +1325,16 @@ if (
 
     if (supabase) {
 
+  if (supabase) {
+
   await supabase
     .from('contacts')
     .update({
       is_primary: false,
     })
     .eq('contact_number', existingPrimary.id);
+
+}
 
 }
   }
