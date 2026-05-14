@@ -2,7 +2,10 @@
 // @ts-nocheck
 
 import React, { useEffect, useRef, useState } from 'react';
+import jsPDF from 'jspdf';
+import html2canvas from 'html2canvas';
 import { supabase } from '@/lib/supabase';
+import { flushSync } from 'react-dom';
 import {
   BarChart,
   Bar,
@@ -22,6 +25,7 @@ const navigationItems = [
   { key: 'contacts', label: 'Contacts', icon: '📇' },
   { key: 'orders', label: 'Orders', icon: '🛒' },
   { key: 'invoices', label: 'Invoices', icon: '🧾' },
+  { key: 'adminTools', label: 'Admin Tools', icon: '⚙️' },
 ];
 
 const formatCurrency = (value: number) => {
@@ -34,7 +38,7 @@ const formatCurrency = (value: number) => {
 
 export default function AIBillingApp() {
   const [activePage, setActivePage] = useState('dashboard');
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(true);
   const [openActionMenu, setOpenActionMenu] = useState<string | null>(null);
   const [selectedRecord, setSelectedRecord] = useState<any | null>(null);
   const [reportGenerated, setReportGenerated] = useState(false);
@@ -52,6 +56,55 @@ export default function AIBillingApp() {
   const [statusFilter, setStatusFilter] = useState('All');
   const [timelineFilter, setTimelineFilter] = useState('All Time');
   const [detailsTab, setDetailsTab] = useState('details');
+  const [adminToolPage, setAdminToolPage] = useState('home');
+
+const [quoteTemplates, setQuoteTemplates] = useState<any[]>([
+  {
+    id: 'TEMP-001',
+    name: 'Default Quote Template',
+    isDefault: true,
+    companyName: 'Your Company',
+    companyEmail: 'sales@company.com',
+    companyPhone: '+91 9999999999',
+    companyAddress: 'Delhi, India',
+    quoteTitle: 'Quotation',
+    footerText: 'Thank you for your business.',
+    termsAndConditions:
+      'Payment due within 15 days.',
+    primaryColor: '#0F172A',
+    secondaryColor: '#1E3A8A',
+  },
+]);
+
+const [templateFormData, setTemplateFormData] =
+  useState<any>({
+    name: '',
+    companyName: '',
+    companyEmail: '',
+    companyPhone: '',
+    companyAddress: '',
+    quoteTitle: 'Quotation',
+    footerText: '',
+    termsAndConditions: '',
+    primaryColor: '#0F172A',
+    secondaryColor: '#1E3A8A',
+  });
+  const [editingTemplateId, setEditingTemplateId] =
+  useState<string | null>(null);
+  const [quotePreviewOpen, setQuotePreviewOpen] =
+  useState(false);
+
+const [selectedQuoteOpportunity, setSelectedQuoteOpportunity] =
+  useState<any>(null);
+
+const [selectedQuoteTemplate, setSelectedQuoteTemplate] =
+  useState<any>(null);
+
+const [quoteLineItems, setQuoteLineItems] =
+
+  useState<any[]>([]);
+  const printableQuoteRef =
+  useRef<HTMLDivElement | null>(null);
 
   const fetchCustomers = async () => {
     if (!supabase) return;
@@ -406,6 +459,43 @@ const fetchActivities = async () => {
 
   console.log(error);
 };
+const fetchQuoteTemplates = async () => {
+
+  if (!supabase) return;
+
+  const { data, error } = await supabase
+    .from('quote_templates')
+    .select('*')
+    .order('created_at', {
+      ascending: false,
+    });
+
+  if (!error && data) {
+
+    setQuoteTemplates(
+      data.map((template:any) => ({
+        id: template.template_number,
+        dbId: template.id,
+        name: template.name,
+        isDefault: template.is_default,
+        companyName: template.company_name,
+        companyEmail: template.company_email,
+        companyPhone: template.company_phone,
+        companyAddress: template.company_address,
+        quoteTitle: template.quote_title,
+        footerText: template.footer_text,
+        termsAndConditions:
+          template.terms_and_conditions,
+        primaryColor:
+          template.primary_color,
+        secondaryColor:
+          template.secondary_color,
+      }))
+    );
+  }
+
+  console.log(error);
+};
 
 
 useEffect(() => {
@@ -417,6 +507,7 @@ useEffect(() => {
   fetchInvoices();
   fetchContacts();
   fetchActivities();
+  fetchQuoteTemplates();
 }, []);
 
   const [createFormData, setCreateFormData] = useState<any>({
@@ -449,6 +540,7 @@ useEffect(() => {
 const [lineItems, setLineItems] = useState<any[]>([]);
   const actionMenuRef = useRef<HTMLDivElement | null>(null);
   const navigatorRef = useRef<HTMLElement | null>(null);
+  const quotePreviewRef = useRef<HTMLDivElement | null>(null);
 
 const [customers, setCustomers] = useState<any[]>([]);
 
@@ -491,12 +583,6 @@ const [activities, setActivities] = useState<any[]>([]);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
-      if (
-        actionMenuRef.current &&
-        !actionMenuRef.current.contains(event.target as Node)
-      ) {
-        setOpenActionMenu(null);
-      }
 
       if (
         navigatorRef.current &&
@@ -1760,6 +1846,108 @@ contact_id: newOrder.contactId,
 
   setOpenActionMenu(null);
 };
+const createQuoteFromOpportunity = async (
+  opportunity:any
+) => {
+
+  let opportunityItems:any[] = [];
+
+  if (supabase) {
+
+    const { data } = await supabase
+      .from('opportunity_line_items')
+      .select('*')
+      .eq(
+        'opportunity_number',
+        opportunity.id
+      );
+
+    opportunityItems =
+      data?.map((item:any) => ({
+        product: item.product_name,
+        quantity: item.quantity,
+        price: item.price,
+      })) || [];
+  }
+
+  const defaultTemplate =
+    quoteTemplates.find(
+      (template:any) =>
+        template.isDefault
+    ) || quoteTemplates[0];
+
+
+ setSelectedQuoteOpportunity(
+  opportunity
+);
+
+setSelectedQuoteTemplate(
+  defaultTemplate
+);
+
+setQuoteLineItems(
+  opportunityItems
+);
+
+setQuotePreviewOpen(true);
+};
+const downloadQuotePDF = async () => {
+
+  try {
+
+    if (!printableQuoteRef.current)
+      return;
+
+    const canvas = await html2canvas(
+      printableQuoteRef.current,
+      {
+        scale: 2,
+        backgroundColor: '#ffffff',
+        useCORS: true,
+      }
+    );
+
+    const imgData =
+      canvas.toDataURL('image/png');
+
+    const pdf = new jsPDF(
+      'p',
+      'mm',
+      'a4'
+    );
+
+    const pdfWidth =
+      pdf.internal.pageSize.getWidth();
+
+    const pdfHeight =
+      (canvas.height * pdfWidth) /
+      canvas.width;
+
+    pdf.addImage(
+      imgData,
+      'PNG',
+      0,
+      0,
+      pdfWidth,
+      pdfHeight
+    );
+
+    pdf.save(
+      `${
+        selectedQuoteOpportunity?.name ||
+        'Quote'
+      }.pdf`
+    );
+
+  } catch (error) {
+
+    console.error(error);
+
+    alert(
+      'Failed to generate PDF'
+    );
+  }
+};
 const createInvoiceFromOrder = async (
   order:any
 ) => {
@@ -1971,7 +2159,8 @@ case 'activities':
               {activePage}
             </h1>
 
-            {activePage !== 'dashboard' && (
+            {activePage !== 'dashboard' &&
+ activePage !== 'adminTools' && (
               <button
                 onClick={() => {
 
@@ -2045,12 +2234,7 @@ case 'activities':
                     >
                       Generate Report
                     </button>
-                    <button
-  onClick={addCustomer}
-  className="bg-green-600 text-white px-6 py-3 rounded-2xl font-semibold"
->
-  Test Supabase
-</button>
+                    
                   </div>
                 </div>
               </div>
@@ -2239,7 +2423,419 @@ case 'activities':
                 </div>
               </div>
             </div>
-          ) : (
+          ) : activePage === 'adminTools' ? (
+
+  <div className="space-y-8">
+
+    <div className="bg-white rounded-[32px] p-8 shadow-xl border border-blue-100">
+
+      <div className="flex items-center justify-between">
+
+  <div>
+
+    <h1 className="text-4xl font-bold text-[#0F172A]">
+
+      {adminToolPage === 'home'
+        ? 'Admin Tools'
+        : 'Template Designer'}
+
+    </h1>
+
+    <p className="text-gray-600 mt-2 text-lg">
+
+      {adminToolPage === 'home'
+        ? 'Configure templates, branding, workflows and system tools.'
+        : 'Configure quotation PDF templates and branding.'}
+
+    </p>
+
+  </div>
+
+  {adminToolPage !== 'home' && (
+
+    <button
+      onClick={() =>
+        setAdminToolPage('home')
+      }
+      className="bg-[#0F172A] text-white px-5 py-3 rounded-2xl font-semibold"
+    >
+      ← Back
+    </button>
+
+  )}
+
+</div>
+
+    </div>
+
+    {adminToolPage === 'home' ? (
+
+  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+
+    <button
+      onClick={() => {
+        setAdminToolPage('templateDesigner');
+      }}
+      className="bg-gradient-to-br from-[#0F172A] to-blue-900 rounded-[32px] p-8 text-white shadow-2xl text-left hover:scale-[1.02] transition-all"
+    >
+
+      <div className="text-5xl mb-6">
+        📄
+      </div>
+
+      <h2 className="text-2xl font-bold">
+        Template Designer
+      </h2>
+
+      <p className="text-blue-100 mt-3 leading-relaxed">
+        Configure quotation, invoice and document templates.
+      </p>
+
+    </button>
+
+    <div className="bg-white rounded-[32px] p-8 border border-dashed border-blue-200 text-gray-400 flex flex-col justify-center items-center min-h-[240px]">
+
+      <div className="text-5xl mb-4">
+        ⚡
+      </div>
+
+      <div className="font-semibold text-lg">
+        More Admin Tools Coming Soon
+      </div>
+
+    </div>
+
+  </div>
+
+) : (
+
+  <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+
+    <div className="xl:col-span-2 bg-white rounded-[32px] p-8 shadow-xl border border-blue-100">
+
+      <h2 className="text-2xl font-bold text-[#0F172A] mb-6">
+        Quote Template Configuration
+      </h2>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+
+        {[
+          ['name', 'Template Name'],
+          ['companyName', 'Company Name'],
+          ['companyEmail', 'Company Email'],
+          ['companyPhone', 'Company Phone'],
+          ['companyAddress', 'Company Address'],
+          ['quoteTitle', 'Quote Title'],
+        ].map(([field, label]) => (
+
+          <div key={field}>
+
+            <label className="block text-sm font-semibold text-[#0F172A] mb-2">
+              {label}
+            </label>
+
+            <input
+              type="text"
+              value={templateFormData[field]}
+              onChange={(e) =>
+                setTemplateFormData({
+                  ...templateFormData,
+                  [field]: e.target.value,
+                })
+              }
+              className="w-full border border-blue-200 rounded-2xl px-5 py-3"
+            />
+
+          </div>
+
+        ))}
+
+      </div>
+
+      <div className="mt-5">
+
+        <label className="block text-sm font-semibold text-[#0F172A] mb-2">
+          Footer Text
+        </label>
+
+        <textarea
+          value={templateFormData.footerText}
+          onChange={(e) =>
+            setTemplateFormData({
+              ...templateFormData,
+              footerText: e.target.value,
+            })
+          }
+          rows={3}
+          className="w-full border border-blue-200 rounded-2xl px-5 py-3"
+        />
+
+      </div>
+
+      <div className="mt-5">
+
+        <label className="block text-sm font-semibold text-[#0F172A] mb-2">
+          Terms & Conditions
+        </label>
+
+        <textarea
+          value={templateFormData.termsAndConditions}
+          onChange={(e) =>
+            setTemplateFormData({
+              ...templateFormData,
+              termsAndConditions: e.target.value,
+            })
+          }
+          rows={5}
+          className="w-full border border-blue-200 rounded-2xl px-5 py-3"
+        />
+
+      </div>
+
+      <button
+        onClick={async () => {
+          if (editingTemplateId) {
+
+  await supabase
+    .from('quote_templates')
+    .update({
+      name: templateFormData.name,
+      company_name:
+        templateFormData.companyName,
+      company_email:
+        templateFormData.companyEmail,
+      company_phone:
+        templateFormData.companyPhone,
+      company_address:
+        templateFormData.companyAddress,
+      quote_title:
+        templateFormData.quoteTitle,
+      footer_text:
+        templateFormData.footerText,
+      terms_and_conditions:
+        templateFormData.termsAndConditions,
+      primary_color:
+        templateFormData.primaryColor,
+      secondary_color:
+        templateFormData.secondaryColor,
+    })
+    .eq(
+      'template_number',
+      editingTemplateId
+    );
+
+  setEditingTemplateId(null);
+
+  await fetchQuoteTemplates();
+
+  alert('Template Updated');
+
+  return;
+}
+
+         const templateNumber =
+  `TEMP-${Date.now()}`;
+
+if (!supabase) return;
+
+const { error } = await supabase
+  .from('quote_templates')
+  .insert([
+    {
+      template_number: templateNumber,
+      name: templateFormData.name,
+      is_default: false,
+      company_name:
+        templateFormData.companyName,
+      company_email:
+        templateFormData.companyEmail,
+      company_phone:
+        templateFormData.companyPhone,
+      company_address:
+        templateFormData.companyAddress,
+      quote_title:
+        templateFormData.quoteTitle,
+      footer_text:
+        templateFormData.footerText,
+      terms_and_conditions:
+        templateFormData.termsAndConditions,
+      primary_color:
+        templateFormData.primaryColor,
+      secondary_color:
+        templateFormData.secondaryColor,
+    },
+  ]);
+
+if (error) {
+
+  console.log(error);
+
+  alert(error.message);
+
+  return;
+}
+
+await fetchQuoteTemplates();
+
+alert('Template Saved');
+
+          setTemplateFormData({
+            name: '',
+            companyName: '',
+            companyEmail: '',
+            companyPhone: '',
+            companyAddress: '',
+            quoteTitle: 'Quotation',
+            footerText: '',
+            termsAndConditions: '',
+            primaryColor: '#0F172A',
+            secondaryColor: '#1E3A8A',
+          });
+        }}
+        className="mt-6 bg-[#0F172A] text-white px-6 py-4 rounded-2xl font-semibold"
+      >
+        Save Template
+      </button>
+
+    </div>
+
+    <div className="bg-gradient-to-br from-[#0F172A] to-blue-900 rounded-[32px] p-8 text-white shadow-2xl">
+
+      <h2 className="text-2xl font-bold mb-6">
+        Saved Templates
+      </h2>
+
+      <div className="space-y-4">
+
+        {quoteTemplates.map((template:any) => (
+
+          <div
+            key={template.id}
+            className="bg-white/10 rounded-2xl p-5"
+          >
+
+            <div className="flex items-center justify-between">
+
+              <div>
+
+                <div className="font-bold text-lg">
+                  {template.name}
+                </div>
+
+                <div className="text-blue-100 text-sm mt-1">
+                  {template.companyName}
+                </div>
+
+              </div>
+
+              {template.isDefault && (
+
+                <span className="bg-green-500 text-white text-xs px-3 py-1 rounded-full">
+                  Default
+                </span>
+
+              )}
+
+            </div>
+            <div className="flex gap-2 mt-4">
+
+  <button
+    onClick={() => {
+
+      setEditingTemplateId(
+  template.id
+);
+
+setTemplateFormData(template);
+
+    }}
+    className="bg-white/10 hover:bg-white/20 px-3 py-2 rounded-xl text-sm"
+  >
+    Edit
+  </button>
+
+  <button
+    onClick={async () => {
+
+      if (!supabase) return;
+
+      const confirmed =
+        window.confirm(
+          'Delete this template?'
+        );
+
+      if (!confirmed) return;
+
+      await supabase
+        .from('quote_templates')
+        .delete()
+        .eq(
+          'template_number',
+          template.id
+        );
+
+      await fetchQuoteTemplates();
+
+    }}
+    className="bg-red-500 hover:bg-red-600 px-3 py-2 rounded-xl text-sm"
+  >
+    Delete
+  </button>
+
+  <button
+    onClick={async () => {
+
+      if (!supabase) return;
+
+      await supabase
+        .from('quote_templates')
+        .update({
+          is_default: false,
+        })
+        .neq('id', '');
+
+      await supabase
+        .from('quote_templates')
+        .update({
+          is_default: true,
+        })
+        .eq(
+          'template_number',
+          template.id
+        );
+
+      await fetchQuoteTemplates();
+      setQuoteTemplates((prev:any) =>
+  prev.map((item:any) => ({
+    ...item,
+    isDefault:
+      item.id === template.id,
+  }))
+);
+
+    }}
+    className="bg-green-500 hover:bg-green-600 px-3 py-2 rounded-xl text-sm"
+  >
+    Default
+  </button>
+
+</div>
+
+          </div>
+
+        ))}
+
+      </div>
+
+    </div>
+
+  </div>
+
+)}
+
+  </div>
+
+) : (
             <div className="bg-gradient-to-br from-white to-blue-50 rounded-[32px] border border-blue-100 shadow-xl overflow-visible">
               <div className="p-6 border-b border-blue-100 bg-white sticky top-0 z-10">
                 <div className="flex flex-col xl:flex-row gap-4 xl:items-center xl:justify-between">
@@ -2307,11 +2903,17 @@ case 'activities':
 
                       <td className="px-6 py-4 text-center relative w-[160px] overflow-visible">
                         <button
-                          onClick={() => {
-                            setOpenActionMenu(
-                              openActionMenu === record.id ? null : record.id
-                            );
-                          }}
+                          onClick={(e) => {
+
+  e.stopPropagation();
+
+  setOpenActionMenu(
+    openActionMenu === record.id
+      ? null
+      : record.id
+  );
+
+}}
                           className="inline-flex w-10 h-10 items-center justify-center rounded-full bg-[#0F172A] text-white hover:bg-blue-800 shadow-lg border border-blue-700 transition-all mx-auto text-2xl font-bold cursor-pointer"
                         >
                           ⋮
@@ -2319,7 +2921,6 @@ case 'activities':
 
                         {openActionMenu === record.id && (
                           <div
-                            ref={actionMenuRef}
                             className="absolute right-6 top-16 bg-[#0F172A] border border-blue-800 shadow-2xl rounded-2xl p-2 z-[999] min-w-[220px] overflow-hidden"
                           >
                             <button
@@ -2343,13 +2944,316 @@ case 'activities':
                             )}
 
                             {activePage === 'opportunities' && (
-                              <button
-                              onClick={() => createOrderFromOpportunity(record)}
-                              className="w-full text-left px-4 py-3 rounded-xl hover:bg-blue-800 text-white"
-                            >
-                              Create Order
-                            </button>
-                            )}
+
+  <>
+
+    <button
+  onClick={(e) => {
+
+    e.preventDefault();
+
+    e.stopPropagation();
+
+    createQuoteFromOpportunity(record);
+
+    setOpenActionMenu(null);
+
+  }}
+  className="w-full text-left px-4 py-3 rounded-xl hover:bg-blue-800 text-white"
+>
+  Create Quote
+</button>
+
+    <button
+      onClick={() =>
+        createOrderFromOpportunity(record)
+      }
+      className="w-full text-left px-4 py-3 rounded-xl hover:bg-blue-800 text-white"
+    >
+      Create Order
+    </button>
+
+  </>
+
+)}
+                            {quotePreviewOpen &&
+ selectedQuoteOpportunity &&
+ selectedQuoteTemplate && (
+
+  <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-[120] p-6 overflow-auto">
+
+    <div className="bg-white rounded-[32px] shadow-2xl border border-blue-100 w-full max-w-6xl overflow-hidden">
+
+      <div className="bg-gradient-to-r from-[#0F172A] to-blue-900 px-8 py-6 text-white flex items-center justify-between">
+
+        <div>
+
+          <h2 className="text-3xl font-bold">
+            Quote Preview
+          </h2>
+
+          <p className="text-blue-100 mt-1">
+            Opportunity:
+            {' '}
+            {selectedQuoteOpportunity.name}
+          </p>
+
+        </div>
+
+        <div className="flex items-center gap-3">
+
+  <button
+    onClick={() =>
+      window.print()
+    }
+    className="bg-white/10 hover:bg-white/20 px-5 py-3 rounded-2xl font-semibold"
+  >
+    Print
+  </button>
+
+  <button
+    onClick={() =>
+      downloadQuotePDF()
+    }
+    className="bg-white text-[#0F172A] px-5 py-3 rounded-2xl font-bold"
+  >
+    Download PDF
+  </button>
+
+  <button
+    onClick={() =>
+      setQuotePreviewOpen(false)
+    }
+    className="w-10 h-10 rounded-full bg-white/10 hover:bg-white/20"
+  >
+    ✕
+  </button>
+
+</div>
+
+      </div>
+
+      <div className="p-10 bg-gray-100 overflow-auto max-h-[80vh] print:bg-white">
+
+        <div
+  ref={quotePreviewRef}
+  style={{
+    background: '#ffffff',
+    color: '#000000',
+  }}
+  className="bg-white rounded-[24px] p-12 max-w-4xl mx-auto"
+>
+
+          <div className="flex items-start justify-between border-b pb-8">
+
+            <div>
+
+              <h1 className="text-4xl font-bold text-[#0F172A]">
+                {selectedQuoteTemplate.quoteTitle}
+              </h1>
+
+              <div className="mt-4 text-gray-600 space-y-1">
+
+                <div>
+                  {selectedQuoteTemplate.companyName}
+                </div>
+
+                <div>
+                  {selectedQuoteTemplate.companyEmail}
+                </div>
+
+                <div>
+                  {selectedQuoteTemplate.companyPhone}
+                </div>
+
+                <div>
+                  {selectedQuoteTemplate.companyAddress}
+                </div>
+
+              </div>
+
+            </div>
+
+            <div className="text-right">
+
+              <div className="text-sm text-gray-500">
+                Quote Date
+              </div>
+
+              <div className="font-semibold mt-1">
+                {new Date().toLocaleDateString()}
+              </div>
+
+              <div className="text-sm text-gray-500 mt-5">
+                Opportunity
+              </div>
+
+              <div className="font-semibold mt-1">
+                {selectedQuoteOpportunity.id}
+              </div>
+
+            </div>
+
+          </div>
+
+          <div className="grid grid-cols-2 gap-8 mt-10">
+
+            <div>
+
+              <div className="text-sm text-gray-500 mb-2">
+                Customer
+              </div>
+
+              <div className="text-xl font-bold text-[#0F172A]">
+                {selectedQuoteOpportunity.customer}
+              </div>
+
+            </div>
+
+            <div>
+
+              <div className="text-sm text-gray-500 mb-2">
+                Contact
+              </div>
+
+              <div className="text-xl font-bold text-[#0F172A]">
+                {selectedQuoteOpportunity.contact}
+              </div>
+
+            </div>
+
+          </div>
+
+          <div className="mt-10 overflow-hidden rounded-2xl border border-blue-100">
+
+            <table className="w-full">
+
+              <thead className="bg-[#0F172A] text-white">
+
+                <tr>
+
+                  <th className="px-6 py-4 text-left">
+                    Product
+                  </th>
+
+                  <th className="px-6 py-4 text-left">
+                    Quantity
+                  </th>
+
+                  <th className="px-6 py-4 text-left">
+                    Price
+                  </th>
+
+                  <th className="px-6 py-4 text-left">
+                    Amount
+                  </th>
+
+                </tr>
+
+              </thead>
+
+              <tbody>
+
+                {quoteLineItems.map(
+                  (item:any, index:number) => (
+
+                    <tr
+                      key={index}
+                      className="border-t border-blue-100"
+                    >
+
+                      <td className="px-6 py-4">
+                        {item.product}
+                      </td>
+
+                      <td className="px-6 py-4">
+                        {item.quantity}
+                      </td>
+
+                      <td className="px-6 py-4">
+                        {formatCurrency(item.price)}
+                      </td>
+
+                      <td className="px-6 py-4 font-semibold">
+                        {formatCurrency(
+                          item.quantity * item.price
+                        )}
+                      </td>
+
+                    </tr>
+
+                  )
+                )}
+
+              </tbody>
+
+            </table>
+
+          </div>
+
+          <div className="flex justify-end mt-8">
+
+            <div className="bg-blue-50 rounded-2xl px-8 py-6 w-[320px]">
+
+              <div className="flex justify-between text-lg">
+
+                <span>
+                  Total
+                </span>
+
+                <span className="font-bold text-[#0F172A]">
+
+                  {formatCurrency(
+                    quoteLineItems.reduce(
+                      (sum:number, item:any) =>
+                        sum +
+                        (
+                          item.quantity *
+                          item.price
+                        ),
+                      0
+                    )
+                  )}
+
+                </span>
+
+              </div>
+
+            </div>
+
+          </div>
+
+          <div className="mt-12">
+
+            <div className="text-lg font-bold text-[#0F172A] mb-3">
+              Terms & Conditions
+            </div>
+
+            <div className="text-gray-600 leading-relaxed">
+              {
+                selectedQuoteTemplate.termsAndConditions
+              }
+            </div>
+
+          </div>
+
+          <div className="mt-12 border-t pt-6 text-gray-500 text-sm">
+
+            {
+              selectedQuoteTemplate.footerText
+            }
+
+          </div>
+
+        </div>
+
+      </div>
+
+    </div>
+
+  </div>
+
+)}
                             {activePage === 'orders' && (
   <button
     onClick={() => createInvoiceFromOrder(record)}
@@ -4635,6 +5539,189 @@ contactId: '',
         </div>
       )}
     </main>
+    <div
+  style={{
+    position: 'fixed',
+    left: '-99999px',
+    top: 0,
+    width: '900px',
+    background: '#ffffff',
+    padding: '40px',
+    zIndex: -1,
+  }}
+>
+
+  <div ref={printableQuoteRef}>
+
+    {selectedQuoteTemplate &&
+     selectedQuoteOpportunity && (
+
+      <div
+        style={{
+          background: '#ffffff',
+          color: '#000000',
+          fontFamily: 'Arial',
+        }}
+      >
+
+        <h1
+          style={{
+            fontSize: '32px',
+            fontWeight: 'bold',
+            marginBottom: '20px',
+          }}
+        >
+          {selectedQuoteTemplate.quoteTitle}
+        </h1>
+
+        <div style={{ marginBottom: '30px' }}>
+
+          <div>
+            {selectedQuoteTemplate.companyName}
+          </div>
+
+          <div>
+            {selectedQuoteTemplate.companyEmail}
+          </div>
+
+          <div>
+            {selectedQuoteTemplate.companyPhone}
+          </div>
+
+          <div>
+            {selectedQuoteTemplate.companyAddress}
+          </div>
+
+        </div>
+
+        <hr />
+
+        <div
+          style={{
+            marginTop: '20px',
+            marginBottom: '20px',
+          }}
+        >
+
+          <div>
+            <strong>Customer:</strong>
+            {' '}
+            {selectedQuoteOpportunity.customer}
+          </div>
+
+          <div>
+            <strong>Contact:</strong>
+            {' '}
+            {selectedQuoteOpportunity.contact}
+          </div>
+
+        </div>
+
+        <table
+          style={{
+            width: '100%',
+            borderCollapse: 'collapse',
+          }}
+        >
+
+          <thead>
+
+            <tr>
+
+              {[
+                'Product',
+                'Qty',
+                'Price',
+                'Amount',
+              ].map((head) => (
+
+                <th
+                  key={head}
+                  style={{
+                    border:
+                      '1px solid #cccccc',
+                    padding: '10px',
+                    textAlign: 'left',
+                  }}
+                >
+                  {head}
+                </th>
+
+              ))}
+
+            </tr>
+
+          </thead>
+
+          <tbody>
+
+            {quoteLineItems.map(
+              (item:any, index:number) => (
+
+                <tr key={index}>
+
+                  <td
+                    style={{
+                      border:
+                        '1px solid #cccccc',
+                      padding: '10px',
+                    }}
+                  >
+                    {item.product}
+                  </td>
+
+                  <td
+                    style={{
+                      border:
+                        '1px solid #cccccc',
+                      padding: '10px',
+                    }}
+                  >
+                    {item.quantity}
+                  </td>
+
+                  <td
+                    style={{
+                      border:
+                        '1px solid #cccccc',
+                      padding: '10px',
+                    }}
+                  >
+                    {formatCurrency(
+                      item.price
+                    )}
+                  </td>
+
+                  <td
+                    style={{
+                      border:
+                        '1px solid #cccccc',
+                      padding: '10px',
+                    }}
+                  >
+                    {formatCurrency(
+                      item.quantity *
+                      item.price
+                    )}
+                  </td>
+
+                </tr>
+
+              )
+            )}
+
+          </tbody>
+
+        </table>
+
+      </div>
+
+    )}
+
+  </div>
+
+</div>
+
     </div>
   );
 }
