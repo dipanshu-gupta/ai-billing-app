@@ -1349,7 +1349,6 @@ if (
       : customer
   )
 );
-}
 if (
   !editedRecord.isPrimary &&
   editedRecord.customerId
