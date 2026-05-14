@@ -5,6 +5,8 @@ import React, { useEffect, useRef, useState } from 'react';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
 import { supabase } from '@/lib/supabase';
+import { createClient }
+from '@supabase/supabase-js';
 import { flushSync } from 'react-dom';
 import {
   BarChart,
@@ -35,8 +37,33 @@ const formatCurrency = (value: number) => {
     maximumFractionDigits: 0,
   }).format(value || 0);
 };
+const adminSupabase =
+  createClient(
+
+    process.env
+      .NEXT_PUBLIC_SUPABASE_URL!,
+
+    process.env
+      .NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY!
+
+  );
 
 export default function AIBillingApp() {
+  const [session, setSession] =
+  useState<any>(null);
+
+const [authLoading, setAuthLoading] =
+  useState(true);
+
+const [loginForm, setLoginForm] =
+  useState({
+    email: '',
+    password: '',
+  });
+  const [
+  profileMenuOpen,
+  setProfileMenuOpen
+] = useState(false);
   const [activePage, setActivePage] = useState('dashboard');
   const [sidebarCollapsed, setSidebarCollapsed] = useState(true);
   const [openActionMenu, setOpenActionMenu] = useState<string | null>(null);
@@ -56,7 +83,140 @@ export default function AIBillingApp() {
   const [statusFilter, setStatusFilter] = useState('All');
   const [timelineFilter, setTimelineFilter] = useState('All Time');
   const [detailsTab, setDetailsTab] = useState('details');
+  const [
+  customerSections,
+  setCustomerSections
+] = useState({
+  company: true,
+  address: true,
+});
   const [adminToolPage, setAdminToolPage] = useState('home');
+  const [
+  organizations,
+  setOrganizations
+] = useState<any[]>([]);
+
+const [
+  businessUnits,
+  setBusinessUnits
+] = useState<any[]>([]);
+
+const [
+  enterpriseUsers,
+  setEnterpriseUsers
+] = useState<any[]>([]);
+
+const [
+  userGroups,
+  setUserGroups
+] = useState<any[]>([]);
+
+const [
+  userGroupFormOpen,
+  setUserGroupFormOpen
+] = useState(false);
+
+const [
+  userGroupFormData,
+  setUserGroupFormData
+] = useState({
+
+  group_name: '',
+  group_code: '',
+  description: '',
+  organization_id: '',
+  business_unit_id: '',
+  status: 'Active',
+
+});
+
+const [
+  currentUser,
+  setCurrentUser
+] = useState<any>(null);
+const [
+  profilePageOpen,
+  setProfilePageOpen
+] = useState(false);
+
+const [
+  newPassword,
+  setNewPassword
+] = useState('');
+
+const [
+  profileFormData,
+  setProfileFormData
+] = useState({
+
+  first_name: '',
+  last_name: '',
+  phone: '',
+  designation: '',
+
+});
+
+const [
+  userFormOpen,
+  setUserFormOpen
+] = useState(false);
+
+const [
+  userFormData,
+  setUserFormData
+] = useState({
+
+  employee_code: '',
+  username: '',
+  first_name: '',
+  last_name: '',
+  email: '',
+  temporary_password: '',
+  phone: '',
+  designation: '',
+  organization_id: '',
+  business_unit_id: '',
+  status: 'Active',
+
+});
+
+const [
+  organizationFormOpen,
+  setOrganizationFormOpen
+] = useState(false);
+
+const [
+  businessUnitFormOpen,
+  setBusinessUnitFormOpen
+] = useState(false);
+
+const [
+  organizationFormData,
+  setOrganizationFormData
+] = useState({
+
+  name: '',
+  organization_code: '',
+  status: 'Active',
+  industry: '',
+  website: '',
+  country: '',
+  timezone: '',
+  currency: '',
+
+});
+
+const [
+  businessUnitFormData,
+  setBusinessUnitFormData
+] = useState({
+
+  name: '',
+  business_unit_code: '',
+  organization_id: '',
+  status: 'Active',
+
+});
 
 const [quoteTemplates, setQuoteTemplates] = useState<any[]>([
   {
@@ -105,7 +265,276 @@ const [quoteLineItems, setQuoteLineItems] =
   useState<any[]>([]);
   const printableQuoteRef =
   useRef<HTMLDivElement | null>(null);
+  const saveOrganization =
+  async () => {
 
+  if (!supabase) return;
+
+  const { error } =
+    await supabase
+      .from('organizations')
+      .insert([
+        {
+          ...organizationFormData,
+        },
+      ]);
+
+  if (!error) {
+
+    setOrganizationFormOpen(
+      false
+    );
+
+    setOrganizationFormData({
+
+      name: '',
+      organization_code: '',
+      status: 'Active',
+      industry: '',
+      website: '',
+      country: '',
+      timezone: '',
+      currency: '',
+
+    });
+
+    fetchOrganizations();
+
+  }
+
+};
+const saveBusinessUnit =
+  async () => {
+
+  if (!supabase) return;
+
+  const { error } =
+    await supabase
+      .from('business_units')
+      .insert([
+        {
+          ...businessUnitFormData,
+        },
+      ]);
+
+  if (!error) {
+
+    setBusinessUnitFormOpen(
+      false
+    );
+
+    setBusinessUnitFormData({
+
+      name: '',
+      business_unit_code: '',
+      organization_id: '',
+      status: 'Active',
+
+    });
+
+    fetchBusinessUnits();
+
+  }
+
+};
+const saveEnterpriseUser =
+  async () => {
+
+  if (!supabase) return;
+
+  const {
+    data: authData,
+    error: authError,
+  } =
+    await adminSupabase.auth.admin.createUser({
+
+      email:
+        userFormData.email,
+
+      password:
+        userFormData.temporary_password,
+
+      email_confirm: true,
+
+    });
+
+  if (authError) {
+
+    alert(authError.message);
+
+    return;
+
+  }
+
+  const authUserId =
+    authData.user.id;
+
+  const { error } =
+    await supabase
+      .from('enterprise_users')
+      .insert([
+        {
+          ...userFormData,
+
+          auth_user_id:
+            authUserId,
+        },
+      ]);
+
+  if (!error) {
+
+    setUserFormOpen(false);
+
+    setUserFormData({
+
+      employee_code: '',
+      username: '',
+      first_name: '',
+      last_name: '',
+      email: '',
+      temporary_password: '',
+      phone: '',
+      designation: '',
+      organization_id: '',
+      business_unit_id: '',
+      status: 'Active',
+
+    });
+
+    fetchEnterpriseUsers();
+
+  }
+
+};
+
+const saveUserGroup =
+  async () => {
+
+  if (!supabase) return;
+
+  const { error } =
+    await supabase
+      .from('user_groups')
+      .insert([
+        {
+          ...userGroupFormData,
+        },
+      ]);
+
+  if (!error) {
+
+    setUserGroupFormOpen(
+      false
+    );
+
+    setUserGroupFormData({
+
+      group_name: '',
+      group_code: '',
+      description: '',
+      organization_id: '',
+      business_unit_id: '',
+      status: 'Active',
+
+    });
+
+    fetchUserGroups();
+
+  }
+
+};
+const handleLogin = async () => {
+
+  if (!supabase) return;
+
+  const { error } =
+    await supabase.auth.signInWithPassword({
+
+      email: loginForm.email,
+
+      password:
+        loginForm.password,
+
+    });
+
+  if (error) {
+
+    alert(error.message);
+
+  }
+
+};
+const handleLogout = async () => {
+
+  if (!supabase) return;
+
+  await supabase.auth.signOut();
+
+};
+const resetMyPassword =
+  async () => {
+
+  if (!supabase) return;
+
+  const { error } =
+    await supabase.auth.updateUser({
+
+      password: newPassword,
+
+    });
+
+  if (!error) {
+
+    alert(
+      'Password Updated'
+    );
+
+    setNewPassword('');
+
+  }
+
+};
+const saveMyProfile =
+  async () => {
+
+  if (!supabase || !currentUser)
+    return;
+
+  const { error } =
+    await supabase
+      .from('enterprise_users')
+      .update({
+
+        first_name:
+          profileFormData.first_name,
+
+        last_name:
+          profileFormData.last_name,
+
+        phone:
+          profileFormData.phone,
+
+        
+
+      })
+      .eq(
+        'id',
+        currentUser.id
+      );
+
+  if (!error) {
+
+    await fetchCurrentUser();
+
+    await fetchEnterpriseUsers();
+
+    alert(
+      'Profile Updated'
+    );
+
+  }
+
+};
   const fetchCustomers = async () => {
     if (!supabase) return;
   const { data, error } = await supabase
@@ -142,6 +571,128 @@ const [quoteLineItems, setQuoteLineItems] =
   }
 
   console.log(error);
+};
+
+const fetchOrganizations =
+  async () => {
+
+  if (!supabase) return;
+
+  const { data } =
+    await supabase
+      .from('organizations')
+      .select('*')
+      .order('created_at', {
+        ascending: false,
+      });
+
+  if (data) {
+
+    setOrganizations(data);
+
+  }
+
+};
+
+const fetchBusinessUnits =
+  async () => {
+
+  if (!supabase) return;
+
+  const { data } =
+    await supabase
+      .from('business_units')
+      .select('*')
+      .order('created_at', {
+        ascending: false,
+      });
+
+  if (data) {
+
+    setBusinessUnits(data);
+
+  }
+
+};
+const fetchEnterpriseUsers =
+  async () => {
+
+  if (!supabase) return;
+
+  const { data } =
+    await supabase
+      .from('enterprise_users')
+      .select('*')
+      .order('created_at', {
+        ascending: false,
+      });
+
+  if (data) {
+
+    setEnterpriseUsers(data);
+
+  }
+
+};
+const fetchUserGroups =
+  async () => {
+
+  if (!supabase) return;
+
+  const { data } =
+    await supabase
+      .from('user_groups')
+      .select('*')
+      .order('created_at', {
+        ascending: false,
+      });
+
+  if (data) {
+
+    setUserGroups(data);
+
+  }
+
+};
+
+const fetchCurrentUser =
+  async () => {
+
+  if (!supabase || !session)
+    return;
+
+  const { data } =
+    await supabase
+      .from('enterprise_users')
+      .select('*')
+      .eq(
+        'auth_user_id',
+        session.user.id
+      )
+      .single();
+
+  if (data) {
+
+  setCurrentUser(data);
+
+  setProfileFormData({
+
+    first_name:
+      data.first_name || '',
+
+    last_name:
+      data.last_name || '',
+
+    phone:
+      data.phone || '',
+
+    designation:
+      data.designation || '',
+
+  });
+
+}
+
 };
 
 const fetchProducts = async () => {
@@ -496,19 +1047,70 @@ const fetchQuoteTemplates = async () => {
 
   console.log(error);
 };
+useEffect(() => {
 
+  if (!supabase) return;
+
+  supabase.auth.getSession()
+    .then(({ data: { session } }) => {
+
+      setSession(session);
+
+      setAuthLoading(false);
+
+    });
+
+  const {
+    data: authListener,
+  } = supabase.auth.onAuthStateChange(
+    (_event, session) => {
+
+      setSession(session);
+
+    }
+  );
+
+  return () => {
+
+    authListener.subscription.unsubscribe();
+
+  };
+
+}, []);
 
 useEffect(() => {
+
+  if (!session) return;
+
   fetchCustomers();
+
   fetchProducts();
+
   fetchLeads();
+
   fetchOpportunities();
+
   fetchOrders();
+
   fetchInvoices();
+
   fetchContacts();
+
   fetchActivities();
+
   fetchQuoteTemplates();
-}, []);
+
+  fetchOrganizations();
+
+  fetchBusinessUnits();
+
+  fetchEnterpriseUsers();
+
+  fetchUserGroups();
+
+  fetchCurrentUser();
+
+}, [session]);
 
   const [createFormData, setCreateFormData] = useState<any>({
     name: '',
@@ -2108,7 +2710,104 @@ case 'activities':
         return [];
     }
   };
+if (authLoading) {
 
+  return (
+
+    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-[#0F172A] via-blue-900 to-blue-950 text-white text-3xl font-bold">
+
+      Loading AI Billing ERP...
+
+    </div>
+
+  );
+
+}
+if (!session) {
+
+  return (
+
+    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-[#0F172A] via-blue-900 to-blue-950 p-8">
+
+      <div className="w-full max-w-md bg-white rounded-[36px] shadow-2xl p-10">
+
+        <div className="text-center mb-10">
+
+          <div className="w-24 h-24 mx-auto rounded-[32px] bg-gradient-to-br from-[#0F172A] to-blue-800 text-white flex items-center justify-center text-4xl font-bold shadow-xl">
+
+            AI
+
+          </div>
+
+          <h1 className="mt-6 text-4xl font-bold text-[#0F172A]">
+            AI Billing ERP
+          </h1>
+
+          <p className="text-gray-500 mt-3">
+            Enterprise CRM Platform
+          </p>
+
+        </div>
+
+        <div className="space-y-6">
+
+          <div>
+
+            <label className="block text-sm font-semibold text-[#0F172A] mb-2">
+              Email
+            </label>
+
+            <input
+              type="email"
+              value={loginForm.email}
+              onChange={(e) =>
+                setLoginForm({
+                  ...loginForm,
+                  email: e.target.value,
+                })
+              }
+              className="w-full border border-blue-200 rounded-2xl px-5 py-4"
+            />
+
+          </div>
+
+          <div>
+
+            <label className="block text-sm font-semibold text-[#0F172A] mb-2">
+              Password
+            </label>
+
+            <input
+              type="password"
+              value={loginForm.password}
+              onChange={(e) =>
+                setLoginForm({
+                  ...loginForm,
+                  password:
+                    e.target.value,
+                })
+              }
+              className="w-full border border-blue-200 rounded-2xl px-5 py-4"
+            />
+
+          </div>
+
+          <button
+            onClick={handleLogin}
+            className="w-full bg-gradient-to-r from-[#0F172A] to-blue-800 hover:opacity-90 text-white py-4 rounded-2xl font-semibold text-lg shadow-lg transition-all"
+          >
+            Sign In
+          </button>
+
+        </div>
+
+      </div>
+
+    </div>
+
+  );
+
+}
   return (
     <div className="min-h-screen overflow-auto bg-gradient-to-br from-white via-blue-50 to-blue-100">
 
@@ -2131,12 +2830,7 @@ case 'activities':
               <h2 className="text-2xl font-bold">Navigator</h2>
             )}
 
-            <button
-              onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
-              className="bg-blue-800 hover:bg-blue-700 px-3 py-2 rounded-xl"
-            >
-              {sidebarCollapsed ? '→' : '←'}
-            </button>
+            
           </div>
 
           <div className="space-y-3">
@@ -2164,7 +2858,301 @@ case 'activities':
         </div>
       </aside>
 
-      <main className="flex-1 p-8 overflow-auto">
+      <main className="flex-1 overflow-auto">
+
+  {/* ENTERPRISE HEADER */}
+
+  <div className="sticky top-0 z-40 bg-gradient-to-r from-[#0F172A] via-blue-900 to-blue-950 border-b border-blue-800 shadow-2xl">
+
+    <div className="px-8 py-5 flex items-center justify-between">
+
+      {/* LEFT SECTION */}
+
+      <div className="flex items-center gap-5">
+
+        <button
+          onClick={() =>
+            setSidebarCollapsed(
+              !sidebarCollapsed
+            )
+          }
+className="w-12 h-12 rounded-2xl bg-white/10 hover:bg-white/20 text-white flex items-center justify-center text-2xl transition-all"        >
+          ☰
+        </button>
+
+        <div className="flex items-center gap-4">
+
+<div className="w-14 h-14 rounded-3xl bg-white text-[#0F172A] flex items-center justify-center text-2xl font-bold shadow-lg">            AI
+          </div>
+
+          <div>
+
+<h1 className="text-2xl font-bold text-white leading-tight">
+                B Pro
+            </h1>
+
+<p className="text-sm text-blue-100">
+                Enterprise CRM Platform
+            </p>
+
+          </div>
+
+        </div>
+
+      </div>
+
+      {/* RIGHT SECTION */}
+
+<div className="flex items-center gap-4 relative">
+        <button
+className="relative w-12 h-12 rounded-2xl bg-white/10 hover:bg-white/20 text-white flex items-center justify-center text-xl transition-all"        >
+          🔔
+
+          <div className="absolute top-2 right-2 w-3 h-3 bg-red-500 rounded-full" />
+        </button>
+
+        <button
+  onClick={() =>
+    setProfileMenuOpen(
+      !profileMenuOpen
+    )
+  }
+  className="flex items-center gap-3 bg-white/10 hover:bg-white/20 px-4 py-2 rounded-2xl transition-all"
+>
+
+<div className="w-11 h-11 rounded-2xl bg-white text-[#0F172A] flex items-center justify-center font-bold">
+              {currentUser?.first_name
+  ? `${currentUser.first_name.charAt(0)}${
+      currentUser.last_name?.charAt(0) || ''
+    }`
+  : 'U'}
+          </div>
+
+         
+
+
+        </button>
+        {profileMenuOpen && (
+
+  <div className="absolute right-8 top-24 w-64 bg-white rounded-3xl shadow-2xl border border-blue-100 overflow-hidden z-50">
+
+    <div className="p-5 border-b border-blue-100">
+
+      <div className="font-bold text-[#0F172A]">
+
+  {currentUser
+    ? `${currentUser.first_name} ${currentUser.last_name}`
+    : 'User'}
+
+</div>
+
+<div className="text-sm text-gray-500 mt-1">
+
+  {currentUser?.designation || 'Employee'}
+
+</div>
+
+    </div>
+
+    <button
+  onClick={() => {
+
+    setProfileMenuOpen(false);
+
+    setProfilePageOpen(true);
+
+  }}
+  className="w-full text-left px-5 py-4 hover:bg-blue-50 transition-all text-[#0F172A]"
+>
+  My Profile
+</button>
+
+    <button
+      className="w-full text-left px-5 py-4 hover:bg-blue-50 transition-all text-[#0F172A]"
+    >
+      Preferences
+    </button>
+
+    <button
+      onClick={handleLogout}
+      className="w-full text-left px-5 py-4 hover:bg-red-50 transition-all text-red-600"
+    >
+      Logout
+    </button>
+
+  </div>
+
+)}
+{profilePageOpen && (
+  <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 p-6 overflow-auto">
+
+    <div className="w-full max-w-4xl bg-white rounded-[36px] shadow-2xl p-10">
+
+      <div className="flex items-center justify-between mb-10">
+
+        <div>
+
+          <h2 className="text-3xl font-bold text-[#0F172A]">
+            My Profile
+          </h2>
+
+          <p className="text-gray-500 mt-2">
+            Manage your profile and password
+          </p>
+
+        </div>
+
+        <button
+          onClick={() =>
+            setProfilePageOpen(
+              false
+            )
+          }
+          className="w-12 h-12 rounded-2xl bg-gray-100 hover:bg-gray-200 text-[#0F172A] font-bold text-xl"
+        >
+          ✕
+        </button>
+
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+
+        <input
+  value={
+  profileFormData.first_name || ''
+}
+  onChange={(e) =>
+    setProfileFormData({
+
+      ...profileFormData,
+
+      first_name:
+        e.target.value,
+
+    })
+  }
+  className="border border-blue-200 rounded-2xl px-5 py-4 text-[#0F172A]"
+/>
+
+        <input
+  value={
+    profileFormData.last_name || ''
+  }
+  onChange={(e) =>
+    setProfileFormData({
+
+      ...profileFormData,
+
+      last_name:
+        e.target.value,
+
+    })
+  }
+  className="border border-blue-200 rounded-2xl px-5 py-4 text-[#0F172A]"
+/>
+
+        <input
+          value={
+            currentUser.username || ''
+          }
+          readOnly
+          className="border border-blue-200 rounded-2xl px-5 py-4 bg-gray-50 text-[#0F172A]"
+        />
+
+        <input
+          value={
+            currentUser.email || ''
+          }
+          readOnly
+          className="border border-blue-200 rounded-2xl px-5 py-4 bg-gray-50 text-[#0F172A]"
+        />
+
+        <input
+  value={
+    profileFormData.phone || ''
+  }
+  onChange={(e) =>
+    setProfileFormData({
+
+      ...profileFormData,
+
+      phone:
+        e.target.value,
+
+    })
+  }
+  className="border border-blue-200 rounded-2xl px-5 py-4 text-[#0F172A]"
+/>
+
+        <input
+          value={
+            currentUser.designation || ''
+          }
+          readOnly
+          className="border border-blue-200 rounded-2xl px-5 py-4 bg-gray-50 text-[#0F172A]"
+        />
+
+      </div>
+
+      <div className="flex justify-end mt-10">
+
+  <button
+    onClick={saveMyProfile}
+    className="bg-gradient-to-r from-[#0F172A] to-blue-800 text-white px-8 py-4 rounded-2xl font-semibold"
+  >
+    Save Profile
+  </button>
+
+</div>
+
+      <div className="mt-10 border-t border-blue-100 pt-10">
+
+        <h3 className="text-2xl font-bold text-[#0F172A] mb-6">
+          Reset Password
+        </h3>
+
+        <div className="flex gap-4">
+
+          <input
+            type="password"
+            placeholder="New Password"
+            value={newPassword}
+            onChange={(e) =>
+              setNewPassword(
+                e.target.value
+              )
+            }
+            className="flex-1 border border-blue-200 rounded-2xl px-5 py-4 text-[#0F172A] placeholder:text-gray-500"
+          />
+
+          <button
+            onClick={
+              resetMyPassword
+            }
+            className="bg-gradient-to-r from-[#0F172A] to-blue-800 text-white px-8 py-4 rounded-2xl font-semibold"
+          >
+            Update Password
+          </button>
+
+        </div>
+
+      </div>
+
+    </div>
+
+  </div>
+
+)}
+
+      </div>
+
+    </div>
+
+  </div>
+
+  {/* MAIN CONTENT */}
+
+  <div className="p-8">
         <div className="bg-white rounded-[32px] p-8 shadow-xl border border-blue-100 w-full min-h-screen">
           <div className="flex items-center justify-between mb-6">
             <h1 className="text-3xl font-bold text-[#0F172A] capitalize">
@@ -2447,17 +3435,45 @@ case 'activities':
 
     <h1 className="text-4xl font-bold text-[#0F172A]">
 
-      {adminToolPage === 'home'
-        ? 'Admin Tools'
-        : 'Template Designer'}
+      {
+  adminToolPage === 'home'
+    ? 'Admin Tools'
+    : adminToolPage ===
+      'templateDesigner'
+    ? 'Template Designer'
+    : adminToolPage ===
+      'organizations'
+    ? 'Organizations'
+    : adminToolPage ===
+      'businessUnits'
+    ? 'Business Units'
+    : adminToolPage ===
+      'users'
+    ? 'Users'
+    : 'User Groups'
+}
 
     </h1>
 
     <p className="text-gray-600 mt-2 text-lg">
 
-      {adminToolPage === 'home'
-        ? 'Configure templates, branding, workflows and system tools.'
-        : 'Configure quotation PDF templates and branding.'}
+      {
+  adminToolPage === 'home'
+    ? 'Configure templates, branding, workflows and system tools.'
+    : adminToolPage ===
+      'templateDesigner'
+    ? 'Configure quotation PDF templates and branding.'
+    : adminToolPage ===
+      'organizations'
+    ? 'Manage enterprise organizations and legal entities.'
+    : adminToolPage ===
+      'businessUnits'
+    ? 'Configure enterprise business units and hierarchy.'
+    : adminToolPage ===
+      'users'
+    ? 'Manage enterprise users, workforce and access accounts.'
+    : 'Configure workforce groups and department structures.'
+}
 
     </p>
 
@@ -2497,6 +3513,7 @@ case 'activities':
 
       <h2 className="text-2xl font-bold">
         Template Designer
+        
       </h2>
 
       <p className="text-blue-100 mt-3 leading-relaxed">
@@ -2504,6 +3521,99 @@ case 'activities':
       </p>
 
     </button>
+    <button
+  onClick={() => {
+    setAdminToolPage(
+      'organizations'
+    );
+  }}
+  className="bg-white rounded-[32px] p-8 border border-blue-100 shadow-xl text-left hover:scale-[1.02] transition-all"
+>
+
+  <div className="text-5xl mb-6">
+    🏢
+  </div>
+
+  <h2 className="text-2xl font-bold text-[#0F172A]">
+    Organizations
+  </h2>
+
+  <p className="text-gray-500 mt-3 leading-relaxed">
+    Manage enterprise organizations,
+    subsidiaries and legal entities.
+  </p>
+
+</button>
+
+<button
+  onClick={() => {
+    setAdminToolPage(
+      'businessUnits'
+    );
+  }}
+  className="bg-white rounded-[32px] p-8 border border-blue-100 shadow-xl text-left hover:scale-[1.02] transition-all"
+>
+
+  <div className="text-5xl mb-6">
+    🏬
+  </div>
+
+  <h2 className="text-2xl font-bold text-[#0F172A]">
+    Business Units
+  </h2>
+
+  <p className="text-gray-500 mt-3 leading-relaxed">
+    Configure business hierarchy,
+    departments and operational units.
+  </p>
+
+</button>
+<button
+  onClick={() => {
+    setAdminToolPage(
+      'users'
+    );
+  }}
+  className="bg-white rounded-[32px] p-8 border border-blue-100 shadow-xl text-left hover:scale-[1.02] transition-all"
+>
+
+  <div className="text-5xl mb-6">
+    👥
+  </div>
+
+  <h2 className="text-2xl font-bold text-[#0F172A]">
+    Users
+  </h2>
+
+  <p className="text-gray-500 mt-3 leading-relaxed">
+    Create enterprise users,
+    access accounts and workforce hierarchy.
+  </p>
+
+</button>
+
+<button
+  onClick={() => {
+    setAdminToolPage(
+      'userGroups'
+    );
+  }}
+  className="bg-white rounded-[32px] p-8 border border-blue-100 shadow-xl text-left hover:scale-[1.02] transition-all"
+>
+
+  <div className="text-5xl mb-6">
+    🏢
+  </div>
+
+  <h2 className="text-2xl font-bold text-[#0F172A]">
+    User Groups
+  </h2>
+
+  <p className="text-gray-500 mt-3 leading-relaxed">
+    Configure workforce teams, operational groups and departments.
+  </p>
+
+</button>
 
     <div className="bg-white rounded-[32px] p-8 border border-dashed border-blue-200 text-gray-400 flex flex-col justify-center items-center min-h-[240px]">
 
@@ -2516,6 +3626,1139 @@ case 'activities':
       </div>
 
     </div>
+
+  </div>
+
+) : adminToolPage === 'organizations' ? (
+
+  <div className="space-y-8">
+
+    <div className="flex items-center justify-between">
+
+      <div>
+
+        <h2 className="text-3xl font-bold text-[#0F172A]">
+          Organizations
+        </h2>
+
+        <p className="text-gray-500 mt-2">
+          Manage enterprise organizations
+        </p>
+
+      </div>
+
+      <button
+        onClick={() =>
+          setOrganizationFormOpen(
+            true
+          )
+        }
+        className="bg-gradient-to-r from-[#0F172A] to-blue-800 text-white px-6 py-4 rounded-2xl font-semibold shadow-lg"
+      >
+        + New Organization
+      </button>
+
+    </div>
+
+    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+
+      {organizations.map(
+        (organization:any) => (
+
+        <div
+          key={organization.id}
+          className="bg-white rounded-[32px] p-8 border border-blue-100 shadow-xl"
+        >
+
+          <div className="flex items-start justify-between">
+
+            <div>
+
+              <h3 className="text-2xl font-bold text-[#0F172A]">
+                {organization.name}
+              </h3>
+
+              <p className="text-gray-500 mt-2">
+                {
+                  organization.organization_code
+                }
+              </p>
+
+            </div>
+
+            <div className="px-4 py-2 rounded-2xl bg-green-100 text-green-700 text-sm font-semibold">
+              {organization.status}
+            </div>
+
+          </div>
+
+          <div className="mt-6 space-y-3 text-sm text-gray-600">
+
+            <div>
+              Industry:
+              {' '}
+              {organization.industry}
+            </div>
+
+            <div>
+              Country:
+              {' '}
+              {organization.country}
+            </div>
+
+            <div>
+              Currency:
+              {' '}
+              {organization.currency}
+            </div>
+
+          </div>
+
+        </div>
+
+      ))}
+
+    </div>
+{organizationFormOpen && (
+
+  <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 p-6">
+
+    <div className="w-full max-w-3xl bg-white rounded-[36px] shadow-2xl p-10 max-h-[90vh] overflow-auto">
+
+      <div className="flex items-center justify-between mb-8">
+
+        <div>
+
+          <h2 className="text-3xl font-bold text-[#0F172A]">
+            New Organization
+          </h2>
+
+          <p className="text-gray-500 mt-2">
+            Create enterprise organization
+          </p>
+
+        </div>
+
+        <button
+          onClick={() =>
+            setOrganizationFormOpen(
+              false
+            )
+          }
+className="w-12 h-12 rounded-2xl bg-gray-100 hover:bg-gray-200 text-[#0F172A] font-bold text-xl"
+        >
+          ✕
+        </button>
+
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+
+        <input
+          placeholder="Organization Name"
+          value={
+            organizationFormData.name
+          }
+          onChange={(e) =>
+            setOrganizationFormData({
+              ...organizationFormData,
+              name: e.target.value,
+            })
+          }
+className="border border-blue-200 rounded-2xl px-5 py-4 text-[#0F172A] placeholder:text-gray-500"
+        />
+
+        <input
+          placeholder="Organization Code"
+          value={
+            organizationFormData.organization_code
+          }
+          onChange={(e) =>
+            setOrganizationFormData({
+              ...organizationFormData,
+              organization_code:
+                e.target.value,
+            })
+          }
+className="border border-blue-200 rounded-2xl px-5 py-4 text-[#0F172A] placeholder:text-gray-500"
+        />
+
+        <input
+          placeholder="Industry"
+          value={
+            organizationFormData.industry
+          }
+          onChange={(e) =>
+            setOrganizationFormData({
+              ...organizationFormData,
+              industry:
+                e.target.value,
+            })
+          }
+          className="border border-blue-200 rounded-2xl px-5 py-4 text-[#0F172A] placeholder:text-gray-500"
+        />
+
+        <input
+          placeholder="Website"
+          value={
+            organizationFormData.website
+          }
+          onChange={(e) =>
+            setOrganizationFormData({
+              ...organizationFormData,
+              website:
+                e.target.value,
+            })
+          }
+className="border border-blue-200 rounded-2xl px-5 py-4 text-[#0F172A] placeholder:text-gray-500"
+        />
+
+        <input
+          placeholder="Country"
+          value={
+            organizationFormData.country
+          }
+          onChange={(e) =>
+            setOrganizationFormData({
+              ...organizationFormData,
+              country:
+                e.target.value,
+            })
+          }
+          className="border border-blue-200 rounded-2xl px-5 py-4 text-[#0F172A] placeholder:text-gray-500"
+        />
+
+        <input
+          placeholder="Timezone"
+          value={
+            organizationFormData.timezone
+          }
+          onChange={(e) =>
+            setOrganizationFormData({
+              ...organizationFormData,
+              timezone:
+                e.target.value,
+            })
+          }
+          className="border border-blue-200 rounded-2xl px-5 py-4 text-[#0F172A] placeholder:text-gray-500"
+        />
+
+        <input
+          placeholder="Currency"
+          value={
+            organizationFormData.currency
+          }
+          onChange={(e) =>
+            setOrganizationFormData({
+              ...organizationFormData,
+              currency:
+                e.target.value,
+            })
+          }
+          className="border border-blue-200 rounded-2xl px-5 py-4 text-[#0F172A] placeholder:text-gray-500"
+        />
+
+      </div>
+
+      <div className="flex justify-end mt-10">
+
+        <button
+          onClick={saveOrganization}
+          className="bg-gradient-to-r from-[#0F172A] to-blue-800 text-white px-8 py-4 rounded-2xl font-semibold shadow-lg"
+        >
+          Save Organization
+        </button>
+
+      </div>
+
+    </div>
+
+  </div>
+
+)}
+  </div>
+
+) : adminToolPage === 'businessUnits' ? (
+
+  <div className="space-y-8">
+
+    <div className="flex items-center justify-between">
+
+      <div>
+
+        <h2 className="text-3xl font-bold text-[#0F172A]">
+          Business Units
+        </h2>
+
+        <p className="text-gray-500 mt-2">
+          Configure enterprise business hierarchy
+        </p>
+
+      </div>
+
+      <button
+        onClick={() =>
+          setBusinessUnitFormOpen(
+            true
+          )
+        }
+        className="bg-gradient-to-r from-[#0F172A] to-blue-800 text-white px-6 py-4 rounded-2xl font-semibold shadow-lg"
+      >
+        + New Business Unit
+      </button>
+
+    </div>
+
+    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+
+      {businessUnits.map(
+        (businessUnit:any) => {
+
+        const organization =
+          organizations.find(
+            (org:any) =>
+              org.id ===
+              businessUnit.organization_id
+          );
+
+        return (
+
+          <div
+            key={businessUnit.id}
+            className="bg-white rounded-[32px] p-8 border border-blue-100 shadow-xl"
+          >
+
+            <div className="flex items-start justify-between">
+
+              <div>
+
+                <h3 className="text-2xl font-bold text-[#0F172A]">
+                  {businessUnit.name}
+                </h3>
+
+                <p className="text-gray-500 mt-2">
+                  {
+                    businessUnit.business_unit_code
+                  }
+                </p>
+
+              </div>
+
+              <div className="px-4 py-2 rounded-2xl bg-green-100 text-green-700 text-sm font-semibold">
+                {businessUnit.status}
+              </div>
+
+            </div>
+
+            <div className="mt-6 space-y-3 text-sm text-gray-600">
+
+              <div>
+                Organization:
+                {' '}
+                {
+                  organization?.name
+                }
+              </div>
+
+            </div>
+
+          </div>
+
+        );
+
+      })}
+
+    </div>
+
+    {businessUnitFormOpen && (
+
+      <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 p-6">
+
+        <div className="w-full max-w-3xl bg-white rounded-[36px] shadow-2xl p-10">
+
+          <div className="flex items-center justify-between mb-8">
+
+            <div>
+
+              <h2 className="text-3xl font-bold text-[#0F172A]">
+                New Business Unit
+              </h2>
+
+              <p className="text-gray-500 mt-2">
+                Configure operational hierarchy
+              </p>
+
+            </div>
+
+            <button
+              onClick={() =>
+                setBusinessUnitFormOpen(
+                  false
+                )
+              }
+              className="w-12 h-12 rounded-2xl bg-gray-100 hover:bg-gray-200 text-[#0F172A] font-bold text-xl"
+            >
+              ✕
+            </button>
+
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+
+            <input
+              placeholder="Business Unit Name"
+              value={
+                businessUnitFormData.name
+              }
+              onChange={(e) =>
+                setBusinessUnitFormData({
+                  ...businessUnitFormData,
+                  name: e.target.value,
+                })
+              }
+              className="border border-blue-200 rounded-2xl px-5 py-4 text-[#0F172A] placeholder:text-gray-500"
+            />
+
+            <input
+              placeholder="Business Unit Code"
+              value={
+                businessUnitFormData.business_unit_code
+              }
+              onChange={(e) =>
+                setBusinessUnitFormData({
+                  ...businessUnitFormData,
+                  business_unit_code:
+                    e.target.value,
+                })
+              }
+              className="border border-blue-200 rounded-2xl px-5 py-4 text-[#0F172A] placeholder:text-gray-500"
+            />
+
+            <select
+              value={
+                businessUnitFormData.organization_id
+              }
+              onChange={(e) =>
+                setBusinessUnitFormData({
+                  ...businessUnitFormData,
+                  organization_id:
+                    e.target.value,
+                })
+              }
+              className="border border-blue-200 rounded-2xl px-5 py-4 text-[#0F172A]"
+            >
+
+              <option value="">
+                Select Organization
+              </option>
+
+              {organizations.map(
+                (organization:any) => (
+
+                <option
+                  key={organization.id}
+                  value={organization.id}
+                >
+                  {organization.name}
+                </option>
+
+              ))}
+
+            </select>
+
+          </div>
+
+          <div className="flex justify-end mt-10">
+
+            <button
+              onClick={
+                saveBusinessUnit
+              }
+              className="bg-gradient-to-r from-[#0F172A] to-blue-800 text-white px-8 py-4 rounded-2xl font-semibold shadow-lg"
+            >
+              Save Business Unit
+            </button>
+
+          </div>
+
+        </div>
+
+      </div>
+
+    )}
+
+  </div>
+
+) : adminToolPage === 'users' ? (
+
+  <div className="space-y-8">
+
+    <div className="flex items-center justify-between">
+
+      <div>
+
+        <h2 className="text-3xl font-bold text-[#0F172A]">
+          Users
+        </h2>
+
+        <p className="text-gray-500 mt-2">
+          Manage enterprise workforce and access
+        </p>
+
+      </div>
+
+      <button
+        onClick={() =>
+          setUserFormOpen(true)
+        }
+        className="bg-gradient-to-r from-[#0F172A] to-blue-800 text-white px-6 py-4 rounded-2xl font-semibold shadow-lg"
+      >
+        + New User
+      </button>
+
+    </div>
+
+    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+
+      {enterpriseUsers.map(
+        (user:any) => {
+
+        const organization =
+          organizations.find(
+            (org:any) =>
+              org.id ===
+              user.organization_id
+          );
+
+        const businessUnit =
+          businessUnits.find(
+            (bu:any) =>
+              bu.id ===
+              user.business_unit_id
+          );
+          const [
+  userGroups,
+  setUserGroups
+] = useState<any[]>([]);
+
+const [
+  userGroupFormOpen,
+  setUserGroupFormOpen
+] = useState(false);
+
+const [
+  userGroupFormData,
+  setUserGroupFormData
+] = useState({
+
+  group_name: '',
+  group_code: '',
+  description: '',
+  organization_id: '',
+  business_unit_id: '',
+  status: 'Active',
+
+});
+
+        return (
+
+          <div
+            key={user.id}
+            className="bg-white rounded-[32px] p-8 border border-blue-100 shadow-xl"
+          >
+
+            <div className="flex items-start justify-between">
+
+              <div>
+
+                <h3 className="text-2xl font-bold text-[#0F172A]">
+                  {user.first_name}
+                  {' '}
+                  {user.last_name}
+                </h3>
+
+                <p className="text-gray-500 mt-2">
+                  {user.designation}
+                </p>
+
+              </div>
+
+              <div className="px-4 py-2 rounded-2xl bg-green-100 text-green-700 text-sm font-semibold">
+                {user.status}
+              </div>
+
+            </div>
+
+            <div className="mt-6 space-y-3 text-sm text-gray-600">
+
+              <div>
+                Username:
+                {' '}
+                {user.username}
+              </div>
+
+              <div>
+                Email:
+                {' '}
+                {user.email}
+              </div>
+
+              <div>
+                Organization:
+                {' '}
+                {
+                  organization?.name
+                }
+              </div>
+
+              <div>
+                Business Unit:
+                {' '}
+                {
+                  businessUnit?.name
+                }
+              </div>
+
+            </div>
+
+          </div>
+
+        );
+
+      })}
+
+    </div>
+
+    {userFormOpen && (
+
+      <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 p-6 overflow-auto">
+
+        <div className="w-full max-w-5xl bg-white rounded-[36px] shadow-2xl p-10">
+
+          <div className="flex items-center justify-between mb-10">
+
+            <div>
+
+              <h2 className="text-3xl font-bold text-[#0F172A]">
+                New User
+              </h2>
+
+              <p className="text-gray-500 mt-2">
+                Create enterprise login-enabled user
+              </p>
+
+            </div>
+
+            <button
+              onClick={() =>
+                setUserFormOpen(
+                  false
+                )
+              }
+              className="w-12 h-12 rounded-2xl bg-gray-100 hover:bg-gray-200 text-[#0F172A] font-bold text-xl"
+            >
+              ✕
+            </button>
+
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+
+            <input
+              placeholder="Employee Code"
+              value={
+                userFormData.employee_code
+              }
+              onChange={(e) =>
+                setUserFormData({
+                  ...userFormData,
+                  employee_code:
+                    e.target.value,
+                })
+              }
+              className="border border-blue-200 rounded-2xl px-5 py-4 text-[#0F172A] placeholder:text-gray-500"
+            />
+
+            <input
+              placeholder="Username"
+              value={
+                userFormData.username
+              }
+              onChange={(e) =>
+                setUserFormData({
+                  ...userFormData,
+                  username:
+                    e.target.value,
+                })
+              }
+              className="border border-blue-200 rounded-2xl px-5 py-4 text-[#0F172A] placeholder:text-gray-500"
+            />
+
+            <input
+              placeholder="First Name"
+              value={
+                userFormData.first_name
+              }
+              onChange={(e) =>
+                setUserFormData({
+                  ...userFormData,
+                  first_name:
+                    e.target.value,
+                })
+              }
+              className="border border-blue-200 rounded-2xl px-5 py-4 text-[#0F172A] placeholder:text-gray-500"
+            />
+
+            <input
+              placeholder="Last Name"
+              value={
+                userFormData.last_name
+              }
+              onChange={(e) =>
+                setUserFormData({
+                  ...userFormData,
+                  last_name:
+                    e.target.value,
+                })
+              }
+              className="border border-blue-200 rounded-2xl px-5 py-4 text-[#0F172A] placeholder:text-gray-500"
+            />
+
+            <input
+              placeholder="Email"
+              value={
+                userFormData.email
+              }
+              onChange={(e) =>
+                setUserFormData({
+                  ...userFormData,
+                  email:
+                    e.target.value,
+                })
+              }
+              className="border border-blue-200 rounded-2xl px-5 py-4 text-[#0F172A] placeholder:text-gray-500"
+            />
+
+            <input
+              placeholder="Temporary Password"
+              value={
+                userFormData.temporary_password
+              }
+              onChange={(e) =>
+                setUserFormData({
+                  ...userFormData,
+                  temporary_password:
+                    e.target.value,
+                })
+              }
+              className="border border-blue-200 rounded-2xl px-5 py-4 text-[#0F172A] placeholder:text-gray-500"
+            />
+
+            <input
+              placeholder="Phone"
+              value={
+                userFormData.phone
+              }
+              onChange={(e) =>
+                setUserFormData({
+                  ...userFormData,
+                  phone:
+                    e.target.value,
+                })
+              }
+              className="border border-blue-200 rounded-2xl px-5 py-4 text-[#0F172A] placeholder:text-gray-500"
+            />
+
+            <input
+              placeholder="Designation"
+              value={
+                userFormData.designation
+              }
+              onChange={(e) =>
+                setUserFormData({
+                  ...userFormData,
+                  designation:
+                    e.target.value,
+                })
+              }
+              className="border border-blue-200 rounded-2xl px-5 py-4 text-[#0F172A] placeholder:text-gray-500"
+            />
+
+            <select
+              value={
+                userFormData.organization_id
+              }
+              onChange={(e) =>
+                setUserFormData({
+                  ...userFormData,
+                  organization_id:
+                    e.target.value,
+                })
+              }
+              className="border border-blue-200 rounded-2xl px-5 py-4 text-[#0F172A]"
+            >
+
+              <option value="">
+                Select Organization
+              </option>
+
+              {organizations.map(
+                (organization:any) => (
+
+                <option
+                  key={organization.id}
+                  value={organization.id}
+                >
+                  {organization.name}
+                </option>
+
+              ))}
+
+            </select>
+
+            <select
+              value={
+                userFormData.business_unit_id
+              }
+              onChange={(e) =>
+                setUserFormData({
+                  ...userFormData,
+                  business_unit_id:
+                    e.target.value,
+                })
+              }
+              className="border border-blue-200 rounded-2xl px-5 py-4 text-[#0F172A]"
+            >
+
+              <option value="">
+                Select Business Unit
+              </option>
+
+              {businessUnits.map(
+                (businessUnit:any) => (
+
+                <option
+                  key={businessUnit.id}
+                  value={businessUnit.id}
+                >
+                  {businessUnit.name}
+                </option>
+
+              ))}
+
+            </select>
+
+          </div>
+
+          <div className="flex justify-end mt-10">
+
+            <button
+              onClick={
+                saveEnterpriseUser
+              }
+              className="bg-gradient-to-r from-[#0F172A] to-blue-800 text-white px-8 py-4 rounded-2xl font-semibold shadow-lg"
+            >
+              Create User
+            </button>
+
+          </div>
+
+        </div>
+
+      </div>
+
+    )}
+
+  </div>
+
+) : adminToolPage === 'userGroups' ? (
+
+  <div className="space-y-8">
+
+    <div className="flex items-center justify-between">
+
+      <div>
+
+        <h2 className="text-3xl font-bold text-[#0F172A]">
+          User Groups
+        </h2>
+
+        <p className="text-gray-500 mt-2">
+          Configure enterprise workforce teams and departments
+        </p>
+
+      </div>
+
+      <button
+        onClick={() =>
+          setUserGroupFormOpen(
+            true
+          )
+        }
+        className="bg-gradient-to-r from-[#0F172A] to-blue-800 text-white px-6 py-4 rounded-2xl font-semibold shadow-lg"
+      >
+        + New User Group
+      </button>
+
+    </div>
+
+    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+
+      {userGroups.map(
+        (group:any) => {
+
+        const organization =
+          organizations.find(
+            (org:any) =>
+              org.id ===
+              group.organization_id
+          );
+
+        const businessUnit =
+          businessUnits.find(
+            (bu:any) =>
+              bu.id ===
+              group.business_unit_id
+          );
+
+        return (
+
+          <div
+            key={group.id}
+            className="bg-white rounded-[32px] p-8 border border-blue-100 shadow-xl"
+          >
+
+            <div className="flex items-start justify-between">
+
+              <div>
+
+                <h3 className="text-2xl font-bold text-[#0F172A]">
+                  {group.group_name}
+                </h3>
+
+                <p className="text-gray-500 mt-2">
+                  {group.group_code}
+                </p>
+
+              </div>
+
+              <div className="px-4 py-2 rounded-2xl bg-green-100 text-green-700 text-sm font-semibold">
+                {group.status}
+              </div>
+
+            </div>
+
+            <div className="mt-6 space-y-3 text-sm text-gray-600">
+
+              <div>
+                Organization:
+                {' '}
+                {
+                  organization?.name
+                }
+              </div>
+
+              <div>
+                Business Unit:
+                {' '}
+                {
+                  businessUnit?.name
+                }
+              </div>
+
+              <div>
+                {group.description}
+              </div>
+
+            </div>
+
+          </div>
+
+        );
+
+      })}
+
+    </div>
+
+    {userGroupFormOpen && (
+
+      <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 p-6 overflow-auto">
+
+        <div className="w-full max-w-4xl bg-white rounded-[36px] shadow-2xl p-10">
+
+          <div className="flex items-center justify-between mb-10">
+
+            <div>
+
+              <h2 className="text-3xl font-bold text-[#0F172A]">
+                New User Group
+              </h2>
+
+              <p className="text-gray-500 mt-2">
+                Create workforce operational groups
+              </p>
+
+            </div>
+
+            <button
+              onClick={() =>
+                setUserGroupFormOpen(
+                  false
+                )
+              }
+              className="w-12 h-12 rounded-2xl bg-gray-100 hover:bg-gray-200 text-[#0F172A] font-bold text-xl"
+            >
+              ✕
+            </button>
+
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+
+            <input
+              placeholder="Group Name"
+              value={
+                userGroupFormData.group_name
+              }
+              onChange={(e) =>
+                setUserGroupFormData({
+
+                  ...userGroupFormData,
+
+                  group_name:
+                    e.target.value,
+
+                })
+              }
+              className="border border-blue-200 rounded-2xl px-5 py-4 text-[#0F172A] placeholder:text-gray-500"
+            />
+
+            <input
+              placeholder="Group Code"
+              value={
+                userGroupFormData.group_code
+              }
+              onChange={(e) =>
+                setUserGroupFormData({
+
+                  ...userGroupFormData,
+
+                  group_code:
+                    e.target.value,
+
+                })
+              }
+              className="border border-blue-200 rounded-2xl px-5 py-4 text-[#0F172A] placeholder:text-gray-500"
+            />
+
+            <select
+              value={
+                userGroupFormData.organization_id
+              }
+              onChange={(e) =>
+                setUserGroupFormData({
+
+                  ...userGroupFormData,
+
+                  organization_id:
+                    e.target.value,
+
+                })
+              }
+              className="border border-blue-200 rounded-2xl px-5 py-4 text-[#0F172A]"
+            >
+
+              <option value="">
+                Select Organization
+              </option>
+
+              {organizations.map(
+                (organization:any) => (
+
+                <option
+                  key={organization.id}
+                  value={organization.id}
+                >
+                  {organization.name}
+                </option>
+
+              ))}
+
+            </select>
+
+            <select
+              value={
+                userGroupFormData.business_unit_id
+              }
+              onChange={(e) =>
+                setUserGroupFormData({
+
+                  ...userGroupFormData,
+
+                  business_unit_id:
+                    e.target.value,
+
+                })
+              }
+              className="border border-blue-200 rounded-2xl px-5 py-4 text-[#0F172A]"
+            >
+
+              <option value="">
+                Select Business Unit
+              </option>
+
+              {businessUnits.map(
+                (businessUnit:any) => (
+
+                <option
+                  key={businessUnit.id}
+                  value={businessUnit.id}
+                >
+                  {businessUnit.name}
+                </option>
+
+              ))}
+
+            </select>
+
+            <textarea
+              placeholder="Description"
+              value={
+                userGroupFormData.description
+              }
+              onChange={(e) =>
+                setUserGroupFormData({
+
+                  ...userGroupFormData,
+
+                  description:
+                    e.target.value,
+
+                })
+              }
+              className="md:col-span-2 border border-blue-200 rounded-2xl px-5 py-4 min-h-[140px] text-[#0F172A] placeholder:text-gray-500"
+            />
+
+          </div>
+
+          <div className="flex justify-end mt-10">
+
+            <button
+              onClick={
+                saveUserGroup
+              }
+              className="bg-gradient-to-r from-[#0F172A] to-blue-800 text-white px-8 py-4 rounded-2xl font-semibold shadow-lg"
+            >
+              Save User Group
+            </button>
+
+          </div>
+
+        </div>
+
+      </div>
+
+    )}
 
   </div>
 
@@ -5274,6 +7517,7 @@ contactId: '',
           </div>
         </div>
       )}
+      </div>
     </main>
     <div
   style={{
