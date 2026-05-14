@@ -2110,7 +2110,17 @@ case 'activities':
   };
 
   return (
-    <div className="min-h-screen flex bg-gradient-to-br from-white via-blue-50 to-blue-100">
+    <div className="min-h-screen overflow-auto bg-gradient-to-br from-white via-blue-50 to-blue-100">
+
+  <div
+    style={{
+      transform: 'scale(0.8)',
+      transformOrigin: 'top left',
+      width: '125%',
+      minHeight: '125vh',
+    }}
+    className="flex"
+  >
       <aside
         ref={navigatorRef}
         className={`${sidebarCollapsed ? 'w-24' : 'w-72'} bg-[#0F172A] text-white transition-all duration-300 min-h-screen sticky top-0 shadow-2xl`}
@@ -5725,6 +5735,7 @@ contactId: '',
   </div>
 
 )}
+</div>
 
     </div>
   );
