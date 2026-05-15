@@ -112,6 +112,43 @@ const [
 ] = useState<any[]>([]);
 
 const [
+  roles,
+  setRoles
+] = useState<any[]>([]);
+
+const [
+  permissions,
+  setPermissions
+] = useState<any[]>([]);
+
+const [
+  rolePermissions,
+  setRolePermissions
+] = useState<any[]>([]);
+
+const [
+  roleFormOpen,
+  setRoleFormOpen
+] = useState(false);
+
+const [
+  roleFormData,
+  setRoleFormData
+] = useState({
+
+  role_name: '',
+  role_code: '',
+  description: '',
+  status: 'Active',
+
+});
+
+const [
+  selectedRolePermissions,
+  setSelectedRolePermissions
+] = useState<string[]>([]);
+
+const [
   userGroupFormOpen,
   setUserGroupFormOpen
 ] = useState(false);
@@ -129,6 +166,35 @@ const [
   status: 'Active',
 
 });
+const [
+  selectedAdminRecord,
+  setSelectedAdminRecord
+] = useState<any>(null);
+
+const [
+  adminModalMode,
+  setAdminModalMode
+] = useState('');
+
+const [
+  userGroupMembers,
+  setUserGroupMembers
+] = useState<any[]>([]);
+
+const [
+  selectedGroupUsers,
+  setSelectedGroupUsers
+] = useState<string[]>([]);
+
+const [
+  groupWorkspaceOpen,
+  setGroupWorkspaceOpen
+] = useState(false);
+
+const [
+  adminActionMenu,
+  setAdminActionMenu
+] = useState<string | null>(null);
 
 const [
   currentUser,
@@ -212,8 +278,13 @@ const [
 ] = useState({
 
   name: '',
+
   business_unit_code: '',
+
   organization_id: '',
+
+  description: '',
+
   status: 'Active',
 
 });
@@ -270,20 +341,37 @@ const [quoteLineItems, setQuoteLineItems] =
 
   if (!supabase) return;
 
-  const { error } =
-    await supabase
-      .from('organizations')
-      .insert([
-        {
-          ...organizationFormData,
-        },
-      ]);
+    if (
+  adminModalMode ===
+  'editOrganization'
+) {
 
-  if (!error) {
-
-    setOrganizationFormOpen(
-      false
+  await supabase
+    .from('organizations')
+    .update({
+      ...organizationFormData,
+    })
+    .eq(
+      'id',
+      selectedAdminRecord.id
     );
+
+} else {
+
+  await supabase
+    .from('organizations')
+    .insert([
+      {
+        ...organizationFormData,
+      },
+    ]);
+
+}
+    setAdminModalMode('');
+
+setSelectedAdminRecord(
+  null
+);
 
     setOrganizationFormData({
 
@@ -297,44 +385,72 @@ const [quoteLineItems, setQuoteLineItems] =
       currency: '',
 
     });
+    setOrganizationFormOpen(
+      false
+    );
 
     fetchOrganizations();
 
-  }
+  
 
 };
 const saveBusinessUnit =
   async () => {
 
   if (!supabase) return;
+    if (
+  adminModalMode ===
+  'editBusinessUnit'
+) {
 
-  const { error } =
-    await supabase
-      .from('business_units')
-      .insert([
-        {
-          ...businessUnitFormData,
-        },
-      ]);
-
-  if (!error) {
-
-    setBusinessUnitFormOpen(
-      false
+  await supabase
+    .from('business_units')
+    .update({
+      ...businessUnitFormData,
+    })
+    .eq(
+      'id',
+      selectedAdminRecord.id
     );
+
+}  else {
+
+  await supabase
+    .from('business_units')
+    .insert([
+      {
+        ...businessUnitFormData,
+      },
+    ]);
+
+}
+
+    setAdminModalMode('');
+
+setSelectedAdminRecord(
+  null
+);
 
     setBusinessUnitFormData({
 
-      name: '',
-      business_unit_code: '',
-      organization_id: '',
-      status: 'Active',
+  name: '',
 
-    });
+  business_unit_code: '',
+
+  organization_id: '',
+
+  description: '',
+
+  status: 'Active',
+
+});
+setBusinessUnitFormOpen(
+      false
+    );
 
     fetchBusinessUnits();
 
-  }
+  
 
 };
 const saveEnterpriseUser =
@@ -342,34 +458,80 @@ const saveEnterpriseUser =
 
   if (!supabase) return;
 
-  const {
-    data: authData,
-    error: authError,
-  } =
-    await adminSupabase.auth.admin.createUser({
+  if (
+    adminModalMode ===
+    'editUser'
+  ) {
 
-      email:
-        userFormData.email,
+    await supabase
+      .from('enterprise_users')
+      .update({
 
-      password:
-        userFormData.temporary_password,
+        employee_code:
+          userFormData.employee_code,
 
-      email_confirm: true,
+        username:
+          userFormData.username,
 
-    });
+        first_name:
+          userFormData.first_name,
 
-  if (authError) {
+        last_name:
+          userFormData.last_name,
 
-    alert(authError.message);
+        email:
+          userFormData.email,
 
-    return;
+        phone:
+          userFormData.phone,
 
-  }
+        designation:
+          userFormData.designation,
 
-  const authUserId =
-    authData.user.id;
+        organization_id:
+          userFormData.organization_id,
 
-  const { error } =
+        business_unit_id:
+          userFormData.business_unit_id,
+
+        status:
+          userFormData.status,
+
+      })
+      .eq(
+        'id',
+        selectedAdminRecord.id
+      );
+
+  } else {
+
+    const {
+      data: authData,
+      error: authError,
+    } =
+      await adminSupabase.auth.admin.createUser({
+
+        email:
+          userFormData.email,
+
+        password:
+          userFormData.temporary_password,
+
+        email_confirm: true,
+
+      });
+
+    if (authError) {
+
+      alert(authError.message);
+
+      return;
+
+    }
+
+    const authUserId =
+      authData.user.id;
+
     await supabase
       .from('enterprise_users')
       .insert([
@@ -381,29 +543,32 @@ const saveEnterpriseUser =
         },
       ]);
 
-  if (!error) {
-
-    setUserFormOpen(false);
-
-    setUserFormData({
-
-      employee_code: '',
-      username: '',
-      first_name: '',
-      last_name: '',
-      email: '',
-      temporary_password: '',
-      phone: '',
-      designation: '',
-      organization_id: '',
-      business_unit_id: '',
-      status: 'Active',
-
-    });
-
-    fetchEnterpriseUsers();
-
   }
+
+  setAdminModalMode('');
+
+  setSelectedAdminRecord(
+    null
+  );
+
+  setUserFormData({
+
+    employee_code: '',
+    username: '',
+    first_name: '',
+    last_name: '',
+    email: '',
+    temporary_password: '',
+    phone: '',
+    designation: '',
+    organization_id: '',
+    business_unit_id: '',
+    status: 'Active',
+
+  });
+  setUserFormOpen(false);
+
+  fetchEnterpriseUsers();
 
 };
 
@@ -412,20 +577,41 @@ const saveUserGroup =
 
   if (!supabase) return;
 
-  const { error } =
-    await supabase
-      .from('user_groups')
-      .insert([
-        {
-          ...userGroupFormData,
-        },
-      ]);
+    if (
+  adminModalMode ===
+  'editUserGroup'
+) {
 
-  if (!error) {
-
-    setUserGroupFormOpen(
-      false
+  await supabase
+    .from('user_groups')
+    .update({
+      ...userGroupFormData,
+    })
+    .eq(
+      'id',
+      selectedAdminRecord.id
     );
+
+} else {
+
+  await supabase
+    .from('user_groups')
+    .insert([
+      {
+        ...userGroupFormData,
+      },
+    ]);
+
+}
+
+ 
+
+    
+    setAdminModalMode('');
+
+setSelectedAdminRecord(
+  null
+);
 
     setUserGroupFormData({
 
@@ -437,8 +623,293 @@ const saveUserGroup =
       status: 'Active',
 
     });
+    setUserGroupFormOpen(
+      false
+    );
 
     fetchUserGroups();
+
+  
+
+};
+
+const saveRole =
+  async () => {
+
+  if (!supabase) return;
+
+  let roleId =
+    selectedAdminRecord?.id;
+
+  if (
+    adminModalMode ===
+    'editRole'
+  ) {
+
+    await supabase
+      .from('roles')
+      .update({
+        ...roleFormData,
+      })
+      .eq(
+        'id',
+        selectedAdminRecord.id
+      );
+
+  } else {
+
+    const { data } =
+      await supabase
+        .from('roles')
+        .insert([
+          {
+            ...roleFormData,
+          },
+        ])
+        .select()
+        .single();
+
+    roleId = data.id;
+
+  }
+
+  if (roleId) {
+
+    await supabase
+      .from('role_permissions')
+      .delete()
+      .eq('role_id', roleId);
+
+    if (
+      selectedRolePermissions.length > 0
+    ) {
+
+      await supabase
+        .from('role_permissions')
+        .insert(
+
+          selectedRolePermissions.map(
+            (
+              permissionId
+            ) => ({
+
+              role_id: roleId,
+
+              permission_id:
+                permissionId,
+
+            })
+          )
+        );
+    }
+
+  }
+
+  setRoleFormData({
+
+    role_name: '',
+    role_code: '',
+    description: '',
+    status: 'Active',
+
+  });
+
+  setSelectedRolePermissions(
+    []
+  );
+
+  setRoleFormOpen(false);
+
+  setAdminModalMode('');
+
+  setSelectedAdminRecord(
+    null
+  );
+
+  fetchRoles();
+
+};
+
+const addUsersToGroup =
+  async () => {
+
+  if (
+    !selectedAdminRecord
+  ) return;
+
+  if (!supabase) return;
+
+  const existingUserIds =
+  userGroupMembers.map(
+    (member) =>
+      member.enterprise_user_id
+  );
+
+const filteredUsers =
+  selectedGroupUsers.filter(
+    (userId) =>
+
+      !existingUserIds.includes(
+        userId
+      )
+  );
+
+const payload =
+  filteredUsers.map(
+    (userId) => ({
+
+      user_group_id:
+        selectedAdminRecord.id,
+
+      enterprise_user_id:
+        userId,
+
+    })
+  );
+
+  await supabase
+    .from(
+      'user_group_members'
+    )
+    .insert(payload);
+
+  setSelectedGroupUsers([]);
+
+  fetchGroupMembers(
+    selectedAdminRecord.id
+  );
+
+};
+const removeUserFromGroup =
+  async (
+    membershipId: string
+  ) => {
+
+  if (!supabase) return;
+
+  await supabase
+    .from(
+      'user_group_members'
+    )
+    .delete()
+    .eq(
+      'id',
+      membershipId
+    );
+
+  fetchGroupMembers(
+    selectedAdminRecord.id
+  );
+
+};
+const deleteAdminRecord =
+  async (
+    table:string,
+    id:string
+  ) => {
+
+  if (!supabase) return;
+
+  const confirmed =
+    window.confirm(
+      'Are you sure you want to delete this record?'
+    );
+
+  if (!confirmed) return;
+
+  const { error } =
+    await supabase
+      .from(table)
+      .delete()
+      .eq('id', id);
+
+  if (!error) {
+
+    if (
+      table === 'organizations'
+    ) {
+
+      fetchOrganizations();
+
+    }
+
+    if (
+      table === 'business_units'
+    ) {
+
+      fetchBusinessUnits();
+
+    }
+
+    if (
+      table === 'enterprise_users'
+    ) {
+
+      fetchEnterpriseUsers();
+
+    }
+
+    if (
+      table === 'user_groups'
+    ) {
+
+      fetchUserGroups();
+
+    }
+
+  }
+
+};
+const updateAdminStatus =
+  async (
+    table:string,
+    id:string,
+    status:string
+  ) => {
+
+  if (!supabase) return;
+
+  const { error } =
+    await supabase
+      .from(table)
+      .update({
+        status,
+      })
+      .eq('id', id);
+
+  if (!error) {
+
+    if (
+      table === 'organizations'
+    ) {
+
+      fetchOrganizations();
+
+    }
+
+    if (
+      table === 'business_units'
+    ) {
+
+      fetchBusinessUnits();
+
+    }
+
+    if (
+      table === 'enterprise_users'
+    ) {
+
+      fetchEnterpriseUsers();
+
+    }
+
+    if (
+      table === 'user_groups'
+    ) {
+
+      fetchUserGroups();
+
+    }
 
   }
 
@@ -634,6 +1105,42 @@ const fetchEnterpriseUsers =
   }
 
 };
+
+const fetchGroupMembers =
+  async (
+    groupId: string
+  ) => {
+
+  if (!supabase) return;
+
+  const { data } =
+    await supabase
+      .from(
+        'user_group_members'
+      )
+      .select(`
+        id,
+        enterprise_user_id,
+        enterprise_users (
+          id,
+          first_name,
+          last_name,
+          email,
+          employee_code
+        )
+      `)
+      .eq(
+        'user_group_id',
+        groupId
+      );
+
+  if (data) {
+
+    setUserGroupMembers(data);
+
+  }
+
+};
 const fetchUserGroups =
   async () => {
 
@@ -655,43 +1162,128 @@ const fetchUserGroups =
 
 };
 
+const fetchRoles =
+  async () => {
+
+  if (!supabase) return;
+
+  const { data } =
+    await supabase
+      .from('roles')
+      .select('*')
+      .order('created_at', {
+        ascending: false,
+      });
+
+  if (data) {
+
+    setRoles(data);
+
+  }
+
+};
+
+const fetchPermissions =
+  async () => {
+
+  if (!supabase) return;
+
+  const { data } =
+    await supabase
+      .from('permissions')
+      .select('*')
+      .order('module_name');
+
+  if (data) {
+
+    setPermissions(data);
+
+  }
+
+};
+
+const fetchRolePermissions =
+  async (
+    roleId: string
+  ) => {
+
+  if (!supabase) return [];
+
+  const { data, error } =
+    await supabase
+      .from('role_permissions')
+      .select(`
+        id,
+        permission_id,
+        permissions (
+          id,
+          permission_name,
+          permission_code,
+          module_name
+        )
+      `)
+      .eq(
+        'role_id',
+        roleId
+      );
+
+  if (error) {
+
+    console.error(error);
+
+    return [];
+
+  }
+
+  if (data) {
+
+    setRolePermissions(data);
+
+  }
+
+  return data || [];
+
+};
+
 const fetchCurrentUser =
   async () => {
 
-  if (!supabase || !session)
-    return;
+  if (
+    !supabase ||
+    !session?.user?.email
+  ) return;
 
-  const { data } =
+  const { data, error } =
     await supabase
       .from('enterprise_users')
       .select('*')
       .eq(
-        'auth_user_id',
-        session.user.id
+        'email',
+        session.user.email
       )
       .single();
 
-  if (data) {
+  if (data && !error) {
 
-  setCurrentUser(data);
+    setCurrentUser(data);
 
-  setProfileFormData({
+    setProfileFormData({
 
-    first_name:
-      data.first_name || '',
+  first_name:
+    data.first_name || '',
 
-    last_name:
-      data.last_name || '',
+  last_name:
+    data.last_name || '',
 
-    phone:
-      data.phone || '',
+  phone:
+    data.phone || '',
 
-    designation:
-      data.designation || '',
+  designation:
+    data.designation || '',
 
-  });
+});
 
-}
+  }
 
 };
 
@@ -1080,37 +1672,49 @@ useEffect(() => {
 
 useEffect(() => {
 
-  if (!session) return;
+  const initializeApp =
+    async () => {
 
-  fetchCustomers();
+    if (!session?.user?.id)
+      return;
 
-  fetchProducts();
+    await fetchCustomers();
 
-  fetchLeads();
+    await fetchProducts();
 
-  fetchOpportunities();
+    await fetchLeads();
 
-  fetchOrders();
+    await fetchOpportunities();
 
-  fetchInvoices();
+    await fetchOrders();
 
-  fetchContacts();
+    await fetchInvoices();
 
-  fetchActivities();
+    await fetchContacts();
 
-  fetchQuoteTemplates();
+    await fetchActivities();
 
-  fetchOrganizations();
+    await fetchQuoteTemplates();
 
-  fetchBusinessUnits();
+    await fetchOrganizations();
 
-  fetchEnterpriseUsers();
+    await fetchBusinessUnits();
 
-  fetchUserGroups();
+    await fetchEnterpriseUsers();
 
-  fetchCurrentUser();
+    await fetchUserGroups();
 
-}, [session]);
+    await fetchRoles();
+
+await fetchPermissions();
+
+    await fetchCurrentUser();
+
+  };
+
+  initializeApp();
+
+}, [session?.user?.id]);
 
   const [createFormData, setCreateFormData] = useState<any>({
     name: '',
@@ -2983,166 +3587,6 @@ className="relative w-12 h-12 rounded-2xl bg-white/10 hover:bg-white/20 text-whi
   </div>
 
 )}
-{profilePageOpen && (
-  <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 p-6 overflow-auto">
-
-    <div className="w-full max-w-4xl bg-white rounded-[36px] shadow-2xl p-10">
-
-      <div className="flex items-center justify-between mb-10">
-
-        <div>
-
-          <h2 className="text-3xl font-bold text-[#0F172A]">
-            My Profile
-          </h2>
-
-          <p className="text-gray-500 mt-2">
-            Manage your profile and password
-          </p>
-
-        </div>
-
-        <button
-          onClick={() =>
-            setProfilePageOpen(
-              false
-            )
-          }
-          className="w-12 h-12 rounded-2xl bg-gray-100 hover:bg-gray-200 text-[#0F172A] font-bold text-xl"
-        >
-          ✕
-        </button>
-
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-
-        <input
-  value={
-  profileFormData.first_name || ''
-}
-  onChange={(e) =>
-    setProfileFormData({
-
-      ...profileFormData,
-
-      first_name:
-        e.target.value,
-
-    })
-  }
-  className="border border-blue-200 rounded-2xl px-5 py-4 text-[#0F172A]"
-/>
-
-        <input
-  value={
-    profileFormData.last_name || ''
-  }
-  onChange={(e) =>
-    setProfileFormData({
-
-      ...profileFormData,
-
-      last_name:
-        e.target.value,
-
-    })
-  }
-  className="border border-blue-200 rounded-2xl px-5 py-4 text-[#0F172A]"
-/>
-
-        <input
-          value={
-            currentUser.username || ''
-          }
-          readOnly
-          className="border border-blue-200 rounded-2xl px-5 py-4 bg-gray-50 text-[#0F172A]"
-        />
-
-        <input
-          value={
-            currentUser.email || ''
-          }
-          readOnly
-          className="border border-blue-200 rounded-2xl px-5 py-4 bg-gray-50 text-[#0F172A]"
-        />
-
-        <input
-  value={
-    profileFormData.phone || ''
-  }
-  onChange={(e) =>
-    setProfileFormData({
-
-      ...profileFormData,
-
-      phone:
-        e.target.value,
-
-    })
-  }
-  className="border border-blue-200 rounded-2xl px-5 py-4 text-[#0F172A]"
-/>
-
-        <input
-          value={
-            currentUser.designation || ''
-          }
-          readOnly
-          className="border border-blue-200 rounded-2xl px-5 py-4 bg-gray-50 text-[#0F172A]"
-        />
-
-      </div>
-
-      <div className="flex justify-end mt-10">
-
-  <button
-    onClick={saveMyProfile}
-    className="bg-gradient-to-r from-[#0F172A] to-blue-800 text-white px-8 py-4 rounded-2xl font-semibold"
-  >
-    Save Profile
-  </button>
-
-</div>
-
-      <div className="mt-10 border-t border-blue-100 pt-10">
-
-        <h3 className="text-2xl font-bold text-[#0F172A] mb-6">
-          Reset Password
-        </h3>
-
-        <div className="flex gap-4">
-
-          <input
-            type="password"
-            placeholder="New Password"
-            value={newPassword}
-            onChange={(e) =>
-              setNewPassword(
-                e.target.value
-              )
-            }
-            className="flex-1 border border-blue-200 rounded-2xl px-5 py-4 text-[#0F172A] placeholder:text-gray-500"
-          />
-
-          <button
-            onClick={
-              resetMyPassword
-            }
-            className="bg-gradient-to-r from-[#0F172A] to-blue-800 text-white px-8 py-4 rounded-2xl font-semibold"
-          >
-            Update Password
-          </button>
-
-        </div>
-
-      </div>
-
-    </div>
-
-  </div>
-
-)}
 
       </div>
 
@@ -3450,14 +3894,20 @@ className="relative w-12 h-12 rounded-2xl bg-white/10 hover:bg-white/20 text-whi
     : adminToolPage ===
       'users'
     ? 'Users'
-    : 'User Groups'
+    : adminToolPage ===
+      'userGroups'
+    ? 'User Groups'
+    : adminToolPage ===
+      'securityConsole'
+    ? 'Security Console'
+    : 'Admin Tools'
 }
 
     </h1>
 
     <p className="text-gray-600 mt-2 text-lg">
 
-      {
+     {
   adminToolPage === 'home'
     ? 'Configure templates, branding, workflows and system tools.'
     : adminToolPage ===
@@ -3472,7 +3922,13 @@ className="relative w-12 h-12 rounded-2xl bg-white/10 hover:bg-white/20 text-whi
     : adminToolPage ===
       'users'
     ? 'Manage enterprise users, workforce and access accounts.'
-    : 'Configure workforce groups and department structures.'
+    : adminToolPage ===
+      'userGroups'
+    ? 'Configure workforce groups and department structures.'
+    : adminToolPage ===
+      'securityConsole'
+    ? 'Manage enterprise roles, permissions and security access.'
+    : 'Configure enterprise administration.'
 }
 
     </p>
@@ -3615,6 +4071,31 @@ className="relative w-12 h-12 rounded-2xl bg-white/10 hover:bg-white/20 text-whi
 
 </button>
 
+<div
+  onClick={() =>
+    setAdminToolPage(
+      'securityConsole'
+    )
+  }
+  className="bg-white rounded-[32px] p-8 shadow-xl border border-blue-100 hover:shadow-2xl transition-all cursor-pointer"
+>
+
+  <div className="text-5xl">
+    🔐
+  </div>
+
+  <h2 className="mt-6 text-2xl font-bold text-[#0F172A]">
+    Security Console
+  </h2>
+
+  <p className="mt-3 text-gray-500 leading-relaxed">
+    Manage roles, permissions,
+    access policies and
+    enterprise security.
+  </p>
+
+</div>
+
     <div className="bg-white rounded-[32px] p-8 border border-dashed border-blue-200 text-gray-400 flex flex-col justify-center items-center min-h-[240px]">
 
       <div className="text-5xl mb-4">
@@ -3628,6 +4109,86 @@ className="relative w-12 h-12 rounded-2xl bg-white/10 hover:bg-white/20 text-whi
     </div>
 
   </div>
+
+) : adminToolPage === 'securityConsole' ? (
+
+<div className="space-y-8">
+
+  <div className="flex items-center justify-between">
+
+    <div>
+
+      <h2 className="text-3xl font-bold text-[#0F172A]">
+        Security Console
+      </h2>
+
+      <p className="text-gray-500 mt-2">
+        Manage enterprise roles and permissions
+      </p>
+
+    </div>
+
+    <button
+  type="button"
+ onClick={() => {
+
+  setSelectedAdminRecord(null);
+
+  setRoleFormData({
+    role_name: '',
+    role_code: '',
+    description: '',
+    status: 'Active',
+  });
+
+  setSelectedRolePermissions([]);
+
+  setAdminModalMode('createRole');
+
+  setRoleFormOpen(true);
+
+}}
+  className="bg-[#0F172A] text-white px-6 py-4 rounded-2xl"
+>
+  + New Role
+</button>
+
+  </div>
+
+  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+
+    {roles.map((role:any) => (
+
+      <div
+        key={role.id}
+        className="bg-white rounded-[28px] p-6 shadow-lg border border-blue-100"
+      >
+
+        <h2 className="text-2xl font-bold text-[#0F172A]">
+
+          {role.role_name}
+
+        </h2>
+
+        <p className="text-sm text-gray-500 mt-2">
+
+          {role.role_code}
+
+        </p>
+
+        <p className="mt-5 text-gray-600">
+
+          {role.description}
+
+        </p>
+
+      </div>
+
+    ))}
+
+  </div>
+
+</div>
 
 ) : adminToolPage === 'organizations' ? (
 
@@ -3648,14 +4209,40 @@ className="relative w-12 h-12 rounded-2xl bg-white/10 hover:bg-white/20 text-whi
       </div>
 
       <button
-        onClick={() =>
-          setOrganizationFormOpen(
-            true
-          )
-        }
+        onClick={() => {
+
+  setAdminModalMode('');
+
+  setSelectedAdminRecord(
+    null
+  );
+
+  setOrganizationFormData({
+
+    name: '',
+    organization_code: '',
+    status: 'Active',
+    industry: '',
+    website: '',
+    country: '',
+    timezone: '',
+    currency: '',
+
+  });
+
+  setOrganizationFormOpen(
+    true
+  );
+
+}}
         className="bg-gradient-to-r from-[#0F172A] to-blue-800 text-white px-6 py-4 rounded-2xl font-semibold shadow-lg"
       >
-        + New Organization
+        {
+  adminModalMode ===
+  'editOrganization'
+    ? 'Save Changes'
+    : 'Create Organization'
+}
       </button>
 
     </div>
@@ -3666,13 +4253,143 @@ className="relative w-12 h-12 rounded-2xl bg-white/10 hover:bg-white/20 text-whi
         (organization:any) => (
 
         <div
-          key={organization.id}
-          className="bg-white rounded-[32px] p-8 border border-blue-100 shadow-xl"
-        >
+  key={organization.id}
+  className="relative bg-white rounded-[32px] p-8 border border-blue-100 shadow-xl"
+>
 
           <div className="flex items-start justify-between">
 
             <div>
+              <div className="relative">
+
+  <button
+    onClick={() =>
+
+      setAdminActionMenu(
+
+        adminActionMenu ===
+        organization.id
+
+          ? null
+
+          : organization.id
+
+      )
+
+    }
+    className="w-10 h-10 rounded-xl hover:bg-gray-100 text-[#0F172A] text-xl"
+  >
+    ⋯
+  </button>
+
+  {adminActionMenu ===
+    organization.id && (
+
+    <div className="absolute top-12 left-0 w-56 bg-white border border-blue-100 rounded-2xl shadow-2xl z-50 overflow-hidden">
+
+      <button
+        onClick={() => {
+
+          setSelectedAdminRecord(
+            organization
+          );
+
+          setAdminModalMode(
+            'editOrganization'
+          );
+
+          setOrganizationFormData({
+
+  name:
+    organization.name || '',
+
+  organization_code:
+    organization.organization_code || '',
+
+  status:
+    organization.status || 'Active',
+
+  industry:
+    organization.industry || '',
+
+  website:
+    organization.website || '',
+
+  country:
+    organization.country || '',
+
+  timezone:
+    organization.timezone || '',
+
+  currency:
+    organization.currency || '',
+
+});
+
+          setOrganizationFormOpen(
+            true
+          );
+
+          setAdminActionMenu(
+            null
+          );
+
+        }}
+        className="w-full text-left px-5 py-4 hover:bg-gray-50 text-[#0F172A]"
+      >
+        Edit
+      </button>
+
+      <button
+        onClick={() => {
+
+          updateAdminStatus(
+            'organizations',
+            organization.id,
+            organization.status ===
+            'Active'
+              ? 'Inactive'
+              : 'Active'
+          );
+
+          setAdminActionMenu(
+            null
+          );
+
+        }}
+        className="w-full text-left px-5 py-4 hover:bg-gray-50 text-[#0F172A]"
+      >
+        {
+          organization.status ===
+          'Active'
+            ? 'Deactivate'
+            : 'Activate'
+        }
+      </button>
+
+      <button
+        onClick={() => {
+
+          deleteAdminRecord(
+            'organizations',
+            organization.id
+          );
+
+          setAdminActionMenu(
+            null
+          );
+
+        }}
+        className="w-full text-left px-5 py-4 hover:bg-red-50 text-red-600"
+      >
+        Delete
+      </button>
+
+    </div>
+
+  )}
+
+</div>
 
               <h3 className="text-2xl font-bold text-[#0F172A]">
                 {organization.name}
@@ -3730,7 +4447,12 @@ className="relative w-12 h-12 rounded-2xl bg-white/10 hover:bg-white/20 text-whi
         <div>
 
           <h2 className="text-3xl font-bold text-[#0F172A]">
-            New Organization
+            {
+  adminModalMode ===
+  'editOrganization'
+    ? 'Edit Organization'
+    : 'Create New Organization'
+}
           </h2>
 
           <p className="text-gray-500 mt-2">
@@ -3897,14 +4619,37 @@ className="border border-blue-200 rounded-2xl px-5 py-4 text-[#0F172A] placehold
       </div>
 
       <button
-        onClick={() =>
-          setBusinessUnitFormOpen(
-            true
-          )
-        }
+        onClick={() => {
+
+  setAdminModalMode('');
+
+  setSelectedAdminRecord(
+    null
+  );
+
+  setBusinessUnitFormData({
+
+    name: '',
+    business_unit_code: '',
+    status: 'Active',
+    organization_id: '',
+    description: '',
+
+  });
+
+  setBusinessUnitFormOpen(
+    true
+  );
+
+}}
         className="bg-gradient-to-r from-[#0F172A] to-blue-800 text-white px-6 py-4 rounded-2xl font-semibold shadow-lg"
       >
-        + New Business Unit
+        {
+  adminModalMode ===
+  'editBusinessUnit'
+    ? 'Save Changes'
+    : 'Create Business Unit'
+}
       </button>
 
     </div>
@@ -3924,9 +4669,131 @@ className="border border-blue-200 rounded-2xl px-5 py-4 text-[#0F172A] placehold
         return (
 
           <div
-            key={businessUnit.id}
-            className="bg-white rounded-[32px] p-8 border border-blue-100 shadow-xl"
-          >
+  key={businessUnit.id}
+  className="relative bg-white rounded-[32px] p-8 border border-blue-100 shadow-xl"
+>
+
+  <div className="relative">
+
+  <button
+    onClick={() =>
+
+      setAdminActionMenu(
+
+        adminActionMenu ===
+        businessUnit.id
+
+          ? null
+
+          : businessUnit.id
+
+      )
+
+    }
+    className="w-10 h-10 rounded-xl hover:bg-gray-100 text-[#0F172A] text-xl"
+  >
+    ⋯
+  </button>
+
+  {adminActionMenu ===
+    businessUnit.id && (
+
+    <div className="absolute top-12 left-0 w-56 bg-white border border-blue-100 rounded-2xl shadow-2xl z-50 overflow-hidden">
+
+      <button
+        onClick={() => {
+
+          setSelectedAdminRecord(
+            businessUnit
+          );
+
+          setAdminModalMode(
+            'editBusinessUnit'
+          );
+
+          setBusinessUnitFormData({
+
+            name:
+              businessUnit.name || '',
+
+            business_unit_code:
+  businessUnit.business_unit_code || '',
+
+            status:
+              businessUnit.status || '',
+
+            organization_id:
+              businessUnit.organization_id || '',
+
+            description:
+              businessUnit.description || '',
+
+          });
+
+          setBusinessUnitFormOpen(
+            true
+          );
+
+          setAdminActionMenu(
+            null
+          );
+
+        }}
+        className="w-full text-left px-5 py-4 hover:bg-gray-50 text-[#0F172A]"
+      >
+        Edit
+      </button>
+
+      <button
+        onClick={() => {
+
+          updateAdminStatus(
+            'business_units',
+            businessUnit.id,
+            businessUnit.status ===
+            'Active'
+              ? 'Inactive'
+              : 'Active'
+          );
+
+          setAdminActionMenu(
+            null
+          );
+
+        }}
+        className="w-full text-left px-5 py-4 hover:bg-gray-50 text-[#0F172A]"
+      >
+        {
+          businessUnit.status ===
+          'Active'
+            ? 'Deactivate'
+            : 'Activate'
+        }
+      </button>
+
+      <button
+        onClick={() => {
+
+          deleteAdminRecord(
+            'business_units',
+            businessUnit.id
+          );
+
+          setAdminActionMenu(
+            null
+          );
+
+        }}
+        className="w-full text-left px-5 py-4 hover:bg-red-50 text-red-600"
+      >
+        Delete
+      </button>
+
+    </div>
+
+  )}
+
+</div>
 
             <div className="flex items-start justify-between">
 
@@ -3981,7 +4848,12 @@ className="border border-blue-200 rounded-2xl px-5 py-4 text-[#0F172A] placehold
             <div>
 
               <h2 className="text-3xl font-bold text-[#0F172A]">
-                New Business Unit
+                {
+  adminModalMode ===
+  'editBusinessUnit'
+    ? 'Edit Business Unit'
+    : 'Create New Business Unit'
+}
               </h2>
 
               <p className="text-gray-500 mt-2">
@@ -4113,7 +4985,12 @@ className="border border-blue-200 rounded-2xl px-5 py-4 text-[#0F172A] placehold
         }
         className="bg-gradient-to-r from-[#0F172A] to-blue-800 text-white px-6 py-4 rounded-2xl font-semibold shadow-lg"
       >
-        + New User
+        {
+  adminModalMode ===
+  'editUser'
+    ? 'Save Changes'
+    : 'Create User'
+}
       </button>
 
     </div>
@@ -4136,38 +5013,154 @@ className="border border-blue-200 rounded-2xl px-5 py-4 text-[#0F172A] placehold
               bu.id ===
               user.business_unit_id
           );
-          const [
-  userGroups,
-  setUserGroups
-] = useState<any[]>([]);
-
-const [
-  userGroupFormOpen,
-  setUserGroupFormOpen
-] = useState(false);
-
-const [
-  userGroupFormData,
-  setUserGroupFormData
-] = useState({
-
-  group_name: '',
-  group_code: '',
-  description: '',
-  organization_id: '',
-  business_unit_id: '',
-  status: 'Active',
-
-});
+          
 
         return (
 
           <div
-            key={user.id}
-            className="bg-white rounded-[32px] p-8 border border-blue-100 shadow-xl"
-          >
+  key={user.id}
+  className="relative bg-white rounded-[32px] p-8 border border-blue-100 shadow-xl"
+>
 
             <div className="flex items-start justify-between">
+              <div className="relative">
+
+  <button
+    onClick={() =>
+
+      setAdminActionMenu(
+
+        adminActionMenu ===
+        user.id
+
+          ? null
+
+          : user.id
+
+      )
+
+    }
+    className="w-10 h-10 rounded-xl hover:bg-gray-100 text-[#0F172A] text-xl"
+  >
+    ⋯
+  </button>
+
+  {adminActionMenu ===
+    user.id && (
+
+    <div className="absolute top-12 left-0 w-56 bg-white border border-blue-100 rounded-2xl shadow-2xl z-50 overflow-hidden">
+
+      <button
+        onClick={() => {
+
+          setSelectedAdminRecord(
+            user
+          );
+
+          setAdminModalMode(
+            'editUser'
+          );
+
+          setUserFormData({
+
+  employee_code:
+    user.employee_code || '',
+
+  username:
+    user.username || '',
+
+  first_name:
+    user.first_name || '',
+
+  last_name:
+    user.last_name || '',
+
+  email:
+    user.email || '',
+
+  temporary_password: '',
+
+  phone:
+    user.phone || '',
+
+  designation:
+    user.designation || '',
+
+  organization_id:
+    user.organization_id || '',
+
+  business_unit_id:
+    user.business_unit_id || '',
+
+  status:
+    user.status || 'Active',
+
+});
+
+          setUserFormOpen(
+            true
+          );
+
+          setAdminActionMenu(
+            null
+          );
+
+        }}
+        className="w-full text-left px-5 py-4 hover:bg-gray-50 text-[#0F172A]"
+      >
+        Edit
+      </button>
+
+      <button
+        onClick={() => {
+
+          updateAdminStatus(
+            'enterprise_users',
+            user.id,
+            user.status ===
+            'Active'
+              ? 'Inactive'
+              : 'Active'
+          );
+
+          setAdminActionMenu(
+            null
+          );
+
+        }}
+        className="w-full text-left px-5 py-4 hover:bg-gray-50 text-[#0F172A]"
+      >
+        {
+          user.status ===
+          'Active'
+            ? 'Deactivate'
+            : 'Activate'
+        }
+      </button>
+
+      <button
+        onClick={() => {
+
+          deleteAdminRecord(
+            'enterprise_users',
+            user.id
+          );
+
+          setAdminActionMenu(
+            null
+          );
+
+        }}
+        className="w-full text-left px-5 py-4 hover:bg-red-50 text-red-600"
+      >
+        Delete
+      </button>
+
+    </div>
+
+  )}
+
+</div>
 
               <div>
 
@@ -4240,7 +5233,12 @@ const [
             <div>
 
               <h2 className="text-3xl font-bold text-[#0F172A]">
-                New User
+                {
+  adminModalMode ===
+  'editUser'
+    ? 'Edit User'
+    : 'Create New User'
+}
               </h2>
 
               <p className="text-gray-500 mt-2">
@@ -4490,14 +5488,43 @@ const [
       </div>
 
       <button
-        onClick={() =>
-          setUserGroupFormOpen(
-            true
-          )
-        }
+        onClick={() => {
+
+  setAdminModalMode('');
+
+  setSelectedAdminRecord(
+    null
+  );
+
+  setUserFormData({
+
+    employee_code: '',
+    username: '',
+    first_name: '',
+    last_name: '',
+    email: '',
+    temporary_password: '',
+    phone: '',
+    designation: '',
+    organization_id: '',
+    business_unit_id: '',
+    status: 'Active',
+
+  });
+
+  setUserFormOpen(
+    true
+  );
+
+}}
         className="bg-gradient-to-r from-[#0F172A] to-blue-800 text-white px-6 py-4 rounded-2xl font-semibold shadow-lg"
       >
-        + New User Group
+        {
+  adminModalMode ===
+  'editUserGroup'
+    ? 'Save Changes'
+    : 'Create User Group'
+}
       </button>
 
     </div>
@@ -4524,13 +5551,161 @@ const [
         return (
 
           <div
-            key={group.id}
-            className="bg-white rounded-[32px] p-8 border border-blue-100 shadow-xl"
-          >
+  key={group.id}
+  onClick={() => {
+
+  setSelectedAdminRecord(
+    group
+  );
+
+  setAdminModalMode(
+    'groupWorkspace'
+  );
+
+  fetchGroupMembers(
+    group.id
+  );
+
+  setGroupWorkspaceOpen(
+    true
+  );
+
+}}
+  className="relative bg-white rounded-[32px] p-8 border border-blue-100 shadow-xl cursor-pointer hover:scale-[1.01] transition-all"
+>
 
             <div className="flex items-start justify-between">
 
               <div>
+                <div
+  className="relative"
+  onClick={(e) =>
+    e.stopPropagation()
+  }
+>
+
+  <button
+    onClick={() =>
+
+      setAdminActionMenu(
+
+        adminActionMenu ===
+        group.id
+
+          ? null
+
+          : group.id
+
+      )
+
+    }
+    className="w-10 h-10 rounded-xl hover:bg-gray-100 text-[#0F172A] text-xl"
+  >
+    ⋯
+  </button>
+
+  {adminActionMenu ===
+    group.id && (
+
+    <div className="absolute top-12 left-0 w-56 bg-white border border-blue-100 rounded-2xl shadow-2xl z-50 overflow-hidden">
+
+      <button
+        onClick={() => {
+
+          setSelectedAdminRecord(
+            group
+          );
+
+          setAdminModalMode(
+            'editUserGroup'
+          );
+
+          setUserGroupFormData({
+
+            group_name:
+              group.group_name || '',
+
+            group_code:
+              group.group_code || '',
+
+            description:
+              group.description || '',
+
+            organization_id:
+              group.organization_id || '',
+
+            business_unit_id:
+              group.business_unit_id || '',
+
+            status:
+              group.status || '',
+
+          });
+
+          setUserGroupFormOpen(
+            true
+          );
+
+          setAdminActionMenu(
+            null
+          );
+
+        }}
+        className="w-full text-left px-5 py-4 hover:bg-gray-50 text-[#0F172A]"
+      >
+        Edit
+      </button>
+
+      <button
+        onClick={() => {
+
+          updateAdminStatus(
+            'user_groups',
+            group.id,
+            group.status ===
+            'Active'
+              ? 'Inactive'
+              : 'Active'
+          );
+
+          setAdminActionMenu(
+            null
+          );
+
+        }}
+        className="w-full text-left px-5 py-4 hover:bg-gray-50 text-[#0F172A]"
+      >
+        {
+          group.status ===
+          'Active'
+            ? 'Deactivate'
+            : 'Activate'
+        }
+      </button>
+
+      <button
+        onClick={() => {
+
+          deleteAdminRecord(
+            'user_groups',
+            group.id
+          );
+
+          setAdminActionMenu(
+            null
+          );
+
+        }}
+        className="w-full text-left px-5 py-4 hover:bg-red-50 text-red-600"
+      >
+        Delete
+      </button>
+
+    </div>
+
+  )}
+
+</div>
 
                 <h3 className="text-2xl font-bold text-[#0F172A]">
                   {group.group_name}
@@ -4591,7 +5766,12 @@ const [
             <div>
 
               <h2 className="text-3xl font-bold text-[#0F172A]">
-                New User Group
+                {
+  adminModalMode ===
+  'editUserGroup'
+    ? 'Edit User Group'
+    : 'Create New User Group'
+}
               </h2>
 
               <p className="text-gray-500 mt-2">
@@ -4759,6 +5939,531 @@ const [
       </div>
 
     )}
+    {groupWorkspaceOpen && (
+
+<div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-6">
+
+  <div className="bg-white w-full max-w-5xl rounded-[32px] shadow-2xl p-8 max-h-[90vh] overflow-y-auto">
+
+    <div className="flex items-center justify-between mb-8">
+
+      <div>
+
+        <h2 className="text-3xl font-bold text-[#0F172A]">
+
+          {
+            selectedAdminRecord
+              ?.group_name
+          }
+
+        </h2>
+
+        <p className="text-gray-500 mt-1">
+
+          User Group Workspace
+
+        </p>
+
+      </div>
+
+      <button
+        onClick={() => {
+
+  setGroupWorkspaceOpen(
+    false
+  );
+
+  setSelectedGroupUsers(
+    []
+  );
+
+}}
+        className="w-12 h-12 rounded-2xl bg-gray-100 hover:bg-gray-200 text-[#0F172A]"
+      >
+        ✕
+      </button>
+
+    </div>
+
+    <div className="grid grid-cols-2 gap-8">
+
+      <div>
+
+        <h3 className="text-xl font-semibold text-[#0F172A] mb-5">
+
+          Add Users
+
+        </h3>
+
+        <select
+          multiple
+          value={
+            selectedGroupUsers
+          }
+          onChange={(e) => {
+
+            const values =
+              Array.from(
+                e.target.selectedOptions,
+                option => option.value
+              );
+
+            setSelectedGroupUsers(
+              values
+            );
+
+          }}
+          className="w-full border border-blue-200 rounded-2xl p-5 min-h-[300px] text-[#0F172A]"
+        >
+
+          {
+  enterpriseUsers
+
+    .filter((user) =>
+
+      !userGroupMembers.some(
+        (member) =>
+
+          member
+            .enterprise_user_id ===
+          user.id
+      )
+    )
+
+    .map((user) => (
+
+      <option
+        key={user.id}
+        value={user.id}
+      >
+
+        {user.first_name}
+        {' '}
+        {user.last_name}
+        {' - '}
+        {user.employee_code}
+
+      </option>
+
+  ))
+}
+
+        </select>
+
+        <button
+          onClick={
+            addUsersToGroup
+          }
+          className="mt-5 bg-[#0F172A] text-white px-6 py-4 rounded-2xl"
+        >
+          Add Selected Users
+        </button>
+
+      </div>
+
+      <div>
+
+        <h3 className="text-xl font-semibold text-[#0F172A] mb-5">
+
+          Group Members
+
+        </h3>
+
+        <div className="space-y-4">
+
+          {userGroupMembers.map(
+            (member) => (
+
+            <div
+              key={member.id}
+              className="border border-blue-100 rounded-2xl p-5 flex items-center justify-between"
+            >
+
+              <div>
+
+                <div className="font-semibold text-[#0F172A]">
+
+                  {
+                    member
+                    ?.enterprise_users
+                    ?.first_name
+                  }
+                  {' '}
+                  {
+                    member
+                    ?.enterprise_users
+                    ?.last_name
+                  }
+
+                </div>
+
+                <div className="text-sm text-gray-500">
+                  <div className="mt-3 inline-flex items-center px-4 py-2 rounded-2xl bg-blue-50 text-sm font-medium text-blue-700">
+
+  Members:
+  {' '}
+
+  {
+    userGroupMembers
+      .filter(
+        (member) =>
+
+          member.user_group_id ===
+          selectedAdminRecord?.id
+      )
+      .length
+  }
+
+</div>
+
+                  {
+                    member
+                    ?.enterprise_users
+                    ?.email
+                  }
+
+                </div>
+
+              </div>
+
+              <button
+                onClick={() =>
+                  removeUserFromGroup(
+                    member.id
+                  )
+                }
+                className="text-red-600 hover:text-red-700"
+              >
+                Remove
+              </button>
+
+            </div>
+
+          ))}
+
+        </div>
+
+      </div>
+
+    </div>
+
+  </div>
+
+</div>
+
+)}
+{roleFormOpen && (
+
+<div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[140] flex items-center justify-center p-6">
+
+  <div className="bg-white rounded-[36px] shadow-2xl w-full max-w-5xl border border-blue-100 overflow-hidden">
+
+    <div className="bg-gradient-to-r from-[#0F172A] to-blue-900 px-8 py-6 text-white flex items-center justify-between">
+
+      <div>
+
+        <h2 className="text-3xl font-bold">
+
+          {
+            adminModalMode ===
+            'editRole'
+
+              ? 'Edit Role'
+
+              : 'Create Role'
+          }
+
+        </h2>
+
+        <p className="text-blue-100 mt-2">
+
+          Configure enterprise
+          security role and
+          permissions
+
+        </p>
+
+      </div>
+
+      <button
+        onClick={() => {
+
+          setRoleFormOpen(
+            false
+          );
+
+          setSelectedRolePermissions(
+            []
+          );
+
+        }}
+        className="w-12 h-12 rounded-full bg-white/10 hover:bg-white/20 text-2xl"
+      >
+        ✕
+
+      </button>
+
+    </div>
+
+    <div className="p-8 grid grid-cols-1 xl:grid-cols-2 gap-8 max-h-[80vh] overflow-y-auto">
+
+      <div className="space-y-5">
+
+        <div>
+
+          <label className="block text-sm font-semibold text-gray-600 mb-2">
+
+            Role Name
+
+          </label>
+
+          <input
+            value={
+              roleFormData.role_name
+            }
+            onChange={(e) =>
+              setRoleFormData({
+                ...roleFormData,
+
+                role_name:
+                  e.target.value,
+              })
+            }
+            className="w-full border border-blue-200 rounded-2xl px-5 py-4"
+          />
+
+        </div>
+
+        <div>
+
+          <label className="block text-sm font-semibold text-gray-600 mb-2">
+
+            Role Code
+
+          </label>
+
+          <input
+            value={
+              roleFormData.role_code
+            }
+            onChange={(e) =>
+              setRoleFormData({
+                ...roleFormData,
+
+                role_code:
+                  e.target.value,
+              })
+            }
+            className="w-full border border-blue-200 rounded-2xl px-5 py-4"
+          />
+
+        </div>
+
+        <div>
+
+          <label className="block text-sm font-semibold text-gray-600 mb-2">
+
+            Description
+
+          </label>
+
+          <textarea
+            rows={5}
+            value={
+              roleFormData.description
+            }
+            onChange={(e) =>
+              setRoleFormData({
+                ...roleFormData,
+
+                description:
+                  e.target.value,
+              })
+            }
+            className="w-full border border-blue-200 rounded-2xl px-5 py-4"
+          />
+
+        </div>
+
+        <div>
+
+          <label className="block text-sm font-semibold text-gray-600 mb-2">
+
+            Status
+
+          </label>
+
+          <select
+            value={
+              roleFormData.status
+            }
+            onChange={(e) =>
+              setRoleFormData({
+                ...roleFormData,
+
+                status:
+                  e.target.value,
+              })
+            }
+            className="w-full border border-blue-200 rounded-2xl px-5 py-4"
+          >
+
+            <option>
+              Active
+            </option>
+
+            <option>
+              Inactive
+            </option>
+
+          </select>
+
+        </div>
+
+      </div>
+
+      <div>
+
+        <h3 className="text-2xl font-bold text-[#0F172A] mb-6">
+
+          Permissions
+
+        </h3>
+
+        <div className="space-y-6">
+
+          {
+            Array.from(
+
+              new Set(
+
+                permissions.map(
+                  (permission) =>
+
+                    permission.module_name
+                )
+              )
+
+            ).map((moduleName) => (
+
+              <div
+                key={moduleName}
+                className="border border-blue-100 rounded-3xl p-5"
+              >
+
+                <h4 className="text-lg font-bold text-[#0F172A] mb-4">
+
+                  {moduleName}
+
+                </h4>
+
+                <div className="space-y-3">
+
+                  {
+                    permissions
+
+                      .filter(
+                        (permission) =>
+
+                          permission.module_name ===
+                          moduleName
+                      )
+
+                      .map((permission) => (
+
+                        <label
+                          key={permission.id}
+                          className="flex items-center gap-3 text-gray-700"
+                        >
+
+                          <input
+                            type="checkbox"
+
+                            checked={
+                              selectedRolePermissions.includes(
+                                permission.id
+                              )
+                            }
+
+                            onChange={(e) => {
+
+                              if (
+                                e.target.checked
+                              ) {
+
+                                setSelectedRolePermissions([
+
+                                  ...selectedRolePermissions,
+
+                                  permission.id,
+
+                                ]);
+
+                              } else {
+
+                                setSelectedRolePermissions(
+
+                                  selectedRolePermissions.filter(
+                                    (id) =>
+
+                                      id !==
+                                      permission.id
+                                  )
+                                );
+
+                              }
+
+                            }}
+                          />
+
+                          <span>
+
+                            {
+                              permission.permission_name
+                            }
+
+                          </span>
+
+                        </label>
+
+                    ))}
+                </div>
+
+              </div>
+
+          ))}
+        </div>
+
+      </div>
+
+    </div>
+
+    <div className="px-8 py-6 border-t border-blue-100 flex justify-end">
+
+      <button
+        onClick={saveRole}
+        className="bg-gradient-to-r from-[#0F172A] to-blue-900 text-white px-8 py-4 rounded-2xl font-semibold shadow-lg"
+      >
+
+        {
+          adminModalMode ===
+          'editRole'
+
+            ? 'Save Changes'
+
+            : 'Create Role'
+        }
+
+      </button>
+
+    </div>
+
+  </div>
+
+</div>
+
+)}
+
 
   </div>
 
@@ -5255,6 +6960,166 @@ setTemplateFormData(template);
             </div>
           )}
         </div>
+        {profilePageOpen && (
+  <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 p-6 overflow-auto">
+
+    <div className="w-full max-w-4xl bg-white rounded-[36px] shadow-2xl p-10">
+
+      <div className="flex items-center justify-between mb-10">
+
+        <div>
+
+          <h2 className="text-3xl font-bold text-[#0F172A]">
+            My Profile
+          </h2>
+
+          <p className="text-gray-500 mt-2">
+            Manage your profile and password
+          </p>
+
+        </div>
+
+        <button
+          onClick={() =>
+            setProfilePageOpen(
+              false
+            )
+          }
+          className="w-12 h-12 rounded-2xl bg-gray-100 hover:bg-gray-200 text-[#0F172A] font-bold text-xl"
+        >
+          ✕
+        </button>
+
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+
+        <input
+  value={
+  profileFormData.first_name || ''
+}
+  onChange={(e) =>
+    setProfileFormData({
+
+      ...profileFormData,
+
+      first_name:
+        e.target.value,
+
+    })
+  }
+  className="border border-blue-200 rounded-2xl px-5 py-4 text-[#0F172A]"
+/>
+
+        <input
+  value={
+    profileFormData.last_name || ''
+  }
+  onChange={(e) =>
+    setProfileFormData({
+
+      ...profileFormData,
+
+      last_name:
+        e.target.value,
+
+    })
+  }
+  className="border border-blue-200 rounded-2xl px-5 py-4 text-[#0F172A]"
+/>
+
+        <input
+          value={
+            currentUser?.username || ''
+          }
+          readOnly
+          className="border border-blue-200 rounded-2xl px-5 py-4 bg-gray-50 text-[#0F172A]"
+        />
+
+        <input
+          value={
+            currentUser?.email || ''
+          }
+          readOnly
+          className="border border-blue-200 rounded-2xl px-5 py-4 bg-gray-50 text-[#0F172A]"
+        />
+
+        <input
+  value={
+    profileFormData.phone || ''
+  }
+  onChange={(e) =>
+    setProfileFormData({
+
+      ...profileFormData,
+
+      phone:
+        e.target.value,
+
+    })
+  }
+  className="border border-blue-200 rounded-2xl px-5 py-4 text-[#0F172A]"
+/>
+
+        <input
+          value={
+            currentUser?.designation || ''
+          }
+          readOnly
+          className="border border-blue-200 rounded-2xl px-5 py-4 bg-gray-50 text-[#0F172A]"
+        />
+
+      </div>
+
+      <div className="flex justify-end mt-10">
+
+  <button
+    onClick={saveMyProfile}
+    className="bg-gradient-to-r from-[#0F172A] to-blue-800 text-white px-8 py-4 rounded-2xl font-semibold"
+  >
+    Save Profile
+  </button>
+
+</div>
+
+      <div className="mt-10 border-t border-blue-100 pt-10">
+
+        <h3 className="text-2xl font-bold text-[#0F172A] mb-6">
+          Reset Password
+        </h3>
+
+        <div className="flex gap-4">
+
+          <input
+            type="password"
+            placeholder="New Password"
+            value={newPassword}
+            onChange={(e) =>
+              setNewPassword(
+                e.target.value
+              )
+            }
+            className="flex-1 border border-blue-200 rounded-2xl px-5 py-4 text-[#0F172A] placeholder:text-gray-500"
+          />
+
+          <button
+            onClick={
+              resetMyPassword
+            }
+            className="bg-gradient-to-r from-[#0F172A] to-blue-800 text-white px-8 py-4 rounded-2xl font-semibold"
+          >
+            Update Password
+          </button>
+
+        </div>
+
+      </div>
+
+    </div>
+
+  </div>
+
+)}
       {selectedRecord && (
         <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-[110] p-6 overflow-auto">
           <div className="bg-white rounded-[32px] shadow-2xl border border-blue-100 w-full max-w-5xl overflow-hidden">
