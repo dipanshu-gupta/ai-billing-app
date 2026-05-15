@@ -3576,7 +3576,7 @@ className="w-full border border-blue-200 rounded-2xl px-5 py-4 bg-white text-[#0
           </div>
 
           <div className="space-y-3">
-            {navigationItems.map((item) => {
+           {navigationItems.map((item) => {
 
   if (
     item.key === 'adminTools' &&
@@ -3590,6 +3590,8 @@ className="w-full border border-blue-200 rounded-2xl px-5 py-4 bg-white text-[#0
   }
 
   return (
+
+              
               
               <button
                 key={item.key}
@@ -3609,9 +3611,8 @@ className="w-full border border-blue-200 rounded-2xl px-5 py-4 bg-white text-[#0
                   <span className="ml-3 font-medium">{item.label}</span>
                 )}
               </button>
-            );
-
-})}
+  );
+            })}
           </div>
         </div>
       </aside>
