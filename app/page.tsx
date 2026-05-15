@@ -3459,7 +3459,7 @@ if (authLoading) {
 
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-[#0F172A] via-blue-900 to-blue-950 text-white text-3xl font-bold">
 
-      Loading AI Billing ERP...
+      Loading Business Pro ERP...
 
     </div>
 
@@ -3478,12 +3478,12 @@ if (!session) {
 
           <div className="w-24 h-24 mx-auto rounded-[32px] bg-gradient-to-br from-[#0F172A] to-blue-800 text-white flex items-center justify-center text-4xl font-bold shadow-xl">
 
-            AI
+            BP
 
           </div>
 
           <h1 className="mt-6 text-4xl font-bold text-[#0F172A]">
-            AI Billing ERP
+            Business Pro
           </h1>
 
           <p className="text-gray-500 mt-3">
