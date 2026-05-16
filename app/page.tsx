@@ -37,16 +37,6 @@ const formatCurrency = (value: number) => {
     maximumFractionDigits: 0,
   }).format(value || 0);
 };
-const adminSupabase =
-  createClient(
-
-    process.env
-      .NEXT_PUBLIC_SUPABASE_URL!,
-
-    process.env
-      .NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY!
-
-  );
 
 export default function AIBillingApp() {
   const [session, setSession] =
@@ -515,20 +505,18 @@ const saveEnterpriseUser =
   } else {
 
     const {
-      data: authData,
-      error: authError,
-    } =
-      await adminSupabase.auth.admin.createUser({
+  data: authData,
+  error: authError,
+} =
+  await supabase.auth.signUp({
 
-        email:
-          userFormData.email,
+    email:
+      userFormData.email,
 
-        password:
-          userFormData.temporary_password,
+    password:
+      userFormData.temporary_password,
 
-        email_confirm: true,
-
-      });
+  });
 
     if (authError) {
 
@@ -538,8 +526,8 @@ const saveEnterpriseUser =
 
     }
 
-    const authUserId =
-      authData.user.id;
+   const authUserId =
+  authData.user?.id;
 
     await supabase
       .from('enterprise_users')
@@ -3579,15 +3567,17 @@ className="w-full border border-blue-200 rounded-2xl px-5 py-4 bg-white text-[#0
            {navigationItems.map((item) => {
 
   if (
-    item.key === 'adminTools' &&
-    !hasPermission(
-      'admin_tools_view'
-    )
-  ) {
+  item.key === 'adminTools' &&
+  currentUser &&
+  currentUser.role_id &&
+  !hasPermission(
+    'admin_tools_view'
+  )
+) {
 
-    return null;
+  return null;
 
-  }
+}
 
   return (
 
