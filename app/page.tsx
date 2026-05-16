@@ -1442,16 +1442,6 @@ const permissionCodes =
 
 };
 
-const hasPermission =
-  (
-    permissionCode:string
-  ) => {
-
-  return currentUserPermissions.includes(
-    permissionCode
-  );
-
-};
 
 const fetchProducts = async () => {
   if (!supabase) return;
@@ -3605,21 +3595,39 @@ className="w-full border border-blue-200 rounded-2xl px-5 py-4 bg-white text-[#0
           </div>
 
           <div className="space-y-3">
-           {navigationItems.map((item) => {
 
-  if (
-  item.key === 'adminTools'
-) {
+  {navigationItems.map((item) => {
 
-  if (
-    !permissionsLoaded
-  ) {
+    if (
+      item.key === 'adminTools'
+    ) {
+
+      if (
+        currentUser?.role_id &&
+        !currentUserPermissions.includes(
+          'admin_tools_view'
+        )
+      ) {
+
+        return null;
+
+      }
+
+    }
 
     return (
 
       <button
         key={item.key}
-        className="w-full flex items-center rounded-2xl py-3 px-4 bg-white/10 text-white opacity-50"
+        onClick={() => {
+          setActivePage(item.key);
+          setSidebarCollapsed(true);
+        }}
+        className={`w-full flex items-center rounded-2xl transition-all duration-200 py-3 px-4 ${
+          activePage === item.key
+            ? 'bg-white text-[#0F172A]'
+            : 'bg-white/10 text-white hover:bg-blue-700'
+        }`}
       >
         <span className="text-xl">
           {item.icon}
@@ -3634,47 +3642,10 @@ className="w-full border border-blue-200 rounded-2xl px-5 py-4 bg-white text-[#0
 
     );
 
-  }
+  })}
 
-  if (
-    currentUser?.role_id &&
-    !hasPermission(
-      'admin_tools_view'
-    )
-  ) {
-
-    return null;
-
-  }
-
-}
-
-  return (
-
-              
-              
-              <button
-                key={item.key}
-                onClick={() => {
-                  setActivePage(item.key);
-                  setSidebarCollapsed(true);
-                }}
-                className={`w-full flex items-center rounded-2xl transition-all duration-200 py-3 px-4 ${
-                  activePage === item.key
-                    ? 'bg-white text-[#0F172A]'
-                    : 'bg-white/10 text-white hover:bg-blue-700'
-                }`}
-              >
-                <span className="text-xl">{item.icon}</span>
-
-                {!sidebarCollapsed && (
-                  <span className="ml-3 font-medium">{item.label}</span>
-                )}
-              </button>
-  );
-            })}
-          </div>
-        </div>
+</div>
+</div>
       </aside>
 
       <main className="flex-1 overflow-auto">
