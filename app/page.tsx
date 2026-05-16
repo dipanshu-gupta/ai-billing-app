@@ -195,6 +195,12 @@ const [
   currentUserPermissions,
   setCurrentUserPermissions
 ] = useState<string[]>([]);
+
+const [
+  permissionsLoaded,
+  setPermissionsLoaded
+] = useState(false);
+
 const [
   profilePageOpen,
   setProfilePageOpen
@@ -1337,6 +1343,7 @@ const loadCurrentUserPermissions =
     !supabase ||
     !session?.user?.email
   ) return;
+  setPermissionsLoaded(false);
 
   const { data: userData } =
     await supabase
@@ -1358,21 +1365,25 @@ const loadCurrentUserPermissions =
 
     
 
-    setCurrentUserPermissions(
-      []
-    );
+   setCurrentUserPermissions(
+  []
+);
 
-    return;
+setPermissionsLoaded(true);
+
+return;
 
   }
 
   if (!userData.role_id) {
 
-    setCurrentUserPermissions(
-      []
-    );
+   setCurrentUserPermissions(
+  []
+);
 
-    return;
+setPermissionsLoaded(true);
+
+return;
 
   }
 
@@ -1395,11 +1406,13 @@ if (
   permissionIds.length === 0
 ) {
 
-  setCurrentUserPermissions(
-    []
-  );
+ setCurrentUserPermissions(
+  []
+);
 
-  return;
+setPermissionsLoaded(true);
+
+return;
 
 }
 
@@ -1425,6 +1438,7 @@ const permissionCodes =
   setCurrentUserPermissions(
     permissionCodes
   );
+  setPermissionsLoaded(true);
 
 };
 
@@ -3594,15 +3608,44 @@ className="w-full border border-blue-200 rounded-2xl px-5 py-4 bg-white text-[#0
            {navigationItems.map((item) => {
 
   if (
-  item.key === 'adminTools' &&
-  currentUser &&
-  currentUser.role_id &&
-  !hasPermission(
-    'admin_tools_view'
-  )
+  item.key === 'adminTools'
 ) {
 
-  return null;
+  if (
+    !permissionsLoaded
+  ) {
+
+    return (
+
+      <button
+        key={item.key}
+        className="w-full flex items-center rounded-2xl py-3 px-4 bg-white/10 text-white opacity-50"
+      >
+        <span className="text-xl">
+          {item.icon}
+        </span>
+
+        {!sidebarCollapsed && (
+          <span className="ml-3 font-medium">
+            {item.label}
+          </span>
+        )}
+      </button>
+
+    );
+
+  }
+
+  if (
+    currentUser?.role_id &&
+    !hasPermission(
+      'admin_tools_view'
+    )
+  ) {
+
+    return null;
+
+  }
 
 }
 
