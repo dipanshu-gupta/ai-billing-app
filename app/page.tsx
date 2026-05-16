@@ -1376,26 +1376,47 @@ const loadCurrentUserPermissions =
 
   }
 
-  const { data: permissionData } =
-    await supabase
-      .from('role_permissions')
-      .select(`
-        permission_id,
-        permissions (
-          permission_code
-        )
-      `)
-      .eq(
-        'role_id',
-        userData.role_id
-      );
-
-  const permissionCodes =
-    (permissionData || []).map(
-      (item:any) =>
-        item.permissions
-          ?.permission_code
+  const { data: rolePermissionData } =
+  await supabase
+    .from('role_permissions')
+    .select('permission_id')
+    .eq(
+      'role_id',
+      userData.role_id
     );
+
+const permissionIds =
+  (rolePermissionData || []).map(
+    (item:any) =>
+      item.permission_id
+  );
+
+if (
+  permissionIds.length === 0
+) {
+
+  setCurrentUserPermissions(
+    []
+  );
+
+  return;
+
+}
+
+const { data: permissionsData } =
+  await supabase
+    .from('permissions')
+    .select('permission_code')
+    .in(
+      'id',
+      permissionIds
+    );
+
+const permissionCodes =
+  (permissionsData || []).map(
+    (item:any) =>
+      item.permission_code
+  );
     console.log(
   'PRODUCTION PERMISSIONS:',
   permissionCodes
