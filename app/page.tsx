@@ -1315,6 +1315,10 @@ const fetchCurrentUser =
   if (data && !error) {
 
     setCurrentUser(data);
+    console.log(
+  'CURRENT USER ROLE:',
+  data.role_id
+);
 
     setProfileFormData({
 
@@ -1866,13 +1870,25 @@ useEffect(() => {
 
     await fetchCurrentUser();
 
-    await loadCurrentUserPermissions();
+    
 
   };
 
   initializeApp();
 
 }, [session?.user?.id]);
+useEffect(() => {
+
+  if (
+    !session?.user?.email
+  ) return;
+
+  loadCurrentUserPermissions();
+
+}, [
+  session?.user?.email,
+  currentUser?.role_id
+]);
 
   const [createFormData, setCreateFormData] = useState<any>({
     name: '',
