@@ -1356,6 +1356,8 @@ const loadCurrentUserPermissions =
 
   if (!userData) {
 
+    
+
     setCurrentUserPermissions(
       []
     );
@@ -1394,6 +1396,10 @@ const loadCurrentUserPermissions =
         item.permissions
           ?.permission_code
     );
+    console.log(
+  'PRODUCTION PERMISSIONS:',
+  permissionCodes
+);
 
   setCurrentUserPermissions(
     permissionCodes
