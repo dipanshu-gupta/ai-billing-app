@@ -1350,6 +1350,7 @@ const loadCurrentUserPermissions =
   setPermissionsLoaded(false);
 
   const { data: userData } =
+
     await supabase
       .from('enterprise_users')
       .select(`
@@ -1364,6 +1365,13 @@ const loadCurrentUserPermissions =
         session.user.email
       )
       .single();
+
+      console.log(
+  'USER DATA:',
+  userData
+);
+  
+      
 
   if (!userData) {
 
@@ -1399,7 +1407,6 @@ return;
       'role_id',
       userData.role_id
     );
-
 const permissionIds =
   (rolePermissionData || []).map(
     (item:any) =>
@@ -3615,21 +3622,46 @@ className="w-full border border-blue-200 rounded-2xl px-5 py-4 bg-white text-[#0
   {navigationItems.map((item) => {
 
     if (
-      item.key === 'adminTools'
-    ) {
+  item.key === 'adminTools'
+) {
 
-      if (
-        currentUser?.role_id &&
-        !currentUserPermissions.includes(
-          'admin_tools_view'
-        )
-      ) {
+  if (
+    !permissionsLoaded
+  ) {
 
-        return null;
+    return (
 
-      }
+      <button
+        key={item.key}
+        className="w-full flex items-center rounded-2xl py-3 px-4 bg-white/10 text-white opacity-50"
+      >
+        <span className="text-xl">
+          {item.icon}
+        </span>
 
-    }
+        {!sidebarCollapsed && (
+          <span className="ml-3 font-medium">
+            {item.label}
+          </span>
+        )}
+      </button>
+
+    );
+
+  }
+
+  if (
+    currentUser?.role_id &&
+    !currentUserPermissions.includes(
+      'admin_tools_view'
+    )
+  ) {
+
+    return null;
+
+  }
+
+}
 
     return (
 
