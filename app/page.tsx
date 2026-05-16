@@ -3626,29 +3626,37 @@ className="w-full border border-blue-200 rounded-2xl px-5 py-4 bg-white text-[#0
 ) {
 
   if (
-    !permissionsLoaded
-  ) {
+  !permissionsLoaded
+) {
 
-    return (
+  return (
 
-      <button
-        key={item.key}
-        className="w-full flex items-center rounded-2xl py-3 px-4 bg-white/10 text-white opacity-50"
-      >
-        <span className="text-xl">
-          {item.icon}
+    <button
+      key={item.key}
+      onClick={() => {
+        setActivePage(item.key);
+        setSidebarCollapsed(true);
+      }}
+      className={`w-full flex items-center rounded-2xl transition-all duration-200 py-3 px-4 ${
+        activePage === item.key
+          ? 'bg-white text-[#0F172A]'
+          : 'bg-white/10 text-white hover:bg-blue-700'
+      }`}
+    >
+      <span className="text-xl">
+        {item.icon}
+      </span>
+
+      {!sidebarCollapsed && (
+        <span className="ml-3 font-medium">
+          {item.label}
         </span>
+      )}
+    </button>
 
-        {!sidebarCollapsed && (
-          <span className="ml-3 font-medium">
-            {item.label}
-          </span>
-        )}
-      </button>
+  );
 
-    );
-
-  }
+}
 
   if (
     currentUser?.role_id &&
