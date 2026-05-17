@@ -18,16 +18,77 @@ import {
 } from 'recharts';
 
 const navigationItems = [
-  { key: 'dashboard', label: 'Dashboard', icon: '📊' },
-  { key: 'customers', label: 'Customers', icon: '👥' },
-  { key: 'products', label: 'Products', icon: '📦' },
-  { key: 'leads', label: 'Leads', icon: '🎯' },
-  { key: 'opportunities', label: 'Opportunities', icon: '💼' },
-  { key: 'activities', label: 'Activities', icon: '📅' },
-  { key: 'contacts', label: 'Contacts', icon: '📇' },
-  { key: 'orders', label: 'Orders', icon: '🛒' },
-  { key: 'invoices', label: 'Invoices', icon: '🧾' },
-  { key: 'adminTools', label: 'Admin Tools', icon: '⚙️' },
+
+  {
+    key: 'dashboard',
+    label: 'Dashboard',
+    icon: '📊',
+    permission: null,
+  },
+
+  {
+    key: 'customers',
+    label: 'Customers',
+    icon: '👥',
+    permission: 'customers_view',
+  },
+
+  {
+    key: 'products',
+    label: 'Products',
+    icon: '📦',
+    permission: 'products_view',
+  },
+
+  {
+    key: 'leads',
+    label: 'Leads',
+    icon: '🎯',
+    permission: 'leads_view',
+  },
+
+  {
+    key: 'opportunities',
+    label: 'Opportunities',
+    icon: '💼',
+    permission: 'opportunities_view',
+  },
+
+  {
+    key: 'activities',
+    label: 'Activities',
+    icon: '📅',
+    permission: 'activities_view',
+  },
+
+  {
+    key: 'contacts',
+    label: 'Contacts',
+    icon: '📇',
+    permission: 'contacts_view',
+  },
+
+  {
+    key: 'orders',
+    label: 'Orders',
+    icon: '🛒',
+    permission: 'orders_view',
+  },
+
+  {
+    key: 'invoices',
+    label: 'Invoices',
+    icon: '🧾',
+    permission: 'invoices_view',
+  },
+
+  {
+    key: 'adminTools',
+    label: 'Admin Tools',
+    icon: '⚙️',
+    permission: 'admin_tools_view',
+  },
+
 ];
 
 const formatCurrency = (value: number) => {
@@ -510,39 +571,11 @@ const saveEnterpriseUser =
 
   } else {
 
-    const {
-  data: authData,
-  error: authError,
-} =
-  await supabase.auth.signUp({
-
-    email:
-      userFormData.email,
-
-    password:
-      userFormData.temporary_password,
-
-  });
-
-    if (authError) {
-
-      alert(authError.message);
-
-      return;
-
-    }
-
-   const authUserId =
-  authData.user?.id;
-
     await supabase
       .from('enterprise_users')
       .insert([
         {
-          ...userFormData,
-
-          auth_user_id:
-            authUserId,
+          ...userFormData,        
         },
       ]);
 
@@ -571,6 +604,9 @@ const saveEnterpriseUser =
 
   });
   setUserFormOpen(false);
+  setAdminModalMode('');
+
+setSelectedAdminRecord(null);
 
   fetchEnterpriseUsers();
 
@@ -987,6 +1023,12 @@ const handleLogin = async () => {
 const handleLogout = async () => {
 
   if (!supabase) return;
+
+  setCurrentUser(null);
+
+  setCurrentUserPermissions([]);
+
+  setPermissionsLoaded(false);
 
   await supabase.auth.signOut();
 
@@ -3620,6 +3662,17 @@ className="w-full border border-blue-200 rounded-2xl px-5 py-4 bg-white text-[#0
           <div className="space-y-3">
 
   {navigationItems.map((item) => {
+    if (
+  item.permission &&
+  permissionsLoaded &&
+  !currentUserPermissions.includes(
+    item.permission
+  )
+) {
+
+  return null;
+
+}
 
     if (
   item.key === 'adminTools'
@@ -5313,9 +5366,36 @@ className="border border-blue-200 rounded-2xl px-5 py-4 text-[#0F172A] placehold
       </div>
 
       <button
-        onClick={() =>
-          setUserFormOpen(true)
-        }
+        onClick={() => {
+
+  setAdminModalMode(
+    'createUser'
+  );
+
+  setSelectedAdminRecord(
+    null
+  );
+
+  setUserFormData({
+
+    employee_code: '',
+    username: '',
+    first_name: '',
+    last_name: '',
+    email: '',
+    temporary_password: '',
+    phone: '',
+    designation: '',
+    organization_id: '',
+    business_unit_id: '',
+    role_id: '',
+    status: 'Active',
+
+  });
+
+  setUserFormOpen(true);
+
+}}
         className="bg-gradient-to-r from-[#0F172A] to-blue-800 text-white px-6 py-4 rounded-2xl font-semibold shadow-lg"
       >
         {
