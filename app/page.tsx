@@ -8112,10 +8112,7 @@ invoice.customer === selectedRecord.name
 
 )}
 
-            {(
-  activePage !== 'customers' ||
-  detailsTab === 'details'
-) && (
+           {detailsTab === 'details' && (
 
 <div className="p-8 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 bg-gradient-to-br from-white to-blue-50">
               {getObjectFields().map((field: string) => (
