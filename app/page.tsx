@@ -7382,9 +7382,8 @@ setTemplateFormData(template);
 
 )}
       {selectedRecord && (
-        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-[110] p-6 overflow-auto">
-          <div className="bg-white rounded-[32px] shadow-2xl border border-blue-100 w-full max-w-5xl overflow-hidden">
-            <div className="bg-gradient-to-r from-[#0F172A] to-blue-900 px-8 py-6 text-white flex items-center justify-between">
+<div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[110] overflow-y-auto">
+<div className="bg-white rounded-[32px] shadow-2xl border border-blue-100 w-[98vw] min-h-[96vh] my-[2vh] mx-auto overflow-hidden flex flex-col">              <div className="bg-gradient-to-r from-[#0F172A] to-blue-900 px-8 py-6 text-white flex items-center justify-between">
               <div>
                 <h2 className="text-3xl font-bold capitalize">
                   {activePage === 'customers' ? 'Customer' : activePage === 'products' ? 'Product' : activePage === 'leads' ? 'Lead' : activePage === 'opportunities' ? 'Opportunity' : activePage === 'activities' ? 'Activity' : activePage === 'contacts' ? 'Contact' : activePage === 'orders' ? 'Order' : activePage === 'invoices' ? 'Invoice' : 'Record'} Details
@@ -7404,8 +7403,7 @@ setTemplateFormData(template);
             </div>
             {activePage === 'customers' && (
 
-  <div className="px-8 pt-6 bg-gradient-to-br from-white to-blue-50">
-
+<div className="flex-1 overflow-y-auto px-12 pt-8 pb-12 bg-gradient-to-br from-white to-blue-50">
     <div className="flex gap-3 border-b border-blue-100 pb-4">
 
       <button
@@ -8388,8 +8386,8 @@ invoice.customer === selectedRecord.name
                   )}
                 </div>
               ))}
-<div className="col-span-2 mt-10 border border-gray-200 rounded-[28px] overflow-hidden bg-white shadow-sm">
-  <div className="px-8 py-6 bg-gradient-to-r from-slate-50 to-blue-50 border-b border-blue-100">
+<div className="col-span-full mt-10 w-full border border-gray-200 rounded-[28px] overflow-hidden bg-white shadow-sm">
+    <div className="px-8 py-6 bg-gradient-to-r from-slate-50 to-blue-50 border-b border-blue-100">
 
     <div className="flex items-center justify-between">
 
@@ -8477,7 +8475,13 @@ invoice.customer === selectedRecord.name
       </label>
 
       <div className="px-5 py-4 rounded-2xl border border-gray-200 bg-gray-50 text-[#0F172A]">
-        {selectedRecord?.organization_id || '-'}
+        {
+  organizations.find(
+    (org:any) =>
+      org.id ===
+      selectedRecord?.organization_id
+  )?.name || '-'
+}
       </div>
     </div>
 
@@ -8487,7 +8491,13 @@ invoice.customer === selectedRecord.name
       </label>
 
       <div className="px-5 py-4 rounded-2xl border border-gray-200 bg-gray-50 text-[#0F172A]">
-        {selectedRecord?.business_unit_id || '-'}
+        {
+  businessUnits.find(
+    (bu:any) =>
+      bu.id ===
+      selectedRecord?.business_unit_id
+  )?.name || '-'
+}
       </div>
     </div>
 
