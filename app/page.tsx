@@ -1180,6 +1180,12 @@ const saveMyProfile =
     website: customer.website,
     gstNumber: customer.gst_number,
     status: customer.status,
+    created_by: customer.created_by,
+created_at: customer.created_at,
+updated_by: customer.updated_by,
+updated_at: customer.updated_at,
+organization_id: customer.organization_id,
+business_unit_id: customer.business_unit_id,
   }))
 );
   }
@@ -8382,8 +8388,7 @@ invoice.customer === selectedRecord.name
                   )}
                 </div>
               ))}
-              <div className="mt-10 border border-gray-200 rounded-[28px] overflow-hidden bg-white shadow-sm">
-
+<div className="col-span-2 mt-10 border border-gray-200 rounded-[28px] overflow-hidden bg-white shadow-sm">
   <div className="px-8 py-6 bg-gradient-to-r from-slate-50 to-blue-50 border-b border-blue-100">
 
     <div className="flex items-center justify-between">
@@ -8408,7 +8413,7 @@ invoice.customer === selectedRecord.name
 
   </div>
 
-  <div className="p-8 grid grid-cols-1 md:grid-cols-2 gap-6">
+  <div className="p-8 grid grid-cols-1 md:grid-cols-3 gap-8">
 
     <div className="space-y-2">
       <label className="text-xs font-bold tracking-[0.2em] text-gray-500 uppercase">
