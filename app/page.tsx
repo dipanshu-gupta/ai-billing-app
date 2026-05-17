@@ -8382,6 +8382,113 @@ invoice.customer === selectedRecord.name
                   )}
                 </div>
               ))}
+              <div className="mt-10 border border-gray-200 rounded-[28px] overflow-hidden bg-white shadow-sm">
+
+  <div className="px-8 py-6 bg-gradient-to-r from-slate-50 to-blue-50 border-b border-blue-100">
+
+    <div className="flex items-center justify-between">
+
+      <div>
+
+        <h3 className="text-2xl font-bold text-[#0F172A]">
+          System Information
+        </h3>
+
+        <p className="text-sm text-gray-500 mt-1">
+          System generated audit, ownership and governance information
+        </p>
+
+      </div>
+
+      <div className="w-12 h-12 rounded-2xl bg-blue-100 flex items-center justify-center text-2xl">
+        🛡️
+      </div>
+
+    </div>
+
+  </div>
+
+  <div className="p-8 grid grid-cols-1 md:grid-cols-2 gap-6">
+
+    <div className="space-y-2">
+      <label className="text-xs font-bold tracking-[0.2em] text-gray-500 uppercase">
+        Created By
+      </label>
+
+      <div className="px-5 py-4 rounded-2xl border border-gray-200 bg-gray-50 text-[#0F172A]">
+        {selectedRecord?.created_by || '-'}
+      </div>
+    </div>
+
+    <div className="space-y-2">
+      <label className="text-xs font-bold tracking-[0.2em] text-gray-500 uppercase">
+        Creation Date
+      </label>
+
+      <div className="px-5 py-4 rounded-2xl border border-gray-200 bg-gray-50 text-[#0F172A]">
+
+        {
+          selectedRecord?.created_at
+            ? new Date(
+                selectedRecord.created_at
+              ).toLocaleString()
+            : '-'
+        }
+
+      </div>
+    </div>
+
+    <div className="space-y-2">
+      <label className="text-xs font-bold tracking-[0.2em] text-gray-500 uppercase">
+        Last Updated By
+      </label>
+
+      <div className="px-5 py-4 rounded-2xl border border-gray-200 bg-gray-50 text-[#0F172A]">
+        {selectedRecord?.updated_by || '-'}
+      </div>
+    </div>
+
+    <div className="space-y-2">
+      <label className="text-xs font-bold tracking-[0.2em] text-gray-500 uppercase">
+        Last Updated Date
+      </label>
+
+      <div className="px-5 py-4 rounded-2xl border border-gray-200 bg-gray-50 text-[#0F172A]">
+
+        {
+          selectedRecord?.updated_at
+            ? new Date(
+                selectedRecord.updated_at
+              ).toLocaleString()
+            : '-'
+        }
+
+      </div>
+    </div>
+
+    <div className="space-y-2">
+      <label className="text-xs font-bold tracking-[0.2em] text-gray-500 uppercase">
+        Organization
+      </label>
+
+      <div className="px-5 py-4 rounded-2xl border border-gray-200 bg-gray-50 text-[#0F172A]">
+        {selectedRecord?.organization_id || '-'}
+      </div>
+    </div>
+
+    <div className="space-y-2">
+      <label className="text-xs font-bold tracking-[0.2em] text-gray-500 uppercase">
+        Business Unit
+      </label>
+
+      <div className="px-5 py-4 rounded-2xl border border-gray-200 bg-gray-50 text-[#0F172A]">
+        {selectedRecord?.business_unit_id || '-'}
+      </div>
+    </div>
+
+  </div>
+
+</div>
               
             </div>
 )}
