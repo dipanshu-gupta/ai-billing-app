@@ -7403,8 +7403,8 @@ setTemplateFormData(template);
             </div>
             {activePage === 'customers' && (
 
-<div className="flex-1 overflow-y-auto px-12 pt-8 pb-12 bg-gradient-to-br from-white to-blue-50">
-    <div className="flex gap-3 border-b border-blue-100 pb-4">
+<div className="flex-1 overflow-y-auto px-12 pt-8 pb-12 bg-gradient-to-br from-white to-blue-50 flex flex-col">
+      <div className="flex gap-3 border-b border-blue-100 pb-4">
 
       <button
         onClick={() => setDetailsTab('details')}
@@ -7489,8 +7489,7 @@ setTemplateFormData(template);
 {activePage === 'customers' &&
  detailsTab === 'contacts' && (
 
-  <div className="p-8 bg-gradient-to-br from-white to-blue-50">
-
+<div className="p-8 bg-gradient-to-br from-white to-blue-50 flex flex-col justify-start">
     <div className="bg-white rounded-3xl border border-blue-100 shadow-sm overflow-hidden">
 
       <div className="bg-gradient-to-r from-[#0F172A] to-blue-900 px-6 py-4 text-white">
@@ -7618,8 +7617,7 @@ contact.customer === selectedRecord.name
 {activePage === 'customers' &&
  detailsTab === 'leads' && (
 
-  <div className="p-8 bg-gradient-to-br from-white to-blue-50">
-
+<div className="p-8 bg-gradient-to-br from-white to-blue-50 flex flex-col justify-start">
     <div className="bg-white rounded-3xl border border-blue-100 shadow-sm overflow-hidden">
 
       <div className="bg-gradient-to-r from-[#0F172A] to-blue-900 px-6 py-4 text-white">
@@ -7721,7 +7719,7 @@ lead.customer === selectedRecord.name
 {activePage === 'customers' &&
  detailsTab === 'opportunities' && (
 
-  <div className="p-8 bg-gradient-to-br from-white to-blue-50">
+  <div className="p-8 bg-gradient-to-br from-white to-blue-50 flex flex-col justify-start">
 
     <div className="bg-white rounded-3xl border border-blue-100 shadow-sm overflow-hidden">
 
@@ -7824,7 +7822,7 @@ opportunity.customer === selectedRecord.name
 {activePage === 'customers' &&
  detailsTab === 'orders' && (
 
-  <div className="p-8 bg-gradient-to-br from-white to-blue-50">
+  <div className="p-8 bg-gradient-to-br from-white to-blue-50 flex flex-col justify-start">
 
     <div className="bg-white rounded-3xl border border-blue-100 shadow-sm overflow-hidden">
 
@@ -7919,7 +7917,7 @@ order.customer === selectedRecord.name
 {activePage === 'customers' &&
  detailsTab === 'invoices' && (
 
-  <div className="p-8 bg-gradient-to-br from-white to-blue-50">
+  <div className="p-8 bg-gradient-to-br from-white to-blue-50 flex flex-col justify-start">
 
     <div className="bg-white rounded-3xl border border-blue-100 shadow-sm overflow-hidden">
 
@@ -8013,7 +8011,7 @@ invoice.customer === selectedRecord.name
 {activePage === 'customers' &&
  detailsTab === 'activities' && (
 
-  <div className="p-8 bg-gradient-to-br from-white to-blue-50">
+  <div className="p-8 bg-gradient-to-br from-white to-blue-50 flex flex-col justify-start">
 
     <div className="bg-white rounded-3xl border border-blue-100 shadow-sm overflow-hidden">
 
