@@ -98,7 +98,6 @@ const formatCurrency = (value: number) => {
     maximumFractionDigits: 0,
   }).format(value || 0);
 };
-
 export default function AIBillingApp() {
   const [session, setSession] =
   useState<any>(null);
@@ -227,6 +226,9 @@ const [
   setAdminModalMode
 ] = useState('');
 
+const isEditingUser =
+  adminModalMode === 'editUser';
+
 const [
   userGroupMembers,
   setUserGroupMembers
@@ -251,6 +253,56 @@ const [
   currentUser,
   setCurrentUser
 ] = useState<any>(null);
+const buildSystemFields = (
+  isUpdate = false
+) => {
+
+  if (!currentUser) {
+
+    return {};
+
+  }
+
+  const now =
+    new Date().toISOString();
+
+  if (isUpdate) {
+
+    return {
+
+      updated_by:
+        currentUser.email,
+
+      updated_at:
+        now,
+
+    };
+
+  }
+
+  return {
+
+    created_by:
+      currentUser.email,
+
+    created_at:
+      now,
+
+    updated_by:
+      currentUser.email,
+
+    updated_at:
+      now,
+
+    organization_id:
+      currentUser.organization_id,
+
+    business_unit_id:
+      currentUser.business_unit_id,
+
+  };
+
+};
 
 const [
   currentUserPermissions,
@@ -2220,6 +2272,7 @@ const createNewRecord = async () => {
       .from('customers')
       .insert([
         {
+          ...buildSystemFields(),
           customer_number: `CUST-${Date.now()}`,
           name: createFormData.name,
           company: createFormData.company,
@@ -2258,6 +2311,7 @@ console.log(error);
     .from('products')
     .insert([
       {
+        ...buildSystemFields(),
         product_number: `PROD-${Date.now()}`,
         name: createFormData.name,
         category: createFormData.category,
@@ -2286,6 +2340,7 @@ if (activePage === 'leads') {
     .from('leads')
     .insert([
       {
+        ...buildSystemFields(),
         lead_number: leadNumber,
         name: createFormData.name,
         customer: createFormData.customer,
@@ -2332,6 +2387,7 @@ if (activePage === 'opportunities') {
     .from('opportunities')
     .insert([
       {
+        ...buildSystemFields(),
         opportunity_number: opportunityNumber,
         name: createFormData.name,
         customer: createFormData.customer,
@@ -2377,6 +2433,7 @@ if (activePage === 'orders') {
     .from('orders')
     .insert([
       {
+        ...buildSystemFields(),
         order_number: orderNumber,
         customer: createFormData.customer,
 customer_id: createFormData.customerId,
@@ -2438,6 +2495,7 @@ if (activePage === 'invoices') {
     .from('invoices')
     .insert([
       {
+        ...buildSystemFields(),
         invoice_number: invoiceNumber,
         customer: createFormData.customer,
 customer_id: createFormData.customerId,
@@ -2491,6 +2549,7 @@ if (activePage === 'contacts') {
     .from('contacts')
     .insert([
       {
+        ...buildSystemFields(),
         contact_number: contactNumber,
         customer: createFormData.customer,
         customer_id: createFormData.customerId,
@@ -2527,6 +2586,7 @@ if (activePage === 'activities') {
     .from('activities')
     .insert([
       {
+        ...buildSystemFields(),
         activity_number: activityNumber,
         name: createFormData.name,
         customer: createFormData.customer,
@@ -2630,6 +2690,7 @@ if (
   await supabase
     .from('leads')
     .update({
+      ...buildSystemFields(true),
       name: editedRecord.name,
       customer: editedRecord.customer,
       email: editedRecord.email,
@@ -2671,6 +2732,7 @@ if (
   await supabase
     .from('opportunities')
     .update({
+      ...buildSystemFields(true),
       name: editedRecord.name,
       customer: editedRecord.customer,
       stage: editedRecord.stage,
@@ -2777,6 +2839,7 @@ if (supabase && editedRecord.id) {
   await supabase
     .from('customers')
     .update({
+      ...buildSystemFields(true),
       name: editedRecord.name,
       email: editedRecord.email,
       phone: editedRecord.phone,
@@ -2909,6 +2972,7 @@ if (
     await supabase
       .from('contacts')
       .update({
+        ...buildSystemFields(true),
         customer: editedRecord.customer,
         name: editedRecord.name,
         email: editedRecord.email,
@@ -2935,6 +2999,7 @@ if (
     await supabase
       .from('activities')
       .update({
+        ...buildSystemFields(true),
         name: editedRecord.name,
         customer: editedRecord.customer,
         contact: editedRecord.contact,
@@ -2979,6 +3044,7 @@ if (
     await supabase
       .from('orders')
       .update({
+        ...buildSystemFields(true),
         customer: updatedOrder.customer,
         name: updatedOrder.name,
         amount: Number(updatedOrder.amount || 0),
@@ -3039,6 +3105,7 @@ if (
     await supabase
       .from('invoices')
       .update({
+        ...buildSystemFields(true),
         customer: updatedInvoice.customer,
         name: updatedInvoice.name,
         amount: Number(updatedInvoice.amount || 0),
