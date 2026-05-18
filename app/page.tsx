@@ -1598,6 +1598,12 @@ contactId: lead.contact_id,
         source: lead.source,
         amount: Number(lead.amount || 0),
         status: lead.status,
+        created_by: lead.created_by,
+created_at: lead.created_at,
+updated_by: lead.updated_by,
+updated_at: lead.updated_at,
+organization_id: lead.organization_id,
+business_unit_id: lead.business_unit_id,
       }))
     );
   }
@@ -1654,6 +1660,12 @@ contactId: opp.contact_id,
         amount: Number(opp.amount || 0),
         closeDate: opp.close_date,
         status: opp.status,
+        created_by: opp.created_by,
+created_at: opp.created_at,
+updated_by: opp.updated_by,
+updated_at: opp.updated_at,
+organization_id: opp.organization_id,
+business_unit_id: opp.business_unit_id,
       }))
     );
   }
@@ -1712,6 +1724,12 @@ contactId: order.contact_id,
         shippingAddress: order.shipping_address,
         deliveryDate: order.delivery_date,
         status: order.status,
+        created_by: order.created_by,
+created_at: order.created_at,
+updated_by: order.updated_by,
+updated_at: order.updated_at,
+organization_id: order.organization_id,
+business_unit_id: order.business_unit_id,
       }))
     );
   }
@@ -1772,6 +1790,12 @@ contactId: invoice.contact_id,
         paymentTerms: invoice.payment_terms,
         billingAddress: invoice.billing_address,
         status: invoice.status,
+        created_by: invoice.created_by,
+created_at: invoice.created_at,
+updated_by: invoice.updated_by,
+updated_at: invoice.updated_at,
+organization_id: invoice.organization_id,
+business_unit_id: invoice.business_unit_id,
       }))
     );
   }
@@ -1832,6 +1856,12 @@ const fetchContacts = async () => {
         designation: contact.designation,
         department: contact.department,
         status: contact.status,
+        created_by: contact.created_by,
+created_at: contact.created_at,
+updated_by: contact.updated_by,
+updated_at: contact.updated_at,
+organization_id: contact.organization_id,
+business_unit_id: contact.business_unit_id,
       }))
     );
   }
@@ -1863,6 +1893,12 @@ const fetchActivities = async () => {
     activityDate: activity.activity_date,
     notes: activity.notes,
     status: activity.status,
+    created_by: activity.created_by,
+created_at: activity.created_at,
+updated_by: activity.updated_by,
+updated_at: activity.updated_at,
+organization_id: activity.organization_id,
+business_unit_id: activity.business_unit_id,
   }))
 );
   }
@@ -7403,8 +7439,8 @@ setTemplateFormData(template);
             </div>
             {activePage === 'customers' && (
 
-<div className="flex-1 overflow-y-auto px-12 pt-8 pb-12 bg-gradient-to-br from-white to-blue-50 flex flex-col">
-      <div className="flex gap-3 border-b border-blue-100 pb-4">
+<div className="overflow-y-auto px-12 pt-8 pb-8 bg-gradient-to-br from-white to-blue-50">
+        <div className="flex gap-3 border-b border-blue-100 pb-4">
 
       <button
         onClick={() => setDetailsTab('details')}
@@ -7518,23 +7554,23 @@ contact.customer === selectedRecord.name
 
           <thead className="bg-blue-50">
             <tr>
-              <th className="px-6 py-4 text-left">
-                Contact Name
+<th className="px-6 py-4 text-left text-[#0F172A] font-semibold">
+                  Contact Name
               </th>
 
-              <th className="px-6 py-4 text-left">
-                Email
+<th className="px-6 py-4 text-left text-[#0F172A] font-semibold">
+                  Email
               </th>
 
-              <th className="px-6 py-4 text-left">
+              <th className="px-6 py-4 text-left text-[#0F172A] font-semibold">
                 Phone
               </th>
 
-              <th className="px-6 py-4 text-left">
+              <th className="px-6 py-4 text-left text-[#0F172A] font-semibold">
                 Primary
               </th>
 
-              <th className="px-6 py-4 text-left">
+              <th className="px-6 py-4 text-left text-[#0F172A] font-semibold">
                 Status
               </th>
             </tr>
@@ -7642,19 +7678,20 @@ lead.customer === selectedRecord.name
 
           <thead className="bg-blue-50">
             <tr>
-              <th className="px-6 py-4 text-left">
-                Lead
+<th className="px-6 py-4 text-left text-[#0F172A] font-semibold">               
+   Lead
               </th>
 
-              <th className="px-6 py-4 text-left">
-                Source
+
+<th className="px-6 py-4 text-left text-[#0F172A] font-semibold">
+                  Source
               </th>
 
-              <th className="px-6 py-4 text-left">
+              <th className="px-6 py-4 text-left text-[#0F172A] font-semibold">
                 Amount
               </th>
 
-              <th className="px-6 py-4 text-left">
+              <th className="px-6 py-4 text-left text-[#0F172A] font-semibold">
                 Status
               </th>
             </tr>
@@ -7745,19 +7782,19 @@ opportunity.customer === selectedRecord.name
 
           <thead className="bg-blue-50">
             <tr>
-              <th className="px-6 py-4 text-left">
+              <th className="px-6 py-4 text-left text-[#0F172A] font-semibold">
                 Opportunity
               </th>
 
-              <th className="px-6 py-4 text-left">
+              <th className="px-6 py-4 text-left text-[#0F172A] font-semibold">
                 Stage
               </th>
 
-              <th className="px-6 py-4 text-left">
+              <th className="px-6 py-4 text-left text-[#0F172A] font-semibold">
                 Amount
               </th>
 
-              <th className="px-6 py-4 text-left">
+              <th className="px-6 py-4 text-left text-[#0F172A] font-semibold">
                 Status
               </th>
             </tr>
@@ -7848,15 +7885,15 @@ order.customer === selectedRecord.name
 
           <thead className="bg-blue-50">
             <tr>
-              <th className="px-6 py-4 text-left">
+              <th className="px-6 py-4 text-left text-[#0F172A] font-semibold">
                 Order
               </th>
 
-              <th className="px-6 py-4 text-left">
+              <th className="px-6 py-4 text-left text-[#0F172A] font-semibold">
                 Amount
               </th>
 
-              <th className="px-6 py-4 text-left">
+              <th className="px-6 py-4 text-left text-[#0F172A] font-semibold">
                 Status
               </th>
             </tr>
@@ -7943,15 +7980,15 @@ invoice.customer === selectedRecord.name
 
           <thead className="bg-blue-50">
             <tr>
-              <th className="px-6 py-4 text-left">
+              <th className="px-6 py-4 text-left text-[#0F172A] font-semibold">
                 Invoice
               </th>
 
-              <th className="px-6 py-4 text-left">
+              <th className="px-6 py-4 text-left text-[#0F172A] font-semibold">
                 Amount
               </th>
 
-              <th className="px-6 py-4 text-left">
+              <th className="px-6 py-4 text-left text-[#0F172A] font-semibold">
                 Status
               </th>
             </tr>
@@ -8037,19 +8074,19 @@ invoice.customer === selectedRecord.name
 
           <thead className="bg-blue-50">
             <tr>
-              <th className="px-6 py-4 text-left">
+              <th className="px-6 py-4 text-left text-[#0F172A] font-semibold">
                 Activity
               </th>
 
-              <th className="px-6 py-4 text-left">
+              <th className="px-6 py-4 text-left text-[#0F172A] font-semibold">
                 Type
               </th>
 
-              <th className="px-6 py-4 text-left">
+              <th className="px-6 py-4 text-left text-[#0F172A] font-semibold">
                 Date
               </th>
 
-              <th className="px-6 py-4 text-left">
+              <th className="px-6 py-4 text-left text-[#0F172A] font-semibold">
                 Status
               </th>
             </tr>
@@ -8084,7 +8121,7 @@ invoice.customer === selectedRecord.name
 
                   </td>
 
-                  <td className="px-6 py-4">
+                  <td className="px-6 py-4 text-[#0F172A] font-semibold">
                     {activity.activityType}
                   </td>
 
@@ -8388,7 +8425,7 @@ invoice.customer === selectedRecord.name
 
       <div>
 
-        <h3 className="text-2xl font-bold text-[#0F172A]">
+        <h3 className="text-3xl font-bold text-[#0F172A]">
           System Information
         </h3>
 
@@ -8472,10 +8509,9 @@ invoice.customer === selectedRecord.name
       <div className="px-5 py-4 rounded-2xl border border-gray-200 bg-gray-50 text-[#0F172A]">
         {
   organizations.find(
-    (org:any) =>
-      org.id ===
-      selectedRecord?.organization_id
-  )?.name || '-'
+  (org:any) =>
+    org.id === selectedRecord?.organization_id
+)?.name || '-'
 }
       </div>
     </div>
@@ -8487,11 +8523,10 @@ invoice.customer === selectedRecord.name
 
       <div className="px-5 py-4 rounded-2xl border border-gray-200 bg-gray-50 text-[#0F172A]">
         {
-  businessUnits.find(
-    (bu:any) =>
-      bu.id ===
-      selectedRecord?.business_unit_id
-  )?.name || '-'
+ businessUnits.find(
+  (bu:any) =>
+    bu.id === selectedRecord?.business_unit_id
+)?.name || '-'
 }
       </div>
     </div>
