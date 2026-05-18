@@ -1597,7 +1597,6 @@ contactId: lead.contact_id,
         phone: lead.phone,
         source: lead.source,
         amount: Number(lead.amount || 0),
-        ...buildSystemFields(true),
         status: lead.status,
         created_by: lead.created_by,
 created_at: lead.created_at,
@@ -1982,6 +1981,7 @@ useEffect(() => {
     if (!session?.user?.id)
       return;
 
+     await fetchCurrentUser();
     await fetchCustomers();
 
     await fetchProducts();
@@ -2012,7 +2012,7 @@ useEffect(() => {
 
     await fetchPermissions();
 
-    await fetchCurrentUser();
+   
 
     
 
@@ -2376,8 +2376,12 @@ console.log(error);
   console.log(error);
 }
 if (activePage === 'leads') {
-  const leadNumber = `LEAD-${Date.now()}`;
   if (!supabase) return;
+  if (!currentUser) {
+    alert('User profile not loaded yet. Please wait a moment and try again.');
+    return;
+  }
+  const leadNumber = `LEAD-${Date.now()}`;
 
   const { error } = await supabase
     .from('leads')
@@ -2387,44 +2391,48 @@ if (activePage === 'leads') {
         lead_number: leadNumber,
         name: createFormData.name,
         customer: createFormData.customer,
-customer_id: createFormData.customerId,
-contact: createFormData.contact,
-contact_id: createFormData.contactId,
+        customer_id: createFormData.customerId,
+        contact: createFormData.contact,
+        contact_id: createFormData.contactId,
         email: createFormData.email,
         phone: createFormData.phone,
         source: createFormData.source,
         amount: Number(createFormData.amount || 0),
         status: createFormData.status || 'New',
-        ...buildSystemFields(),
       },
     ]);
 
   if (!error) {
-    await supabase
-  .from('lead_line_items')
-  .insert(
-    lineItems.map((item:any) => ({
-      lead_number: leadNumber,
-      product_name: item.product,
-      quantity: item.quantity,
-      price: item.price,
-    }))
-  );
+    if (lineItems.length > 0) {
+      await supabase
+        .from('lead_line_items')
+        .insert(
+          lineItems.map((item: any) => ({
+            lead_number: leadNumber,
+            product_name: item.product,
+            quantity: item.quantity,
+            price: item.price,
+          }))
+        );
+    }
     await fetchLeads();
     setLineItems([]);
     setCreateModalOpen(false);
-
     setCreateFormData({});
-
     return;
   }
 
-  console.log(error);
+  console.error(error);
+  alert(`Failed to create lead: ${error.message}`);
+  return;
 }
+
 if (activePage === 'opportunities') {
-
   if (!supabase) return;
-
+  if (!currentUser) {
+    alert('User profile not loaded yet. Please wait a moment and try again.');
+    return;
+  }
   const opportunityNumber = `OPP-${Date.now()}`;
 
   const { error } = await supabase
@@ -2435,41 +2443,51 @@ if (activePage === 'opportunities') {
         opportunity_number: opportunityNumber,
         name: createFormData.name,
         customer: createFormData.customer,
-customer_id: createFormData.customerId,
-contact: createFormData.contact,
-contact_id: createFormData.contactId,
-        stage: createFormData.stage,
+        customer_id: createFormData.customerId,
+        contact: createFormData.contact,
+        contact_id: createFormData.contactId,
+        stage: createFormData.stage || 'Qualification',
         amount: Number(createFormData.amount || 0),
-        close_date: createFormData.closeDate,
+        close_date: createFormData.closeDate || null,
         status: createFormData.status || 'Open',
       },
     ]);
 
   if (!error) {
-
+    if (lineItems.length > 0) {
+      await supabase
+        .from('opportunity_line_items')
+        .insert(
+          lineItems.map((item: any) => ({
+            opportunity_number: opportunityNumber,
+            product_name: item.product,
+            quantity: item.quantity,
+            price: item.price,
+          }))
+        );
+    }
     await fetchOpportunities();
     setLineItems([]);
     setCreateModalOpen(false);
-
     setCreateFormData({});
-
     return;
   }
 
-  console.log(error);
+  console.error(error);
+  alert(`Failed to create opportunity: ${error.message}`);
+  return;
 }
+
 if (activePage === 'orders') {
-
   if (!supabase) return;
-
+  if (!currentUser) {
+    alert('User profile not loaded yet. Please wait a moment and try again.');
+    return;
+  }
   const orderNumber = `ORD-${Date.now()}`;
-
   const calculatedAmount = lineItems.reduce(
-    (sum:number, item:any) =>
-      sum + (
-        Number(item.quantity || 0) *
-        Number(item.price || 0)
-      ),
+    (sum: number, item: any) =>
+      sum + Number(item.quantity || 0) * Number(item.price || 0),
     0
   );
 
@@ -2480,25 +2498,23 @@ if (activePage === 'orders') {
         ...buildSystemFields(),
         order_number: orderNumber,
         customer: createFormData.customer,
-customer_id: createFormData.customerId,
-contact: createFormData.contact,
-contact_id: createFormData.contactId,
+        customer_id: createFormData.customerId,
+        contact: createFormData.contact,
+        contact_id: createFormData.contactId,
         name: createFormData.name,
         amount: calculatedAmount,
-        shipping_address: createFormData.shippingAddressOrder,
-        delivery_date: createFormData.deliveryDate,
+        shipping_address: createFormData.shippingAddressOrder || '',
+        delivery_date: createFormData.deliveryDate || null,
         status: createFormData.status || 'Processing',
       },
     ]);
 
   if (!error) {
-
     if (lineItems.length > 0) {
-
       await supabase
         .from('order_line_items')
         .insert(
-          lineItems.map((item:any) => ({
+          lineItems.map((item: any) => ({
             order_number: orderNumber,
             product_name: item.product,
             quantity: item.quantity,
@@ -2506,32 +2522,28 @@ contact_id: createFormData.contactId,
           }))
         );
     }
-
     await fetchOrders();
-
     setLineItems([]);
-
     setCreateModalOpen(false);
-
     setCreateFormData({});
-
     return;
   }
 
-  console.log(error);
+  console.error(error);
+  alert(`Failed to create order: ${error.message}`);
+  return;
 }
+
 if (activePage === 'invoices') {
-
   if (!supabase) return;
-
+  if (!currentUser) {
+    alert('User profile not loaded yet. Please wait a moment and try again.');
+    return;
+  }
   const invoiceNumber = `INV-${Date.now()}`;
-
   const calculatedAmount = lineItems.reduce(
-    (sum:number, item:any) =>
-      sum + (
-        Number(item.quantity || 0) *
-        Number(item.price || 0)
-      ),
+    (sum: number, item: any) =>
+      sum + Number(item.quantity || 0) * Number(item.price || 0),
     0
   );
 
@@ -2542,26 +2554,24 @@ if (activePage === 'invoices') {
         ...buildSystemFields(),
         invoice_number: invoiceNumber,
         customer: createFormData.customer,
-customer_id: createFormData.customerId,
-contact: createFormData.contact,
-contact_id: createFormData.contactId,
+        customer_id: createFormData.customerId,
+        contact: createFormData.contact,
+        contact_id: createFormData.contactId,
         name: createFormData.name,
         amount: calculatedAmount,
-        due_date: createFormData.dueDate,
-        payment_terms: createFormData.paymentTerms,
-        billing_address: createFormData.billingAddressInvoice,
+        due_date: createFormData.dueDate || null,
+        payment_terms: createFormData.paymentTerms || '',
+        billing_address: createFormData.billingAddressInvoice || createFormData.billingAddress || '',
         status: createFormData.status || 'Pending',
       },
     ]);
 
   if (!error) {
-
     if (lineItems.length > 0) {
-
       await supabase
         .from('invoice_line_items')
         .insert(
-          lineItems.map((item:any) => ({
+          lineItems.map((item: any) => ({
             invoice_number: invoiceNumber,
             product_name: item.product,
             quantity: item.quantity,
@@ -2569,20 +2579,18 @@ contact_id: createFormData.contactId,
           }))
         );
     }
-
     await fetchInvoices();
-
     setLineItems([]);
-
     setCreateModalOpen(false);
-
     setCreateFormData({});
-
     return;
   }
 
-  console.log(error);
+  console.error(error);
+  alert(`Failed to create invoice: ${error.message}`);
+  return;
 }
+
 if (activePage === 'contacts') {
 
   if (!supabase) return;
@@ -2724,6 +2732,26 @@ if (
   editedRecord.amount = calculatedAmount;
 }
     if (activePage === 'leads') {
+      if (
+  supabase &&
+  !editedRecord.id
+) {
+
+  await supabase
+    .from('leads')
+    .insert([
+      {
+
+        ...editedRecord,
+
+        ...buildSystemFields(),
+
+      }
+    ]);
+
+  await fetchLeads();
+
+}
       setLeads((prev:any) =>
         prev.map((item:any) =>
           item.id === editedRecord.id ? editedRecord : item
@@ -3055,12 +3083,45 @@ if (
       })
       .eq('activity_number', editedRecord.id);
   }
-    } else if (activePage === 'products') {
-      setProducts((prev:any) =>
-        prev.map((item:any) =>
-          item.id === editedRecord.id ? editedRecord : item
-        )
+   } else if (activePage === 'products') {
+
+  setProducts((prev:any) =>
+    prev.map((item:any) =>
+      item.id === editedRecord.id
+        ? editedRecord
+        : item
+    )
+  );
+
+  if (supabase && editedRecord.id) {
+
+    await supabase
+      .from('products')
+      .update({
+
+        ...buildSystemFields(true),
+
+        name: editedRecord.name,
+
+        category: editedRecord.category,
+
+        price: Number(
+          editedRecord.price || 0
+        ),
+
+        status: editedRecord.status,
+
+      })
+      .eq(
+        'product_number',
+        editedRecord.id
       );
+  }
+
+  setSelectedRecord(editedRecord);
+
+  setEditedRecord(editedRecord);
+
     } else if (activePage === 'orders') {
 
   const calculatedAmount = lineItems.reduce(
@@ -3247,25 +3308,27 @@ amount: totalAmount,
   source: lead.source,
   lineItems: [...lineItems],
 };
-    if (supabase) {
+        if (supabase) {
+  const oppSystemFields = buildSystemFields();
 
   await supabase
     .from('opportunities')
     .insert([
       {
+        ...oppSystemFields,
         opportunity_number: newOpportunity.id,
         name: newOpportunity.name,
         customer: newOpportunity.customer,
-customer_id: newOpportunity.customerId,
-contact: newOpportunity.contact,
-contact_id: newOpportunity.contactId,
+        customer_id: newOpportunity.customerId,
+        contact: newOpportunity.contact,
+        contact_id: newOpportunity.contactId,
         stage: newOpportunity.stage,
         amount: Number(newOpportunity.amount || 0),
-        close_date: newOpportunity.closeDate,
+        close_date: newOpportunity.closeDate || null,
         status: newOpportunity.status,
-        ...buildSystemFields(),
       },
     ]);
+
 
   if (leadItems.length > 0) {
 
@@ -3356,6 +3419,7 @@ contactId: opportunity.contactId,
       .from('orders')
       .insert([
         {
+          ...buildSystemFields(),
           order_number: newOrder.id,
           customer: newOrder.customer,
 customer_id: newOrder.customerId,
@@ -3366,7 +3430,7 @@ contact_id: newOrder.contactId,
           shipping_address: '',
           delivery_date: '',
           status: newOrder.status,
-          ...buildSystemFields(),
+          
         },
       ]);
 
@@ -3565,6 +3629,7 @@ contactId: order.contactId,
       .from('invoices')
       .insert([
         {
+          ...buildSystemFields(),
           invoice_number: newInvoice.id,
           customer: newInvoice.customer,
 customer_id: newInvoice.customerId,
@@ -3576,7 +3641,7 @@ contact_id: newInvoice.contactId,
           payment_terms: '',
           billing_address: '',
           status: newInvoice.status,
-          ...buildSystemFields(),
+          
         },
       ]);
 
@@ -5371,41 +5436,7 @@ className="border border-blue-200 rounded-2xl px-5 py-4 text-[#0F172A] placehold
               }
               className="border border-blue-200 rounded-2xl px-5 py-4 text-[#0F172A] placeholder:text-gray-500"
             />
-            <div>
-
-  <label className="block text-sm font-semibold text-[#0F172A] mb-2">
-    Role
-  </label>
-
-  <select
-    value={userFormData.role_id}
-    onChange={(e) =>
-      setUserFormData({
-        ...userFormData,
-        role_id: e.target.value,
-      })
-    }
-    className="w-full border border-blue-200 rounded-2xl px-5 py-4 bg-white text-[#0F172A]"
-  >
-
-    <option value="">
-      Select Role
-    </option>
-
-    {roles.map((role:any) => (
-
-      <option
-        key={role.id}
-        value={role.id}
-      >
-        {role.role_name}
-      </option>
-
-    ))}
-
-  </select>
-
-</div>
+            
 
             <select
               value={
@@ -6070,46 +6101,25 @@ className="border border-blue-200 rounded-2xl px-5 py-4 text-[#0F172A] placehold
 
       </div>
 
-      <button
+            <button
         onClick={() => {
-
-  setAdminModalMode('');
-
-  setSelectedAdminRecord(
-    null
-  );
-
-  setUserFormData({
-
-    employee_code: '',
-    username: '',
-    first_name: '',
-    last_name: '',
-    email: '',
-    temporary_password: '',
-    phone: '',
-    designation: '',
-    organization_id: '',
-    business_unit_id: '',
-    role_id: '',
-    status: 'Active',
-
-  });
-
-  setUserFormOpen(
-    true
-  );
-
-}}
+          setAdminModalMode('');
+          setSelectedAdminRecord(null);
+          setUserGroupFormData({
+            group_name: '',
+            group_code: '',
+            description: '',
+            organization_id: '',
+            business_unit_id: '',
+            status: 'Active',
+          });
+          setUserGroupFormOpen(true);
+        }}
         className="bg-gradient-to-r from-[#0F172A] to-blue-800 text-white px-6 py-4 rounded-2xl font-semibold shadow-lg"
       >
-        {
-  adminModalMode ===
-  'editUserGroup'
-    ? 'Save Changes'
-    : 'Create User Group'
-}
+        {adminModalMode === 'editUserGroup' ? 'Save Changes' : 'Create User Group'}
       </button>
+
 
     </div>
 
@@ -8729,7 +8739,7 @@ invoice.customer === selectedRecord.name
               </div>
 
               <button
-                onClick={createNewRecord}
+                onClick={() => setCreateModalOpen(false)}
                 className="w-10 h-10 rounded-full bg-blue-50 text-[#0F172A] font-bold"
               >
                 ✕
