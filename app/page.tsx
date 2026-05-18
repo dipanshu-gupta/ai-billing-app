@@ -1597,6 +1597,7 @@ contactId: lead.contact_id,
         phone: lead.phone,
         source: lead.source,
         amount: Number(lead.amount || 0),
+        ...buildSystemFields(true),
         status: lead.status,
         created_by: lead.created_by,
 created_at: lead.created_at,
@@ -2394,6 +2395,7 @@ contact_id: createFormData.contactId,
         source: createFormData.source,
         amount: Number(createFormData.amount || 0),
         status: createFormData.status || 'New',
+        ...buildSystemFields(),
       },
     ]);
 
@@ -3261,6 +3263,7 @@ contact_id: newOpportunity.contactId,
         amount: Number(newOpportunity.amount || 0),
         close_date: newOpportunity.closeDate,
         status: newOpportunity.status,
+        ...buildSystemFields(),
       },
     ]);
 
@@ -3307,6 +3310,7 @@ const createOrderFromOpportunity = async (
       .from('opportunities')
       .update({
         status: 'Closed Won',
+        ...buildSystemFields(true),
       })
       .eq('opportunity_number', opportunity.id);
 
@@ -3362,6 +3366,7 @@ contact_id: newOrder.contactId,
           shipping_address: '',
           delivery_date: '',
           status: newOrder.status,
+          ...buildSystemFields(),
         },
       ]);
 
@@ -3513,6 +3518,7 @@ const createInvoiceFromOrder = async (
       .from('orders')
       .update({
         status: 'Delivered',
+        ...buildSystemFields(true),
       })
       .eq('order_number', order.id);
 
@@ -3570,6 +3576,7 @@ contact_id: newInvoice.contactId,
           payment_terms: '',
           billing_address: '',
           status: newInvoice.status,
+          ...buildSystemFields(),
         },
       ]);
 
