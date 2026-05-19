@@ -1825,7 +1825,7 @@ export default function AIBillingApp() {
                         </div>
                         <button onClick={() => { setAdminModalMode(''); setSelectedAdminRecord(null); setOrganizationFormData({ name: '', organization_code: '', status: 'Active', industry: '', website: '', country: '', timezone: '', currency: '' }); setOrganizationFormOpen(true); }}
                           className="bg-gradient-to-r from-[#0F172A] to-blue-800 text-white px-6 py-4 rounded-2xl font-semibold shadow-lg">
-                          {adminModalMode === 'editOrganization' ? 'Save Changes' : 'Create Organization'}
+                          Create Organization
                         </button>
                       </div>
                       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
@@ -1898,7 +1898,7 @@ export default function AIBillingApp() {
                         </div>
                         <button onClick={() => { setSelectedRecord(null); setEditedRecord(null); setAdminModalMode(''); setSelectedAdminRecord(null); setBusinessUnitFormData({ name: '', business_unit_code: '', status: 'Active', organization_id: '', description: '' }); setBusinessUnitFormOpen(true); }}
                           className="bg-gradient-to-r from-[#0F172A] to-blue-800 text-white px-6 py-4 rounded-2xl font-semibold shadow-lg">
-                          {adminModalMode === 'editBusinessUnit' ? 'Save Changes' : 'Create Business Unit'}
+                          Create Business Unit
                         </button>
                       </div>
                       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
@@ -1964,7 +1964,7 @@ export default function AIBillingApp() {
                         </div>
                         <button onClick={() => { setAdminModalMode('createUser'); setSelectedAdminRecord(null); setUserFormData({ employee_code: '', username: '', first_name: '', last_name: '', email: '', temporary_password: '', phone: '', designation: '', organization_id: '', business_unit_id: '', role_id: '', status: 'Active' }); setUserFormOpen(true); }}
                           className="bg-gradient-to-r from-[#0F172A] to-blue-800 text-white px-6 py-4 rounded-2xl font-semibold shadow-lg">
-                          {adminModalMode === 'editUser' ? 'Save Changes' : 'Create User'}
+                          Create User
                         </button>
                       </div>
                       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
@@ -2043,7 +2043,7 @@ export default function AIBillingApp() {
                               </div>
                             </div>
                             <div className="flex justify-end mt-10">
-                              <button onClick={saveEnterpriseUser} className="bg-gradient-to-r from-[#0F172A] to-blue-800 text-white px-8 py-4 rounded-2xl font-semibold shadow-lg">Create User</button>
+                              <button onClick={saveEnterpriseUser} className="bg-gradient-to-r from-[#0F172A] to-blue-800 text-white px-8 py-4 rounded-2xl font-semibold shadow-lg">{adminModalMode === 'editUser' ? 'Save Changes' : 'Create User'}</button>
                             </div>
                           </div>
                         </div>
@@ -2059,7 +2059,7 @@ export default function AIBillingApp() {
                         </div>
                         <button onClick={() => { setAdminModalMode(''); setSelectedAdminRecord(null); setUserGroupFormData({ group_name: '', group_code: '', description: '', organization_id: '', business_unit_id: '', status: 'Active' }); setUserGroupFormOpen(true); }}
                           className="bg-gradient-to-r from-[#0F172A] to-blue-800 text-white px-6 py-4 rounded-2xl font-semibold shadow-lg">
-                          {adminModalMode === 'editUserGroup' ? 'Save Changes' : 'Create User Group'}
+                          Create User Group
                         </button>
                       </div>
                       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
@@ -2125,7 +2125,7 @@ export default function AIBillingApp() {
                                 className="md:col-span-2 border border-blue-200 rounded-2xl px-5 py-4 min-h-[140px] text-[#0F172A] placeholder:text-gray-500" />
                             </div>
                             <div className="flex justify-end mt-10">
-                              <button onClick={saveUserGroup} className="bg-gradient-to-r from-[#0F172A] to-blue-800 text-white px-8 py-4 rounded-2xl font-semibold shadow-lg">Save User Group</button>
+                              <button onClick={saveUserGroup} className="bg-gradient-to-r from-[#0F172A] to-blue-800 text-white px-8 py-4 rounded-2xl font-semibold shadow-lg">{adminModalMode === 'editUserGroup' ? 'Save Changes' : 'Create User Group'}</button>
                             </div>
                           </div>
                         </div>
