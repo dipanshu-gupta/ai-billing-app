@@ -469,7 +469,7 @@ const [quoteTemplates, setQuoteTemplates] = useState<any[]>([
     isDefault: true,
     companyName: 'Your Company',
     companyEmail: 'sales@company.com',
-    companyPhone: '+91 9999999999',
+    companyPhone: '+91 9999999998',
     companyAddress: 'Delhi, India',
     quoteTitle: 'Quotation',
     footerText: 'Thank you for your business.',
