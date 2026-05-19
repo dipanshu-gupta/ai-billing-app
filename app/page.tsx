@@ -304,6 +304,64 @@ const buildSystemFields = (
 
 };
 
+const applyDataSecurity = (
+  records:any[]
+) => {
+
+  if (!currentUser)
+    return records;
+
+  return records.filter(
+    (record:any) => {
+
+      const organizationMatch =
+
+        !record.organization_id ||
+
+        record.organization_id ===
+        currentUser.organization_id;
+
+      const businessUnitMatch =
+
+        !record.business_unit_id ||
+
+        record.business_unit_id ===
+        currentUser.business_unit_id;
+
+      return (
+        organizationMatch &&
+        businessUnitMatch
+      );
+    }
+  );
+};
+
+const canAccessRecord = (
+  record:any
+) => {
+
+  if (!currentUser)
+    return false;
+
+  return (
+
+    (
+      !record.organization_id ||
+
+      record.organization_id ===
+      currentUser.organization_id
+    ) &&
+
+    (
+      !record.business_unit_id ||
+
+      record.business_unit_id ===
+      currentUser.business_unit_id
+    )
+
+  );
+};
+
 const [
   currentUserPermissions,
   setCurrentUserPermissions
@@ -1157,8 +1215,11 @@ const saveMyProfile =
     .order('created_at', { ascending: false });
 
   if (!error && data) {
-    setCustomers(
-  data.map((customer:any) => ({
+    const securedCustomers =
+  applyDataSecurity(data);
+
+setCustomers(
+  securedCustomers.map((customer:any) => ({
     id: customer.customer_number,
     primaryContactId: customer.primary_contact_id,
     primaryContact:
