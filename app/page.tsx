@@ -576,25 +576,53 @@ const saveBusinessUnit =
   'editBusinessUnit'
 ) {
 
-  await supabase
-    .from('business_units')
-    .update({
-      ...businessUnitFormData,
-    })
-    .eq(
-      'id',
-      selectedAdminRecord.id
-    );
+  const {
+  error
+} = await supabase
+  .from('business_units')
+  .update({
+    ...businessUnitFormData,
+  })
+  .eq(
+    'id',
+    selectedAdminRecord.id
+  );
+
+if (error) {
+
+  alert(error.message);
+
+  return;
+
+}
 
 }  else {
 
-  await supabase
-    .from('business_units')
-    .insert([
-      {
-        ...businessUnitFormData,
-      },
-    ]);
+  const {
+  data,
+  error
+} = await supabase
+  .from('business_units')
+  .insert([
+    {
+      ...businessUnitFormData,
+    },
+  ])
+  .select();
+
+console.log(
+  'Business Unit Insert:',
+  data,
+  error
+);
+
+if (error) {
+
+  alert(error.message);
+
+  return;
+
+}
 
 }
 
@@ -5210,7 +5238,12 @@ className="border border-blue-200 rounded-2xl px-5 py-4 text-[#0F172A] placehold
       </div>
 
       <button
+      
         onClick={() => {
+
+          setSelectedRecord(null);
+
+          setEditedRecord(null);
 
   setAdminModalMode('');
 
