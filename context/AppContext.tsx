@@ -611,9 +611,27 @@ export function AppProvider({ children }) {
         runWorkflowRules(objectType, triggerEvent, recordData, recordId),
         runAssignmentRules(objectType, recordId, recordData),
         triggerEvent === 'on_create' ? startSLA(objectType, recordId, recordData) : Promise.resolve(),
-        checkAndAutoApprove(objectType, recordId, recordName, recordData),
+        // NOTE: Auto-approval removed. Users submit manually via "Submit for Approval" button.
+        // The button appears only when an active process with matching conditions exists.
       ]);
     } catch (e) { console.error('Automation error:', e); }
+  };
+
+  // Check if any active approval process matches this record — used by RecordDetailPanel
+  const checkMatchingApprovalProcess = async (objectType, recordData) => {
+    if (!supabase) return null;
+    const { data: processes } = await supabase.from('approval_processes')
+      .select('*').eq('object_type', objectType).eq('is_active', true);
+    for (const proc of (processes || [])) {
+      const condBlock = proc.conditions || { logic: 'AND', conditions: [] };
+      const conds = Array.isArray(condBlock) ? condBlock : (condBlock.conditions || []);
+      const logic  = Array.isArray(condBlock) ? 'AND' : (condBlock.logic || 'AND');
+      if (!conds.length) return proc;
+      const results = conds.map(c => evalCondition(recordData, c.field, c.operator, c.value));
+      const matched = logic === 'OR' ? results.some(Boolean) : results.every(Boolean);
+      if (matched) return proc;
+    }
+    return null;
   };
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -1158,10 +1176,11 @@ export function AppProvider({ children }) {
   };
 
   // Manual submit for approval (from record detail panel)
-  const submitForApproval = async (recordType, recordId, recordName) => {
+  const submitForApproval = async (recordType, recordId, recordName, recordData) => {
     if (!supabase || !currentUser) return;
-    const process = approvalProcesses.find(p => p.object_type === recordType && p.is_active);
-    if (!process) { alert('No active approval process found for this record type.'); return; }
+    // Find first matching active process
+    const process = await checkMatchingApprovalProcess(recordType, recordData || {});
+    if (!process) { alert('No active approval process found that matches this record\'s conditions.'); return; }
     const { data: steps } = await supabase.from('approval_steps').select('*').eq('approval_process_id', process.id).order('step_number');
     if (!steps?.length) { alert('No approval steps configured.'); return; }
     const firstStep = steps[0];
@@ -1361,7 +1380,7 @@ export function AppProvider({ children }) {
     saveQuoteTemplate, deleteQuoteTemplate, setDefaultTemplate,
     saveWorkflowRule, deleteWorkflowRule, saveAssignmentRule, deleteAssignmentRule,
     saveSLAPolicy, deleteSLAPolicy, saveApprovalProcess, deleteApprovalProcess,
-    submitForApproval, processApproval,
+    submitForApproval, processApproval, checkMatchingApprovalProcess,
     logAudit, createNotification,
 
     // saved searches

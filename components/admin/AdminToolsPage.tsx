@@ -279,13 +279,7 @@ function UsersPanel() {
     <div className="space-y-5">
       <div className="flex items-center justify-between">
         <div><h2 className="text-2xl font-bold text-[#0F172A]">Enterprise Users</h2><p className="text-gray-500 text-sm">{enterpriseUsers.length} user(s)</p></div>
-        <button onClick={()=>{
-  setEditing(null);
-  setForm({ status: 'Active', first_name: '', last_name: '', email: '', phone: '', employee_code: '', username: '', designation: '', organization_id: '', business_unit_id: '', role_id: '' });
-  setPassword('');
-  setConfirmPassword('');
-  setOpen(true);
-}} className="bg-gradient-to-r from-[#0F172A] to-blue-800 text-white px-5 py-2.5 rounded-2xl font-semibold text-sm shadow-lg hover:opacity-90">+ Add User</button>
+        <button onClick={()=>{setEditing(null);setForm({status:'Active'});setPassword('');setConfirmPassword('');setOpen(true);}} className="bg-gradient-to-r from-[#0F172A] to-blue-800 text-white px-5 py-2.5 rounded-2xl font-semibold text-sm shadow-lg hover:opacity-90">+ Add User</button>
       </div>
       <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search users by name, email, code..." className={iCls}/>
 
@@ -325,7 +319,7 @@ function UsersPanel() {
       </div>
 
       {/* Create / Edit User Modal */}
-      <Modal open={open} onClose={()=>{setOpen(false);setEditing(null);setForm({status:'Active',first_name:'',last_name:'',email:'',phone:'',employee_code:'',username:'',designation:'',organization_id:'',business_unit_id:'',role_id:''});setPassword('');setConfirmPassword('');}} title={editing?`Edit User: ${editing.first_name} ${editing.last_name}`:'New Enterprise User'}size="lg"
+      <Modal open={open} onClose={()=>setOpen(false)} title={editing?`Edit User: ${editing.first_name} ${editing.last_name}`:'New Enterprise User'} size="lg"
         footer={
           <><button onClick={()=>setOpen(false)} className="px-5 py-2.5 rounded-2xl border border-blue-200 text-sm font-semibold">Cancel</button>
           <button onClick={handleSave} disabled={saving} className="px-5 py-2.5 bg-gradient-to-r from-[#0F172A] to-blue-800 text-white rounded-2xl text-sm font-semibold disabled:opacity-50">
@@ -918,176 +912,206 @@ function SLAPoliciesPanel() {
 }
 
 // ═══════════════════════════ APPROVAL PROCESSES ═══════════════════════════════
+function ConditionBuilder({ conditions, setConditions, objectType }) {
+  const conds = conditions?.conditions || [];
+  const logic  = conditions?.logic || 'AND';
+
+  const add    = () => setConditions(c => ({ ...c, conditions: [...(c.conditions||[]), { field:'', operator:'equals', value:'' }] }));
+  const remove = idx => setConditions(c => ({ ...c, conditions: (c.conditions||[]).filter((_,i) => i !== idx) }));
+  const upd    = (idx, k, v) => setConditions(c => ({ ...c, conditions: (c.conditions||[]).map((x,i) => i===idx ? {...x,[k]:v} : x) }));
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-3 flex-wrap">
+        <span className="text-sm font-bold text-[#0F172A]">Match</span>
+        <select value={logic} onChange={e=>setConditions(c=>({...c,logic:e.target.value}))} className={`${sCls} w-auto`}>
+          <option value="AND">ALL conditions (AND)</option>
+          <option value="OR">ANY condition (OR)</option>
+        </select>
+        <button onClick={add} className="bg-blue-100 hover:bg-blue-200 text-blue-700 px-4 py-2 rounded-xl text-sm font-semibold">+ Add Condition</button>
+      </div>
+      {conds.length === 0
+        ? <div className="text-gray-400 text-sm bg-white rounded-xl px-4 py-3 border border-blue-100">No conditions — applies to ALL records. Add conditions to restrict.</div>
+        : conds.map((cond, idx) => {
+            const opts = getFieldOptions(objectType, cond.field);
+            return (
+              <div key={idx} className="grid grid-cols-3 gap-2 items-start">
+                <div>
+                  {idx === 0 && <L t="Field"/>}
+                  <select value={cond.field||''} onChange={e=>upd(idx,'field',e.target.value)} className={sCls}>
+                    <option value="">Select field</option>
+                    {(CONDITION_FIELDS[objectType]||[]).map(f=><option key={f.v} value={f.v}>{f.l}</option>)}
+                  </select>
+                </div>
+                <div>
+                  {idx === 0 && <L t="Operator"/>}
+                  <select value={cond.operator||'equals'} onChange={e=>upd(idx,'operator',e.target.value)} className={sCls}>
+                    {OPERATORS.map(o=><option key={o.v} value={o.v}>{o.l}</option>)}
+                  </select>
+                </div>
+                <div className="flex gap-2">
+                  <div className="flex-1">
+                    {idx === 0 && <L t="Value"/>}
+                    {opts
+                      ? <select value={cond.value||''} onChange={e=>upd(idx,'value',e.target.value)} className={sCls}><option value="">Select</option>{opts.map(o=><option key={o}>{o}</option>)}</select>
+                      : <input value={cond.value||''} onChange={e=>upd(idx,'value',e.target.value)} placeholder="Value" className={iCls}/>
+                    }
+                  </div>
+                  <button onClick={()=>remove(idx)} className={`text-red-500 hover:text-red-700 font-bold text-lg ${idx===0?'mt-7':''}`}>✕</button>
+                </div>
+              </div>
+            );
+          })
+      }
+    </div>
+  );
+}
+
 function ApprovalProcessesPanel() {
-  const { approvalProcesses, approvalRequests, enterpriseUsers, userGroups, saveApprovalProcess, deleteApprovalProcess, processApproval, currentUser } = useApp();
-  const [open, setOpen] = useState(false);
-  const [editing, setEditing] = useState(null);
-  const [form, setForm] = useState({ object_type:'opportunities', condition_operator:'greater_than', is_active:true });
-  const [steps, setSteps] = useState([{ step_name:'Manager Approval', approver_user_id:'', approval_type:'any', on_approve_action:'Approved', on_reject_action:'Rejected' }]);
-  const [decisionComment, setDecisionComment] = useState('');
-  const [processingId, setProcessingId] = useState(null);
+  const { approvalProcesses, enterpriseUsers, userGroups, saveApprovalProcess, deleteApprovalProcess } = useApp();
+  const [open,     setOpen]     = useState(false);
+  const [editing,  setEditing]  = useState(null);
+  const [form,     setForm]     = useState({ object_type:'opportunities', is_active:true });
+  const [conditions, setConditions] = useState({ logic:'AND', conditions:[] });
+  const [steps,    setSteps]    = useState([{ step_name:'Manager Approval', approver_user_id:'', approval_type:'any', on_approve_action:'Approved', on_reject_action:'Rejected' }]);
+  const [loading,  setLoading]  = useState(false);
   const s = (k,v)=>setForm(f=>({...f,[k]:v}));
 
-  const condFields = CONDITION_FIELDS[form.object_type]||[];
-  const valueOpts = getFieldOptions(form.object_type, form.condition_field);
+  const addStep    = () => setSteps(p=>[...p,{step_name:'',approver_user_id:'',approval_type:'any',on_approve_action:'Approved',on_reject_action:'Rejected'}]);
+  const removeStep = idx => setSteps(p=>p.filter((_,i)=>i!==idx));
+  const setStep    = (idx,k,v) => setSteps(p=>p.map((st,i)=>i===idx?{...st,[k]:v}:st));
 
-  const addStep = ()=>setSteps(prev=>[...prev,{step_name:'',approver_user_id:'',approval_type:'any',on_approve_action:'Approved',on_reject_action:'Rejected'}]);
-  const removeStep = idx=>setSteps(prev=>prev.filter((_,i)=>i!==idx));
-  const setStep = (idx,k,v)=>setSteps(prev=>prev.map((st,i)=>i===idx?{...st,[k]:v}:st));
-
-  const handleSave = async()=>{
-    if(!form.name?.trim()){alert('Process name is required.');return;}
-    if(!steps.length){alert('Add at least one approval step.');return;}
-    if(steps.some(st=>!st.approver_user_id)){alert('All steps must have an approver.');return;}
-    try{
-      await saveApprovalProcess(form,steps,editing?.id);
-      setOpen(false);
-    }catch(e){alert('Save failed: '+(e?.message||'Unknown error'));}
+  const openNew = () => {
+    setEditing(null);
+    setForm({object_type:'opportunities',is_active:true});
+    setConditions({logic:'AND',conditions:[]});
+    setSteps([{step_name:'Manager Approval',approver_user_id:'',approval_type:'any',on_approve_action:'Approved',on_reject_action:'Rejected'}]);
+    setOpen(true);
   };
 
-  // Pending requests where current user is approver
-  const pendingRequests = approvalRequests.filter(r=>r.status==='Pending');
+  const openEdit = async (proc) => {
+    setLoading(true);
+    setEditing(proc);
+    setForm({...proc});
+    // Restore conditions from DB
+    const savedConds = proc.conditions || { logic:'AND', conditions:[] };
+    setConditions(typeof savedConds === 'string' ? JSON.parse(savedConds) : savedConds);
+    // Load steps from Supabase
+    const { createClient } = await import('@supabase/supabase-js').catch(()=>({}));
+    // Use supabase from lib
+    const { supabase: sb } = await import('@/lib/supabase');
+    if (sb) {
+      const { data: stepRows } = await sb.from('approval_steps').select('*').eq('approval_process_id', proc.id).order('step_number');
+      if (stepRows?.length) {
+        setSteps(stepRows.map(r=>({
+          step_name:         r.step_name         || '',
+          approver_user_id:  r.approver_user_id  || '',
+          approver_group_id: r.approver_group_id || '',
+          approval_type:     r.approval_type     || 'any',
+          on_approve_action: r.on_approve_action || 'Approved',
+          on_reject_action:  r.on_reject_action  || 'Rejected',
+        })));
+      } else {
+        setSteps([{step_name:'Manager Approval',approver_user_id:'',approval_type:'any',on_approve_action:'Approved',on_reject_action:'Rejected'}]);
+      }
+    }
+    setLoading(false);
+    setOpen(true);
+  };
 
-  const handleDecision = async(requestId, decision)=>{
-    setProcessingId(requestId);
-    await processApproval(requestId,decision,decisionComment);
-    setDecisionComment('');
-    setProcessingId(null);
+  const handleSave = async () => {
+    if(!form.name?.trim()){alert('Process name is required.');return;}
+    if(!steps.length){alert('Add at least one approval step.');return;}
+    if(steps.some(st=>!st.approver_user_id)){alert('All steps must have an approver selected.');return;}
+    try {
+      await saveApprovalProcess({...form, conditions}, steps, editing?.id);
+      setOpen(false);
+    } catch(e){alert('Save failed: '+(e?.message||'Unknown error'));}
   };
 
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between">
-        <div><h2 className="text-2xl font-bold text-[#0F172A]">Approval Processes</h2><p className="text-gray-500 text-sm">{approvalProcesses.length} process(es)</p></div>
-        <button onClick={()=>{setEditing(null);setForm({object_type:'opportunities',condition_operator:'greater_than',is_active:true});setSteps([{step_name:'Manager Approval',approver_user_id:'',approval_type:'any',on_approve_action:'Approved',on_reject_action:'Rejected'}]);setOpen(true);}} className="bg-gradient-to-r from-[#0F172A] to-blue-800 text-white px-5 py-2.5 rounded-2xl font-semibold text-sm shadow-lg hover:opacity-90">+ New Process</button>
+        <div><h2 className="text-2xl font-bold text-[#0F172A]">Approval Processes</h2><p className="text-gray-500 text-sm">{approvalProcesses.length} process(es) — configure multi-step approval workflows</p></div>
+        <button onClick={openNew} className="bg-gradient-to-r from-[#0F172A] to-blue-800 text-white px-5 py-2.5 rounded-2xl font-semibold text-sm shadow-lg hover:opacity-90">+ New Process</button>
       </div>
 
-      {/* Pending Approvals Inbox */}
-      {pendingRequests.length>0&&(
-        <div className="bg-yellow-50 border border-yellow-200 rounded-[24px] p-5 space-y-3">
-          <h3 className="font-bold text-yellow-800 flex items-center gap-2">⏳ Pending Approvals Inbox <span className="bg-yellow-200 text-yellow-800 text-xs font-bold px-2.5 py-0.5 rounded-full">{pendingRequests.length}</span></h3>
-          {pendingRequests.map(req=>(
-            <div key={req.id} className="bg-white border border-yellow-200 rounded-2xl p-4">
-              <div className="flex items-start justify-between mb-3">
-                <div>
-                  <div className="font-bold text-[#0F172A]">{req.record_name}</div>
-                  <div className="text-sm text-gray-500 mt-0.5">{req.record_type} · {req.request_number}</div>
-                  <div className="text-xs text-gray-400 mt-0.5">Submitted by {req.submitted_by}</div>
-                </div>
-                <span className="bg-yellow-100 text-yellow-700 text-xs font-semibold px-3 py-1 rounded-full">Pending</span>
-              </div>
-              <div className="space-y-2">
-                <input value={decisionComment} onChange={e=>setDecisionComment(e.target.value)} placeholder="Add a comment (optional)" className={iCls}/>
-                <div className="flex gap-3">
-                  <button onClick={()=>handleDecision(req.id,'Approved')} disabled={processingId===req.id} className="flex-1 bg-green-500 hover:bg-green-600 text-white py-2.5 rounded-xl font-semibold text-sm transition-all disabled:opacity-50">✅ Approve</button>
-                  <button onClick={()=>handleDecision(req.id,'Rejected')} disabled={processingId===req.id} className="flex-1 bg-red-500 hover:bg-red-600 text-white py-2.5 rounded-xl font-semibold text-sm transition-all disabled:opacity-50">❌ Reject</button>
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* Processes list */}
       {approvalProcesses.length===0
-        ? <div className="py-16 text-center bg-white rounded-[24px] border border-blue-100 shadow"><div className="text-5xl mb-3">✅</div><div className="font-bold text-[#0F172A] text-lg mb-2">No approval processes yet</div><p className="text-gray-400 mb-5">Create multi-step approval workflows for high-value records.</p><button onClick={()=>setOpen(true)} className="bg-gradient-to-r from-[#0F172A] to-blue-800 text-white px-6 py-3 rounded-2xl font-semibold text-sm">+ Create First Process</button></div>
+        ? <div className="py-16 text-center bg-white rounded-[24px] border border-blue-100 shadow"><div className="text-5xl mb-3">✅</div><div className="font-bold text-[#0F172A] text-lg mb-2">No approval processes yet</div><p className="text-gray-400 mb-5">Create multi-step approval workflows. Records meeting conditions will show a Submit for Approval button.</p><button onClick={openNew} className="bg-gradient-to-r from-[#0F172A] to-blue-800 text-white px-6 py-3 rounded-2xl font-semibold text-sm">+ Create First Process</button></div>
         : <div className="space-y-3">
-            {approvalProcesses.map(proc=>{
-              const procRequests = approvalRequests.filter(r=>r.approval_process_id===proc.id);
-              const pending = procRequests.filter(r=>r.status==='Pending').length;
-              return (
-                <div key={proc.id} className="bg-white border border-blue-100 rounded-2xl p-5 shadow-sm">
-                  <div className="flex items-start justify-between">
-                    <div>
-                      <div className="flex items-center gap-3 mb-1">
-                        <h3 className="font-bold text-[#0F172A] text-lg">{proc.name}</h3>
-                        <span className={`px-2.5 py-0.5 rounded-full text-xs font-semibold ${proc.is_active?'bg-green-100 text-green-700':'bg-gray-100 text-gray-500'}`}>{proc.is_active?'Active':'Inactive'}</span>
-                        {pending>0&&<span className="bg-yellow-100 text-yellow-700 text-xs font-semibold px-2.5 py-0.5 rounded-full">{pending} pending</span>}
-                      </div>
-                      <div className="text-sm text-gray-500">
-                        <span className="font-medium text-[#0F172A]">{proc.object_type}</span>
-                        {proc.condition_field&&<span>: When {proc.condition_field} {proc.condition_operator} <span className="font-medium text-[#0F172A]">"{proc.condition_value}"</span></span>}
-                      </div>
-                      <div className="text-xs text-gray-400 mt-1">{procRequests.length} total requests · {procRequests.filter(r=>r.status==='Approved').length} approved · {procRequests.filter(r=>r.status==='Rejected').length} rejected</div>
-                    </div>
-                    <div className="flex gap-2">
-                      <button onClick={()=>{setEditing(proc);setForm({...proc});setOpen(true);}} className="bg-blue-100 hover:bg-blue-200 text-blue-700 px-4 py-2 rounded-xl text-sm font-semibold">Edit</button>
-                      <button onClick={()=>deleteApprovalProcess(proc.id)} className="bg-red-100 hover:bg-red-200 text-red-600 px-4 py-2 rounded-xl text-sm font-semibold">Delete</button>
-                    </div>
+            {approvalProcesses.map(proc=>(
+              <div key={proc.id} className="bg-white border border-blue-100 rounded-2xl p-5 shadow-sm flex items-start justify-between">
+                <div>
+                  <div className="flex items-center gap-3 mb-1">
+                    <h3 className="font-bold text-[#0F172A] text-lg">{proc.name}</h3>
+                    <span className={`px-2.5 py-0.5 rounded-full text-xs font-semibold ${proc.is_active?'bg-green-100 text-green-700':'bg-gray-100 text-gray-500'}`}>{proc.is_active?'Active':'Inactive'}</span>
+                  </div>
+                  <div className="text-sm text-gray-500">
+                    Object: <span className="font-medium text-[#0F172A]">{proc.object_type}</span>
+                    {(() => {
+                      const conds = proc.conditions?.conditions || [];
+                      if (!conds.length) return <span> · Applies to all records</span>;
+                      return <span> · {conds.length} condition{conds.length>1?'s':''} ({proc.conditions?.logic||'AND'})</span>;
+                    })()}
                   </div>
                 </div>
-              );
-            })}
+                <div className="flex gap-2">
+                  <button onClick={()=>openEdit(proc)} disabled={loading} className="bg-blue-100 hover:bg-blue-200 text-blue-700 px-4 py-2 rounded-xl text-sm font-semibold disabled:opacity-50">Edit</button>
+                  <button onClick={()=>deleteApprovalProcess(proc.id)} className="bg-red-100 hover:bg-red-200 text-red-600 px-4 py-2 rounded-xl text-sm font-semibold">Delete</button>
+                </div>
+              </div>
+            ))}
           </div>
       }
 
       <Modal open={open} onClose={()=>setOpen(false)} title={editing?'Edit Approval Process':'New Approval Process'} size="xl"
         footer={<><button onClick={()=>setOpen(false)} className="px-5 py-2.5 rounded-2xl border border-blue-200 text-sm font-semibold">Cancel</button><button onClick={handleSave} className="px-5 py-2.5 bg-gradient-to-r from-[#0F172A] to-blue-800 text-white rounded-2xl text-sm font-semibold">Save Process</button></>}>
         <div className="space-y-6">
+          {/* Basics */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="col-span-2"><L t="Process Name *"/><input value={form.name||''} onChange={e=>s('name',e.target.value)} placeholder="e.g. High Value Deal Approval" className={iCls}/></div>
-
             <div>
               <L t="Object Type"/>
-              <select value={form.object_type||'opportunities'} onChange={e=>{s('object_type',e.target.value);s('condition_field','');s('condition_value','');}} className={sCls}>
+              <select value={form.object_type||'opportunities'} onChange={e=>{s('object_type',e.target.value);setConditions({logic:'AND',conditions:[]});}} className={sCls}>
                 {ALL_OBJECTS.map(o=><option key={o} value={o}>{o}</option>)}
               </select>
             </div>
             <div><L t="Active"/><select value={form.is_active?'Yes':'No'} onChange={e=>s('is_active',e.target.value==='Yes')} className={sCls}><option>Yes</option><option>No</option></select></div>
+          </div>
 
-            <div className="col-span-2 bg-blue-50 rounded-2xl p-4 space-y-3">
-              <h4 className="font-bold text-[#0F172A] text-sm">Apply When (condition)</h4>
-              <div className="grid grid-cols-3 gap-3">
-                <div>
-                  <L t="Field"/>
-                  <select value={form.condition_field||''} onChange={e=>{s('condition_field',e.target.value);s('condition_value','');}} className={sCls}>
-                    <option value="">All records</option>
-                    {(CONDITION_FIELDS[form.object_type]||[]).map(f=><option key={f.v} value={f.v}>{f.l}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <L t="Operator"/>
-                  <select value={form.condition_operator||'greater_than'} onChange={e=>s('condition_operator',e.target.value)} className={sCls}>
-                    {OPERATORS.map(o=><option key={o.v} value={o.v}>{o.l}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <L t="Value"/>
-                  <ConditionValue objType={form.object_type} field={form.condition_field} value={form.condition_value||''} onChange={v=>s('condition_value',v)}/>
-                </div>
-              </div>
-            </div>
+          {/* Conditions */}
+          <div className="bg-blue-50 rounded-2xl p-5 space-y-4">
+            <div><h4 className="font-bold text-[#0F172A]">Approval Conditions</h4><p className="text-xs text-gray-500 mt-1">The "Submit for Approval" button appears on records that meet these conditions.</p></div>
+            <ConditionBuilder conditions={conditions} setConditions={setConditions} objectType={form.object_type||'opportunities'}/>
           </div>
 
           {/* Steps */}
           <div>
             <div className="flex items-center justify-between mb-4">
-              <h3 className="font-bold text-[#0F172A] text-lg">Approval Steps</h3>
+              <div><h3 className="font-bold text-[#0F172A] text-lg">Approval Steps</h3><p className="text-xs text-gray-500 mt-0.5">Steps are executed in order.</p></div>
               <button onClick={addStep} className="bg-blue-100 hover:bg-blue-200 text-blue-700 px-4 py-2 rounded-xl text-sm font-semibold">+ Add Step</button>
             </div>
             <div className="space-y-4">
               {steps.map((step,idx)=>(
                 <div key={idx} className="bg-blue-50 rounded-2xl p-4 space-y-3">
                   <div className="flex items-center justify-between">
-                    <span className="font-bold text-[#0F172A] text-sm">Step {idx+1}</span>
+                    <span className="font-bold text-[#0F172A] text-sm flex items-center gap-2">
+                      <span className="w-7 h-7 bg-[#0F172A] text-white rounded-full flex items-center justify-center text-xs">{idx+1}</span>
+                      Step {idx+1}
+                    </span>
                     {steps.length>1&&<button onClick={()=>removeStep(idx)} className="text-red-500 text-xs font-semibold hover:underline">Remove Step</button>}
                   </div>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                     <div><L t="Step Name"/><input value={step.step_name||''} onChange={e=>setStep(idx,'step_name',e.target.value)} placeholder="e.g. Manager Approval" className={iCls}/></div>
                     <div>
-                      <L t="Approver"/>
-                      <select value={step.approver_user_id||''} onChange={e=>setStep(idx,'approver_user_id',e.target.value)} className={sCls}>
-                        <option value="">Select approver</option>
+                      <L t="Approver *"/>
+                      <select value={step.approver_user_id||''} onChange={e=>setStep(idx,'approver_user_id',e.target.value)} className={`${sCls} ${!step.approver_user_id?'border-red-200':''}`}>
+                        <option value="">Select approver user</option>
                         {enterpriseUsers.map(u=><option key={u.id} value={u.id}>{u.first_name} {u.last_name} ({u.email})</option>)}
                       </select>
+                      {!step.approver_user_id&&<p className="text-red-500 text-xs mt-1">Required</p>}
                     </div>
-                    <div>
-                      <L t="Approval Type"/>
-                      <select value={step.approval_type||'any'} onChange={e=>setStep(idx,'approval_type',e.target.value)} className={sCls}>
-                        <option value="any">Any Approver</option>
-                        <option value="all">All Approvers</option>
-                      </select>
-                    </div>
+                    <div><L t="Approval Type"/><select value={step.approval_type||'any'} onChange={e=>setStep(idx,'approval_type',e.target.value)} className={sCls}><option value="any">Any Approver</option><option value="all">All Approvers</option></select></div>
                     <div>
                       <L t="Group Approver (optional)"/>
                       <select value={step.approver_group_id||''} onChange={e=>setStep(idx,'approver_group_id',e.target.value)} className={sCls}>
@@ -1095,8 +1119,8 @@ function ApprovalProcessesPanel() {
                         {userGroups.map(g=><option key={g.id} value={g.id}>{g.group_name}</option>)}
                       </select>
                     </div>
-                    <div><L t="On Approve → Set Status"/><input value={step.on_approve_action||'Approved'} onChange={e=>setStep(idx,'on_approve_action',e.target.value)} className={iCls}/></div>
-                    <div><L t="On Reject → Set Status"/><input value={step.on_reject_action||'Rejected'} onChange={e=>setStep(idx,'on_reject_action',e.target.value)} className={iCls}/></div>
+                    <div><L t="On Approve → Status"/><input value={step.on_approve_action||'Approved'} onChange={e=>setStep(idx,'on_approve_action',e.target.value)} placeholder="e.g. Approved" className={iCls}/></div>
+                    <div><L t="On Reject → Status"/><input value={step.on_reject_action||'Rejected'} onChange={e=>setStep(idx,'on_reject_action',e.target.value)} placeholder="e.g. Rejected" className={iCls}/></div>
                   </div>
                 </div>
               ))}
@@ -1108,7 +1132,7 @@ function ApprovalProcessesPanel() {
   );
 }
 
-// ═══════════════════════════ QUOTE TEMPLATES ═══════════════════════════════════
+// ═══════════════════════════ QUOTE TEMPLATES // ═══════════════════════════ QUOTE TEMPLATES ═══════════════════════════════════
 function TemplateDesignerPanel() {
   const { quoteTemplates, saveQuoteTemplate, deleteQuoteTemplate, setDefaultTemplate } = useApp();
   const [open, setOpen] = useState(false);

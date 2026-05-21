@@ -227,7 +227,7 @@ function Customer360({ customer }) {
 export default function RecordDetailPanel({ page, record, onClose }) {
   const {
     customers, contacts, products, organizations, businessUnits, enterpriseUsers,
-    updateRecord, submitForApproval,
+    updateRecord, submitForApproval, checkMatchingApprovalProcess,
     convertLeadToOpportunity, createOrderFromOpportunity, createInvoiceFromOrder,
   } = useApp();
 
@@ -236,11 +236,22 @@ export default function RecordDetailPanel({ page, record, onClose }) {
   const [loadingLI, setLoadingLI] = useState(false);
   const [saving,    setSaving]    = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [tab,       setTab]       = useState('details');
+  const [tab,        setTab]       = useState('details');
+  const [matchingProcess, setMatchingProcess] = useState(null);
+  const [checkingApproval, setCheckingApproval] = useState(false);
 
   useEffect(() => {
     setEdited({ ...record });
     setTab('details');
+    // Check if a matching approval process exists for this record
+    const checkApproval = async () => {
+      if (!['leads','opportunities','orders','invoices','customers','contacts','activities'].includes(page)) return;
+      setCheckingApproval(true);
+      const proc = await checkMatchingApprovalProcess(page, { ...record, amount: record.amount });
+      setMatchingProcess(proc);
+      setCheckingApproval(false);
+    };
+    checkApproval();
     if (!HAS_LI.includes(page)) { setLineItems([]); return; }
     const [table, field] = LI_MAP[page] || [];
     if (!table || !supabase) return;
@@ -266,9 +277,10 @@ export default function RecordDetailPanel({ page, record, onClose }) {
 
   const handleSubmitForApproval = async () => {
     setSubmitting(true);
-    await submitForApproval(page, record.id, record.name);
+    await submitForApproval(page, record.id, record.name, { ...record });
     setSubmitting(false);
     setEdited(p => ({ ...p, status: 'Pending Approval' }));
+    setMatchingProcess(null); // Hide button after submission
   };
 
   const renderField = (field) => {
@@ -296,7 +308,13 @@ export default function RecordDetailPanel({ page, record, onClose }) {
   };
 
   const isPendingApproval = edited.status === 'Pending Approval';
-  const canSubmitForApproval = ['leads','opportunities','orders','invoices'].includes(page) && !isPendingApproval;
+  // Show Submit button only when: not pending, a matching process exists, not already decided
+  const decisionStatuses = ['Approved', 'Rejected', 'Pending Approval'];
+  const canSubmitForApproval = (
+    matchingProcess != null &&
+    !decisionStatuses.includes(edited.status) &&
+    !checkingApproval
+  );
 
   return (
     <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[110] overflow-y-auto">
@@ -384,9 +402,16 @@ export default function RecordDetailPanel({ page, record, onClose }) {
         {/* Footer */}
         <div className="px-8 py-4 border-t border-blue-100 bg-white flex items-center justify-between flex-shrink-0">
           <div className="flex items-center gap-3">
+            {checkingApproval && (
+              <span className="text-xs text-gray-400 px-4">Checking approval rules…</span>
+            )}
             {canSubmitForApproval && (
-              <button onClick={handleSubmitForApproval} disabled={submitting} className="px-5 py-2.5 text-sm rounded-2xl font-semibold bg-purple-100 hover:bg-purple-200 text-purple-700 border border-purple-200 transition-all disabled:opacity-50">
-                {submitting ? 'Submitting…' : '📋 Submit for Approval'}
+              <button onClick={handleSubmitForApproval} disabled={submitting}
+                className="flex items-center gap-2 px-5 py-2.5 text-sm rounded-2xl font-semibold bg-purple-100 hover:bg-purple-200 text-purple-700 border border-purple-200 transition-all disabled:opacity-50"
+                title={`Process: ${matchingProcess?.name}`}
+              >
+                📋 {submitting ? 'Submitting…' : `Submit for Approval`}
+                <span className="bg-purple-200 text-purple-800 text-xs px-2 py-0.5 rounded-full">{matchingProcess?.name}</span>
               </button>
             )}
             <span className="text-sm text-gray-400">{HAS_LI.includes(page)&&`${lineItems.length} line item${lineItems.length!==1?'s':''}`}</span>
