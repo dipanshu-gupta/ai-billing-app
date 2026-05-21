@@ -91,28 +91,31 @@ function ProfileModal({ open, onClose }) {
           <div><span className="text-gray-400">Employee Code: </span><span className="font-semibold">{currentUser?.employee_code}</span></div>
           <div><span className="text-gray-400">Designation: </span><span className="font-semibold">{currentUser?.designation}</span></div>
         </div>
-        <div className="border-t border-blue-100 pt-4 space-y-2">
-          <label className="text-xs font-bold uppercase tracking-wider text-gray-400">Reset Password</label>
-          <div className="flex gap-2">
-            <input
-              type="password"
-              value={newPassword}
-              onChange={e => setNewPassword(e.target.value)}
-              placeholder="New password (min 6 chars)"
-              className={`${inputClass} flex-1`}
-            />
+        <div className="border-t border-blue-100 pt-4 space-y-3">
+          <div>
+            <label className="text-xs font-bold uppercase tracking-wider text-gray-400 block mb-1.5">Change My Password</label>
+            <p className="text-xs text-gray-400 mb-3">Enter a new password to update your login credentials. Minimum 6 characters.</p>
+          </div>
+          <div className="grid grid-cols-1 gap-3">
+            <div>
+              <label className="text-xs font-semibold text-gray-500 block mb-1">New Password</label>
+              <input
+                type="password"
+                value={newPassword}
+                onChange={e => setNewPassword(e.target.value)}
+                placeholder="Enter new password"
+                className={inputClass}
+              />
+            </div>
             <Button
-              variant="secondary"
               onClick={async () => {
-                if (newPassword.length >= 6) {
-                  await resetMyPassword(newPassword);
-                  setNewPassword('');
-                } else {
-                  alert('Password must be at least 6 characters.');
-                }
+                if (!newPassword) { alert('Please enter a new password.'); return; }
+                if (newPassword.length < 6) { alert('Password must be at least 6 characters.'); return; }
+                await resetMyPassword(newPassword);
+                setNewPassword('');
               }}
             >
-              Update
+              Update Password
             </Button>
           </div>
         </div>

@@ -448,12 +448,51 @@ export function AppProvider({ children }) {
     await fetchBusinessUnits();
   };
 
-  const saveEnterpriseUser = async (data, editingId) => {
+  const saveEnterpriseUser = async (data, editingId, password) => {
     if (!supabase) return;
-    editingId
-      ? await supabase.from('enterprise_users').update(data).eq('id', editingId)
-      : await supabase.from('enterprise_users').insert([data]);
+
+    if (editingId) {
+      // Update existing enterprise user record (no auth changes)
+      const { password: _pw, confirmPassword: _cpw, ...safeData } = data;
+      const { error } = await supabase.from('enterprise_users').update(safeData).eq('id', editingId);
+      if (error) { alert('Failed to update user: ' + error.message); return; }
+    } else {
+      // Create new: first create Supabase Auth user via API route
+      if (!data.email) { alert('Email is required.'); return; }
+      if (!password || password.length < 6) { alert('Password must be at least 6 characters.'); return; }
+
+      const res = await fetch('/api/admin/create-user', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: data.email, password }),
+      });
+      const json = await res.json();
+      if (!res.ok || json.error) { alert('Auth creation failed: ' + (json.error || 'Unknown error')); return; }
+
+      // Then insert enterprise_user record with auth_user_id
+      const { password: _pw, confirmPassword: _cpw, ...safeData } = data;
+      const { error } = await supabase.from('enterprise_users').insert([{
+        ...safeData,
+        auth_user_id: json.authUserId,
+        status: data.status || 'Active',
+      }]);
+      if (error) { alert('Failed to create user record: ' + error.message); return; }
+    }
     await fetchEnterpriseUsers();
+  };
+
+  const adminResetPassword = async (authUserId, newPassword) => {
+    if (!authUserId) { alert('This user has no linked auth account. Re-create the user to link one.'); return; }
+    if (!newPassword || newPassword.length < 6) { alert('Password must be at least 6 characters.'); return; }
+
+    const res = await fetch('/api/admin/reset-password', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ authUserId, password: newPassword }),
+    });
+    const json = await res.json();
+    if (!res.ok || json.error) { alert('Password reset failed: ' + (json.error || 'Unknown error')); return; }
+    alert('Password reset successfully.');
   };
 
   const saveUserGroup = async (data, editingId) => {
@@ -1001,10 +1040,6 @@ export function AppProvider({ children }) {
     await fetchApprovalRequests();
   };
 
-  // ═══════════════════════════════════════════════════════════════════════════
-  // AUTOMATION ENGINES
-  // ═══════════════════════════════════════════════════════════════════════════
-
   const runWorkflowRules = async (objectType, triggerEvent, recordData) => {
     if (!supabase || !currentUser) return;
     const rules = workflowRules.filter(r =>
@@ -1025,14 +1060,6 @@ export function AppProvider({ children }) {
               recordType: objectType, recordId: recordData?.id || '',
             });
           }
-          if (action.action_type === 'send_email' && cfg.to_email) {
-            await createNotification({
-              recipientEmail: cfg.to_email, type: 'email',
-              title: cfg.subject || rule.name,
-              body: cfg.body || '',
-              recordType: objectType, recordId: recordData?.id || '',
-            });
-          }
         } catch (e) { console.error('Workflow action error:', e); }
       }
     }
@@ -1047,16 +1074,12 @@ export function AppProvider({ children }) {
         if (String(val).toLowerCase() !== String(policy.condition_value).toLowerCase()) continue;
       }
       const now = new Date();
-      const responseDue   = new Date(now.getTime() + policy.response_time_hours   * 3600000);
-      const resolutionDue = new Date(now.getTime() + policy.resolution_time_hours * 3600000);
       await supabase.from('sla_records').insert([{
-        sla_policy_id:     policy.id,
-        record_type:       objectType,
-        record_id:         recordId,
-        started_at:        now.toISOString(),
-        response_due_at:   responseDue.toISOString(),
-        resolution_due_at: resolutionDue.toISOString(),
-        status:            'Active',
+        sla_policy_id: policy.id, record_type: objectType, record_id: recordId,
+        started_at: now.toISOString(),
+        response_due_at: new Date(now.getTime() + policy.response_time_hours * 3600000).toISOString(),
+        resolution_due_at: new Date(now.getTime() + policy.resolution_time_hours * 3600000).toISOString(),
+        status: 'Active',
       }]);
     }
   };
@@ -1181,7 +1204,9 @@ export function AppProvider({ children }) {
     // audit
     logAudit, createNotification,
 
-    
+    // user management
+    adminResetPassword,
+
   };
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;

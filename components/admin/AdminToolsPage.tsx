@@ -238,54 +238,160 @@ function BusinessUnitsPanel() {
 
 // ═══════════════════════════ USERS ════════════════════════════════════════════
 function UsersPanel() {
-  const { enterpriseUsers, organizations, businessUnits, roles, saveEnterpriseUser, updateAdminStatus } = useApp();
+  const { enterpriseUsers, organizations, businessUnits, roles, saveEnterpriseUser, adminResetPassword, updateAdminStatus } = useApp();
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState({status:'Active'});
+  const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [resetPwUserId, setResetPwUserId] = useState(null);
+  const [resetPwValue, setResetPwValue] = useState('');
+  const [saving, setSaving] = useState(false);
   const [search, setSearch] = useState('');
   const s = (k,v)=>setForm(f=>({...f,[k]:v}));
 
   const filtered = enterpriseUsers.filter(u=>[u.first_name,u.last_name,u.email,u.employee_code].some(v=>v?.toLowerCase().includes(search.toLowerCase())));
 
+  const handleSave = async () => {
+    if (!editing) {
+      if (!form.email?.trim()) { alert('Email is required.'); return; }
+      if (!password) { alert('Password is required for new users.'); return; }
+      if (password !== confirmPassword) { alert('Passwords do not match.'); return; }
+      if (password.length < 6) { alert('Password must be at least 6 characters.'); return; }
+    }
+    setSaving(true);
+    await saveEnterpriseUser(form, editing?.id, password);
+    setSaving(false);
+    setOpen(false);
+    setPassword('');
+    setConfirmPassword('');
+  };
+
+  const handleResetPassword = async () => {
+    if (!resetPwValue || resetPwValue.length < 6) { alert('Password must be at least 6 characters.'); return; }
+    const user = enterpriseUsers.find(u => u.id === resetPwUserId);
+    await adminResetPassword(user?.auth_user_id, resetPwValue);
+    setResetPwUserId(null);
+    setResetPwValue('');
+  };
+
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between">
         <div><h2 className="text-2xl font-bold text-[#0F172A]">Enterprise Users</h2><p className="text-gray-500 text-sm">{enterpriseUsers.length} user(s)</p></div>
-        <button onClick={()=>{setEditing(null);setForm({status:'Active'});setOpen(true);}} className="bg-gradient-to-r from-[#0F172A] to-blue-800 text-white px-5 py-2.5 rounded-2xl font-semibold text-sm shadow-lg hover:opacity-90">+ Add User</button>
+        <button onClick={()=>{setEditing(null);setForm({status:'Active'});setPassword('');setConfirmPassword('');setOpen(true);}} className="bg-gradient-to-r from-[#0F172A] to-blue-800 text-white px-5 py-2.5 rounded-2xl font-semibold text-sm shadow-lg hover:opacity-90">+ Add User</button>
       </div>
-      <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search users..." className={iCls}/>
+      <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search users by name, email, code..." className={iCls}/>
+
       <div className="bg-white rounded-[24px] border border-blue-100 shadow overflow-hidden">
         <table className="w-full text-sm">
-          <thead className="bg-gradient-to-r from-[#0F172A] to-blue-900 text-white"><tr>{['Code','Name','Email','Designation','Status','Actions'].map(h=><th key={h} className="px-5 py-3 text-left text-sm font-semibold">{h}</th>)}</tr></thead>
+          <thead className="bg-gradient-to-r from-[#0F172A] to-blue-900 text-white">
+            <tr>{['Code','Name','Email','Designation','Auth','Status','Actions'].map(h=><th key={h} className="px-5 py-3 text-left text-sm font-semibold">{h}</th>)}</tr>
+          </thead>
           <tbody>
-            {filtered.length===0?<tr><td colSpan={6} className="px-5 py-8 text-center text-gray-400">No users found.</td></tr>:
-              filtered.map(u=>(
+            {filtered.length===0
+              ? <tr><td colSpan={7} className="px-5 py-8 text-center text-gray-400">No users found.</td></tr>
+              : filtered.map(u=>(
                 <tr key={u.id} className="border-t border-blue-50 hover:bg-blue-50/40">
-                  <td className="px-5 py-3 text-xs font-mono text-gray-400">{u.employee_code}</td>
+                  <td className="px-5 py-3 text-xs font-mono text-gray-400">{u.employee_code||'-'}</td>
                   <td className="px-5 py-3 font-semibold text-[#0F172A]">{u.first_name} {u.last_name}</td>
                   <td className="px-5 py-3 text-gray-500">{u.email}</td>
                   <td className="px-5 py-3 text-gray-500">{u.designation||'-'}</td>
+                  <td className="px-5 py-3">
+                    {u.auth_user_id
+                      ? <span className="bg-green-100 text-green-700 text-xs font-semibold px-2.5 py-0.5 rounded-full">✓ Linked</span>
+                      : <span className="bg-gray-100 text-gray-500 text-xs font-semibold px-2.5 py-0.5 rounded-full">No auth</span>
+                    }
+                  </td>
                   <td className="px-5 py-3"><span className={`px-2.5 py-0.5 rounded-full text-xs font-semibold ${u.status==='Active'?'bg-green-100 text-green-700':'bg-gray-100 text-gray-600'}`}>{u.status}</span></td>
-                  <td className="px-5 py-3"><div className="flex gap-2">
-                    <button onClick={()=>{setEditing(u);setForm({...u});setOpen(true);}} className="bg-blue-100 hover:bg-blue-200 text-blue-700 px-3 py-1.5 rounded-xl text-xs font-semibold">Edit</button>
-                    <button onClick={()=>updateAdminStatus('enterprise_users',u.id,u.status==='Active'?'Inactive':'Active')} className="bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1.5 rounded-xl text-xs font-semibold">{u.status==='Active'?'Deactivate':'Activate'}</button>
-                  </div></td>
+                  <td className="px-5 py-3">
+                    <div className="flex gap-2 flex-wrap">
+                      <button onClick={()=>{setEditing(u);setForm({...u});setPassword('');setConfirmPassword('');setOpen(true);}} className="bg-blue-100 hover:bg-blue-200 text-blue-700 px-3 py-1.5 rounded-xl text-xs font-semibold">Edit</button>
+                      {u.auth_user_id && <button onClick={()=>{setResetPwUserId(u.id);setResetPwValue('');}} className="bg-purple-100 hover:bg-purple-200 text-purple-700 px-3 py-1.5 rounded-xl text-xs font-semibold">Reset PW</button>}
+                      <button onClick={()=>updateAdminStatus('enterprise_users',u.id,u.status==='Active'?'Inactive':'Active')} className="bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1.5 rounded-xl text-xs font-semibold">{u.status==='Active'?'Deactivate':'Activate'}</button>
+                    </div>
+                  </td>
                 </tr>
               ))
             }
           </tbody>
         </table>
       </div>
-      <Modal open={open} onClose={()=>setOpen(false)} title={editing?'Edit User':'New User'} size="lg"
-        footer={<><button onClick={()=>setOpen(false)} className="px-5 py-2.5 rounded-2xl border border-blue-200 text-sm font-semibold">Cancel</button><button onClick={async()=>{await saveEnterpriseUser(form,editing?.id);setOpen(false);}} className="px-5 py-2.5 bg-gradient-to-r from-[#0F172A] to-blue-800 text-white rounded-2xl text-sm font-semibold">Save</button></>}>
-        <div className="grid grid-cols-2 gap-4">
-          {[['First Name','first_name'],['Last Name','last_name'],['Email','email'],['Phone','phone'],['Employee Code','employee_code'],['Username','username'],['Designation','designation']].map(([label,field])=>(
-            <div key={field}><L t={label}/><input value={form[field]||''} onChange={e=>s(field,e.target.value)} className={iCls}/></div>
-          ))}
-          <div><L t="Organization"/><select value={form.organization_id||''} onChange={e=>s('organization_id',e.target.value)} className={sCls}><option value="">Select</option>{organizations.map(o=><option key={o.id} value={o.id}>{o.name}</option>)}</select></div>
-          <div><L t="Business Unit"/><select value={form.business_unit_id||''} onChange={e=>s('business_unit_id',e.target.value)} className={sCls}><option value="">Select</option>{businessUnits.map(b=><option key={b.id} value={b.id}>{b.name}</option>)}</select></div>
-          <div><L t="Role"/><select value={form.role_id||''} onChange={e=>s('role_id',e.target.value)} className={sCls}><option value="">Select Role</option></select></div>
-          <div><L t="Status"/><select value={form.status||'Active'} onChange={e=>s('status',e.target.value)} className={sCls}><option>Active</option><option>Inactive</option></select></div>
+
+      {/* Create / Edit User Modal */}
+      <Modal open={open} onClose={()=>setOpen(false)} title={editing?`Edit User: ${editing.first_name} ${editing.last_name}`:'New Enterprise User'} size="lg"
+        footer={
+          <><button onClick={()=>setOpen(false)} className="px-5 py-2.5 rounded-2xl border border-blue-200 text-sm font-semibold">Cancel</button>
+          <button onClick={handleSave} disabled={saving} className="px-5 py-2.5 bg-gradient-to-r from-[#0F172A] to-blue-800 text-white rounded-2xl text-sm font-semibold disabled:opacity-50">
+            {saving ? (editing?'Saving...':'Creating user...') : (editing?'Save Changes':'Create User')}
+          </button></>
+        }>
+        <div className="space-y-5">
+          {/* Profile fields */}
+          <div className="grid grid-cols-2 gap-4">
+            {[['First Name','first_name'],['Last Name','last_name'],['Email','email'],['Phone','phone'],['Employee Code','employee_code'],['Username','username'],['Designation','designation']].map(([label,field])=>(
+              <div key={field}>
+                <L t={label}/>
+                <input
+                  value={form[field]||''}
+                  onChange={e=>s(field,e.target.value)}
+                  type={field==='email'?'email':'text'}
+                  disabled={field==='email'&&!!editing}
+                  className={`${iCls} ${field==='email'&&editing?'bg-gray-50 text-gray-400':''}`}
+                  placeholder={field==='email'&&editing?'Cannot change email':''}
+                />
+              </div>
+            ))}
+            <div><L t="Organization"/><select value={form.organization_id||''} onChange={e=>s('organization_id',e.target.value)} className={sCls}><option value="">Select</option>{organizations.map(o=><option key={o.id} value={o.id}>{o.name}</option>)}</select></div>
+            <div><L t="Business Unit"/><select value={form.business_unit_id||''} onChange={e=>s('business_unit_id',e.target.value)} className={sCls}><option value="">Select</option>{businessUnits.map(b=><option key={b.id} value={b.id}>{b.name}</option>)}</select></div>
+            <div><L t="Role"/><select value={form.role_id||''} onChange={e=>s('role_id',e.target.value)} className={sCls}><option value="">Select Role</option>{roles.map(r=><option key={r.id} value={r.id}>{r.role_name}</option>)}</select></div>
+            <div><L t="Status"/><select value={form.status||'Active'} onChange={e=>s('status',e.target.value)} className={sCls}><option>Active</option><option>Inactive</option></select></div>
+          </div>
+
+          {/* Password — only shown when creating new user */}
+          {!editing && (
+            <div className="bg-blue-50 rounded-2xl p-4 space-y-3">
+              <h4 className="font-bold text-[#0F172A] text-sm">🔐 Set Login Password</h4>
+              <p className="text-xs text-gray-500">This creates a Supabase Auth account so the user can log in immediately. Minimum 6 characters.</p>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <L t="Password *"/>
+                  <input type="password" value={password} onChange={e=>setPassword(e.target.value)} placeholder="Min. 6 characters" className={iCls}/>
+                </div>
+                <div>
+                  <L t="Confirm Password *"/>
+                  <input type="password" value={confirmPassword} onChange={e=>setConfirmPassword(e.target.value)} placeholder="Re-enter password" className={`${iCls} ${confirmPassword&&password!==confirmPassword?'border-red-300 bg-red-50':''}`}/>
+                  {confirmPassword && password !== confirmPassword && <p className="text-red-500 text-xs mt-1">Passwords do not match</p>}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Auth status when editing */}
+          {editing && (
+            <div className={`rounded-2xl p-4 ${editing.auth_user_id?'bg-green-50 border border-green-200':'bg-yellow-50 border border-yellow-200'}`}>
+              {editing.auth_user_id
+                ? <p className="text-sm text-green-700">✅ This user has a linked Supabase Auth account (<span className="font-mono text-xs">{editing.auth_user_id}</span>). Use the <strong>Reset PW</strong> button in the table to change their password.</p>
+                : <p className="text-sm text-yellow-700">⚠️ This user has no linked auth account — they cannot log in. Delete and re-create this user to set up login credentials.</p>
+              }
+            </div>
+          )}
+        </div>
+      </Modal>
+
+      {/* Reset Password Modal */}
+      <Modal open={!!resetPwUserId} onClose={()=>{setResetPwUserId(null);setResetPwValue('');}} title="Reset User Password" size="sm"
+        footer={
+          <><button onClick={()=>{setResetPwUserId(null);setResetPwValue('');}} className="px-5 py-2.5 rounded-2xl border border-blue-200 text-sm font-semibold">Cancel</button>
+          <button onClick={handleResetPassword} className="px-5 py-2.5 bg-gradient-to-r from-[#0F172A] to-blue-800 text-white rounded-2xl text-sm font-semibold">Reset Password</button></>
+        }>
+        <div className="space-y-4">
+          {(() => { const u = enterpriseUsers.find(x=>x.id===resetPwUserId); return u && <p className="text-sm text-gray-500">Setting new password for <span className="font-semibold text-[#0F172A]">{u.first_name} {u.last_name}</span> ({u.email})</p>; })()}
+          <div>
+            <L t="New Password"/>
+            <input type="password" value={resetPwValue} onChange={e=>setResetPwValue(e.target.value)} placeholder="Min. 6 characters" className={iCls}/>
+          </div>
+          <div className="bg-yellow-50 rounded-xl p-3 text-xs text-yellow-700">The user will be able to log in with this new password immediately. They will not receive an email notification.</div>
         </div>
       </Modal>
     </div>
