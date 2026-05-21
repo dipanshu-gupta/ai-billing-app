@@ -2,6 +2,7 @@
 'use client';
 
 import { useState } from 'react';
+import QuoteTemplateDesigner from '@/components/admin/QuoteTemplateDesigner';
 import { useApp } from '@/context/AppContext';
 import { formatDate, getStatusOptions } from '@/lib/utils';
 import Modal from '@/components/shared/Modal';
@@ -1132,50 +1133,9 @@ function ApprovalProcessesPanel() {
   );
 }
 
-// ═══════════════════════════ QUOTE TEMPLATES // ═══════════════════════════ QUOTE TEMPLATES ═══════════════════════════════════
+// ═══════════════════════════ QUOTE TEMPLATES ═══════════════════════════════════
 function TemplateDesignerPanel() {
-  const { quoteTemplates, saveQuoteTemplate, deleteQuoteTemplate, setDefaultTemplate } = useApp();
-  const [open, setOpen] = useState(false);
-  const [editing, setEditing] = useState(null);
-  const [form, setForm] = useState({ primaryColor:'#0F172A', secondaryColor:'#3B82F6' });
-  const s = (k,v)=>setForm(f=>({...f,[k]:v}));
-
-  return (
-    <div className="space-y-5">
-      <div className="flex items-center justify-between">
-        <div><h2 className="text-2xl font-bold text-[#0F172A]">Quote Templates</h2><p className="text-gray-500 text-sm">{quoteTemplates.length} template(s)</p></div>
-        <button onClick={()=>{setEditing(null);setForm({primaryColor:'#0F172A',secondaryColor:'#3B82F6'});setOpen(true);}} className="bg-gradient-to-r from-[#0F172A] to-blue-800 text-white px-5 py-2.5 rounded-2xl font-semibold text-sm shadow-lg hover:opacity-90">+ New Template</button>
-      </div>
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
-        {quoteTemplates.map(t=>(
-          <div key={t.id} className="bg-white border border-blue-100 rounded-[24px] overflow-hidden shadow-lg">
-            <div className="h-20 flex items-center justify-center" style={{backgroundColor:t.primaryColor||'#0F172A'}}><div className="text-white font-bold text-lg">{t.quoteTitle||t.name}</div></div>
-            <div className="p-5 space-y-3">
-              <div className="flex items-center justify-between"><h3 className="font-bold text-[#0F172A]">{t.name}</h3>{t.isDefault&&<span className="px-2 py-0.5 bg-blue-100 text-blue-700 text-xs font-semibold rounded-full">Default</span>}</div>
-              <div className="text-xs text-gray-500">{t.companyName}</div>
-              <div className="flex gap-2 pt-2">
-                <button onClick={()=>{setEditing(t);setForm({...t});setOpen(true);}} className="flex-1 bg-blue-100 hover:bg-blue-200 text-blue-700 py-2 rounded-xl text-sm font-semibold">Edit</button>
-                {!t.isDefault&&<button onClick={()=>setDefaultTemplate(t.id)} className="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 py-2 rounded-xl text-sm font-semibold">Set Default</button>}
-                <button onClick={()=>deleteQuoteTemplate(t.id)} className="bg-red-100 hover:bg-red-200 text-red-600 px-3 py-2 rounded-xl text-sm font-semibold">🗑</button>
-              </div>
-            </div>
-          </div>
-        ))}
-        {quoteTemplates.length===0&&<div className="col-span-full py-12 text-center text-gray-400"><div className="text-5xl mb-3">📄</div>No templates yet.</div>}
-      </div>
-      <Modal open={open} onClose={()=>setOpen(false)} title={editing?'Edit Template':'New Template'} size="xl"
-        footer={<><button onClick={()=>setOpen(false)} className="px-5 py-2.5 rounded-2xl border border-blue-200 text-sm font-semibold">Cancel</button><button onClick={async()=>{await saveQuoteTemplate(form,editing?.id);setOpen(false);}} className="px-5 py-2.5 bg-gradient-to-r from-[#0F172A] to-blue-800 text-white rounded-2xl text-sm font-semibold">Save Template</button></>}>
-        <div className="grid grid-cols-2 gap-4">
-          {[['Template Name','name'],['Company Name','companyName'],['Company Email','companyEmail'],['Company Phone','companyPhone'],['Company Address','companyAddress'],['Quote Title','quoteTitle'],['Footer Text','footerText']].map(([label,field])=>(
-            <div key={field}><L t={label}/><input value={form[field]||''} onChange={e=>s(field,e.target.value)} className={iCls}/></div>
-          ))}
-          <div><L t="Primary Color"/><input type="color" value={form.primaryColor||'#0F172A'} onChange={e=>s('primaryColor',e.target.value)} className="w-full h-12 rounded-2xl border border-blue-200 cursor-pointer"/></div>
-          <div><L t="Secondary Color"/><input type="color" value={form.secondaryColor||'#3B82F6'} onChange={e=>s('secondaryColor',e.target.value)} className="w-full h-12 rounded-2xl border border-blue-200 cursor-pointer"/></div>
-          <div className="col-span-2"><L t="Terms & Conditions"/><textarea rows={3} value={form.termsAndConditions||''} onChange={e=>s('termsAndConditions',e.target.value)} className={tCls}/></div>
-        </div>
-      </Modal>
-    </div>
-  );
+  return <QuoteTemplateDesigner />;
 }
 
 // ═══════════════════════════ ADMIN HOME ════════════════════════════════════════

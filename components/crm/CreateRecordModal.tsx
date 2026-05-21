@@ -1,7 +1,7 @@
 // @ts-nocheck
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useApp } from '@/context/AppContext';
 import { getPageLabel, getStatusOptions } from '@/lib/utils';
 
@@ -89,9 +89,24 @@ function lbl(text) {
 }
 
 // ─── Main Modal ───────────────────────────────────────────────────────────────
-export default function CreateRecordModal({ page, open, onClose }) {
-  const { customers, contacts, products, enterpriseUsers, createRecord } = useApp();
+export default function CreateRecordModal({ page, open, onClose, prefillCustomer }) {
+  const { customers, contacts, products, enterpriseUsers, currentUser, createRecord } = useApp();
   const [form,      setForm]      = useState({});
+
+  // Prefill customer and owner when props change
+  useEffect(() => {
+    if (!open) return;
+    const defaults = {};
+    if (currentUser) {
+      defaults.owner = currentUser.email;
+      defaults.owner_id = currentUser.id;
+    }
+    if (prefillCustomer?.id) {
+      defaults.customerId = prefillCustomer.id;
+      defaults.customer   = prefillCustomer.name;
+    }
+    setForm(f => ({ ...f, ...defaults }));
+  }, [open, prefillCustomer?.id, currentUser?.id]);
   const [lineItems, setLineItems] = useState([]);
   const [saving,    setSaving]    = useState(false);
 

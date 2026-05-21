@@ -64,6 +64,7 @@ export const getStatusOptions = (page: string): string[] => {
     case 'invoices':      return ['Draft', 'Pending', 'Paid', 'Overdue', 'Cancelled', 'Pending Approval'];
     case 'contacts':      return ['Active', 'Inactive'];
     case 'activities':    return ['Open', 'In Progress', 'Completed', 'Cancelled'];
+    case 'quotations':    return ['Draft','Submitted','Approved','Sent to Customer','Accepted','Rejected','Expired','Cancelled'];
     default:              return ['Active', 'Inactive'];
   }
 };
@@ -110,7 +111,7 @@ export const getObjectFields = (page: string): string[] => {
     case 'customers':
       return ['name','email','phone','company','industry','billingAddress','shippingAddress','city','state','postalCode','country','website','gstNumber','primaryContact','owner','status'];
     case 'products':
-      return ['name','category','price','status'];
+      return ['name','productFamily','category','price','status'];
     case 'leads':
       return ['customer','contact','name','email','phone','source','owner','status','amount'];
     case 'opportunities':
@@ -123,6 +124,8 @@ export const getObjectFields = (page: string): string[] => {
       return ['customer','name','email','phone','designation','department','isPrimary','owner','status'];
     case 'activities':
       return ['name','customer','contact','subject','activityType','activityDate','notes','owner','status'];
+    case 'quotations':
+      return ['name','customer','contact','validity_date','payment_terms','shipping_terms','currency','overall_discount','shipping_cost','owner','status'];
     default:
       return ['name','status'];
   }
@@ -140,6 +143,7 @@ export const navigationItems = [
   { key: 'contacts',      label: 'Contacts',      icon: '📇', permission: 'contacts_view' },
   { key: 'orders',        label: 'Orders',        icon: '🛒', permission: 'orders_view' },
   { key: 'invoices',      label: 'Invoices',      icon: '🧾', permission: 'invoices_view' },
+  { key: 'quotations',     label: 'Quotations',    icon: '📄', permission: null },
   { key: 'approvals',     label: 'My Approvals',  icon: '✅', permission: null },
   { key: 'adminTools',    label: 'Admin Tools',   icon: '⚙️', permission: 'admin_tools_view' },
 ];

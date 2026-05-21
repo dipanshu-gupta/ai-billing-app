@@ -77,6 +77,7 @@ export function AppProvider({ children }) {
   // ── Notifications ─────────────────────────────────────────────────────────────
   const [notifications,  setNotifications]  = useState([]);
   const [savedSearches,  setSavedSearches]  = useState([]);
+  const [quotations,     setQuotations]     = useState([]);
 
   // ═══════════════════════════════════════════════════════════════════════════
   // SYSTEM HELPERS
@@ -216,6 +217,7 @@ export function AppProvider({ children }) {
       website: c.website, gstNumber: c.gst_number, status: c.status,
       created_by: c.created_by, created_at: c.created_at, updated_by: c.updated_by, updated_at: c.updated_at,
       organization_id: c.organization_id, business_unit_id: c.business_unit_id,
+      owner: c.owner || '', owner_id: c.owner_id || null,
     }))));
   };
 
@@ -228,6 +230,7 @@ export function AppProvider({ children }) {
       department: c.department, isPrimary: c.is_primary || false, status: c.status,
       created_by: c.created_by, created_at: c.created_at, updated_by: c.updated_by, updated_at: c.updated_at,
       organization_id: c.organization_id, business_unit_id: c.business_unit_id,
+      owner: c.owner || '', owner_id: c.owner_id || null,
     })));
   };
 
@@ -236,7 +239,7 @@ export function AppProvider({ children }) {
     const { data } = await supabase.from('products').select('*').order('created_at', { ascending: false });
     if (data) setProducts(data.map(p => ({
       id: p.product_number, name: p.name, category: p.category,
-      price: Number(p.price || 0), status: p.status,
+      productFamily: p.product_family || '', price: Number(p.price || 0), status: p.status,
       created_by: p.created_by, created_at: p.created_at, updated_by: p.updated_by, updated_at: p.updated_at,
       organization_id: p.organization_id, business_unit_id: p.business_unit_id,
     })));
@@ -251,6 +254,7 @@ export function AppProvider({ children }) {
       source: l.source, amount: Number(l.amount || 0), status: l.status,
       created_by: l.created_by, created_at: l.created_at, updated_by: l.updated_by, updated_at: l.updated_at,
       organization_id: l.organization_id, business_unit_id: l.business_unit_id,
+      owner: l.owner || '', owner_id: l.owner_id || null,
     })));
   };
 
@@ -263,6 +267,7 @@ export function AppProvider({ children }) {
       amount: Number(o.amount || 0), closeDate: o.close_date, status: o.status,
       created_by: o.created_by, created_at: o.created_at, updated_by: o.updated_by, updated_at: o.updated_at,
       organization_id: o.organization_id, business_unit_id: o.business_unit_id,
+      owner: o.owner || '', owner_id: o.owner_id || null,
     })));
   };
 
@@ -772,6 +777,7 @@ export function AppProvider({ children }) {
             billing_address: data.billingAddress, shipping_address: data.shippingAddress,
             city: data.city, state: data.state, postal_code: data.postalCode, country: data.country,
             gst_number: data.gstNumber, status: data.status || 'Active',
+            owner: data.owner || currentUser.email, owner_id: data.owner_id || currentUser.id,
           }]);
           if (error) throw error;
           createdId = id; recordName = data.name;
@@ -783,7 +789,7 @@ export function AppProvider({ children }) {
           const id = generateId('PROD');
           const { error } = await supabase.from('products').insert([{
             ...sys, product_number: id, name: data.name, category: data.category,
-            price: Number(data.price || 0), status: data.status || 'Active',
+            product_family: data.productFamily || '', price: Number(data.price || 0), status: data.status || 'Active',
           }]);
           if (error) throw error;
           createdId = id; recordName = data.name;
@@ -796,6 +802,7 @@ export function AppProvider({ children }) {
             ...sys, lead_number: id, name: data.name, customer: data.customer, customer_id: data.customerId,
             contact: data.contact, contact_id: data.contactId, email: data.email, phone: data.phone,
             source: data.source, amount: calcAmount || Number(data.amount || 0), status: data.status || 'New',
+            owner: data.owner || currentUser.email, owner_id: data.owner_id || currentUser.id,
           }]);
           if (error) throw error;
           if (lineItems?.length) await supabase.from('lead_line_items').insert(
@@ -812,6 +819,7 @@ export function AppProvider({ children }) {
             ...sys, opportunity_number: id, name: data.name, customer: data.customer, customer_id: data.customerId,
             contact: data.contact, contact_id: data.contactId, stage: data.stage || 'Qualification',
             amount: calcAmount || Number(data.amount || 0), close_date: data.closeDate || null, status: data.status || 'Open',
+            owner: data.owner || currentUser.email, owner_id: data.owner_id || currentUser.id,
           }]);
           if (error) throw error;
           if (lineItems?.length) await supabase.from('opportunity_line_items').insert(
@@ -828,6 +836,7 @@ export function AppProvider({ children }) {
             ...sys, order_number: id, name: data.name, customer: data.customer, customer_id: data.customerId,
             contact: data.contact, contact_id: data.contactId, amount: calcAmount,
             shipping_address: data.shippingAddress || '', delivery_date: data.deliveryDate || null, status: data.status || 'Processing',
+            owner: data.owner || currentUser.email, owner_id: data.owner_id || currentUser.id,
           }]);
           if (error) throw error;
           if (lineItems?.length) await supabase.from('order_line_items').insert(
@@ -845,6 +854,7 @@ export function AppProvider({ children }) {
             contact: data.contact, contact_id: data.contactId, amount: calcAmount,
             due_date: data.dueDate || null, payment_terms: data.paymentTerms || '',
             billing_address: data.billingAddress || '', status: data.status || 'Pending',
+            owner: data.owner || currentUser.email, owner_id: data.owner_id || currentUser.id,
           }]);
           if (error) throw error;
           if (lineItems?.length) await supabase.from('invoice_line_items').insert(
@@ -861,6 +871,7 @@ export function AppProvider({ children }) {
             ...sys, contact_number: id, customer: data.customer, customer_id: data.customerId,
             name: data.name, email: data.email, phone: data.phone,
             designation: data.designation, department: data.department, status: data.status || 'Active',
+            owner: data.owner || currentUser.email, owner_id: data.owner_id || currentUser.id,
           }]);
           if (error) throw error;
           createdId = id; recordName = data.name;
@@ -873,6 +884,7 @@ export function AppProvider({ children }) {
             ...sys, activity_number: id, name: data.name, customer: data.customer, customer_id: data.customerId,
             contact: data.contact, contact_id: data.contactId, subject: data.subject,
             activity_type: data.activityType, activity_date: data.activityDate, notes: data.notes, status: data.status || 'Open',
+            owner: data.owner || currentUser.email, owner_id: data.owner_id || currentUser.id,
           }]);
           if (error) throw error;
           createdId = id; recordName = data.name;
@@ -916,7 +928,7 @@ export function AppProvider({ children }) {
           industry: record.industry, primary_contact_id: record.primaryContactId,
           billing_address: record.billingAddress, shipping_address: record.shippingAddress,
           city: record.city, state: record.state, postal_code: record.postalCode,
-          country: record.country, website: record.website, gst_number: record.gstNumber, status: record.status,
+          country: record.country, website: record.website, gst_number: record.gstNumber, status: record.status, owner: record.owner||'', owner_id: record.owner_id||null,
         }).eq('customer_number', record.id);
         await logAudit({ recordType: 'customers', recordId: record.id, recordName: record.name, action: 'updated' });
         await fetchCustomers(); break;
@@ -924,7 +936,7 @@ export function AppProvider({ children }) {
         await supabase.from('contacts').update({
           ...sys, customer: record.customer, name: record.name, email: record.email,
           phone: record.phone, designation: record.designation,
-          department: record.department, is_primary: record.isPrimary, status: record.status,
+          department: record.department, is_primary: record.isPrimary, status: record.status, owner: record.owner||'', owner_id: record.owner_id||null,
         }).eq('contact_number', record.id);
         if (record.isPrimary) await supabase.from('customers').update({ primary_contact_id: record.id }).eq('customer_number', record.customerId);
         await fetchContacts(); await fetchCustomers(); break;
@@ -936,7 +948,7 @@ export function AppProvider({ children }) {
       case 'leads':
         await supabase.from('leads').update({
           ...sys, name: record.name, customer: record.customer, email: record.email, phone: record.phone,
-          source: record.source, amount: calcAmount || Number(record.amount || 0), status: record.status,
+          source: record.source, amount: calcAmount || Number(record.amount || 0), status: record.status, owner: record.owner||'', owner_id: record.owner_id||null,
         }).eq('lead_number', record.id);
         await upsertLineItems('lead_line_items', 'lead_number', record.id);
         await logAudit({ recordType: 'leads', recordId: record.id, recordName: record.name, action: 'updated' });
@@ -944,7 +956,7 @@ export function AppProvider({ children }) {
       case 'opportunities':
         await supabase.from('opportunities').update({
           ...sys, name: record.name, customer: record.customer, stage: record.stage,
-          amount: calcAmount || Number(record.amount || 0), close_date: record.closeDate, status: record.status,
+          amount: calcAmount || Number(record.amount || 0), close_date: record.closeDate, status: record.status, owner: record.owner||'', owner_id: record.owner_id||null,
         }).eq('opportunity_number', record.id);
         await upsertLineItems('opportunity_line_items', 'opportunity_number', record.id);
         await logAudit({ recordType: 'opportunities', recordId: record.id, recordName: record.name, action: 'updated' });
@@ -952,7 +964,7 @@ export function AppProvider({ children }) {
       case 'orders':
         await supabase.from('orders').update({
           ...sys, customer: record.customer, name: record.name, amount: calcAmount,
-          shipping_address: record.shippingAddress, delivery_date: record.deliveryDate, status: record.status,
+          shipping_address: record.shippingAddress, delivery_date: record.deliveryDate, status: record.status, owner: record.owner||'', owner_id: record.owner_id||null,
         }).eq('order_number', record.id);
         await upsertLineItems('order_line_items', 'order_number', record.id);
         await logAudit({ recordType: 'orders', recordId: record.id, recordName: record.name, action: 'updated' });
@@ -961,7 +973,7 @@ export function AppProvider({ children }) {
         await supabase.from('invoices').update({
           ...sys, customer: record.customer, name: record.name, amount: calcAmount,
           due_date: record.dueDate, payment_terms: record.paymentTerms,
-          billing_address: record.billingAddress, status: record.status,
+          billing_address: record.billingAddress, status: record.status, owner: record.owner||'', owner_id: record.owner_id||null,
         }).eq('invoice_number', record.id);
         await upsertLineItems('invoice_line_items', 'invoice_number', record.id);
         await logAudit({ recordType: 'invoices', recordId: record.id, recordName: record.name, action: 'updated' });
@@ -970,7 +982,7 @@ export function AppProvider({ children }) {
         await supabase.from('activities').update({
           ...sys, name: record.name, customer: record.customer, contact: record.contact,
           subject: record.subject, activity_type: record.activityType,
-          activity_date: record.activityDate, notes: record.notes, status: record.status,
+          activity_date: record.activityDate, notes: record.notes, status: record.status, owner: record.owner||'', owner_id: record.owner_id||null,
         }).eq('activity_number', record.id);
         await fetchActivities(); break;
     }
@@ -1250,6 +1262,174 @@ export function AppProvider({ children }) {
   };
 
   // ═══════════════════════════════════════════════════════════════════════════
+  // QUOTATIONS
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  const fetchQuotations = async () => {
+    if (!supabase) return;
+    const { data } = await supabase.from('quotations').select('*').order('created_at', { ascending: false });
+    if (data) setQuotations(data.map(q => ({
+      ...q,
+      // Aliases for Customer360 customer matching
+      customerId: q.customer_id || '',
+    })));
+  };
+
+  const createQuotation = async (data, lineItems) => {
+    if (!supabase || !currentUser) return null;
+    const qNum = generateId('QUO');
+    const { data: quote, error } = await supabase.from('quotations').insert([{
+      quote_number:     qNum,
+      name:             data.name,
+      opportunity_id:   data.opportunity_id   || null,
+      customer:         data.customer         || '',
+      customer_id:      data.customer_id      || null,
+      contact:          data.contact          || '',
+      contact_id:       data.contact_id       || null,
+      status:           data.status           || 'Draft',
+      validity_date:    data.validity_date    || null,
+      payment_terms:    data.payment_terms    || '',
+      shipping_terms:   data.shipping_terms   || '',
+      billing_address:  data.billing_address  || '',
+      shipping_address: data.shipping_address || '',
+      notes:            data.notes            || '',
+      internal_notes:   data.internal_notes   || '',
+      overall_discount: Number(data.overall_discount || 0),
+      shipping_cost:    Number(data.shipping_cost    || 0),
+      tax_rate:         Number(data.tax_rate         || 0),
+      subtotal:         0, total_discount: 0, total_tax: 0, grand_total: 0,
+      version:          data.version || 1,
+      parent_quote_id:  data.parent_quote_id  || null,
+      template_id:      data.template_id      || null,
+      currency:         data.currency         || 'INR',
+      ...buildSystemFields(),
+    }]).select().single();
+    if (error) { alert('Failed to create quotation: ' + error.message); return null; }
+    if (lineItems?.length) {
+      await supabase.from('quotation_line_items').insert(
+        lineItems.map((i, idx) => ({
+          quote_number:  qNum,
+          product_name:  i.product_name  || '',
+          product_code:  i.product_code  || '',
+          description:   i.description   || '',
+          quantity:      Number(i.quantity      || 1),
+          unit_price:    Number(i.unit_price    || 0),
+          list_price:    Number(i.list_price    || 0),
+          discount_pct:  Number(i.discount_pct  || 0),
+          tax_pct:       Number(i.tax_pct       || 0),
+          extended_price:Number(i.extended_price || 0),
+          sort_order:    idx,
+        }))
+      );
+    }
+    await fetchQuotations();
+    return quote;
+  };
+
+  const updateQuotation = async (data, lineItems) => {
+    if (!supabase || !currentUser) return;
+    const { error } = await supabase.from('quotations').update({
+      name:             data.name,
+      customer:         data.customer         || '',
+      customer_id:      data.customer_id      || null,
+      contact:          data.contact          || '',
+      contact_id:       data.contact_id       || null,
+      status:           data.status,
+      validity_date:    data.validity_date    || null,
+      payment_terms:    data.payment_terms    || '',
+      shipping_terms:   data.shipping_terms   || '',
+      billing_address:  data.billing_address  || '',
+      shipping_address: data.shipping_address || '',
+      notes:            data.notes            || '',
+      internal_notes:   data.internal_notes   || '',
+      overall_discount: Number(data.overall_discount || 0),
+      shipping_cost:    Number(data.shipping_cost    || 0),
+      subtotal:         Number(data.subtotal         || 0),
+      total_discount:   Number(data.total_discount   || 0),
+      total_tax:        Number(data.total_tax        || 0),
+      grand_total:      Number(data.grand_total      || 0),
+      template_id:      data.template_id || null,
+      currency:         data.currency    || 'INR',
+      updated_by:       currentUser.email,
+      updated_at:       new Date().toISOString(),
+    }).eq('id', data.id);
+    if (error) { alert('Update failed: ' + error.message); return; }
+    // Upsert line items
+    await supabase.from('quotation_line_items').delete().eq('quote_number', data.quote_number);
+    if (lineItems?.length) {
+      await supabase.from('quotation_line_items').insert(
+        lineItems.map((i, idx) => ({
+          quote_number:  data.quote_number,
+          product_name:  i.product_name  || '',
+          product_code:  i.product_code  || '',
+          description:   i.description   || '',
+          quantity:      Number(i.quantity      || 1),
+          unit_price:    Number(i.unit_price    || 0),
+          list_price:    Number(i.list_price    || 0),
+          discount_pct:  Number(i.discount_pct  || 0),
+          tax_pct:       Number(i.tax_pct       || 0),
+          extended_price:Number(i.extended_price || 0),
+          sort_order:    idx,
+        }))
+      );
+    }
+    await fetchQuotations();
+  };
+
+  const deleteQuotation = async (id) => {
+    if (!supabase || !window.confirm('Delete this quotation?')) return;
+    const q = quotations.find(x => x.id === id);
+    if (q) await supabase.from('quotation_line_items').delete().eq('quote_number', q.quote_number);
+    await supabase.from('quotations').delete().eq('id', id);
+    await fetchQuotations();
+  };
+
+  const createQuotationFromOpportunity = async (opportunity) => {
+    if (!supabase || !currentUser) return null;
+    // Load opportunity line items
+    const { data: oppItems } = await supabase.from('opportunity_line_items').select('*').eq('opportunity_number', opportunity.id);
+    const lineItems = (oppItems || []).map(i => ({
+      product_name:  i.product_name || '',
+      product_code:  '',
+      description:   '',
+      quantity:      Number(i.quantity || 1),
+      unit_price:    Number(i.price   || 0),
+      list_price:    Number(i.price   || 0),
+      discount_pct:  Number(i.discount || 0),
+      tax_pct:       18,
+      extended_price: Number(i.quantity||1) * Number(i.price||0) * (1 - Number(i.discount||0)/100),
+    }));
+    const quote = await createQuotation({
+      name:           `Quote for ${opportunity.name}`,
+      opportunity_id: opportunity.id,
+      customer:       opportunity.customer,
+      customer_id:    opportunity.customerId,
+      contact:        opportunity.contact,
+      contact_id:     opportunity.contactId,
+      status:         'Draft',
+      currency:       'INR',
+      version:        1,
+      overall_discount: 0,
+      shipping_cost:  0,
+    }, lineItems);
+    return quote;
+  };
+
+  const generateNewVersion = async (quote) => {
+    if (!supabase || !currentUser) return null;
+    const { data: items } = await supabase.from('quotation_line_items').select('*').eq('quote_number', quote.quote_number);
+    const newQ = await createQuotation({
+      ...quote,
+      id: undefined,
+      quote_number: undefined,
+      version: (quote.version || 1) + 1,
+      parent_quote_id: quote.id,
+      status: 'Draft',
+    }, (items||[]).map(i => ({ product_name:i.product_name, product_code:i.product_code, description:i.description, quantity:i.quantity, unit_price:i.unit_price, list_price:i.list_price, discount_pct:i.discount_pct, tax_pct:i.tax_pct, extended_price:i.extended_price })));
+    return newQ;
+  };
+
+  // ═══════════════════════════════════════════════════════════════════════════
   // SAVED SEARCHES
   // ═══════════════════════════════════════════════════════════════════════════
 
@@ -1340,7 +1520,7 @@ export function AppProvider({ children }) {
       fetchQuoteTemplates(), fetchOrganizations(), fetchBusinessUnits(),
       fetchEnterpriseUsers(), fetchUserGroups(), fetchRoles(), fetchPermissions(),
       fetchWorkflowRules(), fetchAssignmentRules(), fetchSLAPolicies(),
-      fetchApprovalProcesses(), fetchApprovalRequests(),
+      fetchApprovalProcesses(), fetchApprovalRequests(), fetchQuotations(),
     ]);
   }, [session?.user?.email]);
 
@@ -1382,6 +1562,10 @@ export function AppProvider({ children }) {
     saveSLAPolicy, deleteSLAPolicy, saveApprovalProcess, deleteApprovalProcess,
     submitForApproval, processApproval, checkMatchingApprovalProcess,
     logAudit, createNotification,
+
+    // quotations
+    quotations, fetchQuotations, createQuotation, updateQuotation, deleteQuotation,
+    createQuotationFromOpportunity, generateNewVersion,
 
     // saved searches
     savedSearches, fetchSavedSearches, createSavedSearch, updateSavedSearch,

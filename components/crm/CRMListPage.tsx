@@ -172,6 +172,7 @@ export default function CRMListPage({ page }) {
     customers, products, leads, opportunities, orders, invoices, contacts, activities,
     enterpriseUsers, savedSearches, fetchSavedSearches,
     convertLeadToOpportunity, createOrderFromOpportunity, createInvoiceFromOrder,
+    createQuotationFromOpportunity, fetchQuotations,
   } = useApp();
 
   const [search,       setSearch]       = useState('');
@@ -411,9 +412,10 @@ export default function CRMListPage({ page }) {
                             {page === 'leads' && record.status === 'Qualified' && (
                               <button onClick={() => { convertLeadToOpportunity(record); setMenuOpenId(null); }} className="w-full text-left px-4 py-3 rounded-xl text-sm font-medium hover:bg-blue-800 text-white">🔀 Convert to Opportunity</button>
                             )}
-                            {page === 'opportunities' && (
+                            {page === 'opportunities' && (<>
                               <button onClick={() => { createOrderFromOpportunity(record); setMenuOpenId(null); }} className="w-full text-left px-4 py-3 rounded-xl text-sm font-medium hover:bg-blue-800 text-white">🛒 Create Order</button>
-                            )}
+                              <button onClick={async () => { setMenuOpenId(null); const q = await createQuotationFromOpportunity(record); await fetchQuotations(); if(q) alert(`Quotation ${q.quote_number} created! Go to Quotations to view it.`); }} className="w-full text-left px-4 py-3 rounded-xl text-sm font-medium hover:bg-blue-800 text-white">📄 Create Quotation</button>
+                            </>)}
                             {page === 'orders' && (
                               <button onClick={() => { createInvoiceFromOrder(record); setMenuOpenId(null); }} className="w-full text-left px-4 py-3 rounded-xl text-sm font-medium hover:bg-blue-800 text-white">🧾 Create Invoice</button>
                             )}

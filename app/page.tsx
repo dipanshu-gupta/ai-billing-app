@@ -9,6 +9,7 @@ import DashboardPage from '@/components/dashboard/DashboardPage';
 import CRMListPage from '@/components/crm/CRMListPage';
 import AdminToolsPage from '@/components/admin/AdminToolsPage';
 import ApprovalsInboxPage from '@/components/approvals/ApprovalsInboxPage';
+import QuotationsPage from '@/components/quotations/QuotationsPage';
 import Modal from '@/components/shared/Modal';
 import { inputClass, Button } from '@/components/shared';
 
@@ -128,7 +129,7 @@ function ProfileModal({ open, onClose }) {
 // ─── App Shell ────────────────────────────────────────────────────────────────
 
 const CRM_PAGES = ['customers', 'products', 'leads', 'opportunities', 'activities', 'contacts', 'orders', 'invoices'];
-const NON_CRM_PAGES = ['dashboard', 'approvals', 'adminTools'];
+const NON_CRM_PAGES = ['dashboard', 'approvals', 'adminTools', 'quotations'];
 
 function AppShell() {
   const { session, authLoading } = useApp();
@@ -168,6 +169,7 @@ function AppShell() {
         <main className="flex-1 p-6 overflow-y-auto">
           {activePage === 'dashboard' && <DashboardPage />}
           {CRM_PAGES.includes(activePage) && !NON_CRM_PAGES.includes(activePage) && <CRMListPage page={activePage} />}
+          {activePage === 'quotations' && <QuotationsPage />}
           {activePage === 'approvals' && <ApprovalsInboxPage />}
           {activePage === 'adminTools' && <AdminToolsPage />}
         </main>
