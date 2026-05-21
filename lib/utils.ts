@@ -108,21 +108,21 @@ export const getStatusColor = (status: string): string => {
 export const getObjectFields = (page: string): string[] => {
   switch (page) {
     case 'customers':
-      return ['name','email','phone','company','industry','billingAddress','shippingAddress','city','state','postalCode','country','website','gstNumber','primaryContact','status'];
+      return ['name','email','phone','company','industry','billingAddress','shippingAddress','city','state','postalCode','country','website','gstNumber','primaryContact','owner','status'];
     case 'products':
       return ['name','category','price','status'];
     case 'leads':
-      return ['customer','contact','name','email','phone','source','status','amount'];
+      return ['customer','contact','name','email','phone','source','owner','status','amount'];
     case 'opportunities':
-      return ['customer','contact','name','stage','closeDate','status','amount'];
+      return ['customer','contact','name','stage','closeDate','owner','status','amount'];
     case 'orders':
-      return ['customer','contact','name','shippingAddress','deliveryDate','status','amount'];
+      return ['customer','contact','name','shippingAddress','deliveryDate','owner','status','amount'];
     case 'invoices':
-      return ['customer','contact','name','dueDate','paymentTerms','billingAddress','status','amount'];
+      return ['customer','contact','name','dueDate','paymentTerms','billingAddress','owner','status','amount'];
     case 'contacts':
-      return ['customer','name','email','phone','designation','department','isPrimary','status'];
+      return ['customer','name','email','phone','designation','department','isPrimary','owner','status'];
     case 'activities':
-      return ['name','customer','contact','subject','activityType','activityDate','notes','status'];
+      return ['name','customer','contact','subject','activityType','activityDate','notes','owner','status'];
     default:
       return ['name','status'];
   }

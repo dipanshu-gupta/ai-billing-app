@@ -90,7 +90,7 @@ function lbl(text) {
 
 // ─── Main Modal ───────────────────────────────────────────────────────────────
 export default function CreateRecordModal({ page, open, onClose }) {
-  const { customers, contacts, products, createRecord } = useApp();
+  const { customers, contacts, products, enterpriseUsers, createRecord } = useApp();
   const [form,      setForm]      = useState({});
   const [lineItems, setLineItems] = useState([]);
   const [saving,    setSaving]    = useState(false);
@@ -149,6 +149,19 @@ export default function CreateRecordModal({ page, open, onClose }) {
     </div>
   );
 
+  const ownerBlock = (
+    <div>
+      {lbl('Owner / Assigned To')}
+      <select value={form.owner_id||''} onChange={e => {
+        const u = enterpriseUsers.find(x => x.id === e.target.value);
+        setForm(f => ({ ...f, owner_id: u?.id || '', owner: u?.email || '' }));
+      }} className={sCls}>
+        <option value="">Unassigned</option>
+        {enterpriseUsers.map(u => <option key={u.id} value={u.id}>{u.first_name} {u.last_name}</option>)}
+      </select>
+    </div>
+  );
+
   const renderFields = () => {
     switch (page) {
       case 'customers': return (<>
@@ -162,6 +175,7 @@ export default function CreateRecordModal({ page, open, onClose }) {
         <div>{lbl('Billing Address')}<input value={form.billingAddress||''} onChange={e=>s('billingAddress',e.target.value)} placeholder="Billing address" className={iCls}/></div>
         <div>{lbl('City')}<input value={form.city||''} onChange={e=>s('city',e.target.value)} placeholder="City" className={iCls}/></div>
         <div>{lbl('State')}<input value={form.state||''} onChange={e=>s('state',e.target.value)} placeholder="State" className={iCls}/></div>
+        {ownerBlock}
         {statusBlock}
       </>);
 
@@ -169,6 +183,7 @@ export default function CreateRecordModal({ page, open, onClose }) {
         <div>{lbl('Product Name *')}<input value={form.name||''} onChange={e=>s('name',e.target.value)} placeholder="Product name" className={iCls}/></div>
         <div>{lbl('Category')}<select value={form.category||''} onChange={e=>s('category',e.target.value)} className={sCls}><option value="">Select</option>{['Software','Hardware','Service','Subscription','Consulting','Other'].map(x=><option key={x}>{x}</option>)}</select></div>
         <div>{lbl('Unit Price (₹)')}<input type="number" min={0} value={form.price||''} onChange={e=>s('price',e.target.value)} placeholder="0" className={iCls}/></div>
+        {ownerBlock}
         {statusBlock}
       </>);
 
@@ -183,6 +198,7 @@ export default function CreateRecordModal({ page, open, onClose }) {
         <div>{lbl('Phone')}<input value={form.phone||''} onChange={e=>s('phone',e.target.value)} placeholder="+91 98765 43210" className={iCls}/></div>
         <div>{lbl('Designation')}<input value={form.designation||''} onChange={e=>s('designation',e.target.value)} placeholder="e.g. Manager" className={iCls}/></div>
         <div>{lbl('Department')}<input value={form.department||''} onChange={e=>s('department',e.target.value)} placeholder="e.g. Sales" className={iCls}/></div>
+        {ownerBlock}
         {statusBlock}
       </>);
 
@@ -192,6 +208,7 @@ export default function CreateRecordModal({ page, open, onClose }) {
         <div>{lbl('Email')}<input type="email" value={form.email||''} onChange={e=>s('email',e.target.value)} placeholder="email@company.com" className={iCls}/></div>
         <div>{lbl('Phone')}<input value={form.phone||''} onChange={e=>s('phone',e.target.value)} placeholder="+91 98765 43210" className={iCls}/></div>
         <div>{lbl('Source')}<select value={form.source||''} onChange={e=>s('source',e.target.value)} className={sCls}><option value="">Select source</option>{['Website','Campaign','Referral','Cold Call','Trade Show','Partner'].map(x=><option key={x}>{x}</option>)}</select></div>
+        {ownerBlock}
         {statusBlock}
       </>);
 
@@ -200,6 +217,7 @@ export default function CreateRecordModal({ page, open, onClose }) {
         {customerBlock}
         <div>{lbl('Stage')}<select value={form.stage||''} onChange={e=>s('stage',e.target.value)} className={sCls}><option value="">Select stage</option>{['Qualification','Proposal Sent','Negotiation','Closed Won','Closed Lost'].map(x=><option key={x}>{x}</option>)}</select></div>
         <div>{lbl('Close Date')}<input type="date" value={form.closeDate||''} onChange={e=>s('closeDate',e.target.value)} className={iCls}/></div>
+        {ownerBlock}
         {statusBlock}
       </>);
 
@@ -208,6 +226,7 @@ export default function CreateRecordModal({ page, open, onClose }) {
         {customerBlock}
         <div>{lbl('Delivery Date')}<input type="date" value={form.deliveryDate||''} onChange={e=>s('deliveryDate',e.target.value)} className={iCls}/></div>
         <div>{lbl('Shipping Address')}<input value={form.shippingAddress||''} onChange={e=>s('shippingAddress',e.target.value)} placeholder="Delivery address" className={iCls}/></div>
+        {ownerBlock}
         {statusBlock}
       </>);
 
@@ -217,6 +236,7 @@ export default function CreateRecordModal({ page, open, onClose }) {
         <div>{lbl('Due Date')}<input type="date" value={form.dueDate||''} onChange={e=>s('dueDate',e.target.value)} className={iCls}/></div>
         <div>{lbl('Payment Terms')}<select value={form.paymentTerms||''} onChange={e=>s('paymentTerms',e.target.value)} className={sCls}><option value="">Select terms</option>{['Due on Receipt','Net 15','Net 30','Net 45'].map(x=><option key={x}>{x}</option>)}</select></div>
         <div>{lbl('Billing Address')}<input value={form.billingAddress||''} onChange={e=>s('billingAddress',e.target.value)} placeholder="Billing address" className={iCls}/></div>
+        {ownerBlock}
         {statusBlock}
       </>);
 
@@ -226,6 +246,7 @@ export default function CreateRecordModal({ page, open, onClose }) {
         <div>{lbl('Subject')}<input value={form.subject||''} onChange={e=>s('subject',e.target.value)} placeholder="Subject" className={iCls}/></div>
         <div>{lbl('Activity Type')}<select value={form.activityType||''} onChange={e=>s('activityType',e.target.value)} className={sCls}><option value="">Select type</option>{['Call','Meeting','Email','Task','Demo'].map(x=><option key={x}>{x}</option>)}</select></div>
         <div>{lbl('Activity Date')}<input type="date" value={form.activityDate||''} onChange={e=>s('activityDate',e.target.value)} className={iCls}/></div>
+        {ownerBlock}
         {statusBlock}
         <div className="md:col-span-2">{lbl('Notes')}<textarea rows={3} value={form.notes||''} onChange={e=>s('notes',e.target.value)} placeholder="Notes..." className={tCls}/></div>
       </>);

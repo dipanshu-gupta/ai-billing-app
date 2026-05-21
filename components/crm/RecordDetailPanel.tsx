@@ -226,7 +226,7 @@ function Customer360({ customer }) {
 // ─── Main Panel ───────────────────────────────────────────────────────────────
 export default function RecordDetailPanel({ page, record, onClose }) {
   const {
-    customers, contacts, products, organizations, businessUnits,
+    customers, contacts, products, organizations, businessUnits, enterpriseUsers,
     updateRecord, submitForApproval,
     convertLeadToOpportunity, createOrderFromOpportunity, createInvoiceFromOrder,
   } = useApp();
@@ -257,7 +257,9 @@ export default function RecordDetailPanel({ page, record, onClose }) {
 
   const handleSave = async () => {
     setSaving(true);
-    await updateRecord(page, edited, lineItems);
+    // Ensure owner fields are synced
+    const finalEdited = { ...edited };
+    await updateRecord(page, finalEdited, lineItems);
     setSaving(false);
     onClose();
   };
@@ -281,6 +283,15 @@ export default function RecordDetailPanel({ page, record, onClose }) {
     if (field === 'isPrimary')    return <select value={v?'Yes':'No'} onChange={e=>set(field,e.target.value==='Yes')} className={sCls}><option>No</option><option>Yes</option></select>;
     if (['closeDate','activityDate','deliveryDate','dueDate'].includes(field)) return <input type="date" value={v||''} onChange={e=>set(field,e.target.value)} className={iCls}/>;
     if (field === 'notes') return <textarea rows={4} value={v||''} onChange={e=>set(field,e.target.value)} className={tCls} placeholder="Notes..."/>;
+    if (field === 'owner') return (
+      <select value={edited.owner_id||''} onChange={e=>{
+        const u=enterpriseUsers.find(x=>x.id===e.target.value);
+        setEdited(p=>({...p,owner_id:u?.id||'',owner:u?.email||''}));
+      }} className={sCls}>
+        <option value="">Unassigned</option>
+        {enterpriseUsers.map(u=><option key={u.id} value={u.id}>{u.first_name} {u.last_name} ({u.email})</option>)}
+      </select>
+    );
     return <input type={['amount','price'].includes(field)?'number':'text'} value={v||''} onChange={e=>set(field,e.target.value)} placeholder={field.replace(/([A-Z])/g,' $1').trim()} className={iCls}/>;
   };
 

@@ -75,7 +75,8 @@ export function AppProvider({ children }) {
   const [approvalRequests,  setApprovalRequests]  = useState([]);
 
   // ── Notifications ─────────────────────────────────────────────────────────────
-  const [notifications, setNotifications] = useState([]);
+  const [notifications,  setNotifications]  = useState([]);
+  const [savedSearches,  setSavedSearches]  = useState([]);
 
   // ═══════════════════════════════════════════════════════════════════════════
   // SYSTEM HELPERS
@@ -1189,9 +1190,11 @@ export function AppProvider({ children }) {
 
   // Approve or reject a pending request
   const processApproval = async (requestId, decision, comments) => {
-    if (!supabase || !currentUser) return;
-    const request = approvalRequests.find(r => r.id === requestId);
-    if (!request) return;
+    if (!supabase || !currentUser) { alert('Not authenticated.'); return; }
+
+    // Fetch fresh from DB — never rely on state for critical operations
+    const { data: request, error: reqErr } = await supabase.from('approval_requests').select('*').eq('id', requestId).single();
+    if (reqErr || !request) { alert('Approval request not found: ' + (reqErr?.message || 'unknown')); return; }
 
     // Get the step to find what status to set
     const { data: stepData } = await supabase.from('approval_steps').select('*').eq('id', request.current_step_id).single();
@@ -1225,6 +1228,75 @@ export function AppProvider({ children }) {
       });
     }
     await fetchApprovalRequests();
+  };
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // SAVED SEARCHES
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  const fetchSavedSearches = async (objectType) => {
+    if (!supabase || !currentUser) return;
+    const { data } = await supabase.from('saved_searches').select('*')
+      .eq('object_type', objectType)
+      .order('created_at', { ascending: false });
+    if (data) setSavedSearches(data);
+  };
+
+  const createSavedSearch = async (name, objectType, filters, isDefault, isGlobalDefault) => {
+    if (!supabase || !currentUser) return;
+    if (!name?.trim()) { alert('Search name is required.'); return; }
+    // Unset other personal defaults for this object/user
+    if (isDefault) {
+      await supabase.from('saved_searches').update({ is_default: false })
+        .eq('object_type', objectType).eq('created_by', currentUser.email);
+    }
+    // Unset other global defaults (admin action)
+    if (isGlobalDefault) {
+      await supabase.from('saved_searches').update({ is_global_default: false })
+        .eq('object_type', objectType);
+    }
+    const { error } = await supabase.from('saved_searches').insert([{
+      search_number:    generateId('SS'),
+      name,
+      object_type:      objectType,
+      filters:          filters,
+      is_default:       isDefault      || false,
+      is_global_default: isGlobalDefault || false,
+      created_by:       currentUser.email,
+      organization_id:  currentUser.organization_id,
+      business_unit_id: currentUser.business_unit_id,
+      created_at:       new Date().toISOString(),
+      updated_at:       new Date().toISOString(),
+    }]);
+    if (error) { alert('Failed to save search: ' + error.message); return; }
+    await fetchSavedSearches(objectType);
+  };
+
+  const updateSavedSearch = async (id, name, objectType, filters) => {
+    if (!supabase || !currentUser) return;
+    const { error } = await supabase.from('saved_searches')
+      .update({ name, filters, updated_at: new Date().toISOString() }).eq('id', id);
+    if (error) { alert('Failed to update: ' + error.message); return; }
+    await fetchSavedSearches(objectType);
+  };
+
+  const deleteSavedSearch = async (id, objectType) => {
+    if (!supabase || !window.confirm('Delete this saved search?')) return;
+    await supabase.from('saved_searches').delete().eq('id', id);
+    await fetchSavedSearches(objectType);
+  };
+
+  const setDefaultSavedSearch = async (id, objectType, isGlobal) => {
+    if (!supabase || !currentUser) return;
+    if (isGlobal) {
+      await supabase.from('saved_searches').update({ is_global_default: false }).eq('object_type', objectType);
+      await supabase.from('saved_searches').update({ is_global_default: true }).eq('id', id);
+    } else {
+      await supabase.from('saved_searches').update({ is_default: false })
+        .eq('object_type', objectType).eq('created_by', currentUser.email);
+      await supabase.from('saved_searches').update({ is_default: true }).eq('id', id);
+    }
+    await fetchSavedSearches(objectType);
   };
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -1291,6 +1363,10 @@ export function AppProvider({ children }) {
     saveSLAPolicy, deleteSLAPolicy, saveApprovalProcess, deleteApprovalProcess,
     submitForApproval, processApproval,
     logAudit, createNotification,
+
+    // saved searches
+    savedSearches, fetchSavedSearches, createSavedSearch, updateSavedSearch,
+    deleteSavedSearch, setDefaultSavedSearch,
   };
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
