@@ -855,7 +855,7 @@ export function AppProvider({ children }) {
       const { data: rule, error } = await supabase.from('workflow_rules').insert([{
         ...data, ...buildSystemFields(), rule_number: generateId('WF'),
       }]).select().single();
-      if (error || !rule) { alert(error?.message || 'Error creating rule'); return; }
+      if (error || !rule) { alert('Workflow save failed: ' + (error?.message || 'Unknown error')); return; }
       ruleId = rule.id;
     }
     await supabase.from('workflow_actions').delete().eq('workflow_rule_id', ruleId);
@@ -957,6 +957,19 @@ export function AppProvider({ children }) {
         recordType, recordId,
       });
     }
+    // Update the CRM record status to Pending Approval
+    const tableMap2 = { customers:'customers', leads:'leads', opportunities:'opportunities', orders:'orders', invoices:'invoices', contacts:'contacts', activities:'activities' };
+    const idFieldMap2 = { customers:'customer_number', leads:'lead_number', opportunities:'opportunity_number', orders:'order_number', invoices:'invoice_number', contacts:'contact_number', activities:'activity_number' };
+    const tbl = tableMap2[recordType];
+    const idf = idFieldMap2[recordType];
+    if (tbl && idf) {
+      await supabase.from(tbl).update({ status: 'Pending Approval', updated_by: currentUser.email, updated_at: new Date().toISOString() }).eq(idf, recordId);
+      if (recordType === 'leads') await fetchLeads();
+      if (recordType === 'opportunities') await fetchOpportunities();
+      if (recordType === 'orders') await fetchOrders();
+      if (recordType === 'invoices') await fetchInvoices();
+    }
+
     await logAudit({ recordType, recordId, recordName, action: 'submitted_for_approval' });
     await fetchApprovalRequests();
     alert('Submitted for approval successfully.');
@@ -988,6 +1001,93 @@ export function AppProvider({ children }) {
     await fetchApprovalRequests();
   };
 
+  // ═══════════════════════════════════════════════════════════════════════════
+  // AUTOMATION ENGINES
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  const runWorkflowRules = async (objectType, triggerEvent, recordData) => {
+    if (!supabase || !currentUser) return;
+    const rules = workflowRules.filter(r =>
+      r.object_type === objectType && r.trigger_event === triggerEvent && r.is_active
+    );
+    for (const rule of rules) {
+      const { data: actions } = await supabase
+        .from('workflow_actions').select('*')
+        .eq('workflow_rule_id', rule.id).order('execution_order');
+      for (const action of (actions || [])) {
+        const cfg = action.action_config || {};
+        try {
+          if (action.action_type === 'send_notification' && cfg.recipient) {
+            await createNotification({
+              recipientEmail: cfg.recipient, type: 'workflow',
+              title: rule.name,
+              body: cfg.message || `Workflow triggered: ${rule.name}`,
+              recordType: objectType, recordId: recordData?.id || '',
+            });
+          }
+          if (action.action_type === 'send_email' && cfg.to_email) {
+            await createNotification({
+              recipientEmail: cfg.to_email, type: 'email',
+              title: cfg.subject || rule.name,
+              body: cfg.body || '',
+              recordType: objectType, recordId: recordData?.id || '',
+            });
+          }
+        } catch (e) { console.error('Workflow action error:', e); }
+      }
+    }
+  };
+
+  const startSLA = async (objectType, recordId, recordData) => {
+    if (!supabase || !currentUser) return;
+    const matching = slaPolicies.filter(p => p.object_type === objectType && p.is_active);
+    for (const policy of matching) {
+      if (policy.condition_field && policy.condition_value) {
+        const val = recordData[policy.condition_field];
+        if (String(val).toLowerCase() !== String(policy.condition_value).toLowerCase()) continue;
+      }
+      const now = new Date();
+      const responseDue   = new Date(now.getTime() + policy.response_time_hours   * 3600000);
+      const resolutionDue = new Date(now.getTime() + policy.resolution_time_hours * 3600000);
+      await supabase.from('sla_records').insert([{
+        sla_policy_id:     policy.id,
+        record_type:       objectType,
+        record_id:         recordId,
+        started_at:        now.toISOString(),
+        response_due_at:   responseDue.toISOString(),
+        resolution_due_at: resolutionDue.toISOString(),
+        status:            'Active',
+      }]);
+    }
+  };
+
+  const runAssignmentRules = async (objectType, recordId, recordData) => {
+    if (!supabase || !currentUser) return;
+    const rules = assignmentRules
+      .filter(r => r.object_type === objectType && r.is_active)
+      .sort((a, b) => a.priority - b.priority);
+    for (const rule of rules) {
+      const val = recordData[rule.condition_field];
+      let matches = false;
+      if (rule.condition_operator === 'equals')       matches = String(val) === rule.condition_value;
+      if (rule.condition_operator === 'not_equals')   matches = String(val) !== rule.condition_value;
+      if (rule.condition_operator === 'contains')     matches = String(val).includes(rule.condition_value);
+      if (rule.condition_operator === 'greater_than') matches = Number(val) > Number(rule.condition_value);
+      if (rule.condition_operator === 'less_than')    matches = Number(val) < Number(rule.condition_value);
+      if (matches) {
+        const assignee = enterpriseUsers.find(u => u.id === rule.assign_to_user_id);
+        if (assignee) {
+          await createNotification({
+            recipientEmail: assignee.email, type: 'assignment',
+            title: 'New Record Assigned',
+            body: `A new ${objectType} record has been assigned to you.`,
+            recordType: objectType, recordId,
+          });
+        }
+        break;
+      }
+    }
+  };
   // ═══════════════════════════════════════════════════════════════════════════
   // EFFECTS
   // ═══════════════════════════════════════════════════════════════════════════
@@ -1080,6 +1180,8 @@ export function AppProvider({ children }) {
 
     // audit
     logAudit, createNotification,
+
+    
   };
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
