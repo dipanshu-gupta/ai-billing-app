@@ -325,7 +325,7 @@ function UsersPanel() {
       </div>
 
       {/* Create / Edit User Modal */}
-      <Modal open={open} onClose={()=>setOpen(false)} title={editing?`Edit User: ${editing.first_name} ${editing.last_name}`:'New Enterprise User'} size="lg"
+      <Modal open={open} onClose={()=>{setOpen(false);setEditing(null);setForm({status:'Active',first_name:'',last_name:'',email:'',phone:'',employee_code:'',username:'',designation:'',organization_id:'',business_unit_id:'',role_id:''});setPassword('');setConfirmPassword('');}} title={editing?`Edit User: ${editing.first_name} ${editing.last_name}`:'New Enterprise User'}size="lg"
         footer={
           <><button onClick={()=>setOpen(false)} className="px-5 py-2.5 rounded-2xl border border-blue-200 text-sm font-semibold">Cancel</button>
           <button onClick={handleSave} disabled={saving} className="px-5 py-2.5 bg-gradient-to-r from-[#0F172A] to-blue-800 text-white rounded-2xl text-sm font-semibold disabled:opacity-50">
