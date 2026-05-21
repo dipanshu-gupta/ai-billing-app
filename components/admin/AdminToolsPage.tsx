@@ -279,7 +279,13 @@ function UsersPanel() {
     <div className="space-y-5">
       <div className="flex items-center justify-between">
         <div><h2 className="text-2xl font-bold text-[#0F172A]">Enterprise Users</h2><p className="text-gray-500 text-sm">{enterpriseUsers.length} user(s)</p></div>
-        <button onClick={()=>{setEditing(null);setForm({status:'Active'});setPassword('');setConfirmPassword('');setOpen(true);}} className="bg-gradient-to-r from-[#0F172A] to-blue-800 text-white px-5 py-2.5 rounded-2xl font-semibold text-sm shadow-lg hover:opacity-90">+ Add User</button>
+        <button onClick={()=>{
+  setEditing(null);
+  setForm({ status: 'Active', first_name: '', last_name: '', email: '', phone: '', employee_code: '', username: '', designation: '', organization_id: '', business_unit_id: '', role_id: '' });
+  setPassword('');
+  setConfirmPassword('');
+  setOpen(true);
+}} className="bg-gradient-to-r from-[#0F172A] to-blue-800 text-white px-5 py-2.5 rounded-2xl font-semibold text-sm shadow-lg hover:opacity-90">+ Add User</button>
       </div>
       <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search users by name, email, code..." className={iCls}/>
 
