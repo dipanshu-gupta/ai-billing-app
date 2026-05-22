@@ -244,8 +244,15 @@ export default function RecordDetailPanel({ page, record, onClose }) {
   const {
     customers, contacts, products, organizations, businessUnits, enterpriseUsers,
     updateRecord, submitForApproval, checkMatchingApprovalProcess,
-    convertLeadToOpportunity, createOrderFromOpportunity, createInvoiceFromOrder,
+    convertLeadToOpportunity, createInvoiceFromOrder,
+
   } = useApp();
+
+  // Local permission helper (mirrors CRMListPage canDo)
+  const canEdit = () => {
+    if (!permissionsLoaded || currentUserPermissions.length === 0) return true;
+    return currentUserPermissions.includes(`${page}_edit`);
+  };
 
   const [edited,          setEdited]          = useState({ ...record });
   const [lineItems,       setLineItems]       = useState([]);
@@ -344,7 +351,7 @@ export default function RecordDetailPanel({ page, record, onClose }) {
             </div>
             <div className="flex items-center gap-2 flex-wrap">
               {page==='leads'&&record.status==='Qualified'&&<button onClick={()=>{convertLeadToOpportunity(record);onClose();}} className="bg-white/20 hover:bg-white/30 text-white px-4 py-2 rounded-xl text-sm font-semibold">🔀 Convert</button>}
-              {page==='opportunities'&&<button onClick={()=>{createOrderFromOpportunity(record);onClose();}} className="bg-white/20 hover:bg-white/30 text-white px-4 py-2 rounded-xl text-sm font-semibold">🛒 Create Order</button>}
+
               {page==='orders'&&<button onClick={()=>{createInvoiceFromOrder(record);onClose();}} className="bg-white/20 hover:bg-white/30 text-white px-4 py-2 rounded-xl text-sm font-semibold">🧾 Create Invoice</button>}
               <button onClick={onClose} className="w-9 h-9 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-lg">✕</button>
             </div>
@@ -435,7 +442,7 @@ export default function RecordDetailPanel({ page, record, onClose }) {
             </div>
             <div className="flex gap-3">
               <button onClick={onClose} className="px-6 py-3 text-sm rounded-2xl font-semibold bg-white border border-blue-200 text-[#0F172A] hover:bg-blue-50">Close</button>
-              {(page!=='customers'||tab==='details')&&(
+              {(page!=='customers'||tab==='details') && canEdit() && (
                 <button onClick={handleSave} disabled={saving} className="px-6 py-3 text-sm rounded-2xl font-semibold bg-gradient-to-r from-[#0F172A] to-blue-800 text-white hover:opacity-90 disabled:opacity-50 shadow-lg">
                   {saving?'Saving…':'Save Changes'}
                 </button>
