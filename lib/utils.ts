@@ -117,7 +117,7 @@ export const getObjectFields = (page: string): string[] => {
     case 'opportunities':
       return ['customer','contact','name','stage','closeDate','owner','status','amount'];
     case 'orders':
-      return ['customer','contact','name','shippingAddress','deliveryDate','owner','status','amount'];
+      return ['customer','contact','name','billingAddress','shippingAddress','paymentTerms','deliveryDate','currency','notes','owner','status','amount'];
     case 'invoices':
       return ['customer','contact','name','dueDate','paymentTerms','billingAddress','owner','status','amount'];
     case 'contacts':

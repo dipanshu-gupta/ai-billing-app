@@ -35,10 +35,6 @@ const buildQuoteHTML = (quote, items, template) => {
   const shipping = Number(quote.shipping_cost||0);
   const grandTotal = subtotal - totalDisc + totalTax - overallDisc + shipping;
 
-  // Add owner to quote data for PDF
-  const ownerUser = enterpriseUsers?.find(u => u.id === quote.owner_id || u.email === quote.owner);
-  if (ownerUser) quote = { ...quote, owner_display: `${ownerUser.first_name} ${ownerUser.last_name}` };
-
   const renderSection = (sec) => {
     const s = sec.settings || {};
     switch(sec.type) {
@@ -132,7 +128,7 @@ const buildQuoteHTML = (quote, items, template) => {
       case 'footer': return `
         <div style="background:${s.bgColor};color:${s.textColor};padding:30px 50px;margin-top:20px;">
           <div style="display:flex;justify-content:space-between;align-items:flex-end;">
-            <div style="font-size:12px;opacity:0.7;">${s.footerText||''}</div>
+            <div style="font-size:12px;opacity:0.7;">${s.footerText||''}${quote.owner_display?`<br>Prepared by: ${quote.owner_display}`:''}</div>
             ${s.showSignature?`<div style="text-align:center;"><div style="border-top:1px solid ${s.textColor};padding-top:8px;width:200px;font-size:12px;opacity:0.8;">${s.signatureLabel||'Authorized Signature'}</div></div>`:''}
           </div>
         </div>`;
@@ -291,13 +287,77 @@ function QuotationDetail({ quote, onClose, onSaved }) {
     if (onSaved) onSaved();
   };
 
-  const handlePrint = async () => {
+  const handlePrint = () => {
     setPrinting(true);
-    const template = quoteTemplates.find(t => t.id === form.template_id || t.isDefault) || quoteTemplates[0];
-    const html = buildQuoteHTML({ ...form, subtotal, grand_total:grandTotal }, items, template);
-    const win = window.open('', '_blank');
-    if (win) { win.document.write(html); win.document.close(); win.focus(); setTimeout(() => { win.print(); setPrinting(false); }, 600); }
-    else { setPrinting(false); alert('Please allow popups for PDF generation.'); }
+    try {
+      const template = quoteTemplates.find(t => t.id === form.template_id) ||
+                       quoteTemplates.find(t => t.isDefault) ||
+                       quoteTemplates[0];
+
+      // Resolve owner before passing — buildQuoteHTML is module-level with no context
+      const ownerUser = enterpriseUsers.find(u =>
+        u.id === form.owner_id || u.email === form.owner
+      );
+      const quoteData = {
+        ...form,
+        subtotal,
+        grand_total: grandTotal,
+        owner_display: ownerUser
+          ? `${ownerUser.first_name} ${ownerUser.last_name}`
+          : (form.owner || ''),
+      };
+
+      const html = buildQuoteHTML(quoteData, items, template);
+
+      // Write into a hidden iframe so no popup is needed
+      let iframe = document.getElementById('pdf-preview-frame');
+      if (!iframe) {
+        iframe = document.createElement('iframe');
+        iframe.id = 'pdf-preview-frame';
+        iframe.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;border:none;z-index:9999;background:white;';
+        document.body.appendChild(iframe);
+      }
+
+      iframe.srcdoc = html;
+      iframe.style.display = 'block';
+
+      // Add a close button overlay
+      let closeBtn = document.getElementById('pdf-close-btn');
+      if (!closeBtn) {
+        closeBtn = document.createElement('button');
+        closeBtn.id = 'pdf-close-btn';
+        closeBtn.textContent = '✕ Close Preview';
+        closeBtn.style.cssText = 'position:fixed;top:16px;right:16px;z-index:10000;background:#0F172A;color:white;border:none;padding:10px 20px;border-radius:12px;font-size:14px;font-weight:bold;cursor:pointer;box-shadow:0 4px 20px rgba(0,0,0,0.3);';
+        closeBtn.onclick = () => {
+          iframe.style.display = 'none';
+          closeBtn.style.display = 'none';
+          printBtn.style.display = 'none';
+        };
+        document.body.appendChild(closeBtn);
+      }
+      closeBtn.style.display = 'block';
+
+      // Add a Print/Download button
+      let printBtn = document.getElementById('pdf-print-btn');
+      if (!printBtn) {
+        printBtn = document.createElement('button');
+        printBtn.id = 'pdf-print-btn';
+        printBtn.textContent = '🖨️ Print / Save PDF';
+        printBtn.style.cssText = 'position:fixed;top:16px;right:180px;z-index:10000;background:#16A34A;color:white;border:none;padding:10px 20px;border-radius:12px;font-size:14px;font-weight:bold;cursor:pointer;box-shadow:0 4px 20px rgba(0,0,0,0.3);';
+        printBtn.onclick = () => {
+          iframe.contentWindow?.focus();
+          iframe.contentWindow?.print();
+        };
+        document.body.appendChild(printBtn);
+      }
+      printBtn.style.display = 'block';
+
+    } catch (e) {
+      console.error('PDF generation error:', e);
+      alert('PDF generation failed: ' + (e?.message || 'Unknown error. Check console.'));
+    } finally {
+      setPrinting(false);
+    }
   };
 
   const handleNewVersion = async () => {
@@ -327,26 +387,15 @@ function QuotationDetail({ quote, onClose, onSaved }) {
             <button onClick={handlePrint} disabled={printing} className="bg-white/20 hover:bg-white/30 text-white px-4 py-2 rounded-xl text-sm font-semibold flex items-center gap-2">
               {printing ? '⏳' : '🖨️'} {printing ? 'Generating...' : 'Generate PDF'}
             </button>
-            {['Approved','Sent to Customer','Accepted'].includes(form.status) && (
-              <button
-                onClick={async () => {
-                  const ordId = await createOrderFromQuotation({ ...form, grand_total: grandTotal });
-                  if (ordId) { s('status','Accepted'); }
-                }}
-                className="bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded-xl text-sm font-semibold flex items-center gap-2"
-              >
-                🛒 Create Order
-              </button>
-            )}
+
             <button onClick={handleNewVersion} className="bg-white/20 hover:bg-white/30 text-white px-4 py-2 rounded-xl text-sm font-semibold">📋 New Version</button>
-            {['Accepted','Approved','Sent to Customer'].includes(form.status) && (
+            {!['Draft','Rejected','Expired','Cancelled'].includes(form.status) && (
               <button
                 onClick={async () => {
-                  if (!window.confirm(`Create an Order from ${quote.quote_number}? The quotation will be marked as Accepted.`)) return;
                   setCreatingOrder(true);
                   const ordId = await createOrderFromQuotation({ ...form, grand_total: grandTotal });
                   setCreatingOrder(false);
-                  if (ordId) { alert(`Order ${ordId} created successfully! View it in the Orders module.`); onClose(); if (onSaved) onSaved(); }
+                  if (ordId) { if (onSaved) onSaved(); onClose(); }
                 }}
                 disabled={creatingOrder}
                 className="bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded-xl text-sm font-bold disabled:opacity-50 flex items-center gap-2"
@@ -607,9 +656,7 @@ export default function QuotationsPage() {
                   <td className="px-5 py-3.5">
                     <div className="flex gap-2 flex-wrap">
                       <button onClick={()=>setSelectedQuote(q)} className="bg-blue-100 hover:bg-blue-200 text-blue-700 px-3 py-1.5 rounded-xl text-xs font-semibold">Open</button>
-                      {['Approved','Sent to Customer','Accepted'].includes(q.status) && (
-                        <button onClick={async()=>{ await createOrderFromQuotation(q); }} className="bg-green-100 hover:bg-green-200 text-green-700 px-3 py-1.5 rounded-xl text-xs font-semibold">🛒 Create Order</button>
-                      )}
+
                       <button onClick={()=>{ if(window.confirm('Delete this quotation?')) deleteQuotation(q.id); }} className="bg-red-100 hover:bg-red-200 text-red-500 px-3 py-1.5 rounded-xl text-xs font-semibold">Delete</button>
                     </div>
                   </td>

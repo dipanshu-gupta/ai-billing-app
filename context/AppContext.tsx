@@ -1082,40 +1082,82 @@ export function AppProvider({ children }) {
   const createOrderFromQuotation = async (quotation) => {
     if (!supabase || !currentUser) return null;
 
-    // Load quotation line items
-    const { data: quoteItems } = await supabase
-      .from('quotation_line_items').select('*').eq('quote_number', quotation.quote_number);
+    // Load quotation line items from Supabase (fresh, not from state)
+    const { data: qItems, error: qErr } = await supabase
+      .from('quotation_line_items')
+      .select('*')
+      .eq('quote_number', quotation.quote_number)
+      .order('sort_order');
 
-    const id = generateId('ORD');
-    const { error } = await supabase.from('orders').insert([{
-      ...buildSystemFields(),
-      order_number:     id,
-      name:             quotation.name || `Order from ${quotation.quote_number}`,
-      customer:         quotation.customer         || '',
-      customer_id:      quotation.customer_id      || null,
-      contact:          quotation.contact          || '',
-      contact_id:       quotation.contact_id       || null,
-      amount:           Number(quotation.grand_total || 0),
-      shipping_address: quotation.shipping_address || '',
-      delivery_date:    null,
-      status:           'Processing',
-      owner:            quotation.owner    || currentUser.email,
-      owner_id:         quotation.owner_id || currentUser.id,
+    if (qErr) { alert('Failed to load quotation line items: ' + qErr.message); return null; }
+
+    // Calculate totals from line items
+    const lineItems   = qItems || [];
+    const subtotal    = lineItems.reduce((s, i) => s + Number(i.quantity||1) * Number(i.unit_price||0), 0);
+    const totalDisc   = lineItems.reduce((s, i) => s + Number(i.quantity||1) * Number(i.unit_price||0) * Number(i.discount_pct||0) / 100, 0);
+    const totalTax    = lineItems.reduce((s, i) => {
+      const net = Number(i.quantity||1) * Number(i.unit_price||0) * (1 - Number(i.discount_pct||0)/100);
+      return s + net * Number(i.tax_pct||0) / 100;
+    }, 0);
+    const overallDisc = subtotal * Number(quotation.overall_discount||0) / 100;
+    const shipping    = Number(quotation.shipping_cost||0);
+    const grandTotal  = subtotal - totalDisc + totalTax - overallDisc + shipping;
+
+    const orderId = generateId('ORD');
+
+    const { error: ordErr } = await supabase.from('orders').insert([{
+      order_number:        orderId,
+      name:                `${quotation.name || quotation.quote_number}`,
+      quote_number:        quotation.quote_number,
+      quote_id:            quotation.id,
+      customer:            quotation.customer            || '',
+      customer_id:         quotation.customer_id         || null,
+      contact:             quotation.contact             || '',
+      contact_id:          quotation.contact_id          || null,
+      billing_address:     quotation.billing_address     || '',
+      shipping_address:    quotation.shipping_address    || '',
+      payment_terms:       quotation.payment_terms       || '',
+      shipping_terms:      quotation.shipping_terms      || '',
+      currency:            quotation.currency            || 'INR',
+      subtotal:            Number(subtotal.toFixed(2)),
+      total_discount:      Number((totalDisc + overallDisc).toFixed(2)),
+      total_tax:           Number(totalTax.toFixed(2)),
+      shipping_cost:       shipping,
+      overall_discount:    Number(quotation.overall_discount||0),
+      amount:              Number(grandTotal.toFixed(2)),
+      notes:               quotation.notes               || '',
+      status:              'Draft',
+      delivery_date:       null,
+      owner:               quotation.owner               || currentUser.email,
+      owner_id:            quotation.owner_id            || currentUser.id,
+      organization_id:     quotation.organization_id     || currentUser.organization_id,
+      business_unit_id:    quotation.business_unit_id    || currentUser.business_unit_id,
+      created_by:          currentUser.email,
+      updated_by:          currentUser.email,
+      created_at:          new Date().toISOString(),
+      updated_at:          new Date().toISOString(),
     }]);
 
-    if (error) { alert('Failed to create order: ' + error.message); return null; }
+    if (ordErr) { alert('Failed to create order: ' + ordErr.message); return null; }
 
-    // Copy line items from quotation → order
-    if (quoteItems?.length) {
-      await supabase.from('order_line_items').insert(
-        quoteItems.map((i) => ({
-          order_number: id,
-          product_name: i.product_name || '',
-          quantity:     Number(i.quantity   || 1),
-          price:        Number(i.unit_price || 0),
-          discount:     Number(i.discount_pct || 0),
+    // Copy all line items from quotation → order
+    if (lineItems.length) {
+      const { error: liErr } = await supabase.from('order_line_items').insert(
+        lineItems.map((i, idx) => ({
+          order_number:  orderId,
+          product_name:  i.product_name  || '',
+          product_code:  i.product_code  || '',
+          description:   i.description   || '',
+          quantity:      Number(i.quantity     || 1),
+          price:         Number(i.unit_price   || 0),
+          list_price:    Number(i.list_price   || 0),
+          discount:      Number(i.discount_pct || 0),
+          tax_pct:       Number(i.tax_pct      || 0),
+          extended_price: Number(i.extended_price || 0),
+          sort_order:    idx,
         }))
       );
+      if (liErr) console.error('Line items copy error:', liErr.message);
     }
 
     // Mark quotation as Accepted
@@ -1126,23 +1168,26 @@ export function AppProvider({ children }) {
     }).eq('quote_number', quotation.quote_number);
 
     await logAudit({
-      recordType: 'quotations', recordId: quotation.quote_number,
-      recordName: quotation.name, action: 'converted_to_order',
+      recordType: 'quotations',
+      recordId:   quotation.quote_number,
+      recordName: quotation.name,
+      action:     'converted_to_order',
     });
 
     // Notify owner
     if (quotation.owner) {
       await createNotification({
-        recipientEmail: quotation.owner, type: 'conversion',
-        title: `Order Created from Quotation`,
-        body: `Quotation "${quotation.name}" (${quotation.quote_number}) has been converted to Order ${id}.`,
-        recordType: 'orders', recordId: id,
+        recipientEmail: quotation.owner,
+        type:    'conversion',
+        title:   'Order Created from Quotation',
+        body:    `"${quotation.name}" (${quotation.quote_number}) converted to Order ${orderId}.`,
+        recordType: 'orders',
+        recordId:   orderId,
       });
     }
 
     await Promise.all([fetchOrders(), fetchQuotations()]);
-    alert(`Order ${id} created successfully from quotation!`);
-    return id;
+    return orderId;
   };
 
   const createInvoiceFromOrder = async (order) => {
