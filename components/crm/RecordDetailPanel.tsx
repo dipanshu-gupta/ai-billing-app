@@ -239,13 +239,84 @@ function Customer360({ customer, onSubRecordOpen, onCreateFor }) {
   );
 }
 
+
+// ─── SubRecordViewer — simple read/edit panel for Customer360 sub-records ─────
+// Avoids recursive import of RecordDetailPanel
+function SubRecordViewer({ page, record, onClose }) {
+  const { updateRecord, customers, contacts, products, enterpriseUsers, organizations, businessUnits } = useApp();
+  const [edited, setEdited] = useState({ ...record });
+  const [saving, setSaving] = useState(false);
+  const set = (k,v) => setEdited(p => ({...p,[k]:v}));
+  const statusOpts = getStatusOptions(page);
+  const fmt = n => new Intl.NumberFormat('en-IN',{style:'currency',currency:'INR',maximumFractionDigits:0}).format(n||0);
+  const ownerUser = enterpriseUsers.find(u => u.id === record.owner_id || u.email === record.owner);
+
+  const handleSave = async () => {
+    setSaving(true);
+    await updateRecord(page, edited, []);
+    setSaving(false);
+    onClose();
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[130] overflow-y-auto flex items-center justify-center p-4">
+      <div className="bg-white rounded-[28px] shadow-2xl w-full max-w-2xl overflow-hidden">
+        <div className="bg-gradient-to-r from-[#0F172A] to-blue-900 px-6 py-4 flex items-center justify-between">
+          <div>
+            <h3 className="text-xl font-bold text-white">{edited.name || edited.subject || getPageLabel(page)}</h3>
+            <p className="text-blue-300 text-sm">{record.id} · {getPageLabel(page)}{ownerUser?` · 👤 ${ownerUser.first_name} ${ownerUser.last_name}`:''}</p>
+          </div>
+          <button onClick={onClose} className="w-9 h-9 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center text-lg">✕</button>
+        </div>
+        <div className="p-6 space-y-4 max-h-[70vh] overflow-y-auto">
+          <div className="grid grid-cols-2 gap-4">
+            {getObjectFields(page).map(field => {
+              const v = edited[field];
+              return (
+                <div key={field} className="bg-gray-50 rounded-2xl p-3 border border-blue-100">
+                  <label className="text-xs font-bold uppercase text-gray-400 block mb-1.5">{field.replace(/([A-Z])/g,' $1').trim()}</label>
+                  {field==='status'
+                    ? <select value={v||''} onChange={e=>set(field,e.target.value)} className={sCls}>{statusOpts.map(s=><option key={s}>{s}</option>)}</select>
+                    : field==='customer'
+                    ? <select value={edited.customerId||''} onChange={e=>{const c=customers.find(x=>x.id===e.target.value);setEdited(p=>({...p,customerId:c?.id||'',customer:c?.name||''}));}} className={sCls}><option value="">Select</option>{customers.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select>
+                    : field==='owner'
+                    ? <select value={edited.owner_id||''} onChange={e=>{const u=enterpriseUsers.find(x=>x.id===e.target.value);setEdited(p=>({...p,owner_id:u?.id||'',owner:u?.email||''}));}} className={sCls}><option value="">Unassigned</option>{enterpriseUsers.map(u=><option key={u.id} value={u.id}>{u.first_name} {u.last_name}</option>)}</select>
+                    : ['closeDate','activityDate','deliveryDate','dueDate'].includes(field)
+                    ? <input type="date" value={v||''} onChange={e=>set(field,e.target.value)} className={iCls}/>
+                    : ['amount','price'].includes(field)
+                    ? <input type="number" value={v||''} onChange={e=>set(field,e.target.value)} className={iCls}/>
+                    : field==='notes'
+                    ? <textarea rows={3} value={v||''} onChange={e=>set(field,e.target.value)} className={tCls}/>
+                    : <input type="text" value={v||''} onChange={e=>set(field,e.target.value)} className={iCls}/>
+                  }
+                </div>
+              );
+            })}
+          </div>
+          <div className="grid grid-cols-2 gap-3 pt-2 border-t border-blue-100">
+            {[['Created By',record.created_by],['Updated By',record.updated_by],['Organization',organizations.find(o=>o.id===record.organization_id)?.name],['Business Unit',businessUnits.find(b=>b.id===record.business_unit_id)?.name]].map(([l,v])=>(
+              <div key={l}><div className="text-xs text-gray-400 font-bold uppercase mb-1">{l}</div><div className="text-sm text-[#0F172A] bg-gray-50 rounded-xl px-3 py-2">{v||'-'}</div></div>
+            ))}
+          </div>
+        </div>
+        <div className="px-6 py-4 border-t border-blue-100 flex justify-end gap-3">
+          <button onClick={onClose} className="px-5 py-2.5 rounded-2xl border border-blue-200 text-sm font-semibold text-[#0F172A] hover:bg-blue-50">Close</button>
+          <button onClick={handleSave} disabled={saving} className="px-5 py-2.5 rounded-2xl bg-gradient-to-r from-[#0F172A] to-blue-800 text-white text-sm font-semibold disabled:opacity-50">
+            {saving?'Saving…':'Save Changes'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Main RecordDetailPanel ───────────────────────────────────────────────────
 export default function RecordDetailPanel({ page, record, onClose }) {
   const {
     customers, contacts, products, organizations, businessUnits, enterpriseUsers,
     updateRecord, submitForApproval, checkMatchingApprovalProcess,
     convertLeadToOpportunity, createInvoiceFromOrder,
-
+    currentUserPermissions, permissionsLoaded,
   } = useApp();
 
   // Local permission helper (mirrors CRMListPage canDo)
@@ -452,15 +523,13 @@ export default function RecordDetailPanel({ page, record, onClose }) {
         </div>
       </div>
 
-      {/* Sub-record detail (from Customer360 row click) — z-[130] > parent z-[110] */}
+      {/* Sub-record quick view (from Customer360 row click) */}
       {subRecord && (
-        <div style={{position:'fixed',inset:0,zIndex:130}}>
-          <RecordDetailPanel
-            page={subRecord.page}
-            record={subRecord.record}
-            onClose={() => setSubRecord(null)}
-          />
-        </div>
+        <SubRecordViewer
+          page={subRecord.page}
+          record={subRecord.record}
+          onClose={() => setSubRecord(null)}
+        />
       )}
 
       {/* Create record for Customer360 */}
