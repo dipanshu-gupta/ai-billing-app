@@ -244,7 +244,7 @@ function QuoteLineItems({ items, setItems, products }) {
 
 // ─── Quotation Detail Panel ────────────────────────────────────────────────────
 function QuotationDetail({ quote, onClose, onSaved }) {
-  const { customers, contacts, products, enterpriseUsers, quoteTemplates, organizations, businessUnits, currentUser, updateQuotation, generateNewVersion, checkMatchingApprovalProcess, submitForApproval } = useApp();
+  const { customers, contacts, products, enterpriseUsers, quoteTemplates, organizations, businessUnits, currentUser, updateQuotation, generateNewVersion, checkMatchingApprovalProcess, submitForApproval, approvalRequests, processApproval } = useApp();
   const [form,     setForm]     = useState({ ...quote });
   const [items,    setItems]    = useState([]);
   const [loading,  setLoading]  = useState(true);
@@ -429,6 +429,43 @@ function QuotationDetail({ quote, onClose, onSaved }) {
                 </div>
               ))}
             </div>
+
+            {/* Owner Field */}
+            <div className="bg-white rounded-2xl border border-blue-100 p-4 shadow-sm">
+              <label className="text-xs font-bold uppercase tracking-wider text-gray-400 block mb-2">Owner / Assigned To</label>
+              <select value={form.owner_id||''} onChange={e=>{const u=enterpriseUsers.find(x=>x.id===e.target.value);s('owner_id',u?.id||'');s('owner',u?.email||'');}} className="w-full border border-blue-200 rounded-xl px-3 py-2.5 text-[#0F172A] bg-white focus:outline-none focus:ring-2 focus:ring-blue-400 text-sm">
+                <option value="">Unassigned</option>
+                {enterpriseUsers.map(u=><option key={u.id} value={u.id}>{u.first_name} {u.last_name}</option>)}
+              </select>
+            </div>
+
+            {/* System Information */}
+            <div className="bg-white rounded-[24px] border border-blue-100 shadow overflow-hidden">
+              <div className="px-6 py-4 bg-gradient-to-r from-slate-50 to-blue-50 border-b border-blue-100 flex items-center justify-between">
+                <h3 className="text-lg font-bold text-[#0F172A]">System Information</h3>
+                <span className="text-2xl">🛡️</span>
+              </div>
+              <div className="p-6 grid grid-cols-2 md:grid-cols-4 gap-4">
+                {[
+                  ['Created By',    quote.created_by || '-'],
+                  ['Created At',    quote.created_at ? new Date(quote.created_at).toLocaleString('en-IN') : '-'],
+                  ['Updated By',    quote.updated_by || '-'],
+                  ['Updated At',    quote.updated_at ? new Date(quote.updated_at).toLocaleString('en-IN') : '-'],
+                  ['Organization',  organizations?.find(o=>o.id===quote.organization_id)?.name || '-'],
+                  ['Business Unit', businessUnits?.find(b=>b.id===quote.business_unit_id)?.name || '-'],
+                  ['Opportunity',   quote.opportunity_id || '-'],
+                  ['Version',       `v${quote.version||1}`],
+                  ['Quote Number',  quote.quote_number || '-'],
+                  ['Currency',      quote.currency || 'INR'],
+                ].map(([lbl,val])=>(
+                  <div key={lbl}>
+                    <div className="text-xs font-bold uppercase tracking-wider text-gray-400 mb-1">{lbl}</div>
+                    <div className="text-sm text-[#0F172A] font-medium bg-gray-50 rounded-xl px-3 py-2 truncate">{val}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
           </div>
         )}
 

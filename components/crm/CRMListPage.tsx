@@ -170,7 +170,7 @@ function SavedSearchPanel({ page, currentFilters, onApply, onClose }) {
 export default function CRMListPage({ page }) {
   const {
     customers, products, leads, opportunities, orders, invoices, contacts, activities,
-    enterpriseUsers, savedSearches, fetchSavedSearches,
+    enterpriseUsers, savedSearches, fetchSavedSearches, hasPermission,
     convertLeadToOpportunity, createOrderFromOpportunity, createInvoiceFromOrder,
     createQuotationFromOpportunity, fetchQuotations,
   } = useApp();
@@ -283,9 +283,11 @@ export default function CRMListPage({ page }) {
               ✕ Clear Filters <span className="bg-blue-100 text-blue-700 text-xs font-bold px-1.5 py-0.5 rounded-full">{activeFilterCount}</span>
             </button>
           )}
-          <button onClick={() => setCreateOpen(true)} className="bg-gradient-to-r from-[#0F172A] to-blue-800 text-white px-5 py-2.5 rounded-2xl font-semibold text-sm shadow-lg hover:opacity-90 transition-all">
-            + Create {pageLabel}
-          </button>
+          {canDo('create') && (
+            <button onClick={() => setCreateOpen(true)} className="bg-gradient-to-r from-[#0F172A] to-blue-800 text-white px-5 py-2.5 rounded-2xl font-semibold text-sm shadow-lg hover:opacity-90 transition-all">
+              + Create {pageLabel}
+            </button>
+          )}
         </div>
       </div>
 
@@ -408,7 +410,7 @@ export default function CRMListPage({ page }) {
                         <button onClick={() => setMenuOpenId(menuOpenId === record.id ? null : record.id)} className="w-9 h-9 rounded-full bg-[#0F172A] text-white hover:bg-blue-800 flex items-center justify-center text-lg font-bold shadow transition-all">⋮</button>
                         {menuOpenId === record.id && (
                           <div className="absolute right-0 top-10 bg-[#0F172A] border border-blue-800 shadow-2xl rounded-2xl p-2 z-[999] min-w-[200px]">
-                            <button onClick={() => { setSelectedRecord(record); setMenuOpenId(null); }} className="w-full text-left px-4 py-3 rounded-xl text-sm font-medium hover:bg-blue-800 text-white">Open Details</button>
+                            {canDo('view') && <button onClick={() => { setSelectedRecord(record); setMenuOpenId(null); }} className="w-full text-left px-4 py-3 rounded-xl text-sm font-medium hover:bg-blue-800 text-white">Open Details</button>}
                             {page === 'leads' && record.status === 'Qualified' && (
                               <button onClick={() => { convertLeadToOpportunity(record); setMenuOpenId(null); }} className="w-full text-left px-4 py-3 rounded-xl text-sm font-medium hover:bg-blue-800 text-white">🔀 Convert to Opportunity</button>
                             )}
@@ -432,7 +434,9 @@ export default function CRMListPage({ page }) {
       </div>
 
       {selectedRecord && <RecordDetailPanel page={page} record={selectedRecord} onClose={() => setSelectedRecord(null)}/>}
-      <CreateRecordModal page={page} open={createOpen} onClose={() => setCreateOpen(false)}/>
+      {hasPermission(`${page}_create`) && (
+        <CreateRecordModal page={page} open={createOpen} onClose={() => setCreateOpen(false)}/>
+      )}
     </div>
   );
 }

@@ -445,13 +445,15 @@ export default function RecordDetailPanel({ page, record, onClose }) {
         </div>
       </div>
 
-      {/* Sub-record detail (from Customer360 row click) */}
+      {/* Sub-record detail (from Customer360 row click) — z-[130] > parent z-[110] */}
       {subRecord && (
-        <RecordDetailPanel
-          page={subRecord.page}
-          record={subRecord.record}
-          onClose={() => setSubRecord(null)}
-        />
+        <div style={{position:'fixed',inset:0,zIndex:130}}>
+          <RecordDetailPanel
+            page={subRecord.page}
+            record={subRecord.record}
+            onClose={() => setSubRecord(null)}
+          />
+        </div>
       )}
 
       {/* Create record for Customer360 */}

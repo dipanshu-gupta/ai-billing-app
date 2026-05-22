@@ -93,19 +93,22 @@ export default function CreateRecordModal({ page, open, onClose, prefillCustomer
   const { customers, contacts, products, enterpriseUsers, currentUser, createRecord } = useApp();
   const [form,      setForm]      = useState({});
 
-  // Prefill customer and owner when props change
+  // Reset form and prefill when modal opens
   useEffect(() => {
     if (!open) return;
+    // Start fresh then apply defaults
     const defaults = {};
     if (currentUser) {
-      defaults.owner = currentUser.email;
+      defaults.owner    = currentUser.email;
       defaults.owner_id = currentUser.id;
     }
     if (prefillCustomer?.id) {
       defaults.customerId = prefillCustomer.id;
       defaults.customer   = prefillCustomer.name;
     }
-    setForm(f => ({ ...f, ...defaults }));
+    // Reset form completely, then apply defaults
+    setForm(defaults);
+    setLineItems([]);
   }, [open, prefillCustomer?.id, currentUser?.id]);
   const [lineItems, setLineItems] = useState([]);
   const [saving,    setSaving]    = useState(false);
@@ -271,7 +274,7 @@ export default function CreateRecordModal({ page, open, onClose, prefillCustomer
   };
 
   return (
-    <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 p-4 overflow-auto">
+    <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-[160] p-4 overflow-auto">
       <div className="bg-white rounded-[32px] shadow-2xl border border-blue-100 w-full max-w-3xl max-h-[95vh] flex flex-col">
 
         {/* Header */}

@@ -12,7 +12,7 @@ const iCls = 'w-full border border-blue-200 rounded-xl px-3 py-2.5 text-[#0F172A
 const sCls = 'w-full border border-blue-200 rounded-xl px-3 py-2.5 text-[#0F172A] bg-white focus:outline-none focus:ring-2 focus:ring-blue-400 text-sm';
 const tCls = 'w-full border border-blue-200 rounded-xl px-3 py-2.5 text-[#0F172A] bg-white focus:outline-none focus:ring-2 focus:ring-blue-400 text-sm resize-none';
 
-const ALL_OBJECTS = ['customers','leads','opportunities','orders','invoices','contacts','activities'];
+const ALL_OBJECTS = ['customers','leads','opportunities','orders','invoices','contacts','activities','quotations'];
 
 // Fields available per object for conditions / update-field actions
 const CONDITION_FIELDS = {
@@ -23,6 +23,7 @@ const CONDITION_FIELDS = {
   invoices:      [{v:'status',l:'Status'},{v:'payment_terms',l:'Payment Terms'},{v:'amount',l:'Amount'}],
   contacts:      [{v:'status',l:'Status'},{v:'designation',l:'Designation'}],
   activities:    [{v:'status',l:'Status'},{v:'activity_type',l:'Activity Type'}],
+  quotations:    [{v:'status',l:'Status'},{v:'payment_terms',l:'Payment Terms'},{v:'currency',l:'Currency'}],
 };
 
 // For a given object + field, return dropdown options (null = free text)
@@ -345,7 +346,13 @@ function UsersPanel() {
             ))}
             <div><L t="Organization"/><select value={form.organization_id||''} onChange={e=>s('organization_id',e.target.value)} className={sCls}><option value="">Select</option>{organizations.map(o=><option key={o.id} value={o.id}>{o.name}</option>)}</select></div>
             <div><L t="Business Unit"/><select value={form.business_unit_id||''} onChange={e=>s('business_unit_id',e.target.value)} className={sCls}><option value="">Select</option>{businessUnits.map(b=><option key={b.id} value={b.id}>{b.name}</option>)}</select></div>
-            <div><L t="Role"/><select value={form.role_id||''} onChange={e=>s('role_id',e.target.value)} className={sCls}><option value="">Select Role</option>{roles.map(r=><option key={r.id} value={r.id}>{r.role_name}</option>)}</select></div>
+            <div><L t="Role"/>
+                <select value={form.role_id||''} onChange={e=>s('role_id',e.target.value)} className={sCls}>
+                  <option value="">No Role Assigned</option>
+                  {roles.map(r=><option key={r.id} value={r.id}>{r.role_name}</option>)}
+                </select>
+                {form.role_id && <div className="text-xs text-blue-600 mt-1">Role permissions will apply on next login or page refresh.</div>}
+              </div>
             <div><L t="Status"/><select value={form.status||'Active'} onChange={e=>s('status',e.target.value)} className={sCls}><option>Active</option><option>Inactive</option></select></div>
           </div>
 
@@ -1154,8 +1161,7 @@ const ADMIN_SECTIONS = [
 
 export default function AdminToolsPage() {
   const [active, setActive] = useState(null);
-  const { approvalRequests } = useApp();
-  const pendingCount = approvalRequests.filter(r=>r.status==='Pending').length;
+  // Admin tools page — data loaded via individual panel components
 
   const renderSection = ()=>{
     switch(active){
@@ -1187,9 +1193,7 @@ export default function AdminToolsPage() {
             <div className="text-3xl mb-3">{section.icon}</div>
             <div className="font-bold text-sm">{section.label}</div>
             <div className={`text-xs mt-1 ${active===section.key?'text-blue-200':'text-gray-400'}`}>{section.desc}</div>
-            {section.key==='approvals'&&pendingCount>0&&(
-              <div className="absolute top-3 right-3 w-5 h-5 bg-red-500 rounded-full text-white text-xs font-bold flex items-center justify-center">{pendingCount}</div>
-            )}
+
           </button>
         ))}
       </div>

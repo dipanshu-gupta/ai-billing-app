@@ -97,12 +97,19 @@ export function AppProvider({ children }) {
 
   const applyDataSecurity = useCallback((records) => {
     if (!currentUser) return records;
+    // Super admins (no org set) see everything
+    if (!currentUser.organization_id) return records;
     return records.filter(r => {
       const orgOk = !r.organization_id  || r.organization_id  === currentUser.organization_id;
-      const buOk  = !r.business_unit_id || r.business_unit_id === currentUser.business_unit_id;
-      return orgOk && buOk;
+      return orgOk;
     });
   }, [currentUser]);
+
+  // Apply Supabase-level org filter for efficiency (server-side filtering)
+  const withOrgFilter = useCallback((query) => {
+    if (!currentUser?.organization_id) return query;
+    return query.or(`organization_id.eq.${currentUser.organization_id},organization_id.is.null`);
+  }, [currentUser?.organization_id]);
 
   // ═══════════════════════════════════════════════════════════════════════════
   // AUTH
@@ -146,10 +153,20 @@ export function AppProvider({ children }) {
     if (!supabase || !email) return;
     setPermissionsLoaded(false);
     const { data: ud } = await supabase.from('enterprise_users').select('*, roles(id, role_name)').eq('email', email).single();
-    if (!ud?.role_id) { setCurrentUserPermissions([]); setPermissionsLoaded(true); return; }
+    if (!ud?.role_id) {
+      // No role = full admin access, use a special marker
+      setCurrentUserPermissions(['__admin__']);
+      setPermissionsLoaded(true);
+      return;
+    }
     const { data: rpData } = await supabase.from('role_permissions').select('permission_id').eq('role_id', ud.role_id);
     const ids = (rpData || []).map(x => x.permission_id);
-    if (!ids.length) { setCurrentUserPermissions([]); setPermissionsLoaded(true); return; }
+    if (!ids.length) {
+      // Role exists but no permissions assigned = no access (empty array)
+      setCurrentUserPermissions([]);
+      setPermissionsLoaded(true);
+      return;
+    }
     const { data: permsData } = await supabase.from('permissions').select('permission_code').in('id', ids);
     setCurrentUserPermissions((permsData || []).map(x => x.permission_code));
     setPermissionsLoaded(true);
@@ -208,7 +225,10 @@ export function AppProvider({ children }) {
 
   const fetchCustomers = async () => {
     if (!supabase) return;
-    const { data } = await supabase.from('customers').select('*').order('created_at', { ascending: false });
+    let q_customers = supabase.from('customers').select('*').order('created_at', { ascending: false });
+    if (currentUser?.organization_id)  q_customers = q_customers.eq('organization_id',  currentUser.organization_id);
+    if (currentUser?.business_unit_id) q_customers = q_customers.eq('business_unit_id', currentUser.business_unit_id);
+    const { data } = await q_customers;
     if (data) setCustomers(applyDataSecurity(data.map(c => ({
       id: c.customer_number, primaryContactId: c.primary_contact_id, primaryContact: '',
       name: c.name, email: c.email, phone: c.phone, company: c.company, industry: c.industry,
@@ -223,7 +243,10 @@ export function AppProvider({ children }) {
 
   const fetchContacts = async () => {
     if (!supabase) return;
-    const { data } = await supabase.from('contacts').select('*').order('created_at', { ascending: false });
+    let q_contacts = supabase.from('contacts').select('*').order('created_at', { ascending: false });
+    if (currentUser?.organization_id)  q_contacts = q_contacts.eq('organization_id',  currentUser.organization_id);
+    if (currentUser?.business_unit_id) q_contacts = q_contacts.eq('business_unit_id', currentUser.business_unit_id);
+    const { data } = await q_contacts;
     if (data) setContacts(data.map(c => ({
       id: c.contact_number, customerId: c.customer_id, customer: c.customer,
       name: c.name, email: c.email, phone: c.phone, designation: c.designation,
@@ -236,7 +259,9 @@ export function AppProvider({ children }) {
 
   const fetchProducts = async () => {
     if (!supabase) return;
-    const { data } = await supabase.from('products').select('*').order('created_at', { ascending: false });
+    let pq = supabase.from('products').select('*').order('created_at', { ascending: false });
+    if (currentUser?.organization_id) pq = pq.eq('organization_id', currentUser.organization_id);
+    const { data } = await pq;
     if (data) setProducts(data.map(p => ({
       id: p.product_number, name: p.name, category: p.category,
       productFamily: p.product_family || '', price: Number(p.price || 0), status: p.status,
@@ -247,7 +272,10 @@ export function AppProvider({ children }) {
 
   const fetchLeads = async () => {
     if (!supabase) return;
-    const { data } = await supabase.from('leads').select('*').order('created_at', { ascending: false });
+    let q_leads = supabase.from('leads').select('*').order('created_at', { ascending: false });
+    if (currentUser?.organization_id)  q_leads = q_leads.eq('organization_id',  currentUser.organization_id);
+    if (currentUser?.business_unit_id) q_leads = q_leads.eq('business_unit_id', currentUser.business_unit_id);
+    const { data } = await q_leads;
     if (data) setLeads(data.map(l => ({
       id: l.lead_number, name: l.name, customer: l.customer, customerId: l.customer_id,
       contact: l.contact, contactId: l.contact_id, email: l.email, phone: l.phone,
@@ -260,7 +288,10 @@ export function AppProvider({ children }) {
 
   const fetchOpportunities = async () => {
     if (!supabase) return;
-    const { data } = await supabase.from('opportunities').select('*').order('created_at', { ascending: false });
+    let q_opportunities = supabase.from('opportunities').select('*').order('created_at', { ascending: false });
+    if (currentUser?.organization_id)  q_opportunities = q_opportunities.eq('organization_id',  currentUser.organization_id);
+    if (currentUser?.business_unit_id) q_opportunities = q_opportunities.eq('business_unit_id', currentUser.business_unit_id);
+    const { data } = await q_opportunities;
     if (data) setOpportunities(data.map(o => ({
       id: o.opportunity_number, name: o.name, customer: o.customer, customerId: o.customer_id,
       contact: o.contact, contactId: o.contact_id, stage: o.stage,
@@ -273,7 +304,10 @@ export function AppProvider({ children }) {
 
   const fetchOrders = async () => {
     if (!supabase) return;
-    const { data } = await supabase.from('orders').select('*').order('created_at', { ascending: false });
+    let q_orders = supabase.from('orders').select('*').order('created_at', { ascending: false });
+    if (currentUser?.organization_id)  q_orders = q_orders.eq('organization_id',  currentUser.organization_id);
+    if (currentUser?.business_unit_id) q_orders = q_orders.eq('business_unit_id', currentUser.business_unit_id);
+    const { data } = await q_orders;
     if (data) setOrders(data.map(o => ({
       id: o.order_number, name: o.name, customer: o.customer, customerId: o.customer_id,
       contact: o.contact, contactId: o.contact_id, amount: Number(o.amount || 0),
@@ -285,7 +319,10 @@ export function AppProvider({ children }) {
 
   const fetchInvoices = async () => {
     if (!supabase) return;
-    const { data } = await supabase.from('invoices').select('*').order('created_at', { ascending: false });
+    let q_invoices = supabase.from('invoices').select('*').order('created_at', { ascending: false });
+    if (currentUser?.organization_id)  q_invoices = q_invoices.eq('organization_id',  currentUser.organization_id);
+    if (currentUser?.business_unit_id) q_invoices = q_invoices.eq('business_unit_id', currentUser.business_unit_id);
+    const { data } = await q_invoices;
     if (data) setInvoices(data.map(inv => ({
       id: inv.invoice_number, name: inv.name, customer: inv.customer, customerId: inv.customer_id,
       contact: inv.contact, contactId: inv.contact_id, amount: Number(inv.amount || 0),
@@ -298,7 +335,10 @@ export function AppProvider({ children }) {
 
   const fetchActivities = async () => {
     if (!supabase) return;
-    const { data } = await supabase.from('activities').select('*').order('created_at', { ascending: false });
+    let q_activities = supabase.from('activities').select('*').order('created_at', { ascending: false });
+    if (currentUser?.organization_id)  q_activities = q_activities.eq('organization_id',  currentUser.organization_id);
+    if (currentUser?.business_unit_id) q_activities = q_activities.eq('business_unit_id', currentUser.business_unit_id);
+    const { data } = await q_activities;
     if (data) setActivities(data.map(a => ({
       id: a.activity_number, name: a.name, customer: a.customer, customerId: a.customer_id,
       contact: a.contact, contactId: a.contact_id, subject: a.subject,
@@ -680,6 +720,10 @@ export function AppProvider({ children }) {
       if (error) { alert('Failed to create user record: ' + error.message); return; }
     }
     await fetchEnterpriseUsers();
+    // If the saved user is the current logged-in user, refresh their permissions
+    if (currentUser?.email === data.email) {
+      await loadCurrentUserPermissions(currentUser.email);
+    }
   };
 
   const adminResetPassword = async (authUserId, newPassword) => {
@@ -1267,7 +1311,7 @@ export function AppProvider({ children }) {
 
   const fetchQuotations = async () => {
     if (!supabase) return;
-    const { data } = await supabase.from('quotations').select('*').order('created_at', { ascending: false });
+    const { data } = await withOrgFilter(supabase.from('quotations').select('*')).order('created_at', { ascending: false });
     if (data) setQuotations(data.map(q => ({
       ...q,
       // Aliases for Customer360 customer matching
@@ -1509,20 +1553,36 @@ export function AppProvider({ children }) {
     return () => listener.subscription.unsubscribe();
   }, []);
 
+  // Effect 1: Auth — fetch current user and permissions when session changes
   useEffect(() => {
     if (!session?.user?.email) return;
     const email = session.user.email;
     fetchCurrentUser(email);
     loadCurrentUserPermissions(email);
-    Promise.all([
-      fetchCustomers(), fetchProducts(), fetchLeads(), fetchOpportunities(),
-      fetchOrders(), fetchInvoices(), fetchContacts(), fetchActivities(),
-      fetchQuoteTemplates(), fetchOrganizations(), fetchBusinessUnits(),
-      fetchEnterpriseUsers(), fetchUserGroups(), fetchRoles(), fetchPermissions(),
-      fetchWorkflowRules(), fetchAssignmentRules(), fetchSLAPolicies(),
-      fetchApprovalProcesses(), fetchApprovalRequests(), fetchQuotations(),
-    ]);
+    // Fetch admin/config data that doesn't need org/BU filtering
+    fetchOrganizations(); fetchBusinessUnits();
+    fetchEnterpriseUsers(); fetchUserGroups(); fetchRoles(); fetchPermissions();
+    fetchWorkflowRules(); fetchAssignmentRules(); fetchSLAPolicies();
+    fetchApprovalProcesses(); fetchApprovalRequests();
+    fetchQuoteTemplates();
   }, [session?.user?.email]);
+
+  // Effect 2: CRM data — runs AFTER currentUser is set so org/BU filters apply correctly
+  useEffect(() => {
+    if (!currentUser) return;
+    fetchCustomers(); fetchProducts(); fetchLeads(); fetchOpportunities();
+    fetchOrders(); fetchInvoices(); fetchContacts(); fetchActivities();
+    fetchQuotations();
+  }, [currentUser?.id]);
+
+  // Re-fetch all CRM data when currentUser loads (ensures org/BU data isolation)
+  useEffect(() => {
+    if (!currentUser?.id) return;
+    Promise.all([
+      fetchCustomers(), fetchLeads(), fetchOpportunities(), fetchOrders(),
+      fetchInvoices(), fetchContacts(), fetchActivities(), fetchQuotations(),
+    ]);
+  }, [currentUser?.id]);
 
   useEffect(() => {
     if (!currentUser?.email) return;
@@ -1535,9 +1595,18 @@ export function AppProvider({ children }) {
   // CONTEXT VALUE
   // ═══════════════════════════════════════════════════════════════════════════
 
+  // ─── Permission helper ──────────────────────────────────────────────────────
+  // Returns true if user has the permission (or if no permissions are loaded/configured)
+  const hasPermission = (permCode) => {
+    if (!permissionsLoaded) return true; // Allow while loading
+    if (!permCode) return true;          // No permission required
+    if (currentUserPermissions.length === 0) return true; // No role restrictions configured
+    return currentUserPermissions.includes(permCode);
+  };
+
   const value = {
     session, authLoading, currentUser, currentUserPermissions, permissionsLoaded,
-    handleLogin, handleLogout, resetMyPassword, saveMyProfile, loadCurrentUserPermissions,
+    handleLogin, handleLogout, resetMyPassword, saveMyProfile, loadCurrentUserPermissions, hasPermission,
     customers, contacts, products, leads, opportunities, orders, invoices, activities,
     organizations, businessUnits, enterpriseUsers, userGroups, userGroupMembers,
     roles, permissions, rolePermissions, quoteTemplates,
