@@ -1079,6 +1079,72 @@ export function AppProvider({ children }) {
     await fetchOrders();
   };
 
+  const createOrderFromQuotation = async (quotation) => {
+    if (!supabase || !currentUser) return null;
+
+    // Load quotation line items
+    const { data: quoteItems } = await supabase
+      .from('quotation_line_items').select('*').eq('quote_number', quotation.quote_number);
+
+    const id = generateId('ORD');
+    const { error } = await supabase.from('orders').insert([{
+      ...buildSystemFields(),
+      order_number:     id,
+      name:             quotation.name || `Order from ${quotation.quote_number}`,
+      customer:         quotation.customer         || '',
+      customer_id:      quotation.customer_id      || null,
+      contact:          quotation.contact          || '',
+      contact_id:       quotation.contact_id       || null,
+      amount:           Number(quotation.grand_total || 0),
+      shipping_address: quotation.shipping_address || '',
+      delivery_date:    null,
+      status:           'Processing',
+      owner:            quotation.owner    || currentUser.email,
+      owner_id:         quotation.owner_id || currentUser.id,
+    }]);
+
+    if (error) { alert('Failed to create order: ' + error.message); return null; }
+
+    // Copy line items from quotation → order
+    if (quoteItems?.length) {
+      await supabase.from('order_line_items').insert(
+        quoteItems.map((i) => ({
+          order_number: id,
+          product_name: i.product_name || '',
+          quantity:     Number(i.quantity   || 1),
+          price:        Number(i.unit_price || 0),
+          discount:     Number(i.discount_pct || 0),
+        }))
+      );
+    }
+
+    // Mark quotation as Accepted
+    await supabase.from('quotations').update({
+      status:     'Accepted',
+      updated_by: currentUser.email,
+      updated_at: new Date().toISOString(),
+    }).eq('quote_number', quotation.quote_number);
+
+    await logAudit({
+      recordType: 'quotations', recordId: quotation.quote_number,
+      recordName: quotation.name, action: 'converted_to_order',
+    });
+
+    // Notify owner
+    if (quotation.owner) {
+      await createNotification({
+        recipientEmail: quotation.owner, type: 'conversion',
+        title: `Order Created from Quotation`,
+        body: `Quotation "${quotation.name}" (${quotation.quote_number}) has been converted to Order ${id}.`,
+        recordType: 'orders', recordId: id,
+      });
+    }
+
+    await Promise.all([fetchOrders(), fetchQuotations()]);
+    alert(`Order ${id} created successfully from quotation!`);
+    return id;
+  };
+
   const createInvoiceFromOrder = async (order) => {
     if (!supabase) return;
     await supabase.from('orders').update({ status: 'Delivered', ...buildSystemFields(true) }).eq('order_number', order.id);
@@ -1625,7 +1691,7 @@ export function AppProvider({ children }) {
     addUsersToGroup, removeUserFromGroup, deleteAdminRecord, updateAdminStatus,
     adminResetPassword,
     createRecord, updateRecord,
-    convertLeadToOpportunity, createOrderFromOpportunity, createInvoiceFromOrder,
+    convertLeadToOpportunity, createOrderFromOpportunity, createOrderFromQuotation, createInvoiceFromOrder,
     saveQuoteTemplate, deleteQuoteTemplate, setDefaultTemplate,
     saveWorkflowRule, deleteWorkflowRule, saveAssignmentRule, deleteAssignmentRule,
     saveSLAPolicy, deleteSLAPolicy, saveApprovalProcess, deleteApprovalProcess,

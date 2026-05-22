@@ -244,12 +244,13 @@ function QuoteLineItems({ items, setItems, products }) {
 
 // ─── Quotation Detail Panel ────────────────────────────────────────────────────
 function QuotationDetail({ quote, onClose, onSaved }) {
-  const { customers, contacts, products, enterpriseUsers, quoteTemplates, organizations, businessUnits, currentUser, updateQuotation, generateNewVersion, checkMatchingApprovalProcess, submitForApproval, approvalRequests, processApproval } = useApp();
+  const { customers, contacts, products, enterpriseUsers, quoteTemplates, organizations, businessUnits, currentUser, updateQuotation, generateNewVersion, checkMatchingApprovalProcess, submitForApproval, approvalRequests, processApproval, createOrderFromQuotation } = useApp();
   const [form,     setForm]     = useState({ ...quote });
   const [items,    setItems]    = useState([]);
   const [loading,  setLoading]  = useState(true);
   const [saving,   setSaving]   = useState(false);
   const [printing,        setPrinting]       = useState(false);
+  const [creatingOrder,   setCreatingOrder]  = useState(false);
   const [matchingProcess, setMatchingProcess] = useState(null);
   const [submitting,      setSubmitting]      = useState(false);
 
@@ -326,7 +327,33 @@ function QuotationDetail({ quote, onClose, onSaved }) {
             <button onClick={handlePrint} disabled={printing} className="bg-white/20 hover:bg-white/30 text-white px-4 py-2 rounded-xl text-sm font-semibold flex items-center gap-2">
               {printing ? '⏳' : '🖨️'} {printing ? 'Generating...' : 'Generate PDF'}
             </button>
+            {['Approved','Sent to Customer','Accepted'].includes(form.status) && (
+              <button
+                onClick={async () => {
+                  const ordId = await createOrderFromQuotation({ ...form, grand_total: grandTotal });
+                  if (ordId) { s('status','Accepted'); }
+                }}
+                className="bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded-xl text-sm font-semibold flex items-center gap-2"
+              >
+                🛒 Create Order
+              </button>
+            )}
             <button onClick={handleNewVersion} className="bg-white/20 hover:bg-white/30 text-white px-4 py-2 rounded-xl text-sm font-semibold">📋 New Version</button>
+            {['Accepted','Approved','Sent to Customer'].includes(form.status) && (
+              <button
+                onClick={async () => {
+                  if (!window.confirm(`Create an Order from ${quote.quote_number}? The quotation will be marked as Accepted.`)) return;
+                  setCreatingOrder(true);
+                  const ordId = await createOrderFromQuotation({ ...form, grand_total: grandTotal });
+                  setCreatingOrder(false);
+                  if (ordId) { alert(`Order ${ordId} created successfully! View it in the Orders module.`); onClose(); if (onSaved) onSaved(); }
+                }}
+                disabled={creatingOrder}
+                className="bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded-xl text-sm font-bold disabled:opacity-50 flex items-center gap-2"
+              >
+                {creatingOrder ? '⏳ Creating...' : '🛒 Create Order'}
+              </button>
+            )}
             <button onClick={onClose} className="w-9 h-9 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-lg">✕</button>
           </div>
         </div>
@@ -495,7 +522,7 @@ function QuotationDetail({ quote, onClose, onSaved }) {
 
 // ─── Quotations List Page ──────────────────────────────────────────────────────
 export default function QuotationsPage() {
-  const { quotations, fetchQuotations, customers, createQuotation, deleteQuotation } = useApp();
+  const { quotations, fetchQuotations, customers, createQuotation, deleteQuotation, createOrderFromQuotation } = useApp();
   const [selectedQuote, setSelectedQuote] = useState(null);
   const [createOpen,   setCreateOpen]    = useState(false);
   const [form,         setForm]          = useState({ status:'Draft', currency:'INR', version:1, overall_discount:0, shipping_cost:0, tax_rate:18 });
@@ -578,8 +605,11 @@ export default function QuotationsPage() {
                   <td className="px-5 py-3.5 font-bold text-[#0F172A]">{fmt(q.grand_total)}</td>
                   <td className="px-5 py-3.5 text-gray-500">{q.validity_date||'-'}</td>
                   <td className="px-5 py-3.5">
-                    <div className="flex gap-2">
+                    <div className="flex gap-2 flex-wrap">
                       <button onClick={()=>setSelectedQuote(q)} className="bg-blue-100 hover:bg-blue-200 text-blue-700 px-3 py-1.5 rounded-xl text-xs font-semibold">Open</button>
+                      {['Approved','Sent to Customer','Accepted'].includes(q.status) && (
+                        <button onClick={async()=>{ await createOrderFromQuotation(q); }} className="bg-green-100 hover:bg-green-200 text-green-700 px-3 py-1.5 rounded-xl text-xs font-semibold">🛒 Create Order</button>
+                      )}
                       <button onClick={()=>{ if(window.confirm('Delete this quotation?')) deleteQuotation(q.id); }} className="bg-red-100 hover:bg-red-200 text-red-500 px-3 py-1.5 rounded-xl text-xs font-semibold">Delete</button>
                     </div>
                   </td>
