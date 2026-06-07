@@ -78,6 +78,11 @@ export function AppProvider({ children }) {
   const [notifications,  setNotifications]  = useState([]);
   const [savedSearches,  setSavedSearches]  = useState([]);
   const [quotations,     setQuotations]     = useState([]);
+  const [appPreferences, setAppPreferences] = useState({
+    crm_enabled: true, cpq_enabled: true, default_currency: 'INR',
+    date_format: 'DD/MM/YYYY', fiscal_year_start: 'April',
+  });
+  const [exchangeRates,  setExchangeRates]  = useState({});
 
   // ═══════════════════════════════════════════════════════════════════════════
   // SYSTEM HELPERS
@@ -309,9 +314,26 @@ export function AppProvider({ children }) {
     if (currentUser?.business_unit_id) q_orders = q_orders.eq('business_unit_id', currentUser.business_unit_id);
     const { data } = await q_orders;
     if (data) setOrders(data.map(o => ({
-      id: o.order_number, name: o.name, customer: o.customer, customerId: o.customer_id,
-      contact: o.contact, contactId: o.contact_id, amount: Number(o.amount || 0),
-      shippingAddress: o.shipping_address, deliveryDate: o.delivery_date, status: o.status,
+      id: o.order_number, name: o.name,
+      customer: o.customer, customerId: o.customer_id, customer_id: o.customer_id,
+      contact: o.contact,  contactId: o.contact_id,   contact_id: o.contact_id,
+      amount:           Number(o.amount            || 0),
+      shippingAddress:  o.shipping_address || '',
+      shipping_address: o.shipping_address || '',
+      billing_address:  o.billing_address  || '',
+      payment_terms:    o.payment_terms    || '',
+      shipping_terms:   o.shipping_terms   || '',
+      currency:         o.currency         || 'INR',
+      overall_discount: Number(o.overall_discount || 0),
+      shipping_cost:    Number(o.shipping_cost    || 0),
+      subtotal:         Number(o.subtotal         || 0),
+      total_discount:   Number(o.total_discount   || 0),
+      total_tax:        Number(o.total_tax        || 0),
+      notes:            o.notes         || '',
+      quote_number:     o.quote_number  || '',
+      quote_id:         o.quote_id      || null,
+      deliveryDate:  o.delivery_date, delivery_date: o.delivery_date,
+      status: o.status,
       created_by: o.created_by, created_at: o.created_at, updated_by: o.updated_by, updated_at: o.updated_at,
       organization_id: o.organization_id, business_unit_id: o.business_unit_id,
     })));
@@ -1007,8 +1029,28 @@ export function AppProvider({ children }) {
         await fetchOpportunities(); break;
       case 'orders':
         await supabase.from('orders').update({
-          ...sys, customer: record.customer, name: record.name, amount: calcAmount,
-          shipping_address: record.shippingAddress, delivery_date: record.deliveryDate, status: record.status, owner: record.owner||'', owner_id: record.owner_id||null,
+          ...sys,
+          name:             record.name,
+          customer:         record.customer,
+          customer_id:      record.customerId || record.customer_id || null,
+          contact:          record.contact,
+          contact_id:       record.contactId  || record.contact_id  || null,
+          amount:           calcAmount,
+          billing_address:  record.billing_address  || record.billingAddress  || '',
+          shipping_address: record.shipping_address || record.shippingAddress || '',
+          payment_terms:    record.payment_terms    || record.paymentTerms    || '',
+          shipping_terms:   record.shipping_terms   || '',
+          currency:         record.currency         || 'INR',
+          overall_discount: Number(record.overall_discount || 0),
+          shipping_cost:    Number(record.shipping_cost    || 0),
+          subtotal:         Number(record.subtotal         || 0),
+          total_discount:   Number(record.total_discount   || 0),
+          total_tax:        Number(record.total_tax        || 0),
+          notes:            record.notes             || '',
+          delivery_date:    record.deliveryDate      || record.delivery_date || null,
+          status:           record.status,
+          owner:            record.owner    || '',
+          owner_id:         record.owner_id || null,
         }).eq('order_number', record.id);
         await upsertLineItems('order_line_items', 'order_number', record.id);
         await logAudit({ recordType: 'orders', recordId: record.id, recordName: record.name, action: 'updated' });
@@ -1160,9 +1202,9 @@ export function AppProvider({ children }) {
       if (liErr) console.error('Line items copy error:', liErr.message);
     }
 
-    // Mark quotation as Accepted
+    // Mark quotation as Ordered (order has been created from this quote)
     await supabase.from('quotations').update({
-      status:     'Accepted',
+      status:     'Ordered',
       updated_by: currentUser.email,
       updated_at: new Date().toISOString(),
     }).eq('quote_number', quotation.quote_number);
@@ -1191,22 +1233,83 @@ export function AppProvider({ children }) {
   };
 
   const createInvoiceFromOrder = async (order) => {
-    if (!supabase) return;
-    await supabase.from('orders').update({ status: 'Delivered', ...buildSystemFields(true) }).eq('order_number', order.id);
-    setOrders(prev => prev.map(o => o.id === order.id ? { ...o, status: 'Delivered' } : o));
-    const items = await fetchLineItems('order_line_items', 'order_number', order.id);
-    const amount = items.reduce((s, i) => s + i.quantity * i.price, 0);
+    if (!supabase || !currentUser) return;
+
+    // Load order line items fresh from DB
+    const { data: ordItems } = await supabase
+      .from('order_line_items').select('*')
+      .eq('order_number', order.id).order('sort_order');
+
+    const lineItems    = ordItems || [];
+    const subtotal     = lineItems.reduce((s,i) => s + Number(i.quantity||1)*Number(i.price||0), 0);
+    const totalDisc    = lineItems.reduce((s,i) => s + Number(i.quantity||1)*Number(i.price||0)*(Number(i.discount||0)/100), 0);
+    const totalTax     = lineItems.reduce((s,i) => {
+      const net = Number(i.quantity||1)*Number(i.price||0)*(1-Number(i.discount||0)/100);
+      return s + net*(Number(i.tax_pct||0)/100);
+    }, 0);
+    const overallDisc  = subtotal * Number(order.overall_discount||0) / 100;
+    const shipping     = Number(order.shipping_cost||0);
+    const grandTotal   = subtotal - totalDisc + totalTax - overallDisc + shipping;
+
     const id = generateId('INV');
-    await supabase.from('invoices').insert([{
-      ...buildSystemFields(), invoice_number: id, name: order.name,
-      customer: order.customer, customer_id: order.customerId,
-      contact: order.contact, contact_id: order.contactId,
-      amount, due_date: null, payment_terms: '', billing_address: '', status: 'Pending',
+    // Due date = 30 days from today by default
+    const dueDate = new Date(); dueDate.setDate(dueDate.getDate() + 30);
+
+    const { error } = await supabase.from('invoices').insert([{
+      ...buildSystemFields(),
+      invoice_number:   id,
+      name:             order.name,
+      order_number:     order.id,
+      customer:         order.customer         || '',
+      customer_id:      order.customer_id      || order.customerId || null,
+      contact:          order.contact          || '',
+      contact_id:       order.contact_id       || order.contactId  || null,
+      billing_address:  order.billing_address  || '',
+      shipping_address: order.shipping_address || '',
+      payment_terms:    order.payment_terms    || '',
+      currency:         order.currency         || 'INR',
+      overall_discount: Number(order.overall_discount || 0),
+      shipping_cost:    shipping,
+      subtotal:         Number(subtotal.toFixed(2)),
+      total_discount:   Number((totalDisc + overallDisc).toFixed(2)),
+      total_tax:        Number(totalTax.toFixed(2)),
+      amount:           Number(grandTotal.toFixed(2)),
+      notes:            order.notes            || '',
+      status:           'Pending',
+      due_date:         dueDate.toISOString().split('T')[0],
+      owner:            order.owner            || currentUser.email,
+      owner_id:         order.owner_id         || currentUser.id,
+      organization_id:  order.organization_id  || currentUser.organization_id,
+      business_unit_id: order.business_unit_id || currentUser.business_unit_id,
     }]);
-    if (items.length) await supabase.from('invoice_line_items').insert(
-      items.map(i => ({ invoice_number: id, product_name: i.product, quantity: i.quantity, price: i.price, discount: i.discount || 0 }))
-    );
-    await logAudit({ recordType: 'orders', recordId: order.id, recordName: order.name, action: 'converted_to_invoice' });
+    if (error) { alert('Failed to create invoice: ' + error.message); return; }
+
+    // Copy all line items from order → invoice
+    if (lineItems.length) {
+      await supabase.from('invoice_line_items').insert(
+        lineItems.map((i, sortIdx) => ({
+          invoice_number: id,
+          product_name:   i.product_name  || '',
+          product_code:   i.product_code  || '',
+          description:    i.description   || '',
+          quantity:       Number(i.quantity    || 1),
+          price:          Number(i.price       || 0),
+          list_price:     Number(i.list_price  || 0),
+          discount:       Number(i.discount    || 0),
+          tax_pct:        Number(i.tax_pct     || 0),
+          extended_price: Number(i.extended_price || 0),
+          sort_order:     sortIdx,
+        }))
+      );
+    }
+
+    // Mark order as Invoiced
+    await supabase.from('orders')
+      .update({ status:'Invoiced', ...buildSystemFields(true) })
+      .eq('order_number', order.id);
+    setOrders(prev => prev.map(o => o.id === order.id ? {...o, status:'Invoiced'} : o));
+
+    await logAudit({ recordType:'orders', recordId:order.id, recordName:order.name, action:'invoiced' });
     await fetchInvoices();
   };
 
@@ -1414,6 +1517,48 @@ export function AppProvider({ children }) {
       });
     }
     await fetchApprovalRequests();
+  };
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // APP PREFERENCES
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  const fetchAppPreferences = async () => {
+    if (!supabase) return;
+    const { data } = await supabase.from('app_preferences').select('*').limit(1).single();
+    if (data) setAppPreferences(data);
+  };
+
+  const saveAppPreferences = async (prefs) => {
+    if (!supabase || !currentUser) return;
+    const { data: existing } = await supabase.from('app_preferences').select('id').limit(1).single();
+    if (existing?.id) {
+      await supabase.from('app_preferences').update({ ...prefs, updated_at: new Date().toISOString() }).eq('id', existing.id);
+    } else {
+      await supabase.from('app_preferences').insert([{ ...prefs, organization_id: currentUser.organization_id }]);
+    }
+    await fetchAppPreferences();
+    // Refresh exchange rates if currency changed
+    if (prefs.default_currency) await fetchExchangeRates(prefs.default_currency);
+  };
+
+  const fetchExchangeRates = async (baseCurrency = 'INR') => {
+    try {
+      const res  = await fetch(`https://open.er-api.com/v6/latest/${baseCurrency}`);
+      const data = await res.json();
+      if (data?.rates) setExchangeRates(data.rates);
+    } catch (e) {
+      console.warn('Exchange rate fetch failed:', e.message);
+    }
+  };
+
+  const convertCurrency = (amount, fromCurrency, toCurrency) => {
+    if (fromCurrency === toCurrency || !exchangeRates[toCurrency]) return amount;
+    // Convert via base currency
+    const base  = appPreferences.default_currency || 'INR';
+    const toBase = fromCurrency === base ? 1 : (1 / (exchangeRates[fromCurrency] || 1));
+    const fromBase = exchangeRates[toCurrency] || 1;
+    return amount * toBase * fromBase;
   };
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -1742,6 +1887,10 @@ export function AppProvider({ children }) {
     saveSLAPolicy, deleteSLAPolicy, saveApprovalProcess, deleteApprovalProcess,
     submitForApproval, processApproval, checkMatchingApprovalProcess,
     logAudit, createNotification,
+
+    // app preferences
+    appPreferences, saveAppPreferences, fetchAppPreferences,
+    exchangeRates, fetchExchangeRates, convertCurrency,
 
     // quotations
     quotations, fetchQuotations, createQuotation, updateQuotation, deleteQuotation,

@@ -64,7 +64,7 @@ export const getStatusOptions = (page: string): string[] => {
     case 'invoices':      return ['Draft', 'Pending', 'Paid', 'Overdue', 'Cancelled', 'Pending Approval'];
     case 'contacts':      return ['Active', 'Inactive'];
     case 'activities':    return ['Open', 'In Progress', 'Completed', 'Cancelled'];
-    case 'quotations':    return ['Draft','Submitted','Approved','Sent to Customer','Accepted','Rejected','Expired','Cancelled'];
+    case 'quotations':    return ['Draft','Submitted','Pending Approval','Approved','Sent to Customer','Accepted','Ordered','Rejected','Expired','Cancelled'];
     default:              return ['Active', 'Inactive'];
   }
 };
@@ -143,7 +143,7 @@ export const navigationItems = [
   { key: 'contacts',      label: 'Contacts',      icon: '📇', permission: 'contacts_view' },
   { key: 'orders',        label: 'Orders',        icon: '🛒', permission: 'orders_view' },
   { key: 'invoices',      label: 'Invoices',      icon: '🧾', permission: 'invoices_view' },
-  { key: 'quotations',     label: 'Quotations',    icon: '📄', permission: null },
+  { key: 'quotations',     label: 'Quotations',    icon: '📄', permission: null, requiresCPQ: true },
   { key: 'approvals',     label: 'My Approvals',  icon: '✅', permission: null },
   { key: 'adminTools',    label: 'Admin Tools',   icon: '⚙️', permission: 'admin_tools_view' },
 ];

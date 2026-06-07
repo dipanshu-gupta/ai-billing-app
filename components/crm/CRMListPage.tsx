@@ -6,6 +6,7 @@ import { useApp } from '@/context/AppContext';
 import { getPageLabel, getStatusOptions, getStatusColor, formatCurrency } from '@/lib/utils';
 import RecordDetailPanel from '@/components/crm/RecordDetailPanel';
 import CreateRecordModal from '@/components/crm/CreateRecordModal';
+import CPQRecordDetail from '@/components/crm/CPQRecordDetail';
 
 const TIME_PERIODS = [
   { v:'',           l:'All Time' },
@@ -139,7 +140,7 @@ export default function CRMListPage({ page }) {
     enterpriseUsers, savedSearches, fetchSavedSearches,
     convertLeadToOpportunity, createOrderFromOpportunity, createInvoiceFromOrder,
     createQuotationFromOpportunity, fetchQuotations,
-    currentUserPermissions, permissionsLoaded,
+    currentUserPermissions, permissionsLoaded, appPreferences,
   } = useApp();
 
   const [search,       setSearch]       = useState('');
@@ -360,7 +361,14 @@ export default function CRMListPage({ page }) {
         </div>
       </div>
 
-      {selectedRecord && <RecordDetailPanel page={page} record={selectedRecord} onClose={()=>setSelectedRecord(null)}/>}
+      {selectedRecord && (() => {
+        const isCPQPage = ['orders','invoices'].includes(page);
+        const cpqEnabled = appPreferences?.cpq_enabled !== false;
+        if (isCPQPage && cpqEnabled) {
+          return <CPQRecordDetail page={page} record={selectedRecord} onClose={()=>setSelectedRecord(null)}/>;
+        }
+        return <RecordDetailPanel page={page} record={selectedRecord} onClose={()=>setSelectedRecord(null)}/>;
+      })()}
       <CreateRecordModal page={page} open={createOpen} onClose={()=>setCreateOpen(false)}/>
     </div>
   );

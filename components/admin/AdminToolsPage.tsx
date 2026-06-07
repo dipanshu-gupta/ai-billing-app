@@ -1,7 +1,7 @@
 // @ts-nocheck
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import QuoteTemplateDesigner from '@/components/admin/QuoteTemplateDesigner';
 import { useApp } from '@/context/AppContext';
 import { formatDate, getStatusOptions } from '@/lib/utils';
@@ -1145,6 +1145,135 @@ function TemplateDesignerPanel() {
   return <QuoteTemplateDesigner />;
 }
 
+
+// ═══════════════════════════ APP PREFERENCES ══════════════════════════════════
+const CURRENCIES = ['INR','USD','EUR','GBP','AED','SGD','AUD','CAD','JPY','CNY'];
+const DATE_FORMATS = ['DD/MM/YYYY','MM/DD/YYYY','YYYY-MM-DD'];
+const FISCAL_YEARS = ['January','April','July','October'];
+
+function AppPreferencesPanel() {
+  const { appPreferences, saveAppPreferences, fetchExchangeRates } = useApp();
+  const [form,    setForm]    = useState({ ...appPreferences });
+  const [saving,  setSaving]  = useState(false);
+  const [testRate,setTestRate]= useState(null);
+  const sf = (k,v) => setForm(p => ({...p,[k]:v}));
+
+  useEffect(() => { setForm({ ...appPreferences }); }, [appPreferences.id]);
+
+  const handleSave = async () => {
+    setSaving(true);
+    await saveAppPreferences(form);
+    setSaving(false);
+    alert('App preferences saved successfully!');
+  };
+
+  const testExchangeRate = async () => {
+    try {
+      const res  = await fetch(`https://open.er-api.com/v6/latest/${form.default_currency||'INR'}`);
+      const data = await res.json();
+      if (data?.rates) {
+        const preview = Object.entries(data.rates).filter(([k])=>CURRENCIES.includes(k)).slice(0,6);
+        setTestRate({ base: form.default_currency, rates: preview });
+        await fetchExchangeRates(form.default_currency);
+      } else { alert('Could not fetch exchange rates. Check your internet connection.'); }
+    } catch(e) { alert('Exchange rate API error: '+e.message); }
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <div><h2 className="text-2xl font-bold text-[#0F172A]">App Preferences</h2><p className="text-gray-500 text-sm">Configure application-wide settings. Changes take effect immediately.</p></div>
+        <button onClick={handleSave} disabled={saving} className="bg-gradient-to-r from-[#0F172A] to-blue-800 text-white px-5 py-2.5 rounded-2xl font-semibold text-sm shadow-lg hover:opacity-90 disabled:opacity-50">{saving?'Saving...':'💾 Save Preferences'}</button>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        {/* Module Toggles */}
+        <div className="bg-white rounded-[24px] border border-blue-100 shadow-lg overflow-hidden">
+          <div className="bg-gradient-to-r from-[#0F172A] to-blue-900 px-6 py-4"><h3 className="text-white font-bold">Module Configuration</h3><p className="text-blue-300 text-xs mt-0.5">Enable or disable application modules</p></div>
+          <div className="p-6 space-y-5">
+            {[
+              { key:'crm_enabled',  label:'CRM Module', desc:'Enable customer, lead, opportunity, contact and activity management', icon:'👥' },
+              { key:'cpq_enabled',  label:'CPQ Module (Quotations)', desc:'Enable quotation management. When ON: Opportunity → Quote → Order → Invoice. When OFF: Opportunity → Order → Invoice', icon:'📄' },
+            ].map(item=>(
+              <div key={item.key} className={`flex items-start gap-4 p-4 rounded-2xl border-2 transition-all ${form[item.key]?'border-blue-200 bg-blue-50':'border-gray-100 bg-gray-50'}`}>
+                <div className="text-3xl">{item.icon}</div>
+                <div className="flex-1">
+                  <div className="font-bold text-[#0F172A] flex items-center gap-3">
+                    {item.label}
+                    <span className={`text-xs px-2.5 py-0.5 rounded-full font-semibold ${form[item.key]?'bg-green-100 text-green-700':'bg-gray-200 text-gray-500'}`}>{form[item.key]?'Enabled':'Disabled'}</span>
+                  </div>
+                  <div className="text-sm text-gray-500 mt-1">{item.desc}</div>
+                </div>
+                <button onClick={()=>sf(item.key, !form[item.key])}
+                  className={`w-14 h-7 rounded-full transition-all flex-shrink-0 mt-1 relative ${form[item.key]?'bg-blue-600':'bg-gray-300'}`}>
+                  <div className={`absolute top-0.5 w-6 h-6 bg-white rounded-full shadow transition-all ${form[item.key]?'left-7':'left-0.5'}`}/>
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Regional Settings */}
+        <div className="bg-white rounded-[24px] border border-blue-100 shadow-lg overflow-hidden">
+          <div className="bg-gradient-to-r from-[#0F172A] to-blue-900 px-6 py-4"><h3 className="text-white font-bold">Regional & Currency Settings</h3><p className="text-blue-300 text-xs mt-0.5">Default currency and localization</p></div>
+          <div className="p-6 space-y-4">
+            <div>
+              <L t="Default Currency"/>
+              <select value={form.default_currency||'INR'} onChange={e=>sf('default_currency',e.target.value)} className={sCls}>
+                {CURRENCIES.map(c=><option key={c}>{c}</option>)}
+              </select>
+            </div>
+            <div>
+              <L t="Date Format"/>
+              <select value={form.date_format||'DD/MM/YYYY'} onChange={e=>sf('date_format',e.target.value)} className={sCls}>
+                {DATE_FORMATS.map(f=><option key={f}>{f}</option>)}
+              </select>
+            </div>
+            <div>
+              <L t="Fiscal Year Start"/>
+              <select value={form.fiscal_year_start||'April'} onChange={e=>sf('fiscal_year_start',e.target.value)} className={sCls}>
+                {FISCAL_YEARS.map(m=><option key={m}>{m}</option>)}
+              </select>
+            </div>
+            <div className="pt-2 border-t border-blue-50">
+              <button onClick={testExchangeRate} className="w-full bg-blue-100 hover:bg-blue-200 text-blue-700 py-3 rounded-2xl text-sm font-semibold flex items-center justify-center gap-2">
+                💱 Test Exchange Rates for {form.default_currency||'INR'}
+              </button>
+              {testRate && (
+                <div className="mt-3 bg-green-50 border border-green-100 rounded-2xl p-4">
+                  <div className="text-xs font-bold text-green-700 mb-2">Live Rates (base: {testRate.base})</div>
+                  <div className="grid grid-cols-3 gap-2">
+                    {testRate.rates.map(([cur,rate])=>(
+                      <div key={cur} className="text-center bg-white rounded-xl py-2 px-3">
+                        <div className="font-bold text-[#0F172A] text-sm">{cur}</div>
+                        <div className="text-xs text-gray-500">{Number(rate).toFixed(4)}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Flow preview */}
+      <div className="bg-white rounded-[24px] border border-blue-100 shadow-lg p-6">
+        <h3 className="font-bold text-[#0F172A] mb-4">Current Business Flow</h3>
+        <div className="flex items-center gap-3 flex-wrap">
+          {(form.crm_enabled ? ['Lead','Opportunity'] : []).concat(form.cpq_enabled ? ['Quotation','Order','Invoice'] : ['Order','Invoice']).map((step,i,arr)=>(
+            <div key={step} className="flex items-center gap-3">
+              <div className={`px-5 py-2.5 rounded-2xl font-bold text-sm shadow ${step==='Quotation'?'bg-gradient-to-r from-purple-500 to-purple-700 text-white':step==='Order'||step==='Invoice'?'bg-gradient-to-r from-green-500 to-emerald-600 text-white':'bg-gradient-to-r from-[#0F172A] to-blue-800 text-white'}`}>{step}</div>
+              {i < arr.length-1 && <span className="text-gray-300 text-xl font-light">→</span>}
+            </div>
+          ))}
+        </div>
+        <p className="text-xs text-gray-400 mt-4">{form.cpq_enabled ? 'CPQ mode: Full quotation workflow enabled. Order and invoice layouts use CPQ-style fields with line items, discounts and tax.' : 'Non-CPQ mode: Orders created directly from opportunities with simple layout.'}</p>
+      </div>
+    </div>
+  );
+}
+
 // ═══════════════════════════ ADMIN HOME ════════════════════════════════════════
 const ADMIN_SECTIONS = [
   {key:'organizations', label:'Organizations',   icon:'🏢', desc:'Companies & tenants'},
@@ -1157,6 +1286,7 @@ const ADMIN_SECTIONS = [
   {key:'sla',           label:'SLA Policies',    icon:'⏱️', desc:'Response time targets'},
   {key:'approvals',     label:'Approval Processes',icon:'✅',desc:'Multi-step approvals'},
   {key:'templates',     label:'Quote Templates', icon:'📄', desc:'Branded quote layouts'},
+  {key:'appPrefs',      label:'App Preferences', icon:'⚙️',  desc:'CPQ, CRM & currency settings'},
 ];
 
 export default function AdminToolsPage() {
@@ -1175,6 +1305,7 @@ export default function AdminToolsPage() {
       case 'sla':           return <SLAPoliciesPanel/>;
       case 'approvals':     return <ApprovalProcessesPanel/>;
       case 'templates':     return <TemplateDesignerPanel/>;
+      case 'appPrefs':      return <AppPreferencesPanel/>;
       default:              return null;
     }
   };
