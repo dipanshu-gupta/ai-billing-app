@@ -199,11 +199,13 @@ function QuotationDetail({ quote, onClose, onSaved }) {
     ? grandTotal * (exchangeRates[displayCurrency] / (exchangeRates[form.currency||'INR'] || 1))
     : grandTotal;
 
-  const handleSave = async () => {
+  const [saveSuccess, setSaveSuccess] = useState(false);
+
+  const handleSave = async (andClose = false) => {
     setSaving(true);
     await updateQuotation({ ...form, subtotal, total_discount:totalDisc, total_tax:totalTax, grand_total:grandTotal }, items);
     setSaving(false);
-    if (onSaved) onSaved();
+    if (andClose) { if (onSaved) onSaved(); } else { setSaveSuccess(true); setTimeout(()=>setSaveSuccess(false),2500); }
   };
 
   // ── Action handlers ──────────────────────────────────────────────────────────
@@ -383,6 +385,17 @@ function QuotationDetail({ quote, onClose, onSaved }) {
             <span className="text-xs font-bold text-gray-400 uppercase mr-2">Actions:</span>
             {loading ? <span className="text-xs text-gray-400">Loading...</span> : renderActionButtons()}
             {creatingOrder && <span className="text-sm text-gray-500 animate-pulse">⏳ Creating Order...</span>}
+          </div>
+
+          {/* Top save bar */}
+          <div className="bg-white border-b border-blue-100 px-8 py-3 flex items-center justify-between flex-shrink-0">
+            <button onClick={onClose} className="flex items-center gap-2 text-sm text-gray-500 hover:text-[#0F172A] font-semibold">← Back to list</button>
+            <div className="flex items-center gap-3">
+              {saveSuccess && <span className="text-green-600 text-sm font-semibold">✓ Saved</span>}
+              <button onClick={onClose} className="px-4 py-2 text-sm rounded-xl font-semibold border border-gray-200 text-gray-600 hover:bg-gray-50">Cancel</button>
+              <button onClick={()=>handleSave(false)} disabled={saving} className="px-4 py-2 text-sm rounded-xl font-semibold bg-blue-100 hover:bg-blue-200 text-blue-700 disabled:opacity-50">{saving?'Saving…':'Save Changes'}</button>
+              <button onClick={()=>handleSave(true)} disabled={saving} className="px-5 py-2 text-sm rounded-xl font-semibold bg-gradient-to-r from-[#0F172A] to-blue-800 text-white hover:opacity-90 disabled:opacity-50 shadow-md">{saving?'Saving…':'Save & Close'}</button>
+            </div>
           </div>
 
           {/* Approval banner */}
@@ -572,11 +585,25 @@ function QuotationDetail({ quote, onClose, onSaved }) {
 }
 
 // ─── Quotations List Page ──────────────────────────────────────────────────────
-export default function QuotationsPage() {
+export default function QuotationsPage({ pendingOpenRecord, onRecordOpened }) {
   const { quotations, fetchQuotations, customers, createQuotation, deleteQuotation, appPreferences } = useApp();
   const [selectedQuote, setSelectedQuote] = useState(null);
   const [createOpen,    setCreateOpen]    = useState(false);
   const [form,          setForm]          = useState({ status:'Draft', currency: appPreferences.default_currency||'INR', version:1, overall_discount:0, shipping_cost:0 });
+  // Auto-open from global search
+  useEffect(() => {
+    const pending = (pendingOpenRecord?.page === 'quotations' && pendingOpenRecord?.record)
+      ? pendingOpenRecord
+      : (window.__pendingRecord?.page === 'quotations' && window.__pendingRecord?.record)
+      ? window.__pendingRecord
+      : null;
+    if (pending) {
+      setSelectedQuote(pending.record);
+      if (onRecordOpened) onRecordOpened();
+      window.__pendingRecord = null;
+    }
+  }, [pendingOpenRecord]);
+
   const [search,        setSearch]        = useState('');
   const [statusFilter,  setStatusFilter]  = useState('All');
   const [saving,        setSaving]        = useState(false);

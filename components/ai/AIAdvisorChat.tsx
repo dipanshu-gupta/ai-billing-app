@@ -195,6 +195,13 @@ export default function AIAdvisorChat() {
     messagesEnd.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, open]);
 
+  // Listen for toggle event from Header button
+  useEffect(() => {
+    const handler = () => { setOpen(o => !o); setMinimized(false); };
+    window.addEventListener('toggle-ai-chat', handler);
+    return () => window.removeEventListener('toggle-ai-chat', handler);
+  }, []);
+
   useEffect(() => {
     if (open && !minimized) inputRef.current?.focus();
   }, [open, minimized]);
@@ -259,18 +266,6 @@ export default function AIAdvisorChat() {
 
   return (
     <>
-      {/* Floating button */}
-      <button
-        onClick={() => { setOpen(true); setMinimized(false); }}
-        className={`fixed bottom-8 right-8 z-[200] flex items-center gap-3 bg-gradient-to-r from-[#0F172A] to-blue-700 text-white px-7 py-4 rounded-full shadow-2xl hover:shadow-blue-500/40 hover:scale-105 transition-all font-bold text-base ${open && !minimized ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}
-      >
-        <div className="relative">
-          <span className="text-2xl">🤖</span>
-          <span className="absolute -top-1 -right-1 w-3.5 h-3.5 bg-green-400 rounded-full border-2 border-white animate-pulse"/>
-        </div>
-        Business Advisor Agent
-      </button>
-
       {/* Chat panel */}
       {open && (
         <div className={`fixed bottom-6 right-6 z-[200] flex flex-col bg-white rounded-[28px] shadow-2xl border border-blue-100 transition-all`}

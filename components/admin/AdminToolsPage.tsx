@@ -1194,6 +1194,7 @@ function AppPreferencesPanel() {
             {[
               { key:'crm_enabled',  label:'CRM Module', desc:'Enable customer, lead, opportunity, contact and activity management', icon:'👥' },
               { key:'cpq_enabled',  label:'CPQ Module (Quotations)', desc:'Enable quotation management. When ON: Opportunity → Quote → Order → Invoice. When OFF: Opportunity → Order → Invoice', icon:'📄' },
+              { key:'global_search_enabled', label:'Global Search', desc:'Show a search bar in the header to search across all records and objects in real time. Default: Off', icon:'🔍' },
             ].map(item=>(
               <div key={item.key} className={`flex items-start gap-4 p-4 rounded-2xl border-2 transition-all ${form[item.key]?'border-blue-200 bg-blue-50':'border-gray-100 bg-gray-50'}`}>
                 <div className="text-3xl">{item.icon}</div>

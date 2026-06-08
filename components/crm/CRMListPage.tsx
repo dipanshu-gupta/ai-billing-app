@@ -1,7 +1,7 @@
 // @ts-nocheck
 'use client';
 
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
 import { useApp } from '@/context/AppContext';
 import { getPageLabel, getStatusOptions, getStatusColor, formatCurrency } from '@/lib/utils';
 import RecordDetailPanel from '@/components/crm/RecordDetailPanel';
@@ -134,7 +134,7 @@ function SavedSearchPanel({ page, currentFilters, onApply, onClose }) {
   );
 }
 
-export default function CRMListPage({ page }) {
+export default function CRMListPage({ page, pendingOpenRecord, onRecordOpened }) {
   const {
     customers, products, leads, opportunities, orders, invoices, contacts, activities,
     enterpriseUsers, savedSearches, fetchSavedSearches,
@@ -155,6 +155,17 @@ export default function CRMListPage({ page }) {
   const [defaultLoaded,setDefaultLoaded]= useState(false);
 
   // Permission helper
+  const menuRef = useRef(null);
+
+  // Close 3-dot menu when clicking outside
+  useEffect(() => {
+    const handler = (e) => {
+      if (!e.target.closest('[data-menu-container]')) setMenuOpenId(null);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
   const canDo = (action) => {
     if (!permissionsLoaded || currentUserPermissions.length === 0) return true;
     return currentUserPermissions.includes(`${page}_${action}`);
@@ -335,7 +346,7 @@ export default function CRMListPage({ page }) {
                     {hasAmount && <td className="px-5 py-3.5 text-right text-sm font-semibold text-[#0F172A]">{formatCurrency(record.amount||0)}</td>}
                     {hasPrice  && <td className="px-5 py-3.5 text-right text-sm font-semibold text-[#0F172A]">{formatCurrency(record.price||0)}</td>}
                     <td className="px-5 py-3.5">
-                      <div className="relative flex justify-center">
+                      <div className="relative flex justify-center" data-menu-container>
                         <button onClick={()=>setMenuOpenId(menuOpenId===record.id?null:record.id)} className="w-9 h-9 rounded-full bg-[#0F172A] text-white hover:bg-blue-800 flex items-center justify-center text-lg font-bold shadow transition-all">⋮</button>
                         {menuOpenId === record.id && (
                           <div className="absolute right-0 top-10 bg-[#0F172A] border border-blue-800 shadow-2xl rounded-2xl p-2 z-[999] min-w-[220px]">

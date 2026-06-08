@@ -143,6 +143,7 @@ export const navigationItems = [
   { key: 'contacts',      label: 'Contacts',      icon: '📇', permission: 'contacts_view' },
   { key: 'orders',        label: 'Orders',        icon: '🛒', permission: 'orders_view' },
   { key: 'invoices',      label: 'Invoices',      icon: '🧾', permission: 'invoices_view' },
+  { key: 'reports',       label: 'Fast Reports',  icon: '⚡', permission: null },
   { key: 'quotations',     label: 'Quotations',    icon: '📄', permission: null, requiresCPQ: true },
   { key: 'approvals',     label: 'My Approvals',  icon: '✅', permission: null },
   { key: 'adminTools',    label: 'Admin Tools',   icon: '⚙️', permission: 'admin_tools_view' },

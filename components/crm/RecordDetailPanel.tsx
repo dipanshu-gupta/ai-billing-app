@@ -367,11 +367,13 @@ export default function RecordDetailPanel({ page, record, onClose }) {
   const fields     = getObjectFields(page);
   const statusOpts = getStatusOptions(page);
 
-  const handleSave = async () => {
+  const [saveSuccess, setSaveSuccess] = useState(false);
+
+  const handleSave = async (andClose = false) => {
     setSaving(true);
     await updateRecord(page, edited, lineItems);
     setSaving(false);
-    onClose();
+    if (andClose) { onClose(); } else { setSaveSuccess(true); setTimeout(() => setSaveSuccess(false), 2500); }
   };
 
   const handleSubmitForApproval = async () => {
@@ -427,6 +429,27 @@ export default function RecordDetailPanel({ page, record, onClose }) {
               {page==='orders'&&<button onClick={()=>{createInvoiceFromOrder(record);onClose();}} className="bg-white/20 hover:bg-white/30 text-white px-4 py-2 rounded-xl text-sm font-semibold">🧾 Create Invoice</button>}
               <button onClick={onClose} className="w-9 h-9 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-lg">✕</button>
             </div>
+          </div>
+
+          {/* Action bar — top */}
+          <div className="bg-white border-b border-blue-100 px-8 py-3 flex items-center justify-between flex-shrink-0">
+            <button onClick={onClose} className="flex items-center gap-2 text-sm text-gray-500 hover:text-[#0F172A] font-semibold transition-all">
+              ← Back to list
+            </button>
+            {(page!=='customers'||tab==='details') && (
+              <div className="flex items-center gap-3">
+                {saveSuccess && <span className="text-green-600 text-sm font-semibold flex items-center gap-1">✓ Saved</span>}
+                <button onClick={onClose} className="px-4 py-2 text-sm rounded-xl font-semibold bg-white border border-gray-200 text-gray-600 hover:bg-gray-50">
+                  Cancel
+                </button>
+                <button onClick={() => handleSave(false)} disabled={saving} className="px-4 py-2 text-sm rounded-xl font-semibold bg-blue-100 hover:bg-blue-200 text-blue-700 disabled:opacity-50">
+                  {saving ? 'Saving…' : 'Save Changes'}
+                </button>
+                <button onClick={() => handleSave(true)} disabled={saving} className="px-5 py-2 text-sm rounded-xl font-semibold bg-gradient-to-r from-[#0F172A] to-blue-800 text-white hover:opacity-90 disabled:opacity-50 shadow-md">
+                  {saving ? 'Saving…' : 'Save & Close'}
+                </button>
+              </div>
+            )}
           </div>
 
           {/* Customer tabs */}
@@ -501,28 +524,18 @@ export default function RecordDetailPanel({ page, record, onClose }) {
             </>)}
           </div>
 
-          {/* Footer */}
-          <div className="px-8 py-4 border-t border-blue-100 bg-white flex items-center justify-between flex-shrink-0">
-            <div className="flex items-center gap-3">
-              {checkingApproval&&<span className="text-xs text-gray-400">Checking approval rules…</span>}
-              {canSubmitForApproval&&(
-                <button onClick={handleSubmitForApproval} disabled={submitting}
-                  className="flex items-center gap-2 px-5 py-2.5 text-sm rounded-2xl font-semibold bg-purple-100 hover:bg-purple-200 text-purple-700 border border-purple-200 disabled:opacity-50"
-                  title={`Process: ${matchingProcess?.name}`}>
-                  📋 {submitting ? 'Submitting…' : 'Submit for Approval'}
-                  <span className="bg-purple-200 text-purple-800 text-xs px-2 py-0.5 rounded-full">{matchingProcess?.name}</span>
-                </button>
-              )}
-              <span className="text-sm text-gray-400">{HAS_LI.includes(page)&&`${lineItems.length} line item${lineItems.length!==1?'s':''}`}</span>
-            </div>
-            <div className="flex gap-3">
-              <button onClick={onClose} className="px-6 py-3 text-sm rounded-2xl font-semibold bg-white border border-blue-200 text-[#0F172A] hover:bg-blue-50">Close</button>
-              {(page!=='customers'||tab==='details') && canEdit() && (
-                <button onClick={handleSave} disabled={saving} className="px-6 py-3 text-sm rounded-2xl font-semibold bg-gradient-to-r from-[#0F172A] to-blue-800 text-white hover:opacity-90 disabled:opacity-50 shadow-lg">
-                  {saving?'Saving…':'Save Changes'}
-                </button>
-              )}
-            </div>
+          {/* Footer — approval + line item count only */}
+          <div className="px-8 py-3 border-t border-blue-100 bg-gray-50 flex items-center gap-3 flex-shrink-0">
+            {checkingApproval&&<span className="text-xs text-gray-400">Checking approval rules…</span>}
+            {canSubmitForApproval&&(
+              <button onClick={handleSubmitForApproval} disabled={submitting}
+                className="flex items-center gap-2 px-4 py-2 text-sm rounded-xl font-semibold bg-purple-100 hover:bg-purple-200 text-purple-700 border border-purple-200 disabled:opacity-50"
+                title={`Process: ${matchingProcess?.name}`}>
+                📋 {submitting ? 'Submitting…' : 'Submit for Approval'}
+                <span className="bg-purple-200 text-purple-800 text-xs px-2 py-0.5 rounded-full">{matchingProcess?.name}</span>
+              </button>
+            )}
+            {HAS_LI.includes(page)&&<span className="text-xs text-gray-400 ml-auto">{lineItems.length} line item{lineItems.length!==1?'s':''}</span>}
           </div>
         </div>
       </div>

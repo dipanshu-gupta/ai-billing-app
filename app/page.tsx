@@ -1,7 +1,7 @@
 // @ts-nocheck
 'use client';
 
-import { useState } from 'react';
+import React, { useState } from 'react';
 import { AppProvider, useApp } from '@/context/AppContext';
 import Sidebar from '@/components/layout/Sidebar';
 import Header from '@/components/layout/Header';
@@ -11,6 +11,7 @@ import AdminToolsPage from '@/components/admin/AdminToolsPage';
 import ApprovalsInboxPage from '@/components/approvals/ApprovalsInboxPage';
 import QuotationsPage from '@/components/quotations/QuotationsPage';
 import AIAdvisorChat from '@/components/ai/AIAdvisorChat';
+import FastReportsPage from '@/components/reports/FastReportsPage';
 import Modal from '@/components/shared/Modal';
 import { inputClass, Button } from '@/components/shared';
 
@@ -130,11 +131,33 @@ function ProfileModal({ open, onClose }) {
 // ─── App Shell ────────────────────────────────────────────────────────────────
 
 const CRM_PAGES = ['customers', 'products', 'leads', 'opportunities', 'activities', 'contacts', 'orders', 'invoices'];
-const NON_CRM_PAGES = ['dashboard', 'approvals', 'adminTools', 'quotations'];
+const NON_CRM_PAGES = ['dashboard', 'approvals', 'adminTools', 'quotations', 'reports'];
 
 function AppShell() {
   const { session, authLoading, appPreferences } = useApp();
-  const [activePage, setActivePage] = useState('dashboard');
+  const [activePage,       setActivePage]       = useState('dashboard');
+  const [pendingOpenRecord, setPendingOpenRecord] = useState(null); // { page, record }
+
+  // Listen for profile open event from Header
+  React.useEffect(() => {
+    const h = () => setProfileOpen(true);
+    window.addEventListener('open-profile', h);
+    return () => window.removeEventListener('open-profile', h);
+  }, []);
+
+  // Listen for open-record event from GlobalSearch
+  React.useEffect(() => {
+    const h = (e) => {
+      const { page, record } = e.detail;
+      // Store in window as bulletproof fallback for cross-render access
+      window.__pendingRecord = { page, record };
+      // Set both synchronously — React 18 batches these into one render
+      setActivePage(page);
+      setPendingOpenRecord({ page, record });
+    };
+    window.addEventListener('open-record', h);
+    return () => window.removeEventListener('open-record', h);
+  }, []);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(true);
   const [profileOpen, setProfileOpen] = useState(false);
 
@@ -163,14 +186,12 @@ function AppShell() {
         setCollapsed={setSidebarCollapsed}
       />
       <div className="flex-1 flex flex-col min-w-0">
-        <Header
-          onToggleSidebar={() => setSidebarCollapsed(c => !c)}
-          onOpenProfile={() => setProfileOpen(true)}
-        />
+        <Header activePage={activePage} onNavigate={(page) => setActivePage(page)} />
         <main className="flex-1 p-6 overflow-y-auto">
           {activePage === 'dashboard' && <DashboardPage />}
-          {CRM_PAGES.includes(activePage) && !NON_CRM_PAGES.includes(activePage) && <CRMListPage page={activePage} />}
-          {activePage === 'quotations' && appPreferences?.cpq_enabled !== false && <QuotationsPage />}
+          {CRM_PAGES.includes(activePage) && !NON_CRM_PAGES.includes(activePage) && <CRMListPage page={activePage} pendingOpenRecord={pendingOpenRecord} onRecordOpened={() => setPendingOpenRecord(null)} />}
+          {activePage === 'quotations' && appPreferences?.cpq_enabled !== false && <QuotationsPage pendingOpenRecord={pendingOpenRecord} onRecordOpened={() => setPendingOpenRecord(null)} />}
+          {activePage === 'reports' && <FastReportsPage />}
           {activePage === 'approvals' && <ApprovalsInboxPage />}
           {activePage === 'adminTools' && <AdminToolsPage />}
         </main>

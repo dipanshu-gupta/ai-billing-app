@@ -1,80 +1,169 @@
 // @ts-nocheck
 'use client';
-
-import { useState } from 'react';
+import React, { useRef, useEffect, useState } from 'react';
 import { useApp } from '@/context/AppContext';
-import { timeAgo } from '@/lib/utils';
+import { getPageLabel } from '@/lib/utils';
+import GlobalSearch from '@/components/layout/GlobalSearch';
 
-export default function Header({ onToggleSidebar, onOpenProfile }) {
-  const { currentUser, notifications, unreadCount, markNotificationRead, markAllNotificationsRead, handleLogout } = useApp();
-  const [notifOpen, setNotifOpen] = useState(false);
-  const [profileOpen, setProfileOpen] = useState(false);
+function NotificationBell() {
+  const { notifications } = useApp();
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  const unread = (notifications || []).filter(n => !n.is_read).length;
+
+  useEffect(() => {
+    const h = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', h);
+    return () => document.removeEventListener('mousedown', h);
+  }, []);
 
   return (
-    <header className="sticky top-0 z-40 bg-gradient-to-r from-[#0F172A] via-blue-900 to-blue-950 border-b border-blue-800 shadow-2xl">
-      <div className="px-6 py-4 flex items-center justify-between">
-        <div className="flex items-center gap-4">
-          <button onClick={onToggleSidebar} className="w-10 h-10 rounded-2xl bg-white/10 hover:bg-white/20 text-white flex items-center justify-center text-xl transition-all">☰</button>
-          <div>
-            <h1 className="text-xl font-bold text-white leading-tight">Business Pro</h1>
-            <p className="text-xs text-blue-300">Enterprise CRM Platform</p>
+    <div ref={ref} className="relative">
+      <button onClick={() => setOpen(!open)}
+        className="relative w-9 h-9 flex items-center justify-center rounded-xl hover:bg-white/10 transition-colors">
+        <svg className="w-5 h-5 text-white/80" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+            d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"/>
+        </svg>
+        {unread > 0 && (
+          <span className="absolute -top-0.5 -right-0.5 w-4 h-4 bg-red-400 text-white text-[10px] rounded-full flex items-center justify-center font-bold border border-white">
+            {unread > 9 ? '9+' : unread}
+          </span>
+        )}
+      </button>
+      {open && (
+        <div className="absolute right-0 top-full mt-2 w-80 bg-white border border-gray-200 rounded-2xl shadow-xl z-50 overflow-hidden">
+          <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
+            <span className="font-semibold text-gray-800 text-sm">Notifications</span>
+            {unread > 0 && <span className="text-xs text-blue-600 font-medium">{unread} unread</span>}
+          </div>
+          <div className="overflow-y-auto" style={{maxHeight:'320px'}}>
+            {!notifications?.length
+              ? <div className="px-4 py-8 text-center text-gray-400 text-sm">No notifications</div>
+              : notifications.slice(0,10).map(n => (
+                <div key={n.id} className={`px-4 py-3 border-b border-gray-50 hover:bg-gray-50 ${!n.is_read?'bg-blue-50/50':''}`}>
+                  <div className="text-sm font-medium text-gray-800">{n.title}</div>
+                  <div className="text-xs text-gray-500 mt-0.5 line-clamp-2">{n.body||n.message}</div>
+                </div>
+              ))
+            }
           </div>
         </div>
-        <div className="flex items-center gap-3 relative">
-          <div className="relative">
-            <button onClick={() => { setNotifOpen(!notifOpen); setProfileOpen(false); }} className="relative w-10 h-10 rounded-2xl bg-white/10 hover:bg-white/20 text-white flex items-center justify-center text-xl transition-all">
-              🔔
-              {unreadCount > 0 && <span className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 rounded-full text-xs font-bold flex items-center justify-center">{unreadCount > 9 ? '9+' : unreadCount}</span>}
-            </button>
-            {notifOpen && (
-              <div className="absolute right-0 top-14 w-96 bg-white rounded-3xl shadow-2xl border border-blue-100 overflow-hidden z-50">
-                <div className="px-5 py-4 border-b border-blue-100 flex items-center justify-between">
-                  <h3 className="font-bold text-[#0F172A]">Notifications</h3>
-                  {unreadCount > 0 && <button onClick={markAllNotificationsRead} className="text-xs text-blue-600 font-semibold hover:underline">Mark all read</button>}
+      )}
+    </div>
+  );
+}
+
+export default function Header({ activePage, onNavigate }) {
+  const { currentUser, handleLogout, appPreferences } = useApp();
+  const [profileOpen, setProfileOpen] = useState(false);
+  const [today, setToday] = useState('');
+  const menuRef = useRef(null);
+
+  useEffect(() => {
+    setToday(new Date().toLocaleDateString('en-IN', {
+      weekday:'long', day:'numeric', month:'long', year:'numeric',
+    }));
+  }, []);
+
+  useEffect(() => {
+    const h = (e) => { if (menuRef.current && !menuRef.current.contains(e.target)) setProfileOpen(false); };
+    document.addEventListener('mousedown', h);
+    return () => document.removeEventListener('mousedown', h);
+  }, []);
+
+  const displayName = currentUser
+    ? `${currentUser.first_name||''} ${currentUser.last_name||''}`.trim() || currentUser.email
+    : '';
+  const initials = displayName
+    ? displayName.split(' ').filter(Boolean).map(n=>n[0]).join('').toUpperCase().slice(0,2)
+    : '?';
+
+  const PAGE_LABELS = {
+    dashboard:'Dashboard', customers:'Customers', contacts:'Contacts',
+    leads:'Leads', opportunities:'Opportunities', activities:'Activities',
+    quotations:'Quotations', orders:'Orders', invoices:'Invoices',
+    products:'Products', reports:'Fast Reports', approvals:'My Approvals',
+    adminTools:'Admin Tools',
+  };
+  const pageTitle = PAGE_LABELS[activePage] || getPageLabel(activePage) || 'Business Pro';
+
+  return (
+    <header className="h-16 bg-gradient-to-r from-[#0F172A] to-blue-900 flex items-center justify-between px-6 shadow-lg flex-shrink-0 sticky top-0 z-30">
+      {/* Left: Company logo / branding */}
+      <div className="flex items-center gap-3">
+        <div className="w-9 h-9 rounded-xl bg-white flex items-center justify-center font-black text-[#0F172A] text-sm shadow-md flex-shrink-0">
+          BP
+        </div>
+        <div>
+          <div className="text-base font-bold text-white leading-tight">Business Pro</div>
+          <p className="text-xs text-blue-300 leading-tight h-4" suppressHydrationWarning>{today}</p>
+        </div>
+      </div>
+
+      {/* Center: Global Search */}
+      {appPreferences?.global_search_enabled && (
+        <GlobalSearch onNavigate={onNavigate}/>
+      )}
+
+      {/* Right: AI + Bell + Profile */}
+      <div className="flex items-center gap-2">
+
+        {/* AI Advisor */}
+        <button onClick={() => window.dispatchEvent(new CustomEvent('toggle-ai-chat'))}
+          title="Business Advisor Agent"
+          className="relative flex items-center gap-2 px-3.5 py-2 rounded-xl bg-white/15 hover:bg-white/25 text-white transition-all border border-white/20 text-sm font-semibold">
+          <span>🤖</span>
+          <span className="hidden sm:inline">AI Advisor</span>
+          <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-green-400 rounded-full border-2 border-[#0F172A]"/>
+        </button>
+
+        {/* Notification bell */}
+        <NotificationBell />
+
+        {/* Divider */}
+        <div className="w-px h-6 bg-white/20 mx-1"/>
+
+        {/* Profile */}
+        <div ref={menuRef} className="relative">
+          <button onClick={() => setProfileOpen(!profileOpen)}
+            className="flex items-center gap-2.5 pl-1 pr-3 py-1.5 rounded-xl hover:bg-white/10 transition-all">
+            {/* Company logo / avatar */}
+            <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-blue-400 to-indigo-500 flex items-center justify-center text-white text-sm font-bold shadow-md border-2 border-white/30">
+              {initials}
+            </div>
+            <div className="hidden sm:block text-left">
+              <p className="text-sm font-semibold text-white leading-tight">{displayName}</p>
+              <p className="text-xs text-blue-300 leading-tight">{currentUser?.designation || 'User'}</p>
+            </div>
+            <svg className="w-3.5 h-3.5 text-white/60 ml-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7"/>
+            </svg>
+          </button>
+
+          {profileOpen && (
+            <div className="absolute right-0 top-full mt-2 w-60 bg-white border border-gray-200 rounded-2xl shadow-2xl z-50 overflow-hidden">
+              <div className="px-4 py-4 bg-gradient-to-r from-[#0F172A] to-blue-900 flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-400 to-indigo-500 flex items-center justify-center text-white font-bold text-sm border-2 border-white/30">
+                  {initials}
                 </div>
-                <div className="max-h-[400px] overflow-y-auto divide-y divide-blue-50">
-                  {notifications.length === 0
-                    ? <div className="p-6 text-center text-gray-400 text-sm">No notifications</div>
-                    : notifications.slice(0, 20).map(n => (
-                      <button key={n.id} onClick={() => markNotificationRead(n.id)} className={`w-full text-left px-5 py-4 hover:bg-blue-50 transition-all ${!n.is_read ? 'bg-blue-50/50' : ''}`}>
-                        <div className="flex items-start gap-3">
-                          <div className={`w-2 h-2 rounded-full mt-2 flex-shrink-0 ${!n.is_read ? 'bg-blue-500' : 'bg-gray-300'}`} />
-                          <div>
-                            <div className="font-semibold text-[#0F172A] text-sm">{n.title}</div>
-                            <div className="text-gray-500 text-xs mt-1">{n.body}</div>
-                            <div className="text-gray-400 text-xs mt-2">{timeAgo(n.created_at)}</div>
-                          </div>
-                        </div>
-                      </button>
-                    ))
-                  }
+                <div>
+                  <p className="text-sm font-bold text-white">{displayName}</p>
+                  <p className="text-xs text-blue-300 mt-0.5">{currentUser?.email}</p>
                 </div>
               </div>
-            )}
-          </div>
-          <div className="relative">
-            <button onClick={() => { setProfileOpen(!profileOpen); setNotifOpen(false); }} className="flex items-center gap-3 bg-white/10 hover:bg-white/20 px-3 py-2 rounded-2xl transition-all">
-              <div className="w-9 h-9 rounded-xl bg-white text-[#0F172A] flex items-center justify-center font-bold text-sm">
-                {currentUser?.first_name?.charAt(0)}{currentUser?.last_name?.charAt(0) || ''}
+              <div className="py-1">
+                <button onClick={() => { window.dispatchEvent(new CustomEvent('open-profile')); setProfileOpen(false); }}
+                  className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 transition-colors">
+                  <span>👤</span> My Profile
+                </button>
+                <button onClick={() => { handleLogout(); setProfileOpen(false); }}
+                  className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-red-600 hover:bg-red-50 transition-colors">
+                  <span>🚪</span> Sign Out
+                </button>
               </div>
-              <div className="hidden md:block text-left">
-                <div className="text-sm font-semibold text-white">{currentUser?.first_name} {currentUser?.last_name}</div>
-                <div className="text-xs text-blue-300">{currentUser?.designation || 'Employee'}</div>
-              </div>
-              <span className="text-white/60 text-xs">▾</span>
-            </button>
-            {profileOpen && (
-              <div className="absolute right-0 top-14 w-64 bg-white rounded-3xl shadow-2xl border border-blue-100 overflow-hidden z-50">
-                <div className="p-5 border-b border-blue-100">
-                  <div className="font-bold text-[#0F172A]">{currentUser?.first_name} {currentUser?.last_name}</div>
-                  <div className="text-sm text-gray-500 mt-1">{currentUser?.email}</div>
-                </div>
-                <button onClick={() => { setProfileOpen(false); onOpenProfile(); }} className="w-full text-left px-5 py-4 hover:bg-blue-50 text-[#0F172A] text-sm font-medium">👤 My Profile</button>
-                <div className="border-t border-blue-100" />
-                <button onClick={() => { setProfileOpen(false); handleLogout(); }} className="w-full text-left px-5 py-4 hover:bg-red-50 text-red-600 text-sm font-medium">🚪 Logout</button>
-              </div>
-            )}
-          </div>
+            </div>
+          )}
         </div>
       </div>
     </header>

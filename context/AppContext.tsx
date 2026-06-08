@@ -78,10 +78,13 @@ export function AppProvider({ children }) {
   const [notifications,  setNotifications]  = useState([]);
   const [savedSearches,  setSavedSearches]  = useState([]);
   const [quotations,     setQuotations]     = useState([]);
+  const [reports,        setReports]        = useState([]);
   const [appPreferences, setAppPreferences] = useState({
     crm_enabled: true, cpq_enabled: true, default_currency: 'INR',
     date_format: 'DD/MM/YYYY', fiscal_year_start: 'April',
+    global_search_enabled: false,
   });
+  const [pendingRecord,  setPendingRecord]  = useState(null); // { page, record }
   const [exchangeRates,  setExchangeRates]  = useState({});
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -1520,25 +1523,93 @@ export function AppProvider({ children }) {
   };
 
   // ═══════════════════════════════════════════════════════════════════════════
+  // REPORTS
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  const fetchReports = async () => {
+    if (!supabase || !currentUser) return;
+    const { data } = await supabase.from('reports').select('*')
+      .or(`created_by.eq.${currentUser.email},is_public.eq.true`)
+      .order('created_at', { ascending: false });
+    if (data) setReports(data);
+  };
+
+  const saveReport = async (reportData) => {
+    if (!supabase || !currentUser) return null;
+    const isEdit = !!reportData.id;
+    let result;
+    if (isEdit) {
+      const { data, error } = await supabase.from('reports')
+        .update({ ...reportData, updated_at: new Date().toISOString() }).eq('id', reportData.id).select().single();
+      if (error) { alert('Save failed: ' + error.message); return null; }
+      result = data;
+    } else {
+      const { data, error } = await supabase.from('reports').insert([{
+        name:            reportData.name,
+        description:     reportData.description || '',
+        object_type:     reportData.object_type,
+        columns:         reportData.columns,
+        filters:         reportData.filters,
+        grouping:        reportData.grouping || null,
+        chart_type:      reportData.chart_type || 'none',
+        chart_field:     reportData.chart_field || null,
+        is_public:       reportData.is_public || false,
+        created_by:      currentUser.email,
+        organization_id: currentUser.organization_id,
+        created_at:      new Date().toISOString(),
+        updated_at:      new Date().toISOString(),
+      }]).select().single();
+      if (error) { alert('Save failed: ' + error.message); return null; }
+      result = data;
+    }
+    await fetchReports();
+    return result;
+  };
+
+  const deleteReport = async (id) => {
+    if (!supabase || !window.confirm('Delete this report?')) return;
+    await supabase.from('reports').delete().eq('id', id);
+    await fetchReports();
+  };
+
+  // ═══════════════════════════════════════════════════════════════════════════
   // APP PREFERENCES
   // ═══════════════════════════════════════════════════════════════════════════
 
   const fetchAppPreferences = async () => {
     if (!supabase) return;
     const { data } = await supabase.from('app_preferences').select('*').limit(1).single();
-    if (data) setAppPreferences(data);
+    if (data) setAppPreferences({
+      crm_enabled:           data.crm_enabled           ?? true,
+      cpq_enabled:           data.cpq_enabled           ?? true,
+      default_currency:      data.default_currency      || 'INR',
+      date_format:           data.date_format           || 'DD/MM/YYYY',
+      fiscal_year_start:     data.fiscal_year_start     || 'April',
+      global_search_enabled: data.global_search_enabled ?? false,
+    });
   };
 
   const saveAppPreferences = async (prefs) => {
     if (!supabase || !currentUser) return;
+    // Explicitly map all known fields so column changes don't cause silent failures
+    const payload = {
+      crm_enabled:           prefs.crm_enabled           ?? true,
+      cpq_enabled:           prefs.cpq_enabled           ?? true,
+      default_currency:      prefs.default_currency      || 'INR',
+      date_format:           prefs.date_format           || 'DD/MM/YYYY',
+      fiscal_year_start:     prefs.fiscal_year_start     || 'April',
+      global_search_enabled: prefs.global_search_enabled ?? false,
+      updated_at:            new Date().toISOString(),
+    };
     const { data: existing } = await supabase.from('app_preferences').select('id').limit(1).single();
     if (existing?.id) {
-      await supabase.from('app_preferences').update({ ...prefs, updated_at: new Date().toISOString() }).eq('id', existing.id);
+      const { error } = await supabase.from('app_preferences').update(payload).eq('id', existing.id);
+      if (error) { alert('Failed to save preferences: ' + error.message); return; }
     } else {
-      await supabase.from('app_preferences').insert([{ ...prefs, organization_id: currentUser.organization_id }]);
+      const { error } = await supabase.from('app_preferences').insert([{ ...payload, organization_id: currentUser.organization_id }]);
+      if (error) { alert('Failed to save preferences: ' + error.message); return; }
     }
     await fetchAppPreferences();
-    // Refresh exchange rates if currency changed
     if (prefs.default_currency) await fetchExchangeRates(prefs.default_currency);
   };
 
@@ -1887,6 +1958,12 @@ export function AppProvider({ children }) {
     saveSLAPolicy, deleteSLAPolicy, saveApprovalProcess, deleteApprovalProcess,
     submitForApproval, processApproval, checkMatchingApprovalProcess,
     logAudit, createNotification,
+
+    // global search / pending record
+    pendingRecord, setPendingRecord,
+
+    // reports
+    reports, fetchReports, saveReport, deleteReport,
 
     // app preferences
     appPreferences, saveAppPreferences, fetchAppPreferences,
