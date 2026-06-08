@@ -5,6 +5,7 @@ import { useState, useEffect } from 'react';
 import { useApp } from '@/context/AppContext';
 import { supabase } from '@/lib/supabase';
 import { getStatusOptions, getStatusColor, getPageLabel, formatDateTime } from '@/lib/utils';
+import AISummary from '@/components/ai/AISummary';
 
 const iCls = 'w-full border border-blue-200 rounded-xl px-3 py-2.5 text-[#0F172A] bg-white focus:outline-none focus:ring-2 focus:ring-blue-400 text-sm placeholder:text-gray-400';
 const sCls = 'w-full border border-blue-200 rounded-xl px-3 py-2.5 text-[#0F172A] bg-white focus:outline-none focus:ring-2 focus:ring-blue-400 text-sm';
@@ -223,6 +224,9 @@ export default function CPQRecordDetail({ page, record, onClose }) {
           <div className="flex-1 flex items-center justify-center text-gray-400"><div className="text-4xl animate-pulse">{pageIcon}</div></div>
         ) : (
           <div className="flex-1 overflow-y-auto p-8 bg-gradient-to-br from-white to-blue-50 space-y-6">
+
+            {/* AI Summary */}
+            <AISummary page={page} record={record}/>
 
             {/* Status + Core Fields */}
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">

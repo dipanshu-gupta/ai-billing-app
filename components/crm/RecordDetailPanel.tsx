@@ -9,6 +9,7 @@ import {
 } from '@/lib/utils';
 import { supabase } from '@/lib/supabase';
 import CreateRecordModal from '@/components/crm/CreateRecordModal';
+import AISummary from '@/components/ai/AISummary';
 
 const iCls = 'w-full border border-blue-200 rounded-xl px-3 py-2.5 text-[#0F172A] bg-white focus:outline-none focus:ring-2 focus:ring-blue-400 text-sm placeholder:text-gray-400';
 const sCls = 'w-full border border-blue-200 rounded-xl px-3 py-2.5 text-[#0F172A] bg-white focus:outline-none focus:ring-2 focus:ring-blue-400 text-sm';
@@ -456,6 +457,9 @@ export default function RecordDetailPanel({ page, record, onClose }) {
 
             {/* Details */}
             {(page!=='customers'||tab==='details')&&(<>
+              {/* AI Summary */}
+              <AISummary page={page} record={record}/>
+
               <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
                 {fields.map(field=>(
                   <div key={field} className="bg-white rounded-2xl border border-blue-100 p-4 shadow-sm">

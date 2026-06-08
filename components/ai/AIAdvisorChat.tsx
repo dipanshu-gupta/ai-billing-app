@@ -69,6 +69,22 @@ const parseAction = (text) => {
   } catch { return { cleanText: text, action: null }; }
 };
 
+// ─── Singularize helper ──────────────────────────────────────────────────────
+const toSingular = (object: string): string => {
+  const map: Record<string,string> = {
+    customers:     'Customer',
+    leads:         'Lead',
+    opportunities: 'Opportunity',
+    contacts:      'Contact',
+    activities:    'Activity',
+    orders:        'Order',
+    invoices:      'Invoice',
+    quotations:    'Quotation',
+    products:      'Product',
+  };
+  return map[object] || object.charAt(0).toUpperCase() + object.slice(1,-1);
+};
+
 // ─── Message Bubble ────────────────────────────────────────────────────────────
 function MessageBubble({ msg, onActionExecuted }) {
   const [executing, setExecuting] = useState(false);
@@ -106,10 +122,10 @@ function MessageBubble({ msg, onActionExecuted }) {
             <span className="text-xs text-gray-400 font-medium">Business Advisor Agent</span>
           </div>
         )}
-        <div className={`rounded-[20px] px-4 py-3 text-sm leading-relaxed ${
+        <div className={`rounded-[20px] px-5 py-4 text-[15px] leading-relaxed ${
           msg.role === 'user'
-            ? 'bg-gradient-to-r from-[#0F172A] to-blue-800 text-white rounded-tr-sm'
-            : 'bg-white border border-blue-100 text-[#0F172A] rounded-tl-sm shadow-sm'
+            ? 'bg-gradient-to-r from-[#0F172A] to-blue-800 text-white rounded-tr-sm shadow-md'
+            : 'bg-white border border-blue-100 text-[#0F172A] rounded-tl-sm shadow-md'
         }`}>
           {lines.map((line, i) => {
             if (line.startsWith('- ') || line.startsWith('• ')) {
@@ -124,11 +140,11 @@ function MessageBubble({ msg, onActionExecuted }) {
           {action && action.type === 'create_record' && !executed && (
             <div className="mt-3 pt-3 border-t border-blue-100">
               <div className="text-xs text-blue-600 font-semibold mb-2">
-                🎯 Suggested Action: Create {action.object.slice(0,-1)} "{action.data?.name}"
+                🎯 Suggested Action: Create {toSingular(action.object)} "{action.data?.name}"
               </div>
               <button onClick={executeAction} disabled={executing}
                 className="flex items-center gap-2 bg-gradient-to-r from-[#0F172A] to-blue-800 text-white px-4 py-2 rounded-xl text-xs font-bold hover:opacity-90 disabled:opacity-50 shadow-md">
-                {executing ? '⏳ Creating...' : `✅ Create ${action.object.slice(0,-1)} now`}
+                {executing ? '⏳ Creating...' : `✅ Create ${toSingular(action.object)} now`}
               </button>
             </div>
           )}
@@ -246,30 +262,33 @@ export default function AIAdvisorChat() {
       {/* Floating button */}
       <button
         onClick={() => { setOpen(true); setMinimized(false); }}
-        className={`fixed bottom-6 right-6 z-[200] flex items-center gap-3 bg-gradient-to-r from-[#0F172A] to-blue-700 text-white px-5 py-3.5 rounded-full shadow-2xl hover:shadow-blue-500/30 hover:scale-105 transition-all font-bold text-sm ${open && !minimized ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}
+        className={`fixed bottom-8 right-8 z-[200] flex items-center gap-3 bg-gradient-to-r from-[#0F172A] to-blue-700 text-white px-7 py-4 rounded-full shadow-2xl hover:shadow-blue-500/40 hover:scale-105 transition-all font-bold text-base ${open && !minimized ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}
       >
         <div className="relative">
-          <span className="text-xl">🤖</span>
-          <span className="absolute -top-1 -right-1 w-3 h-3 bg-green-400 rounded-full border-2 border-white animate-pulse"/>
+          <span className="text-2xl">🤖</span>
+          <span className="absolute -top-1 -right-1 w-3.5 h-3.5 bg-green-400 rounded-full border-2 border-white animate-pulse"/>
         </div>
-        Business Advisor
+        Business Advisor Agent
       </button>
 
       {/* Chat panel */}
       {open && (
-        <div className={`fixed bottom-6 right-6 z-[200] flex flex-col bg-white rounded-[28px] shadow-2xl border border-blue-100 transition-all ${minimized ? 'h-16 w-80' : 'w-[420px]'}`}
-          style={{height: minimized ? '64px' : '620px', maxHeight: '85vh'}}>
+        <div className={`fixed bottom-6 right-6 z-[200] flex flex-col bg-white rounded-[28px] shadow-2xl border border-blue-100 transition-all`}
+          style={{width: minimized ? '340px' : '620px', height: minimized ? '64px' : '85vh', maxHeight: '85vh'}}>
 
           {/* Header */}
-          <div className="bg-gradient-to-r from-[#0F172A] to-blue-800 rounded-t-[28px] px-5 py-4 flex items-center justify-between flex-shrink-0">
+          <div className="bg-gradient-to-r from-[#0F172A] to-blue-800 rounded-t-[28px] px-6 py-5 flex items-center justify-between flex-shrink-0">
             <div className="flex items-center gap-3">
               <div className="relative">
-                <div className="w-10 h-10 bg-white/20 rounded-full flex items-center justify-center text-xl">🤖</div>
-                <div className="absolute bottom-0 right-0 w-3 h-3 bg-green-400 rounded-full border-2 border-[#0F172A]"/>
+                <div className="w-14 h-14 bg-white/20 rounded-2xl flex items-center justify-center text-3xl">🤖</div>
+                <div className="absolute bottom-0 right-0 w-3.5 h-3.5 bg-green-400 rounded-full border-2 border-[#0F172A]"/>
               </div>
               <div>
-                <div className="text-white font-bold text-sm">Business Advisor Agent</div>
-                <div className="text-blue-300 text-xs">AI-Powered Sales Assistant</div>
+                <div className="text-white font-bold text-lg">Business Advisor Agent</div>
+                <div className="text-blue-300 text-xs flex items-center gap-1.5 mt-0.5">
+                  <span className="w-1.5 h-1.5 bg-green-400 rounded-full inline-block"/>
+                  Online · AI-Powered Sales Assistant
+                </div>
               </div>
             </div>
             <div className="flex items-center gap-2">
@@ -281,10 +300,10 @@ export default function AIAdvisorChat() {
 
           {!minimized && (<>
             {/* Messages */}
-            <div className="flex-1 overflow-y-auto p-4 bg-gradient-to-b from-blue-50/30 to-white space-y-1" style={{scrollBehavior:'smooth'}}>
+            <div className="flex-1 overflow-y-auto p-5 bg-gradient-to-b from-blue-50/30 to-white space-y-2" style={{scrollBehavior:'smooth'}}>
               {messages.map((msg, i) => (
                 <MessageBubble key={i} msg={msg} onActionExecuted={(action) => {
-                  setMessages(prev => [...prev, { role:'assistant', content:`✅ Done! I've created the ${action.object.slice(0,-1)} in your CRM. You can view it in the ${action.object} module. What's next?`, timestamp: new Date() }]);
+                  setMessages(prev => [...prev, { role:'assistant', content:`✅ Done! I've created the ${toSingular(action.object)} in your CRM. You can view it in the ${action.object} module. What's next?`, timestamp: new Date() }]);
                 }}/>
               ))}
               {loading && (
@@ -302,38 +321,41 @@ export default function AIAdvisorChat() {
             </div>
 
             {/* Quick prompts */}
-            <div className="px-4 py-2 border-t border-blue-50 bg-white flex gap-2 overflow-x-auto flex-shrink-0" style={{scrollbarWidth:'none'}}>
-              {QUICK_PROMPTS.map(qp => (
-                <button key={qp.label} onClick={() => sendMessage(qp.prompt)} disabled={loading}
-                  className="flex-shrink-0 bg-blue-50 hover:bg-blue-100 text-blue-700 text-xs font-semibold px-3 py-1.5 rounded-full border border-blue-100 hover:border-blue-300 transition-all whitespace-nowrap disabled:opacity-50">
-                  {qp.label}
-                </button>
-              ))}
+            <div className="px-4 py-3 border-t border-blue-50 bg-gradient-to-b from-blue-50/50 to-white flex-shrink-0">
+              <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Quick Actions</div>
+              <div className="flex flex-wrap gap-2">
+                {QUICK_PROMPTS.map(qp => (
+                  <button key={qp.label} onClick={() => sendMessage(qp.prompt)} disabled={loading}
+                    className="bg-white hover:bg-blue-50 text-blue-700 text-sm font-semibold px-4 py-2.5 rounded-xl border border-blue-200 hover:border-blue-400 transition-all whitespace-nowrap disabled:opacity-50 shadow-sm">
+                    {qp.label}
+                  </button>
+                ))}
+              </div>
             </div>
 
             {/* Input */}
-            <div className="px-4 pb-4 pt-2 bg-white rounded-b-[28px] flex-shrink-0">
-              <div className="flex items-end gap-2 bg-gray-50 rounded-2xl border border-blue-200 focus-within:border-blue-400 focus-within:ring-2 focus-within:ring-blue-200 overflow-hidden px-3 py-2">
+            <div className="px-5 pb-5 pt-3 bg-white flex-shrink-0">
+              <div className="flex items-end gap-3 bg-gray-50 rounded-2xl border-2 border-blue-200 focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-200 overflow-hidden px-5 py-4">
                 <textarea
                   ref={inputRef}
                   value={input}
                   onChange={e => setInput(e.target.value)}
                   onKeyDown={handleKey}
-                  placeholder="Ask anything — pipeline, deals, strategies, create records..."
+                  placeholder="Ask me anything — pipeline, deals, strategies, next actions..."
                   rows={1}
-                  style={{resize:'none',overflow:'hidden',minHeight:'24px',maxHeight:'96px'}}
-                  onInput={e => { e.target.style.height='auto'; e.target.style.height=Math.min(e.target.scrollHeight,96)+'px'; }}
-                  className="flex-1 bg-transparent text-sm text-[#0F172A] focus:outline-none placeholder:text-gray-400"
+                  style={{resize:'none',overflow:'hidden',minHeight:'28px',maxHeight:'120px'}}
+                  onInput={e => { e.target.style.height='auto'; e.target.style.height=Math.min(e.target.scrollHeight,120)+'px'; }}
+                  className="flex-1 bg-transparent text-base text-[#0F172A] focus:outline-none placeholder:text-gray-400 leading-relaxed"
                 />
                 <button
                   onClick={() => sendMessage()}
                   disabled={loading || !input.trim()}
-                  className="flex-shrink-0 w-9 h-9 bg-gradient-to-r from-[#0F172A] to-blue-700 text-white rounded-xl flex items-center justify-center disabled:opacity-40 hover:opacity-90 shadow-md transition-all"
+                  className="flex-shrink-0 w-12 h-12 bg-gradient-to-r from-[#0F172A] to-blue-700 text-white rounded-xl flex items-center justify-center disabled:opacity-40 hover:opacity-90 shadow-lg transition-all"
                 >
-                  {loading ? <span className="text-xs animate-spin">⟳</span> : <span className="text-base">↑</span>}
+                  {loading ? <span className="text-sm animate-spin">⟳</span> : <span className="text-lg font-bold">↑</span>}
                 </button>
               </div>
-              <div className="text-center mt-1.5 text-xs text-gray-300">Enter to send · Shift+Enter for new line</div>
+              <div className="text-center mt-2 text-xs text-gray-400">⏎ Send · ⇧⏎ New line · Powered by AI</div>
             </div>
           </>)}
         </div>

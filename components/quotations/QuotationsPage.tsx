@@ -5,6 +5,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { useApp } from '@/context/AppContext';
 import { supabase } from '@/lib/supabase';
 import { formatCurrency, getStatusColor } from '@/lib/utils';
+import AISummary from '@/components/ai/AISummary';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const QUOTE_STATUSES = ['Draft','Submitted','Pending Approval','Approved','Sent to Customer','Accepted','Ordered','Rejected','Expired','Cancelled'];
@@ -403,6 +404,9 @@ function QuotationDetail({ quote, onClose, onSaved }) {
             <div className="flex-1 flex items-center justify-center"><div className="text-4xl animate-pulse">📄</div></div>
           ) : (
             <div className="flex-1 overflow-y-auto p-8 bg-gradient-to-br from-white to-blue-50 space-y-6">
+
+              {/* AI Summary */}
+              <AISummary page="quotations" record={quote}/>
 
               {/* Currency display converter */}
               {Object.keys(exchangeRates).length > 0 && (
