@@ -201,19 +201,19 @@ export default function AIAdvisorChat() {
         .filter(m => m.role !== 'assistant' || messages.indexOf(m) > 0) // skip greeting
         .map(m => ({ role: m.role, content: m.content }));
 
-      const res = await fetch('https://api.anthropic.com/v1/messages', {
+      const res = await fetch('/api/ai', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          model:      'claude-sonnet-4-20250514',
-          max_tokens: 1024,
           system:     systemPrompt,
           messages:   apiMessages,
+          max_tokens: 1024,
         }),
       });
 
       const data = await res.json();
-      const reply = data.content?.[0]?.text || 'Sorry, I encountered an error. Please try again.';
+      if (data.error) throw new Error(data.error);
+      const reply = data.content?.[0]?.text || 'Sorry, I could not generate a response. Please try again.';
 
       setMessages(prev => [...prev, {
         role: 'assistant',
