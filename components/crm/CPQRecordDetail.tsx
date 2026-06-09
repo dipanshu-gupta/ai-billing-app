@@ -6,6 +6,7 @@ import { useApp } from '@/context/AppContext';
 import { supabase } from '@/lib/supabase';
 import { getStatusOptions, getStatusColor, getPageLabel, formatDateTime } from '@/lib/utils';
 import AISummary from '@/components/ai/AISummary';
+import SearchableSelect from '@/components/shared/SearchableSelect';
 
 const iCls = 'w-full border border-blue-200 rounded-xl px-3 py-2.5 text-[#0F172A] bg-white focus:outline-none focus:ring-2 focus:ring-blue-400 text-sm placeholder:text-gray-400';
 const sCls = 'w-full border border-blue-200 rounded-xl px-3 py-2.5 text-[#0F172A] bg-white focus:outline-none focus:ring-2 focus:ring-blue-400 text-sm';
@@ -73,7 +74,12 @@ function CPQLineItems({ items, setItems, products, readOnly, currency }) {
                 <tr key={row._id??idx} className="border-t border-blue-50 hover:bg-blue-50/30">
                   <td className="px-4 py-3" style={{minWidth:'200px'}}>
                     {readOnly ? <div><span className="font-semibold text-[#0F172A]">{row.product_name||'-'}</span>{row.description&&<div className="text-xs text-gray-400 mt-0.5">{row.description}</div>}</div>
-                    : <select value={row.product_name||''} onChange={e=>upd(idx,'product_name',e.target.value)} className={sCls}><option value="">Select product</option>{products.map(p=><option key={p.id} value={p.name}>{p.name}</option>)}</select>}
+                    : <SearchableSelect
+                      value={row.product_name||''}
+                      onChange={v=>upd(idx,'product_name',v)}
+                      options={products.map(p=>({value:p.name,label:p.name,sub:p.category||p.productFamily||''}))}
+                      placeholder="Select product" emptyLabel="No product"
+                    />}
                   </td>
                   <td className="px-4 py-3" style={{minWidth:'150px'}}>
                     {readOnly ? null
@@ -253,16 +259,22 @@ export default function CPQRecordDetail({ page, record, onClose }) {
               {/* Customer */}
               <div className="bg-white rounded-2xl border border-blue-100 p-4 shadow-sm">
                 <label className="text-xs font-bold uppercase tracking-wider text-gray-400 block mb-2">Customer</label>
-                <select value={edited.customerId||edited.customer_id||''} onChange={e=>{const c=customers.find(x=>x.id===e.target.value);setEdited(p=>({...p,customerId:c?.id||'',customer_id:c?.id||'',customer:c?.name||''}));}} className={sCls}>
-                  <option value="">Select</option>{customers.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
-                </select>
+                <SearchableSelect
+                  value={edited.customerId||edited.customer_id||''}
+                  onChange={v=>{const c=customers.find(x=>x.id===v);setEdited(p=>({...p,customerId:c?.id||'',customer_id:c?.id||'',customer:c?.name||''}));}}
+                  options={customers.map(c=>({value:c.id,label:c.name,sub:[c.email,c.phone,c.industry,c.city].filter(Boolean).join(' · ')}))}
+                  placeholder="Select customer" emptyLabel="No customer"
+                />
               </div>
               {/* Contact */}
               <div className="bg-white rounded-2xl border border-blue-100 p-4 shadow-sm">
                 <label className="text-xs font-bold uppercase tracking-wider text-gray-400 block mb-2">Contact</label>
-                <select value={edited.contactId||edited.contact_id||''} onChange={e=>{const c=contacts.find(x=>x.id===e.target.value);setEdited(p=>({...p,contactId:c?.id||'',contact_id:c?.id||'',contact:c?.name||''}));}} className={sCls}>
-                  <option value="">Select</option>{contacts.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
-                </select>
+                <SearchableSelect
+                  value={edited.contactId||edited.contact_id||''}
+                  onChange={v=>{const c=contacts.find(x=>x.id===v);setEdited(p=>({...p,contactId:c?.id||'',contact_id:c?.id||'',contact:c?.name||''}));}}
+                  options={contacts.map(c=>({value:c.id,label:c.name,sub:[c.email,c.phone,c.designation,c.customer].filter(Boolean).join(' · ')}))}
+                  placeholder="Select contact" emptyLabel="No contact"
+                />
               </div>
               {/* Currency */}
               <div className="bg-white rounded-2xl border border-blue-100 p-4 shadow-sm">
@@ -286,9 +298,12 @@ export default function CPQRecordDetail({ page, record, onClose }) {
               {/* Owner */}
               <div className="bg-white rounded-2xl border border-blue-100 p-4 shadow-sm">
                 <label className="text-xs font-bold uppercase tracking-wider text-gray-400 block mb-2">Owner</label>
-                <select value={edited.owner_id||''} onChange={e=>{const u=enterpriseUsers.find(x=>x.id===e.target.value);setEdited(p=>({...p,owner_id:u?.id||'',owner:u?.email||''}));}} className={sCls}>
-                  <option value="">Unassigned</option>{enterpriseUsers.map(u=><option key={u.id} value={u.id}>{u.first_name} {u.last_name}</option>)}
-                </select>
+                <SearchableSelect
+                  value={edited.owner_id||''}
+                  onChange={v=>{const u=enterpriseUsers.find(x=>x.id===v);setEdited(p=>({...p,owner_id:u?.id||'',owner:u?.email||''}));}}
+                  options={enterpriseUsers.map(u=>({value:u.id,label:`${u.first_name||''} ${u.last_name||''}`.trim(),sub:u.designation||u.email||''}))}
+                  placeholder="Select owner" emptyLabel="Unassigned"
+                />
               </div>
             </div>
 

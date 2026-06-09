@@ -6,6 +6,7 @@ import { useApp } from '@/context/AppContext';
 import { supabase } from '@/lib/supabase';
 import { formatCurrency, getStatusColor } from '@/lib/utils';
 import AISummary from '@/components/ai/AISummary';
+import SearchableSelect from '@/components/shared/SearchableSelect';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const QUOTE_STATUSES = ['Draft','Submitted','Pending Approval','Approved','Sent to Customer','Accepted','Ordered','Rejected','Expired','Cancelled'];
@@ -124,7 +125,12 @@ function QuoteLineItems({ items, setItems, products, currency }) {
               ? <tr><td colSpan={9} className="px-5 py-8 text-center text-gray-400">No line items. Click + Add Line.</td></tr>
               : items.map((row,idx)=>(
                 <tr key={row._id??idx} className="border-t border-blue-50 hover:bg-blue-50/30">
-                  <td className="px-3 py-2" style={{minWidth:180}}><select value={row.product_name||''} onChange={e=>upd(idx,'product_name',e.target.value)} className={sCls}><option value="">Select</option>{products.map(p=><option key={p.id} value={p.name}>{p.name}</option>)}</select></td>
+                  <td className="px-3 py-2" style={{minWidth:180}}><SearchableSelect
+              value={row.product_name||''}
+              onChange={v=>updItem(idx,'product_name',v)}
+              options={products.map(p=>({value:p.name,label:p.name,sub:p.category||p.productFamily||''}))}
+              placeholder="Select product" emptyLabel="No product"
+            /></td>
                   <td className="px-3 py-2" style={{minWidth:140}}><input value={row.description||''} onChange={e=>upd(idx,'description',e.target.value)} placeholder="Description" className={iCls}/></td>
                   <td className="px-3 py-2 w-16"><input type="number" min={1} value={row.quantity} onChange={e=>upd(idx,'quantity',e.target.value)} className={`${iCls} text-center`}/></td>
                   <td className="px-3 py-2 text-right text-gray-400 whitespace-nowrap">{fmt(row.list_price)}</td>
@@ -451,7 +457,12 @@ function QuotationDetail({ quote, onClose, onSaved }) {
                 ].map(({ l, field, type, opts }) => (
                   <div key={field} className="bg-white rounded-2xl border border-blue-100 p-4 shadow-sm">
                     <label className="text-xs font-bold uppercase tracking-wider text-gray-400 block mb-2">{l}</label>
-                    {field==='customer_select' ? <select value={form.customer_id||''} onChange={e=>{const c=customers.find(x=>x.id===e.target.value);s('customer_id',c?.id||'');s('customer',c?.name||'');}} className={sCls}><option value="">Select</option>{customers.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select>
+                    {field==='customer_select' ? <SearchableSelect
+              value={form.customer_id||''}
+              onChange={v=>{const c=customers.find(x=>x.id===v);s('customer_id',c?.id||'');s('customer',c?.name||'');}}
+              options={customers.map(c=>({value:c.id,label:c.name,sub:[c.email,c.phone,c.industry,c.city].filter(Boolean).join(' · ')}))}
+              placeholder="Select customer" emptyLabel="No customer"
+            />
                     :field==='contact_select'  ? <select value={form.contact_id||''} onChange={e=>{const c=contacts.find(x=>x.id===e.target.value);s('contact_id',c?.id||'');s('contact',c?.name||'');}} className={sCls}><option value="">Select</option>{contacts.filter(c=>!form.customer_id||c.customerId===form.customer_id).map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select>
                     :field==='owner_select'    ? <select value={form.owner_id||''} onChange={e=>{const u=enterpriseUsers.find(x=>x.id===e.target.value);s('owner_id',u?.id||'');s('owner',u?.email||'');}} className={sCls}><option value="">Unassigned</option>{enterpriseUsers.map(u=><option key={u.id} value={u.id}>{u.first_name} {u.last_name}</option>)}</select>
                     :field==='template_id'     ? <select value={form.template_id||''} onChange={e=>s('template_id',e.target.value)} className={sCls}><option value="">Default Template</option>{quoteTemplates.map(t=><option key={t.id} value={t.id}>{t.name}{t.isDefault?' (Default)':''}</option>)}</select>
@@ -585,24 +596,12 @@ function QuotationDetail({ quote, onClose, onSaved }) {
 }
 
 // ─── Quotations List Page ──────────────────────────────────────────────────────
-export default function QuotationsPage({ pendingOpenRecord, onRecordOpened }) {
+export default function QuotationsPage() {
   const { quotations, fetchQuotations, customers, createQuotation, deleteQuotation, appPreferences } = useApp();
   const [selectedQuote, setSelectedQuote] = useState(null);
   const [createOpen,    setCreateOpen]    = useState(false);
   const [form,          setForm]          = useState({ status:'Draft', currency: appPreferences.default_currency||'INR', version:1, overall_discount:0, shipping_cost:0 });
-  // Auto-open from global search
-  useEffect(() => {
-    const pending = (pendingOpenRecord?.page === 'quotations' && pendingOpenRecord?.record)
-      ? pendingOpenRecord
-      : (window.__pendingRecord?.page === 'quotations' && window.__pendingRecord?.record)
-      ? window.__pendingRecord
-      : null;
-    if (pending) {
-      setSelectedQuote(pending.record);
-      if (onRecordOpened) onRecordOpened();
-      window.__pendingRecord = null;
-    }
-  }, [pendingOpenRecord]);
+
 
   const [search,        setSearch]        = useState('');
   const [statusFilter,  setStatusFilter]  = useState('All');
@@ -700,7 +699,12 @@ export default function QuotationsPage({ pendingOpenRecord, onRecordOpened }) {
             </div>
             <div className="p-8 space-y-4">
               <div><label className="text-xs font-bold uppercase text-gray-400 block mb-1.5">Quotation Name *</label><input value={form.name||''} onChange={e=>sf('name',e.target.value)} placeholder="e.g. Enterprise Software Proposal" className={iCls}/></div>
-              <div><label className="text-xs font-bold uppercase text-gray-400 block mb-1.5">Customer</label><select value={form.customer_id||''} onChange={e=>{const c=customers.find(x=>x.id===e.target.value);sf('customer_id',c?.id||'');sf('customer',c?.name||'');}} className={sCls}><option value="">Select customer</option>{customers.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
+              <div><label className="text-xs font-bold uppercase text-gray-400 block mb-1.5">Customer</label><SearchableSelect
+              value={form.customer_id||''}
+              onChange={v=>{const c=customers.find(x=>x.id===v);s('customer_id',c?.id||'');s('customer',c?.name||'');}}
+              options={customers.map(c=>({value:c.id,label:c.name,sub:[c.email,c.phone,c.industry,c.city].filter(Boolean).join(' · ')}))}
+              placeholder="Select customer" emptyLabel="No customer"
+            /></div>
               <div><label className="text-xs font-bold uppercase text-gray-400 block mb-1.5">Validity Date</label><input type="date" value={form.validity_date||''} onChange={e=>sf('validity_date',e.target.value)} className={iCls}/></div>
               <div><label className="text-xs font-bold uppercase text-gray-400 block mb-1.5">Currency</label><select value={form.currency||'INR'} onChange={e=>sf('currency',e.target.value)} className={sCls}>{CURRENCIES.map(c=><option key={c}>{c}</option>)}</select></div>
             </div>

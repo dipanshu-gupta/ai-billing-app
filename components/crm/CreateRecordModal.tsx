@@ -3,6 +3,7 @@
 
 import { useState, useEffect } from 'react';
 import { useApp } from '@/context/AppContext';
+import SearchableSelect from '@/components/shared/SearchableSelect';
 import { getPageLabel, getStatusOptions } from '@/lib/utils';
 
 const iCls = 'w-full border border-blue-200 rounded-xl px-3 py-2.5 text-[#0F172A] bg-white focus:outline-none focus:ring-2 focus:ring-blue-400 text-sm placeholder:text-gray-400';
@@ -136,13 +137,12 @@ export default function CreateRecordModal({ page, open, onClose, prefillCustomer
     <>
       <div>
         {lbl('Customer')}
-        <select value={form.customerId||''} onChange={e => {
-          const c = customers.find(x => x.id === e.target.value);
-          setForm(f => ({ ...f, customerId: c?.id||'', customer: c?.name||'', contactId: '', contact: '' }));
-        }} className={sCls}>
-          <option value="">Select customer</option>
-          {customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-        </select>
+        <SearchableSelect
+              value={form.customerId||form.customer_id||''}
+              onChange={v=>{const c=customers.find(x=>x.id===v);setForm(p=>({...p,customerId:c?.id||'',customer:c?.name||'',customer_id:c?.id||''}));}}
+              options={customers.map(c=>({value:c.id,label:c.name,sub:[c.email,c.phone,c.industry,c.city].filter(Boolean).join(' · ')}))}
+              placeholder="Select customer" emptyLabel="No customer"
+            />
       </div>
       <div>
         {lbl('Contact')}
@@ -170,13 +170,12 @@ export default function CreateRecordModal({ page, open, onClose, prefillCustomer
   const ownerBlock = (
     <div>
       {lbl('Owner / Assigned To')}
-      <select value={form.owner_id||''} onChange={e => {
-        const u = enterpriseUsers.find(x => x.id === e.target.value);
-        setForm(f => ({ ...f, owner_id: u?.id || '', owner: u?.email || '' }));
-      }} className={sCls}>
-        <option value="">Unassigned</option>
-        {enterpriseUsers.map(u => <option key={u.id} value={u.id}>{u.first_name} {u.last_name}</option>)}
-      </select>
+      <SearchableSelect
+              value={form.owner_id||''}
+              onChange={v=>{const u=enterpriseUsers.find(x=>x.id===v);setForm(p=>({...p,owner_id:u?.id||'',owner:u?.email||''}));}}
+              options={enterpriseUsers.map(u=>({value:u.id,label:`${u.first_name||''} ${u.last_name||''}`.trim(),sub:u.email||''}))}
+              placeholder="Select owner" emptyLabel="Unassigned"
+            />
     </div>
   );
 
@@ -207,9 +206,12 @@ export default function CreateRecordModal({ page, open, onClose, prefillCustomer
 
       case 'contacts': return (<>
         <div>{lbl('Customer')}
-          <select value={form.customerId||''} onChange={e=>{const c=customers.find(x=>x.id===e.target.value);setForm(f=>({...f,customerId:c?.id||'',customer:c?.name||''}))} } className={sCls}>
-            <option value="">Select customer</option>{customers.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
-          </select>
+          <SearchableSelect
+              value={form.customerId||form.customer_id||''}
+              onChange={v=>{const c=customers.find(x=>x.id===v);setForm(p=>({...p,customerId:c?.id||'',customer:c?.name||'',customer_id:c?.id||''}));}}
+              options={customers.map(c=>({value:c.id,label:c.name,sub:[c.email,c.phone,c.industry,c.city].filter(Boolean).join(' · ')}))}
+              placeholder="Select customer" emptyLabel="No customer"
+            />
         </div>
         <div>{lbl('Contact Name *')}<input value={form.name||''} onChange={e=>s('name',e.target.value)} placeholder="Full name" className={iCls}/></div>
         <div>{lbl('Email')}<input type="email" value={form.email||''} onChange={e=>s('email',e.target.value)} placeholder="email@company.com" className={iCls}/></div>

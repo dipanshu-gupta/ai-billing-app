@@ -2,6 +2,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import AppearancePanel from '@/components/admin/AppearancePanel';
 import QuoteTemplateDesigner from '@/components/admin/QuoteTemplateDesigner';
 import { useApp } from '@/context/AppContext';
 import { formatDate, getStatusOptions } from '@/lib/utils';
@@ -1158,7 +1159,7 @@ function AppPreferencesPanel() {
   const [testRate,setTestRate]= useState(null);
   const sf = (k,v) => setForm(p => ({...p,[k]:v}));
 
-  useEffect(() => { setForm({ ...appPreferences }); }, [appPreferences.id]);
+  useEffect(() => { setForm(p => ({ ...p, ...appPreferences })); }, [JSON.stringify(appPreferences)]);
 
   const handleSave = async () => {
     setSaving(true);
@@ -1288,6 +1289,7 @@ const ADMIN_SECTIONS = [
   {key:'approvals',     label:'Approval Processes',icon:'✅',desc:'Multi-step approvals'},
   {key:'templates',     label:'Quote Templates', icon:'📄', desc:'Branded quote layouts'},
   {key:'appPrefs',      label:'App Preferences', icon:'⚙️',  desc:'CPQ, CRM & currency settings'},
+  {key:'appearance',    label:'Appearance',      icon:'🎨',  desc:'Logo, themes & language for all users'},
 ];
 
 export default function AdminToolsPage() {
@@ -1307,32 +1309,42 @@ export default function AdminToolsPage() {
       case 'approvals':     return <ApprovalProcessesPanel/>;
       case 'templates':     return <TemplateDesignerPanel/>;
       case 'appPrefs':      return <AppPreferencesPanel/>;
+      case 'appearance':   return <AppearancePanel/>;
       default:              return null;
     }
   };
 
   return (
     <div className="space-y-6">
-      <div className="bg-gradient-to-r from-[#0F172A] to-blue-900 rounded-[28px] p-6 text-white">
-        <h1 className="text-3xl font-bold">Admin Tools</h1>
-        <p className="text-blue-200 mt-1">Configure your enterprise platform — users, automation, SLA, approvals, and more.</p>
-      </div>
+      {/* Show header only when no panel is active */}
+      {!active && (
+        <div className="bg-gradient-to-r from-[#0F172A] to-blue-900 rounded-[28px] p-6 text-white">
+          <h1 className="text-3xl font-bold">⚙️ Admin Tools</h1>
+          <p className="text-blue-200 mt-1">Configure your enterprise platform — users, automation, SLA, approvals, and more.</p>
+        </div>
+      )}
 
-      <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-4">
-        {ADMIN_SECTIONS.map(section=>(
-          <button key={section.key} onClick={()=>setActive(active===section.key?null:section.key)}
-            className={`rounded-[24px] p-5 text-left border transition-all shadow-lg hover:scale-[1.02] relative ${active===section.key?'bg-gradient-to-br from-[#0F172A] to-blue-900 text-white border-transparent':'bg-white border-blue-100 text-[#0F172A] hover:border-blue-300'}`}>
-            <div className="text-3xl mb-3">{section.icon}</div>
-            <div className="font-bold text-sm">{section.label}</div>
-            <div className={`text-xs mt-1 ${active===section.key?'text-blue-200':'text-gray-400'}`}>{section.desc}</div>
+      {/* Grid — hidden when a panel is open */}
+      {!active && (
+        <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-4">
+          {ADMIN_SECTIONS.map(section=>(
+            <button key={section.key} onClick={()=>setActive(section.key)}
+              className="rounded-[24px] p-5 text-left border border-blue-100 bg-white hover:border-blue-400 hover:shadow-xl transition-all shadow-lg hover:scale-[1.02] group">
+              <div className="text-3xl mb-3">{section.icon}</div>
+              <div className="font-bold text-sm text-[#0F172A] group-hover:text-blue-700">{section.label}</div>
+              <div className="text-xs mt-1 text-gray-400">{section.desc}</div>
+            </button>
+          ))}
+        </div>
+      )}
 
+      {/* Active panel — full width, no grid */}
+      {active && (
+        <div className="space-y-5">
+          <button onClick={()=>setActive(null)}
+            className="flex items-center gap-2 text-sm text-gray-500 hover:text-[#0F172A] font-semibold transition-all px-1">
+            ← Back to Admin Tools
           </button>
-        ))}
-      </div>
-
-      {active&&(
-        <div className="bg-white rounded-[28px] border border-blue-100 shadow-xl p-6 space-y-5">
-          <button onClick={()=>setActive(null)} className="flex items-center gap-2 text-sm text-gray-500 hover:text-[#0F172A] font-semibold transition-all">← Back to Admin Tools</button>
           {renderSection()}
         </div>
       )}

@@ -60,7 +60,9 @@ function StatusBadge({ status }) {
 }
 
 function SavedSearchPanel({ page, currentFilters, onApply, onClose }) {
-  const { currentUser, savedSearches, fetchSavedSearches, createSavedSearch, deleteSavedSearch, setDefaultSavedSearch } = useApp();
+  const { currentUser, savedSearches, fetchSavedSearches, createSavedSearch, deleteSavedSearch, setDefaultSavedSearch,
+    appPreferences, createOrderFromOpportunity, fetchOrders,
+  } = useApp();
   const [saveName,   setSaveName]   = useState('');
   const [saveDef,    setSaveDef]    = useState(false);
   const [saveGlobal, setSaveGlobal] = useState(false);
@@ -134,13 +136,14 @@ function SavedSearchPanel({ page, currentFilters, onApply, onClose }) {
   );
 }
 
-export default function CRMListPage({ page, pendingOpenRecord, onRecordOpened }) {
+export default function CRMListPage({ page }) {
   const {
     customers, products, leads, opportunities, orders, invoices, contacts, activities,
     enterpriseUsers, savedSearches, fetchSavedSearches,
     convertLeadToOpportunity, createOrderFromOpportunity, createInvoiceFromOrder,
     createQuotationFromOpportunity, fetchQuotations,
     currentUserPermissions, permissionsLoaded, appPreferences,
+    fetchOrders,
   } = useApp();
 
   const [search,       setSearch]       = useState('');
@@ -355,7 +358,11 @@ export default function CRMListPage({ page, pendingOpenRecord, onRecordOpened })
                               <button onClick={()=>{convertLeadToOpportunity(record);setMenuOpenId(null);}} className="w-full text-left px-4 py-3 rounded-xl text-sm font-medium hover:bg-blue-800 text-white">🔀 Convert to Opportunity</button>
                             )}
                             {page==='opportunities' && (<>
-                              <button onClick={async()=>{setMenuOpenId(null);const q=await createQuotationFromOpportunity(record);await fetchQuotations();if(q)alert(`Quotation ${q.quote_number} created! View in Quotations.`);}} className="w-full text-left px-4 py-3 rounded-xl text-sm font-medium hover:bg-blue-800 text-white">📄 Create Quotation</button>
+                              {appPreferences?.cpq_enabled !== false ? (
+                                <button onClick={async()=>{setMenuOpenId(null);const q=await createQuotationFromOpportunity(record);await fetchQuotations();if(q)alert(`Quotation ${q.quote_number} created! View in Quotations.`);}} className="w-full text-left px-4 py-3 rounded-xl text-sm font-medium hover:bg-blue-800 text-white">📄 Create Quotation</button>
+                              ) : (
+                                <button onClick={async()=>{setMenuOpenId(null);await createOrderFromOpportunity(record);await fetchOrders();alert('Order created successfully!');}} className="w-full text-left px-4 py-3 rounded-xl text-sm font-medium hover:bg-blue-800 text-white">🛒 Create Order</button>
+                              )}
                             </>)}
                             {page==='orders' && (
                               <button onClick={()=>{createInvoiceFromOrder(record);setMenuOpenId(null);}} className="w-full text-left px-4 py-3 rounded-xl text-sm font-medium hover:bg-blue-800 text-white">🧾 Create Invoice</button>

@@ -10,6 +10,7 @@ import {
 import { supabase } from '@/lib/supabase';
 import CreateRecordModal from '@/components/crm/CreateRecordModal';
 import AISummary from '@/components/ai/AISummary';
+import SearchableSelect from '@/components/shared/SearchableSelect';
 
 const iCls = 'w-full border border-blue-200 rounded-xl px-3 py-2.5 text-[#0F172A] bg-white focus:outline-none focus:ring-2 focus:ring-blue-400 text-sm placeholder:text-gray-400';
 const sCls = 'w-full border border-blue-200 rounded-xl px-3 py-2.5 text-[#0F172A] bg-white focus:outline-none focus:ring-2 focus:ring-blue-400 text-sm';
@@ -29,7 +30,10 @@ function Pill({ status }) {
 
 // ─── Approval Banner ──────────────────────────────────────────────────────────
 function ApprovalBanner({ recordId, recordType, onDecision }) {
-  const { currentUser, approvalRequests, processApproval } = useApp();
+  const { currentUser, approvalRequests, processApproval,
+    appPreferences, createOrderFromOpportunity,
+    checkMatchingApprovalProcess, submitForApproval, fetchLineItems, createQuotationFromOpportunity, convertLeadToOpportunity, createInvoiceFromOrder
+  } = useApp();
   const [request,    setRequest]    = useState(null);
   const [step,       setStep]       = useState(null);
   const [isApprover, setIsApprover] = useState(false);
@@ -133,7 +137,12 @@ function LineItemsTable({ items, setItems, products }) {
                   const lt=row.quantity*row.price*(1-row.discount/100);
                   return (
                     <tr key={row._id??idx} className="border-t border-blue-50 hover:bg-slate-50">
-                      <td className="px-4 py-2"><select value={row.product} onChange={e=>upd(idx,'product',e.target.value)} className={sCls}><option value="">— Select —</option>{products.map(p=><option key={p.id} value={p.name}>{p.name} — {fmt(p.price)}</option>)}</select></td>
+                      <td className="px-4 py-2"><SearchableSelect
+                        value={row.product||row.product_name||''}
+                        onChange={v=>upd(idx,'product',v)}
+                        options={products.map(p=>({value:p.name,label:p.name,sub:p.category||''}))}
+                        placeholder="Select product" emptyLabel="No product"
+                      /></td>
                       <td className="px-4 py-2"><input type="number" min={1} value={row.quantity} onChange={e=>upd(idx,'quantity',e.target.value)} className={`${iCls} text-center`}/></td>
                       <td className="px-4 py-2"><input type="number" min={0} value={row.price} onChange={e=>upd(idx,'price',e.target.value)} className={`${iCls} text-right`}/></td>
                       <td className="px-4 py-2"><input type="number" min={0} max={100} value={row.discount} onChange={e=>upd(idx,'discount',e.target.value)} className={`${iCls} text-center ${row.discount>0?'border-green-300 bg-green-50':''}`}/></td>
@@ -279,9 +288,19 @@ function SubRecordViewer({ page, record, onClose }) {
                   {field==='status'
                     ? <select value={v||''} onChange={e=>set(field,e.target.value)} className={sCls}>{statusOpts.map(s=><option key={s}>{s}</option>)}</select>
                     : field==='customer'
-                    ? <select value={edited.customerId||''} onChange={e=>{const c=customers.find(x=>x.id===e.target.value);setEdited(p=>({...p,customerId:c?.id||'',customer:c?.name||''}));}} className={sCls}><option value="">Select</option>{customers.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select>
+                    ? <SearchableSelect
+              value={edited.customerId||''}
+              onChange={v=>{const c=customers.find(x=>x.id===v);setEdited(p=>({...p,customerId:c?.id||'',customer:c?.name||''}));}}
+              options={customers.map(c=>({value:c.id,label:c.name,sub:[c.email,c.phone,c.industry,c.city].filter(Boolean).join(' · ')}))}
+              placeholder="Select customer" emptyLabel="No customer"
+            />
                     : field==='owner'
-                    ? <select value={edited.owner_id||''} onChange={e=>{const u=enterpriseUsers.find(x=>x.id===e.target.value);setEdited(p=>({...p,owner_id:u?.id||'',owner:u?.email||''}));}} className={sCls}><option value="">Unassigned</option>{enterpriseUsers.map(u=><option key={u.id} value={u.id}>{u.first_name} {u.last_name}</option>)}</select>
+                    ? <SearchableSelect
+              value={edited.owner_id||''}
+              onChange={v=>{const u=enterpriseUsers.find(x=>x.id===v);setEdited(p=>({...p,owner_id:u?.id||'',owner:u?.email||''}));}}
+              options={enterpriseUsers.map(u=>({value:u.id,label:`${u.first_name||''} ${u.last_name||''}`.trim(),sub:u.designation||u.email||''}))}
+              placeholder="Select owner" emptyLabel="Unassigned"
+            />
                     : ['closeDate','activityDate','deliveryDate','dueDate'].includes(field)
                     ? <input type="date" value={v||''} onChange={e=>set(field,e.target.value)} className={iCls}/>
                     : ['amount','price'].includes(field)
@@ -387,9 +406,24 @@ export default function RecordDetailPanel({ page, record, onClose }) {
   const renderField = (field) => {
     const v = edited[field];
     if (field==='status')       return <select value={v||''} onChange={e=>set('status',e.target.value)} className={sCls}>{statusOpts.map(s=><option key={s}>{s}</option>)}</select>;
-    if (field==='customer')     return <select value={edited.customerId||''} onChange={e=>{const c=customers.find(x=>x.id===e.target.value);setEdited(p=>({...p,customerId:c?.id||'',customer:c?.name||''}));}} className={sCls}><option value="">Select</option>{customers.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select>;
-    if (field==='contact')      return <select value={edited.contactId||''} onChange={e=>{const c=contacts.find(x=>x.id===e.target.value);setEdited(p=>({...p,contactId:c?.id||'',contact:c?.name||''}));}} className={sCls}><option value="">Select</option>{contacts.filter(c=>!edited.customerId||c.customerId===edited.customerId).map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select>;
-    if (field==='owner')        return <select value={edited.owner_id||''} onChange={e=>{const u=enterpriseUsers.find(x=>x.id===e.target.value);setEdited(p=>({...p,owner_id:u?.id||'',owner:u?.email||''}));}} className={sCls}><option value="">Unassigned</option>{enterpriseUsers.map(u=><option key={u.id} value={u.id}>{u.first_name} {u.last_name}</option>)}</select>;
+    if (field==='customer')     return <SearchableSelect
+              value={edited.customerId||''}
+              onChange={v=>{const c=customers.find(x=>x.id===v);setEdited(p=>({...p,customerId:c?.id||'',customer:c?.name||''}));}}
+              options={customers.map(c=>({value:c.id,label:c.name,sub:[c.email,c.phone,c.industry,c.city].filter(Boolean).join(' · ')}))}
+              placeholder="Select customer" emptyLabel="No customer"
+            />;
+    if (field==='contact')      return <SearchableSelect
+              value={edited.contactId||''}
+              onChange={v=>{const c=contacts.find(x=>x.id===v);setEdited(p=>({...p,contactId:c?.id||'',contact:c?.name||''}));}}
+              options={contacts.map(c=>({value:c.id,label:c.name,sub:[c.email,c.phone,c.designation,c.customer].filter(Boolean).join(' · ')}))}
+              placeholder="Select contact" emptyLabel="No contact"
+            />;
+    if (field==='owner')        return <SearchableSelect
+              value={edited.owner_id||''}
+              onChange={v=>{const u=enterpriseUsers.find(x=>x.id===v);setEdited(p=>({...p,owner_id:u?.id||'',owner:u?.email||''}));}}
+              options={enterpriseUsers.map(u=>({value:u.id,label:`${u.first_name||''} ${u.last_name||''}`.trim(),sub:u.designation||u.email||''}))}
+              placeholder="Select owner" emptyLabel="Unassigned"
+            />;
     if (field==='stage')        return <select value={v||''} onChange={e=>set(field,e.target.value)} className={sCls}>{['Qualification','Proposal Sent','Negotiation','Closed Won','Closed Lost'].map(s=><option key={s}>{s}</option>)}</select>;
     if (field==='source')       return <select value={v||''} onChange={e=>set(field,e.target.value)} className={sCls}>{['Website','Campaign','Referral','Cold Call','Trade Show','Partner'].map(s=><option key={s}>{s}</option>)}</select>;
     if (field==='activityType') return <select value={v||''} onChange={e=>set(field,e.target.value)} className={sCls}>{['Call','Meeting','Email','Task','Demo'].map(s=><option key={s}>{s}</option>)}</select>;
@@ -436,6 +470,13 @@ export default function RecordDetailPanel({ page, record, onClose }) {
             <button onClick={onClose} className="flex items-center gap-2 text-sm text-gray-500 hover:text-[#0F172A] font-semibold transition-all">
               ← Back to list
             </button>
+            {/* CPQ-off: Create Order directly from Opportunity */}
+            {page === 'opportunities' && appPreferences?.cpq_enabled === false && (
+              <button onClick={async () => { await createOrderFromOpportunity(record); alert('Order created! View in Orders.'); onClose(); }}
+                className="flex items-center gap-2 bg-gradient-to-r from-[#0F172A] to-blue-800 text-white px-4 py-2 rounded-xl text-sm font-bold hover:opacity-90 shadow-md">
+                🛒 Create Order
+              </button>
+            )}
             {(page!=='customers'||tab==='details') && (
               <div className="flex items-center gap-3">
                 {saveSuccess && <span className="text-green-600 text-sm font-semibold flex items-center gap-1">✓ Saved</span>}

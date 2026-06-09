@@ -2,31 +2,33 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
+import { t, THEMES } from '@/lib/i18n';
 import { useApp } from '@/context/AppContext';
 
 const TOP_ITEMS = [
-  { key:'dashboard', label:'Dashboard', icon:'🏠', permission:null },
+  { key:'dashboard', label:'dashboard', icon:'🏠', permission:null },
 ];
 
 const SALES_GROUP = [
-  { key:'customers',     label:'Customers',    icon:'👥', permission:'customers_view' },
-  { key:'contacts',      label:'Contacts',     icon:'📇', permission:'contacts_view' },
-  { key:'leads',         label:'Leads',        icon:'🎯', permission:'leads_view' },
-  { key:'opportunities', label:'Opportunities',icon:'💼', permission:'opportunities_view' },
-  { key:'activities',    label:'Activities',   icon:'📅', permission:'activities_view' },
-  { key:'quotations',    label:'Quotations',   icon:'📄', permission:null, requiresCPQ:true },
+  { key:'customers',     label:'customers',     icon:'👥', permission:'customers_view'  },
+  { key:'contacts',      label:'contacts',      icon:'📇', permission:'contacts_view',      requiresCRM:true },
+  { key:'leads',         label:'leads',         icon:'🎯', permission:'leads_view',          requiresCRM:true },
+  { key:'opportunities', label:'opportunities', icon:'💼', permission:'opportunities_view',  requiresCRM:true },
+  { key:'activities',    label:'activities',    icon:'📅', permission:'activities_view' },
+  { key:'products',      label:'products',      icon:'📦', permission:'products_view'   },
+  { key:'quotations',    label:'quotations',    icon:'📄', permission:null, requiresCPQ:true },
 ];
 
 const BOTTOM_ITEMS = [
-  { key:'orders',     label:'Orders',       icon:'🛒', permission:'orders_view' },
-  { key:'invoices',   label:'Invoices',     icon:'🧾', permission:'invoices_view' },
-  { key:'reports',    label:'Fast Reports', icon:'⚡', permission:null },
-  { key:'approvals',  label:'My Approvals', icon:'✅', permission:null },
-  { key:'adminTools', label:'Admin Tools',  icon:'⚙️', permission:'admin_tools_view' },
+  { key:'orders',     label:'orders',      icon:'🛒', permission:'orders_view' },
+  { key:'invoices',   label:'invoices',    icon:'🧾', permission:'invoices_view' },
+  { key:'reports',    label:'reports',     icon:'⚡', permission:null },
+  { key:'approvals',  label:'approvals',   icon:'✅', permission:null },
+  { key:'adminTools', label:'adminTools',  icon:'⚙️', permission:'admin_tools_view' },
 ];
 
 export default function Sidebar({ activePage, setActivePage, collapsed, setCollapsed }) {
-  const { currentUser, currentUserPermissions, permissionsLoaded, appPreferences } = useApp();
+  const { currentUser, currentUserPermissions, permissionsLoaded, appPreferences, appearance } = useApp();
   const [salesOpen, setSalesOpen] = useState(true);
   const ref = useRef(null);
 
@@ -42,6 +44,7 @@ export default function Sidebar({ activePage, setActivePage, collapsed, setColla
   }, [collapsed, setCollapsed]);
 
   const canSee = (item) => {
+    if (item.requiresCRM && appPreferences?.crm_enabled === false) return false;
     if (item.requiresCPQ && appPreferences?.cpq_enabled === false) return false;
     if (!item.permission) return true;
     if (!permissionsLoaded) return true;
@@ -55,7 +58,7 @@ export default function Sidebar({ activePage, setActivePage, collapsed, setColla
     return (
       <button
         onClick={() => { setActivePage(item.key); setCollapsed(true); }}
-        title={item.label}
+        title={t(lang, item.label)}
         className={`w-full flex items-center gap-3 rounded-2xl transition-all duration-200 py-2.5 px-3 text-sm font-medium
           ${active
             ? 'bg-white text-[#0F172A] shadow-lg'
@@ -63,15 +66,20 @@ export default function Sidebar({ activePage, setActivePage, collapsed, setColla
           }`}
       >
         <span className="text-lg flex-shrink-0">{item.icon}</span>
-        {!collapsed && <span className="truncate flex-1 text-left">{item.label}</span>}
+        {!collapsed && <span className="truncate flex-1 text-left">{t(lang, item.label)}</span>}
       </button>
     );
   };
 
+  const lang      = appearance?.language || 'en';
+  const themeObj  = THEMES.find(th => th.id === (appearance?.theme || 'navy')) || THEMES[0];
+  const sidebarBg = themeObj.sidebar;
+
   return (
     <aside
       ref={ref}
-      className={`${collapsed ? 'w-16' : 'w-64'} bg-[#0F172A] text-white transition-all duration-300 min-h-screen sticky top-0 shadow-2xl flex-shrink-0 flex flex-col z-40`}
+      className={`${collapsed ? 'w-16' : 'w-64'} text-white transition-all duration-300 min-h-screen sticky top-0 shadow-2xl flex-shrink-0 flex flex-col z-40`}
+      style={{background: sidebarBg}}
     >
       {/* Top: Hamburger menu */}
       <div className="h-16 flex items-center justify-center px-3 border-b border-white/10 flex-shrink-0">

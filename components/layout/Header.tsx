@@ -3,6 +3,7 @@
 import React, { useRef, useEffect, useState } from 'react';
 import { useApp } from '@/context/AppContext';
 import { getPageLabel } from '@/lib/utils';
+import { t } from '@/lib/i18n';
 import GlobalSearch from '@/components/layout/GlobalSearch';
 
 function NotificationBell() {
@@ -55,7 +56,7 @@ function NotificationBell() {
 }
 
 export default function Header({ activePage, onNavigate }) {
-  const { currentUser, handleLogout, appPreferences } = useApp();
+  const { currentUser, handleLogout, appPreferences, appearance } = useApp();
   const [profileOpen, setProfileOpen] = useState(false);
   const [today, setToday] = useState('');
   const menuRef = useRef(null);
@@ -89,16 +90,27 @@ export default function Header({ activePage, onNavigate }) {
   const pageTitle = PAGE_LABELS[activePage] || getPageLabel(activePage) || 'Business Pro';
 
   return (
-    <header className="h-16 bg-gradient-to-r from-[#0F172A] to-blue-900 flex items-center justify-between px-6 shadow-lg flex-shrink-0 sticky top-0 z-30">
+    <header className="h-16 flex items-center justify-between px-6 shadow-lg flex-shrink-0 sticky top-0 z-30"
+      style={{background: `linear-gradient(135deg, var(--bp-primary, #0F172A), var(--bp-secondary, #1e3a8a))`}}>
       {/* Left: Company logo / branding */}
       <div className="flex items-center gap-3">
-        <div className="w-9 h-9 rounded-xl bg-white flex items-center justify-center font-black text-[#0F172A] text-sm shadow-md flex-shrink-0">
-          BP
-        </div>
-        <div>
-          <div className="text-base font-bold text-white leading-tight">Business Pro</div>
-          <p className="text-xs text-blue-300 leading-tight h-4" suppressHydrationWarning>{today}</p>
-        </div>
+        {appearance?.company_logo_url
+          ? <img src={appearance.company_logo_url} alt="logo"
+              className="h-10 object-contain rounded-xl bg-white/10 p-1 max-w-[160px]"
+              onError={e => { e.currentTarget.style.display='none'; }}/>
+          : <div className="w-9 h-9 rounded-xl bg-white flex items-center justify-center font-black text-[#0F172A] text-sm shadow-md flex-shrink-0">
+              {(appearance?.company_name||'BP').slice(0,2).toUpperCase()}
+            </div>
+        }
+        {!appearance?.company_logo_url && (
+          <div>
+            <div className="text-base font-bold text-white leading-tight">{appearance?.company_name||'Business Pro'}</div>
+            <p className="text-xs text-blue-300 leading-tight h-4" suppressHydrationWarning>{today}</p>
+          </div>
+        )}
+        {appearance?.company_logo_url && (
+          <p className="text-xs text-blue-300 leading-tight" suppressHydrationWarning>{today}</p>
+        )}
       </div>
 
       {/* Center: Global Search */}
@@ -114,7 +126,7 @@ export default function Header({ activePage, onNavigate }) {
           title="Business Advisor Agent"
           className="relative flex items-center gap-2 px-3.5 py-2 rounded-xl bg-white/15 hover:bg-white/25 text-white transition-all border border-white/20 text-sm font-semibold">
           <span>🤖</span>
-          <span className="hidden sm:inline">AI Advisor</span>
+          <span className="hidden sm:inline">{t(appearance?.language||'en','aiAdvisor')}</span>
           <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-green-400 rounded-full border-2 border-[#0F172A]"/>
         </button>
 

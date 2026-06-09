@@ -12,6 +12,7 @@ import ApprovalsInboxPage from '@/components/approvals/ApprovalsInboxPage';
 import QuotationsPage from '@/components/quotations/QuotationsPage';
 import AIAdvisorChat from '@/components/ai/AIAdvisorChat';
 import FastReportsPage from '@/components/reports/FastReportsPage';
+import RecordDetailPanel from '@/components/crm/RecordDetailPanel';
 import Modal from '@/components/shared/Modal';
 import { inputClass, Button } from '@/components/shared';
 
@@ -145,13 +146,10 @@ function AppShell() {
     return () => window.removeEventListener('open-profile', h);
   }, []);
 
-  // Listen for open-record event from GlobalSearch
+  // Listen for open-record event from GlobalSearch — open panel directly from AppShell
   React.useEffect(() => {
     const h = (e) => {
       const { page, record } = e.detail;
-      // Store in window as bulletproof fallback for cross-render access
-      window.__pendingRecord = { page, record };
-      // Set both synchronously — React 18 batches these into one render
       setActivePage(page);
       setPendingOpenRecord({ page, record });
     };
@@ -189,14 +187,23 @@ function AppShell() {
         <Header activePage={activePage} onNavigate={(page) => setActivePage(page)} />
         <main className="flex-1 p-6 overflow-y-auto">
           {activePage === 'dashboard' && <DashboardPage />}
-          {CRM_PAGES.includes(activePage) && !NON_CRM_PAGES.includes(activePage) && <CRMListPage page={activePage} pendingOpenRecord={pendingOpenRecord} onRecordOpened={() => setPendingOpenRecord(null)} />}
-          {activePage === 'quotations' && appPreferences?.cpq_enabled !== false && <QuotationsPage pendingOpenRecord={pendingOpenRecord} onRecordOpened={() => setPendingOpenRecord(null)} />}
+          {CRM_PAGES.includes(activePage) && !NON_CRM_PAGES.includes(activePage) && <CRMListPage page={activePage} />}
+          {activePage === 'quotations' && appPreferences?.cpq_enabled !== false && <QuotationsPage />}
           {activePage === 'reports' && <FastReportsPage />}
           {activePage === 'approvals' && <ApprovalsInboxPage />}
           {activePage === 'adminTools' && <AdminToolsPage />}
         </main>
       </div>
       <ProfileModal open={profileOpen} onClose={() => setProfileOpen(false)} />
+
+      {/* Global search record detail — opens directly from AppShell */}
+      {pendingOpenRecord && pendingOpenRecord.record && (
+        <RecordDetailPanel
+          page={pendingOpenRecord.page}
+          record={pendingOpenRecord.record}
+          onClose={() => setPendingOpenRecord(null)}
+        />
+      )}
       <AIAdvisorChat />
     </div>
   );
