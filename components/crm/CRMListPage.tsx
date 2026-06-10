@@ -171,6 +171,7 @@ export default function CRMListPage({ page }) {
 
   const canDo = (action) => {
     if (!permissionsLoaded || currentUserPermissions.length === 0) return true;
+    if (currentUserPermissions.includes('__admin__')) return true;
     return currentUserPermissions.includes(`${page}_${action}`);
   };
 

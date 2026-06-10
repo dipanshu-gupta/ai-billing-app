@@ -6,6 +6,7 @@ import { useApp } from '@/context/AppContext';
 import { supabase } from '@/lib/supabase';
 import { getStatusOptions, getStatusColor, getPageLabel, formatDateTime } from '@/lib/utils';
 import AISummary from '@/components/ai/AISummary';
+import AddressSelector from '@/components/shared/AddressSelector';
 import SearchableSelect from '@/components/shared/SearchableSelect';
 
 const iCls = 'w-full border border-blue-200 rounded-xl px-3 py-2.5 text-[#0F172A] bg-white focus:outline-none focus:ring-2 focus:ring-blue-400 text-sm placeholder:text-gray-400';
@@ -309,12 +310,24 @@ export default function CPQRecordDetail({ page, record, onClose }) {
 
             {/* Addresses */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {[['Billing Address',page==='orders'?'billing_address':'billingAddress'],['Shipping Address',page==='orders'?'shipping_address':'shippingAddress']].map(([l,f])=>(
-                <div key={f} className="bg-white rounded-2xl border border-blue-100 p-4 shadow-sm">
-                  <label className="text-xs font-bold uppercase tracking-wider text-gray-400 block mb-2">{l}</label>
-                  <textarea rows={3} value={edited[f]||''} onChange={e=>s(f,e.target.value)} className={tCls}/>
-                </div>
-              ))}
+              <div className="bg-white rounded-2xl border border-blue-100 p-4 shadow-sm">
+                <AddressSelector
+                  customerId={edited.customerId||edited.customer_id}
+                  value={edited.billing_address||edited.billingAddress||''}
+                  onChange={v=>s('billing_address',v)}
+                  label="Billing Address"
+                  placeholder="Select saved billing address or type"
+                />
+              </div>
+              <div className="bg-white rounded-2xl border border-blue-100 p-4 shadow-sm">
+                <AddressSelector
+                  customerId={edited.customerId||edited.customer_id}
+                  value={edited.shipping_address||edited.shippingAddress||''}
+                  onChange={v=>s('shipping_address',v)}
+                  label="Shipping Address"
+                  placeholder="Select saved shipping address or type"
+                />
+              </div>
             </div>
 
             {/* Line Items */}

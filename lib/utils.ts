@@ -54,20 +54,36 @@ export const getPageLabel = (page: string): string => {
 
 // ─── Status options ────────────────────────────────────────────────────────────
 
-export const getStatusOptions = (page: string): string[] => {
+export const getStatusOptions = (page: string, hasApproval = false): string[] => {
   switch (page) {
-    case 'customers':     return ['Active', 'Inactive', 'Prospect'];
-    case 'products':      return ['Active', 'Inactive', 'Discontinued'];
-    case 'leads':         return ['New', 'Contacted', 'Qualified', 'Converted', 'Lost', 'Pending Approval'];
-    case 'opportunities': return ['Open', 'Proposal Sent', 'Negotiation', 'Closed Won', 'Closed Lost', 'Pending Approval'];
-    case 'orders':        return ['Draft', 'Processing', 'Shipped', 'Delivered', 'Cancelled', 'Pending Approval'];
-    case 'invoices':      return ['Draft', 'Pending', 'Paid', 'Overdue', 'Cancelled', 'Pending Approval'];
-    case 'contacts':      return ['Active', 'Inactive'];
-    case 'activities':    return ['Open', 'In Progress', 'Completed', 'Cancelled'];
-    case 'quotations':    return ['Draft','Submitted','Pending Approval','Approved','Sent to Customer','Accepted','Ordered','Rejected','Expired','Cancelled'];
-    default:              return ['Active', 'Inactive'];
+    case 'customers':
+      return ['New','Prospect','Active','On Hold','Inactive','Churned','Blacklisted'];
+    case 'leads':
+      return hasApproval
+        ? ['New','Contacted','Qualified','Pending Approval','Approved','Unqualified','Converted','Disqualified']
+        : ['New','Contacted','Qualified','Unqualified','Converted','Disqualified'];
+    case 'opportunities':
+      return hasApproval
+        ? ['Prospecting','Qualification','Needs Analysis','Value Proposition','Proposal Sent','Pending Approval','Negotiation','Closed Won','Closed Lost','On Hold']
+        : ['Prospecting','Qualification','Needs Analysis','Value Proposition','Proposal Sent','Negotiation','Closed Won','Closed Lost','On Hold'];
+    case 'orders':
+      return ['Draft','Confirmed','Processing','Partially Shipped','Shipped','Delivered','Invoiced','On Hold','Cancelled'];
+    case 'invoices':
+      return ['Draft','Pending','Sent','Partially Paid','Paid','Overdue','Disputed','Write Off','Cancelled'];
+    case 'contacts':
+      return ['Active','Prospect','Key Contact','Inactive','Do Not Contact'];
+    case 'activities':
+      return ['Not Started','In Progress','Completed','Deferred','Waiting on Customer','Cancelled'];
+    case 'products':
+      return ['Active','Draft','Under Review','Discontinued','Out of Stock'];
+    case 'quotations':
+      return hasApproval
+        ? ['Draft','Submitted','Pending Approval','Approved','Sent to Customer','Accepted','Ordered','Rejected','Expired','Cancelled']
+        : ['Draft','Submitted','Approved','Sent to Customer','Accepted','Ordered','Rejected','Expired','Cancelled'];
+    default:
+      return ['Active','Inactive'];
   }
-};
+}
 
 // ─── Status colour ─────────────────────────────────────────────────────────────
 
@@ -109,25 +125,32 @@ export const getStatusColor = (status: string): string => {
 export const getObjectFields = (page: string): string[] => {
   switch (page) {
     case 'customers':
-      return ['name','email','phone','company','industry','billingAddress','shippingAddress','city','state','postalCode','country','website','gstNumber','primaryContact','owner','status'];
-    case 'products':
-      return ['name','productFamily','category','price','status'];
-    case 'leads':
-      return ['customer','contact','name','email','phone','source','owner','status','amount'];
-    case 'opportunities':
-      return ['customer','contact','name','stage','closeDate','owner','status','amount'];
-    case 'orders':
-      return ['customer','contact','name','billingAddress','shippingAddress','paymentTerms','deliveryDate','currency','notes','owner','status','amount'];
-    case 'invoices':
-      return ['customer','contact','name','dueDate','paymentTerms','billingAddress','owner','status','amount'];
+      return ['name','industry','phone','email','website','gstNumber',
+              'billingAddress','shippingAddress','city','state','postalCode','country',
+              'primaryContact','owner','status','description'];
     case 'contacts':
-      return ['customer','name','email','phone','designation','department','isPrimary','owner','status'];
+      return ['name','designation','department','email','phone','mobile',
+              'customer','isPrimary','linkedIn','owner','status','description'];
+    case 'products':
+      return ['name','productFamily','category','sku','price','cost',
+              'unit','taxRate','status','description'];
+    case 'leads':
+      return ['name','customer','contact','email','phone',
+              'source','amount','expectedCloseDate','owner','status','description'];
+    case 'opportunities':
+      return ['name','customer','contact','stage','amount',
+              'closeDate','probability','campaign','owner','status','description'];
+    case 'orders':
+      return ['name','customer','contact','currency','paymentTerms',
+              'deliveryDate','amount','owner','status','notes'];
+    case 'invoices':
+      return ['name','customer','contact','dueDate','paymentTerms',
+              'amount','owner','status','notes'];
     case 'activities':
-      return ['name','customer','contact','subject','activityType','activityDate','notes','owner','status'];
-    case 'quotations':
-      return ['name','customer','contact','validity_date','payment_terms','shipping_terms','currency','overall_discount','shipping_cost','owner','status'];
+      return ['name','activityType','customer','contact','activityDate',
+              'priority','dueDate','owner','status','description'];
     default:
-      return ['name','status'];
+      return ['name','status','owner'];
   }
 };
 

@@ -7,6 +7,7 @@ import { supabase } from '@/lib/supabase';
 import { formatCurrency, getStatusColor } from '@/lib/utils';
 import AISummary from '@/components/ai/AISummary';
 import SearchableSelect from '@/components/shared/SearchableSelect';
+import AddressSelector from '@/components/shared/AddressSelector';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const QUOTE_STATUSES = ['Draft','Submitted','Pending Approval','Approved','Sent to Customer','Accepted','Ordered','Rejected','Expired','Cancelled'];
@@ -476,12 +477,24 @@ function QuotationDetail({ quote, onClose, onSaved }) {
 
               {/* Addresses */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {[['Billing Address','billing_address'],['Shipping Address','shipping_address']].map(([l,f])=>(
-                  <div key={f} className="bg-white rounded-2xl border border-blue-100 p-4 shadow-sm">
-                    <label className="text-xs font-bold uppercase tracking-wider text-gray-400 block mb-2">{l}</label>
-                    <textarea rows={3} value={form[f]||''} onChange={e=>s(f,e.target.value)} className="w-full border border-blue-200 rounded-xl px-3 py-2.5 text-sm text-[#0F172A] focus:outline-none focus:ring-2 focus:ring-blue-400 resize-none"/>
-                  </div>
-                ))}
+                <div className="bg-white rounded-2xl border border-blue-100 p-4 shadow-sm">
+                  <AddressSelector
+                    customerId={form.customer_id}
+                    value={form.billing_address||''}
+                    onChange={v=>s('billing_address',v)}
+                    label="Billing Address"
+                    placeholder="Select saved billing address or type"
+                  />
+                </div>
+                <div className="bg-white rounded-2xl border border-blue-100 p-4 shadow-sm">
+                  <AddressSelector
+                    customerId={form.customer_id}
+                    value={form.shipping_address||''}
+                    onChange={v=>s('shipping_address',v)}
+                    label="Shipping Address"
+                    placeholder="Select saved shipping address or type"
+                  />
+                </div>
               </div>
 
               {/* Line Items */}

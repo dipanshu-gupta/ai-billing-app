@@ -757,23 +757,23 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
     switch (page) {
       case 'customers':
-        await supabase.from('customers').update({ ...sys, name: record.name, email: record.email, phone: record.phone, company: record.company, industry: record.industry, primary_contact_id: record.primaryContactId, billing_address: record.billingAddress, shipping_address: record.shippingAddress, city: record.city, state: record.state, postal_code: record.postalCode, country: record.country, website: record.website, gst_number: record.gstNumber, status: record.status }).eq('customer_number', record.id);
+        await supabase.from('customers').update({ ...sys, name: record.name, email: record.email, phone: record.phone, company: record.company, industry: record.industry, primary_contact_id: record.primaryContactId, billing_address: record.billingAddress, shipping_address: record.shippingAddress, city: record.city, state: record.state, postal_code: record.postalCode||record.postal_code||'', country: record.country||'', website: record.website||'', gst_number: record.gstNumber||record.gst_number||'', description: record.description||'', owner: record.owner||'', owner_id: record.owner_id||null, status: record.status }).eq('customer_number', record.id);
         await logAudit({ recordType: 'customer', recordId: record.id, recordName: record.name, action: 'updated' });
         await fetchCustomers(); break;
       case 'contacts':
-        await supabase.from('contacts').update({ ...sys, customer: record.customer, name: record.name, email: record.email, phone: record.phone, designation: record.designation, department: record.department, is_primary: record.isPrimary, status: record.status }).eq('contact_number', record.id);
+        await supabase.from('contacts').update({ ...sys, customer: record.customer, customer_id: record.customerId||null, name: record.name, email: record.email||'', phone: record.phone||'', mobile: record.mobile||'', designation: record.designation||'', department: record.department||'', is_primary: record.isPrimary||false, linked_in: record.linkedIn||'', description: record.description||'', owner: record.owner||'', owner_id: record.owner_id||null, status: record.status }).eq('contact_number', record.id);
         if (record.isPrimary) await supabase.from('customers').update({ primary_contact_id: record.id }).eq('customer_number', record.customerId);
         await fetchContacts(); await fetchCustomers(); break;
       case 'products':
-        await supabase.from('products').update({ ...sys, name: record.name, category: record.category, price: Number(record.price || 0), status: record.status }).eq('product_number', record.id);
+        await supabase.from('products').update({ ...sys, name: record.name, product_family: record.productFamily||'', category: record.category||'', sku: record.sku||'', price: Number(record.price||0), cost: Number(record.cost||0), unit: record.unit||'', tax_rate: Number(record.taxRate||record.tax_rate||0), description: record.description||'', owner: record.owner||'', status: record.status }).eq('id', record.id);
         await fetchProducts(); break;
       case 'leads':
-        await supabase.from('leads').update({ ...sys, name: record.name, customer: record.customer, email: record.email, phone: record.phone, source: record.source, amount: calcAmount || Number(record.amount || 0), status: record.status }).eq('lead_number', record.id);
+        await supabase.from('leads').update({ ...sys, name: record.name, customer: record.customer, customer_id: record.customerId||null, contact: record.contact, contact_id: record.contactId||null, email: record.email||'', phone: record.phone||'', source: record.source||'', amount: calcAmount||Number(record.amount||0), expected_close_date: record.expectedCloseDate||null, billing_address: record.billingAddress||record.billing_address||'', shipping_address: record.shippingAddress||record.shipping_address||'', description: record.description||'', owner: record.owner||'', owner_id: record.owner_id||null, status: record.status }).eq('lead_number', record.id);
         await upsertLineItems('lead_line_items', 'lead_number', record.id);
         await logAudit({ recordType: 'lead', recordId: record.id, recordName: record.name, action: 'updated' });
         await fetchLeads(); break;
       case 'opportunities':
-        await supabase.from('opportunities').update({ ...sys, name: record.name, customer: record.customer, stage: record.stage, amount: calcAmount || Number(record.amount || 0), close_date: record.closeDate, status: record.status }).eq('opportunity_number', record.id);
+        await supabase.from('opportunities').update({ ...sys, name: record.name, customer: record.customer, customer_id: record.customerId||null, contact: record.contact, contact_id: record.contactId||null, stage: record.stage||'', amount: calcAmount||Number(record.amount||0), close_date: record.closeDate||null, probability: Number(record.probability||0), campaign: record.campaign||'', billing_address: record.billingAddress||record.billing_address||'', shipping_address: record.shippingAddress||record.shipping_address||'', description: record.description||'', owner: record.owner||'', owner_id: record.owner_id||null, status: record.status }).eq('opportunity_number', record.id);
         await upsertLineItems('opportunity_line_items', 'opportunity_number', record.id);
         await logAudit({ recordType: 'opportunity', recordId: record.id, recordName: record.name, action: 'updated' });
         await fetchOpportunities(); break;
@@ -788,7 +788,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         await logAudit({ recordType: 'invoice', recordId: record.id, recordName: record.name, action: 'updated' });
         await fetchInvoices(); break;
       case 'activities':
-        await supabase.from('activities').update({ ...sys, name: record.name, customer: record.customer, contact: record.contact, subject: record.subject, activity_type: record.activityType, activity_date: record.activityDate, notes: record.notes, status: record.status }).eq('activity_number', record.id);
+        await supabase.from('activities').update({ ...sys, name: record.name, customer: record.customer, customer_id: record.customerId||null, contact: record.contact, contact_id: record.contactId||null, activity_type: record.activityType||'', activity_date: record.activityDate||null, due_date: record.dueDate||null, priority: record.priority||'Medium', description: record.description||'', notes: record.notes||'', owner: record.owner||'', owner_id: record.owner_id||null, status: record.status }).eq('activity_number', record.id);
         await fetchActivities(); break;
     }
   };
@@ -815,8 +815,37 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const items = await fetchLineItems('opportunity_line_items', 'opportunity_number', opportunity.id);
     const totalAmount = items.reduce((s, i) => s + i.quantity * i.price, 0);
     const id = generateId('ORD');
-    await supabase.from('orders').insert([{ ...buildSystemFields(), order_number: id, name: opportunity.name, customer: opportunity.customer, customer_id: opportunity.customerId, contact: opportunity.contact, contact_id: opportunity.contactId, amount: totalAmount, shipping_address: '', delivery_date: null, status: 'Processing' }]);
-    if (items.length) await supabase.from('order_line_items').insert(items.map(i => ({ order_number: id, product_name: i.product, quantity: i.quantity, price: i.price })));
+    await supabase.from('orders').insert([{
+      ...buildSystemFields(),
+      order_number: id,
+      name: opportunity.name,
+      customer: opportunity.customer,
+      customer_id: opportunity.customerId,
+      contact: opportunity.contact,
+      contact_id: opportunity.contactId,
+      amount: totalAmount,
+      currency: (opportunity as any).currency || 'INR',
+      billing_address: (opportunity as any).billingAddress || (opportunity as any).billing_address || '',
+      shipping_address: (opportunity as any).shippingAddress || (opportunity as any).shipping_address || '',
+      payment_terms: (opportunity as any).paymentTerms || (opportunity as any).payment_terms || '',
+      delivery_date: null,
+      owner: opportunity.owner || currentUser?.email || '',
+      owner_id: opportunity.owner_id || currentUser?.id || null,
+      status: 'Draft',
+    }]);
+    if (items.length) await supabase.from('order_line_items').insert(items.map((i: any, idx: number) => ({
+      order_number: id,
+      product_name: i.product_name || i.product || '',
+      product_code: i.product_code || '',
+      description:  i.description  || '',
+      quantity:     Number(i.quantity   || 1),
+      price:        Number(i.price      || 0),
+      list_price:   Number(i.list_price || i.price || 0),
+      discount:     Number(i.discount   || 0),
+      tax_pct:      Number(i.tax_pct    || 0),
+      extended_price: Number(i.quantity||1) * Number(i.price||0) * (1 - Number(i.discount||0)/100),
+      sort_order:   idx,
+    })));
     await logAudit({ recordType: 'opportunity', recordId: opportunity.id, recordName: opportunity.name, action: 'converted_to_order' });
     await fetchOrders();
   };
@@ -828,8 +857,45 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const items = await fetchLineItems('order_line_items', 'order_number', order.id);
     const totalAmount = items.reduce((s, i) => s + i.quantity * i.price, 0);
     const id = generateId('INV');
-    await supabase.from('invoices').insert([{ ...buildSystemFields(), invoice_number: id, name: order.name, customer: order.customer, customer_id: order.customerId, contact: order.contact, contact_id: order.contactId, amount: totalAmount, due_date: null, payment_terms: '', billing_address: '', status: 'Pending' }]);
-    if (items.length) await supabase.from('invoice_line_items').insert(items.map(i => ({ invoice_number: id, product_name: i.product, quantity: i.quantity, price: i.price })));
+    const dueDate = new Date(); dueDate.setDate(dueDate.getDate() + 30);
+    await supabase.from('invoices').insert([{
+      ...buildSystemFields(),
+      invoice_number: id,
+      name: order.name,
+      order_number: order.id,
+      customer: order.customer,
+      customer_id: order.customerId || (order as any).customer_id,
+      contact: order.contact,
+      contact_id: order.contactId || (order as any).contact_id,
+      amount: totalAmount,
+      currency: (order as any).currency || 'INR',
+      billing_address: (order as any).billing_address || (order as any).billingAddress || '',
+      shipping_address: (order as any).shipping_address || (order as any).shippingAddress || '',
+      payment_terms: (order as any).payment_terms || (order as any).paymentTerms || '',
+      overall_discount: (order as any).overall_discount || 0,
+      shipping_cost: (order as any).shipping_cost || 0,
+      subtotal: (order as any).subtotal || totalAmount,
+      total_discount: (order as any).total_discount || 0,
+      total_tax: (order as any).total_tax || 0,
+      notes: (order as any).notes || '',
+      due_date: dueDate.toISOString().split('T')[0],
+      owner: order.owner || currentUser?.email || '',
+      owner_id: order.owner_id || currentUser?.id || null,
+      status: 'Pending',
+    }]);
+    if (items.length) await supabase.from('invoice_line_items').insert(items.map((i: any, idx: number) => ({
+      invoice_number: id,
+      product_name:   i.product_name || i.product || '',
+      product_code:   i.product_code || '',
+      description:    i.description  || '',
+      quantity:       Number(i.quantity   || 1),
+      price:          Number(i.price      || 0),
+      list_price:     Number(i.list_price || i.price || 0),
+      discount:       Number(i.discount   || 0),
+      tax_pct:        Number(i.tax_pct    || 0),
+      extended_price: Number(i.quantity||1) * Number(i.price||0) * (1 - Number(i.discount||0)/100),
+      sort_order:     idx,
+    })));
     await logAudit({ recordType: 'order', recordId: order.id, recordName: order.name, action: 'converted_to_invoice' });
     await fetchInvoices();
   };
@@ -1200,7 +1266,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const updateQuotation = async (data,items=[]) => { if(!supabase)return; const{quote_number,...rest}=data; await supabase.from('quotations').update({...rest,...buildSystemFields(true)}).eq('quote_number',quote_number); if(items)await upsertLineItems('quotation_line_items','quote_number',quote_number,items); await fetchQuotations(); };
   const deleteQuotation = async (qNum) => { if(!supabase||!window.confirm('Delete?'))return; await supabase.from('quotation_line_items').delete().eq('quote_number',qNum); await supabase.from('quotations').delete().eq('quote_number',qNum); await fetchQuotations(); };
   const generateNewVersion = async (q) => { if(!supabase||!currentUser)return null; const qNum=generateId('QUO'); const v=(q.version||1)+1; const items=await fetchLineItems('quotation_line_items','quote_number',q.quote_number); await supabase.from('quotations').insert([{...buildSystemFields(),...q,quote_number:qNum,version:v,status:'Draft',id:undefined,created_at:new Date().toISOString()}]); if(items.length)await upsertLineItems('quotation_line_items','quote_number',qNum,items.map(i=>({...i,id:undefined}))); await fetchQuotations(); return{quote_number:qNum}; };
-  const createQuotationFromOpportunity = async (opp) => { if(!supabase||!currentUser)return null; const items=await fetchLineItems('opportunity_line_items','opportunity_number',opp.id); const qNum=generateId('QUO'); const{error}=await supabase.from('quotations').insert([{...buildSystemFields(),quote_number:qNum,name:`Quote - ${opp.name}`,status:'Draft',version:1,customer:opp.customer||'',customer_id:opp.customerId||null,contact:opp.contact||'',contact_id:opp.contactId||null,opportunity_id:opp.id,currency:opp.currency||'INR',grand_total:Number(opp.amount||0),owner:opp.owner||currentUser.email,owner_id:opp.owner_id||currentUser.id}]); if(error){alert('Failed: '+error.message);return null;} if(items.length)await supabase.from('quotation_line_items').insert(items.map((i,idx)=>({quote_number:qNum,product_name:i.product||i.product_name||'',quantity:Number(i.quantity||1),unit_price:Number(i.price||0),discount_pct:Number(i.discount||0),tax_pct:0,sort_order:idx}))); await fetchQuotations(); return{quote_number:qNum}; };
+  const createQuotationFromOpportunity = async (opp) => { if(!supabase||!currentUser)return null; const items=await fetchLineItems('opportunity_line_items','opportunity_number',opp.id); const qNum=generateId('QUO'); const{error}=await supabase.from('quotations').insert([{...buildSystemFields(),quote_number:qNum,name:`Quote - ${opp.name}`,status:'Draft',version:1,customer:opp.customer||'',customer_id:opp.customerId||null,contact:opp.contact||'',contact_id:opp.contactId||null,opportunity_id:opp.id,currency:opp.currency||'INR',grand_total:Number(opp.amount||0),billing_address:opp.billingAddress||opp.billing_address||'',shipping_address:opp.shippingAddress||opp.shipping_address||'',payment_terms:opp.paymentTerms||opp.payment_terms||'',owner:opp.owner||currentUser.email,owner_id:opp.owner_id||currentUser.id}]); if(error){alert('Failed: '+error.message);return null;} if(items.length)await supabase.from('quotation_line_items').insert(items.map((i,idx)=>({quote_number:qNum,product_name:i.product||i.product_name||'',quantity:Number(i.quantity||1),unit_price:Number(i.price||0),discount_pct:Number(i.discount||0),tax_pct:0,sort_order:idx}))); await fetchQuotations(); return{quote_number:qNum}; };
 
   // ─── CPQ Flow: Quote→Order→Invoice, Opp→Order ─────────────────────────────
   const createOrderFromQuotation = async (quotation) => { if(!supabase||!currentUser)return null; const{data:qItems}=await supabase.from('quotation_line_items').select('*').eq('quote_number',quotation.quote_number).order('sort_order'); const li=qItems||[]; const sub=li.reduce((s,i)=>s+Number(i.quantity||1)*Number(i.unit_price||i.price||0),0); const disc=li.reduce((s,i)=>s+Number(i.quantity||1)*Number(i.unit_price||i.price||0)*(Number(i.discount_pct||i.discount||0)/100),0); const tax=li.reduce((s,i)=>{const n=Number(i.quantity||1)*Number(i.unit_price||i.price||0)*(1-Number(i.discount_pct||0)/100);return s+n*(Number(i.tax_pct||0)/100);},0); const od=sub*Number(quotation.overall_discount||0)/100; const gt=sub-disc+tax-od+Number(quotation.shipping_cost||0); const ordId=generateId('ORD'); const{error}=await supabase.from('orders').insert([{...buildSystemFields(),order_number:ordId,name:quotation.name||`Order - ${quotation.quote_number}`,quote_number:quotation.quote_number,customer:quotation.customer||'',customer_id:quotation.customer_id||null,contact:quotation.contact||'',contact_id:quotation.contact_id||null,billing_address:quotation.billing_address||'',shipping_address:quotation.shipping_address||'',payment_terms:quotation.payment_terms||'',currency:quotation.currency||'INR',overall_discount:Number(quotation.overall_discount||0),shipping_cost:Number(quotation.shipping_cost||0),subtotal:Number(sub.toFixed(2)),total_discount:Number((disc+od).toFixed(2)),total_tax:Number(tax.toFixed(2)),amount:Number(gt.toFixed(2)),status:'Draft',owner:quotation.owner||currentUser.email,owner_id:quotation.owner_id||currentUser.id}]); if(error){alert('Failed to create order: '+error.message);return null;} if(li.length)await supabase.from('order_line_items').insert(li.map((i,idx)=>({order_number:ordId,product_name:i.product_name||'',product_code:i.product_code||'',description:i.description||'',quantity:Number(i.quantity||1),price:Number(i.unit_price||i.price||0),list_price:Number(i.unit_price||i.price||0),discount:Number(i.discount_pct||i.discount||0),tax_pct:Number(i.tax_pct||0),extended_price:Number(i.quantity||1)*Number(i.unit_price||i.price||0)*(1-Number(i.discount_pct||0)/100),sort_order:idx}))); await supabase.from('quotations').update({status:'Ordered',...buildSystemFields(true)}).eq('quote_number',quotation.quote_number); setQuotations(prev=>prev.map(q=>q.quote_number===quotation.quote_number?{...q,status:'Ordered'}:q)); await fetchOrders(); return ordId; };

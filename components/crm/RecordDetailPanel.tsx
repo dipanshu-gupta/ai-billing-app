@@ -11,6 +11,8 @@ import { supabase } from '@/lib/supabase';
 import CreateRecordModal from '@/components/crm/CreateRecordModal';
 import AISummary from '@/components/ai/AISummary';
 import SearchableSelect from '@/components/shared/SearchableSelect';
+import AddressManager from '@/components/shared/AddressManager';
+import AddressSelector from '@/components/shared/AddressSelector';
 
 const iCls = 'w-full border border-blue-200 rounded-xl px-3 py-2.5 text-[#0F172A] bg-white focus:outline-none focus:ring-2 focus:ring-blue-400 text-sm placeholder:text-gray-400';
 const sCls = 'w-full border border-blue-200 rounded-xl px-3 py-2.5 text-[#0F172A] bg-white focus:outline-none focus:ring-2 focus:ring-blue-400 text-sm';
@@ -335,13 +337,15 @@ export default function RecordDetailPanel({ page, record, onClose }) {
   const {
     customers, contacts, products, organizations, businessUnits, enterpriseUsers,
     updateRecord, submitForApproval, checkMatchingApprovalProcess,
-    convertLeadToOpportunity, createInvoiceFromOrder,
-    currentUserPermissions, permissionsLoaded,
+    convertLeadToOpportunity, createInvoiceFromOrder, createOrderFromOpportunity,
+    createQuotationFromOpportunity, fetchLineItems,
+    currentUserPermissions, permissionsLoaded, appPreferences,
   } = useApp();
 
   // Local permission helper (mirrors CRMListPage canDo)
   const canEdit = () => {
     if (!permissionsLoaded || currentUserPermissions.length === 0) return true;
+    if (currentUserPermissions.includes('__admin__')) return true;
     return currentUserPermissions.includes(`${page}_edit`);
   };
 
@@ -403,9 +407,50 @@ export default function RecordDetailPanel({ page, record, onClose }) {
     setMatchingProcess(null);
   };
 
+  // Section definitions per page
+  const PAGE_SECTIONS = {
+    customers:    [{icon:'🏢',title:'Basic Info',fields:['name','industry','website','gstNumber']},{icon:'📞',title:'Contact Info',fields:['phone','email','primaryContact']},{icon:'👤',title:'Ownership',fields:['owner','status']}],
+    contacts:     [{icon:'👤',title:'Personal Info',fields:['name','designation','department','isPrimary']},{icon:'📞',title:'Contact Info',fields:['email','phone','mobile','linkedIn']},{icon:'🏢',title:'Relationship',fields:['customer','owner','status']}],
+    leads:        [{icon:'🎯',title:'Lead Info',fields:['name','source','amount','expectedCloseDate']},{icon:'🏢',title:'Relationship',fields:['customer','contact','email','phone']},{icon:'👤',title:'Ownership',fields:['owner','status']}],
+    opportunities:[{icon:'💼',title:'Opportunity Info',fields:['name','stage','amount','closeDate','probability']},{icon:'🏢',title:'Relationship',fields:['customer','contact','campaign']},{icon:'👤',title:'Ownership',fields:['owner','status']}],
+    orders:       [{icon:'🛒',title:'Order Info',fields:['name','currency','paymentTerms','deliveryDate']},{icon:'🏢',title:'Relationship',fields:['customer','contact']},{icon:'👤',title:'Ownership',fields:['owner','status']}],
+    invoices:     [{icon:'🧾',title:'Invoice Info',fields:['name','dueDate','paymentTerms']},{icon:'🏢',title:'Relationship',fields:['customer','contact']},{icon:'👤',title:'Ownership',fields:['owner','status']}],
+    activities:   [{icon:'📅',title:'Activity Info',fields:['name','activityType','activityDate','dueDate','priority']},{icon:'🏢',title:'Relationship',fields:['customer','contact']},{icon:'👤',title:'Ownership',fields:['owner','status']}],
+    products:     [{icon:'📦',title:'Product Info',fields:['name','productFamily','category','sku','unit']},{icon:'💰',title:'Pricing',fields:['price','cost','taxRate']},{icon:'📊',title:'Status',fields:['status']}],
+  };
+
+  const sections = PAGE_SECTIONS[page] || [{icon:'📋',title:'Details',fields:fields}];
+
+  const LABEL_MAP = {
+    name:'Name', status:'Status', owner:'Owner', customer:'Customer', contact:'Contact',
+    email:'Email', phone:'Phone', mobile:'Mobile', website:'Website', industry:'Industry',
+    gstNumber:'GST / Tax Number', primaryContact:'Primary Contact', description:'Description',
+    stage:'Stage', amount:'Amount', closeDate:'Close Date', probability:'Probability (%)',
+    expectedCloseDate:'Expected Close', campaign:'Campaign Source', designation:'Designation',
+    department:'Department', isPrimary:'Primary Contact', linkedIn:'LinkedIn',
+    activityType:'Activity Type', activityDate:'Activity Date', priority:'Priority',
+    dueDate:'Due Date', billingAddress:'Billing Address', shippingAddress:'Shipping Address',
+    paymentTerms:'Payment Terms', deliveryDate:'Delivery Date', currency:'Currency',
+    notes:'Notes', source:'Lead Source', productFamily:'Product Family', category:'Category',
+    sku:'SKU / Code', price:'Unit Price', cost:'Cost Price', taxRate:'Tax Rate (%)',
+    unit:'Unit of Measure',
+  };
+
+  const PRIORITY_OPTS = ['Low','Medium','High','Critical'];
+  const ACTIVITY_TYPES = ['Call','Meeting','Email','Demo','Follow Up','Task','Note','Site Visit','Proposal','Other'];
+  const LEAD_SOURCES = ['Website','Cold Call','Email Campaign','Referral','Social Media','Trade Show','Partner','Advertisement','Inbound','Other'];
+  const INDUSTRIES = ['Technology','Manufacturing','Retail','Healthcare','Finance','Real Estate','Education','Consulting','Media','Logistics','FMCG','Automotive','Energy','Government','Other'];
+  const PAYMENT_TERMS_OPTS = ['Due on Receipt','Net 15','Net 30','Net 45','Net 60','Net 90'];
+  const CURRENCIES = ['INR','USD','EUR','GBP','AED','SGD','AUD','CAD','JPY','CNY'];
+  const STAGES = ['Prospecting','Qualification','Needs Analysis','Value Proposition','Proposal Sent','Negotiation','Closed Won','Closed Lost','On Hold'];
+
   const renderField = (field) => {
     const v = edited[field];
-    if (field==='status')       return <select value={v||''} onChange={e=>set('status',e.target.value)} className={sCls}>{statusOpts.map(s=><option key={s}>{s}</option>)}</select>;
+    if (field==='status') return (
+      <select value={v||''} onChange={e=>set('status',e.target.value)} className={sCls}>
+        {statusOpts.map(s=><option key={s}>{s}</option>)}
+      </select>
+    );
     if (field==='customer')     return <SearchableSelect
               value={edited.customerId||''}
               onChange={v=>{const c=customers.find(x=>x.id===v);setEdited(p=>({...p,customerId:c?.id||'',customer:c?.name||''}));}}
@@ -524,13 +569,37 @@ export default function RecordDetailPanel({ page, record, onClose }) {
               {/* AI Summary */}
               <AISummary page={page} record={record}/>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-                {fields.map(field=>(
-                  <div key={field} className="bg-white rounded-2xl border border-blue-100 p-4 shadow-sm">
-                    <label className="text-xs font-bold uppercase tracking-wider text-gray-400 block mb-2">{field.replace(/([A-Z])/g,' $1').trim()}</label>
-                    {renderField(field)}
+              <div className="space-y-5">
+                {sections.map(section=>(
+                  <div key={section.title} className="bg-white rounded-[20px] border border-blue-100 shadow-sm overflow-hidden">
+                    <div className="px-5 py-3 bg-gradient-to-r from-slate-50 to-blue-50 border-b border-blue-100 flex items-center gap-2">
+                      <span className="text-lg">{section.icon}</span>
+                      <span className="font-bold text-[#0F172A] text-sm">{section.title}</span>
+                    </div>
+                    <div className="p-5 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                      {section.fields.filter(f=>fields.includes(f)||['notes','description'].includes(f)).map(field=>(
+                        <div key={field} className={`space-y-1.5 ${['notes','description','billingAddress','shippingAddress'].includes(field)?'md:col-span-2 xl:col-span-3':''}`}>
+                          <label className="text-xs font-bold uppercase tracking-wider text-gray-400 block">
+                            {LABEL_MAP[field] || field.replace(/([A-Z])/g,' $1').trim()}
+                          </label>
+                          {renderField(field)}
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 ))}
+                {/* Address Manager for customers and contacts */}
+                {(page==='customers'||page==='contacts') && record.id && (
+                  <div className="bg-white rounded-[20px] border border-blue-100 shadow-sm overflow-hidden">
+                    <div className="px-5 py-3 bg-gradient-to-r from-slate-50 to-blue-50 border-b border-blue-100 flex items-center gap-2">
+                      <span className="text-lg">📍</span>
+                      <span className="font-bold text-[#0F172A] text-sm">Addresses</span>
+                    </div>
+                    <div className="p-5">
+                      <AddressManager ownerType={page==='customers'?'customer':'contact'} ownerId={record.id}/>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {HAS_LI.includes(page)&&(loadingLI
