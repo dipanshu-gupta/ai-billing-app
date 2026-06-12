@@ -143,9 +143,10 @@ export default function CRMListPage({ page }) {
     convertLeadToOpportunity, createOrderFromOpportunity, createInvoiceFromOrder,
     createQuotationFromOpportunity, fetchQuotations,
     currentUserPermissions, permissionsLoaded, appPreferences,
-    fetchOrders,
+    fetchOrders, pendingReturnTo, setPendingReturnTo,
   } = useApp();
 
+  const [successDialog, setSuccessDialog] = useState(null); // { title, message }
   const [search,       setSearch]       = useState('');
   const [statusFilter, setStatusFilter] = useState('All');
   const [timePeriod,   setTimePeriod]   = useState('');
@@ -307,7 +308,7 @@ export default function CRMListPage({ page }) {
               <tr>
                 <th className="px-5 py-3.5 text-left text-sm font-semibold">ID</th>
                 <th className="px-5 py-3.5 text-left text-sm font-semibold">Name</th>
-                {page !== 'products' && <th className="px-5 py-3.5 text-left text-sm font-semibold">{page==='customers'?'Company':'Customer'}</th>}
+                {page !== 'products' && page !== 'customers' && <th className="px-5 py-3.5 text-left text-sm font-semibold">Customer</th>}
                 <th className="px-5 py-3.5 text-left text-sm font-semibold">Owner</th>
                 <th className="px-5 py-3.5 text-left text-sm font-semibold">Status</th>
                 {hasAmount && <th className="px-5 py-3.5 text-right text-sm font-semibold">Amount</th>}
@@ -336,14 +337,14 @@ export default function CRMListPage({ page }) {
                         : <span className="font-semibold text-[#0F172A] text-sm">{record.name||record.subject||'—'}</span>
                       }
                     </td>
-                    {page !== 'products' && <td className="px-5 py-3.5 text-sm text-gray-600">{(record.customer||record.company||record.email||'—')}</td>}
+                    {page !== 'products' && page !== 'customers' && <td className="px-5 py-3.5 text-sm text-gray-600">{record.customer||record.email||'—'}</td>}
                     <td className="px-5 py-3.5">
                       {ownerUser
                         ? <div className="flex items-center gap-2">
                             <div className="w-7 h-7 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center text-xs font-bold flex-shrink-0">{ownerUser.first_name?.charAt(0)}{ownerUser.last_name?.charAt(0)}</div>
                             <span className="text-sm text-[#0F172A] font-medium">{ownerUser.first_name} {ownerUser.last_name}</span>
                           </div>
-                        : <span className="text-gray-300 text-sm">—</span>
+                        : record.owner ? <span className="text-sm text-gray-600">{record.owner}</span> : <span className="text-gray-300 text-sm">—</span>
                       }
                     </td>
                     <td className="px-5 py-3.5"><StatusBadge status={record.status}/></td>
@@ -360,7 +361,7 @@ export default function CRMListPage({ page }) {
                             )}
                             {page==='opportunities' && (<>
                               {appPreferences?.cpq_enabled !== false ? (
-                                <button onClick={async()=>{setMenuOpenId(null);const q=await createQuotationFromOpportunity(record);await fetchQuotations();if(q)alert(`Quotation ${q.quote_number} created! View in Quotations.`);}} className="w-full text-left px-4 py-3 rounded-xl text-sm font-medium hover:bg-blue-800 text-white">📄 Create Quotation</button>
+                                <button onClick={async()=>{setMenuOpenId(null);const q=await createQuotationFromOpportunity(record);await fetchQuotations();if(q)setSuccessDialog({ title: '✅ Quotation Created', message: `Quotation ${q.quote_number} has been created successfully. You can view and edit it in the Quotations page.` });}} className="w-full text-left px-4 py-3 rounded-xl text-sm font-medium hover:bg-blue-800 text-white">📄 Create Quotation</button>
                               ) : (
                                 <button onClick={async()=>{setMenuOpenId(null);await createOrderFromOpportunity(record);await fetchOrders();alert('Order created successfully!');}} className="w-full text-left px-4 py-3 rounded-xl text-sm font-medium hover:bg-blue-800 text-white">🛒 Create Order</button>
                               )}
@@ -384,10 +385,38 @@ export default function CRMListPage({ page }) {
         const isCPQPage = ['orders','invoices'].includes(page);
         const cpqEnabled = appPreferences?.cpq_enabled !== false;
         if (isCPQPage && cpqEnabled) {
-          return <CPQRecordDetail page={page} record={selectedRecord} onClose={()=>setSelectedRecord(null)}/>;
+          return <CPQRecordDetail page={page} record={selectedRecord} onClose={()=>{
+            setSelectedRecord(null);
+            if (pendingReturnTo) {
+              const rt = pendingReturnTo;
+              setPendingReturnTo(null);
+              window.dispatchEvent(new CustomEvent('open-crm-record', { detail: rt }));
+            }
+          }}/>;
         }
-        return <RecordDetailPanel page={page} record={selectedRecord} onClose={()=>setSelectedRecord(null)}/>;
+        return <RecordDetailPanel page={page} record={selectedRecord} onClose={()=>{
+          setSelectedRecord(null);
+          if (pendingReturnTo) {
+            const rt = pendingReturnTo;
+            setPendingReturnTo(null);
+            window.dispatchEvent(new CustomEvent('open-crm-record', { detail: rt }));
+          }
+        }}/>;
       })()}
+      {successDialog && (
+        <div className="fixed inset-0 z-[600] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={()=>setSuccessDialog(null)}/>
+          <div className="relative bg-white rounded-[24px] shadow-2xl max-w-md w-full p-6 text-center">
+            <div className="text-5xl mb-3">🎉</div>
+            <h3 className="text-lg font-bold text-[#0F172A] mb-2">{successDialog.title}</h3>
+            <p className="text-sm text-gray-500 leading-relaxed mb-5">{successDialog.message}</p>
+            <button onClick={()=>setSuccessDialog(null)}
+              className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-[#0F172A] to-blue-800 text-white text-sm font-bold hover:opacity-90 shadow-md">
+              Got it
+            </button>
+          </div>
+        </div>
+      )}
       <CreateRecordModal page={page} open={createOpen} onClose={()=>setCreateOpen(false)}/>
     </div>
   );

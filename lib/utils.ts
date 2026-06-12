@@ -127,7 +127,7 @@ export const getObjectFields = (page: string): string[] => {
     case 'customers':
       return ['name','industry','phone','email','website','gstNumber',
               'billingAddress','shippingAddress','city','state','postalCode','country',
-              'primaryContact','owner','status','description'];
+              'owner','status','description'];
     case 'contacts':
       return ['name','designation','department','email','phone','mobile',
               'customer','isPrimary','linkedIn','owner','status','description'];
@@ -136,10 +136,10 @@ export const getObjectFields = (page: string): string[] => {
               'unit','taxRate','status','description'];
     case 'leads':
       return ['name','customer','contact','email','phone',
-              'source','amount','expectedCloseDate','owner','status','description'];
+              'source','amount','expectedCloseDate','billingAddress','shippingAddress','owner','status','description'];
     case 'opportunities':
       return ['name','customer','contact','stage','amount',
-              'closeDate','probability','campaign','owner','status','description'];
+              'closeDate','probability','campaign','billingAddress','shippingAddress','owner','status','description'];
     case 'orders':
       return ['name','customer','contact','currency','paymentTerms',
               'deliveryDate','amount','owner','status','notes'];

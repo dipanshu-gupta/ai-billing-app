@@ -30,6 +30,51 @@ function Pill({ status }) {
   return <span className={`px-2.5 py-0.5 rounded-full text-xs font-semibold ${getStatusColor(status)}`}>{status}</span>;
 }
 
+// ─── OwnerField: searchable select over all users.
+//     Default = record's current owner; if none, the user who created the record;
+//     if none, the currently logged-in user. ─────────────────────────────────────
+function OwnerField({ record, edited, onPick }) {
+  const { enterpriseUsers, currentUser } = useApp();
+  const [backup, setBackup] = useState([]);
+
+  useEffect(() => {
+    if (enterpriseUsers.length > 0 || !supabase) return;
+    supabase.from('enterprise_users').select('*').then(({ data, error }) => {
+      if (error) console.error('OwnerField backup fetch:', error.message);
+      setBackup(data || []);
+    });
+  }, [enterpriseUsers.length]);
+
+  const users = enterpriseUsers.length > 0 ? enterpriseUsers : backup;
+
+  // Resolution order: edited owner_id → edited owner email → created_by email → current user
+  const resolved =
+    users.find(u => edited.owner_id   && u.id    === edited.owner_id)  ||
+    users.find(u => edited.owner      && u.email === edited.owner)      ||
+    users.find(u => record.created_by && u.email === record.created_by) ||
+    users.find(u => currentUser       && u.id    === currentUser.id);
+
+  // Auto-persist the default into edited state so saving captures it
+  useEffect(() => {
+    if (resolved && !edited.owner_id) onPick(resolved);
+  }, [resolved?.id]);
+
+  return (
+    <SearchableSelect
+      value={resolved?.id || ''}
+      onChange={uid => onPick(users.find(x => x.id === uid) || null)}
+      options={users.map(u => ({
+        value: u.id,
+        label: (`${u.first_name || ''} ${u.last_name || ''}`.trim()) || u.email || 'User',
+        sub:   [u.designation, u.email].filter(Boolean).join(' · '),
+      }))}
+      placeholder={users.length === 0 ? 'Loading users...' : 'Select owner'}
+      emptyLabel="Unassigned"
+    />
+  );
+}
+
+
 // ─── Approval Banner ──────────────────────────────────────────────────────────
 function ApprovalBanner({ recordId, recordType, onDecision }) {
   const { currentUser, approvalRequests, processApproval,
@@ -178,7 +223,7 @@ function Customer360({ customer, onSubRecordOpen, onCreateFor }) {
 
   const secs = {
     contacts:      { icon:'📇', label:'Contacts',      createLabel:'Contact',     data:contacts.filter(m),
-      cols:[{h:'Name',v:r=>r.name},{h:'Email',v:r=>r.email||'-'},{h:'Phone',v:r=>r.phone||'-'},{h:'Designation',v:r=>r.designation||'-'},{h:'Status',v:r=><Pill status={r.status}/>}] },
+      cols:[{h:'Name',v:r=>r.name},{h:'Email',v:r=>r.email||'-'},{h:'Phone',v:r=>r.phone||'-'},{h:'Designation',v:r=>r.designation||'-'},{h:'Primary',v:r=>(r.isPrimary||r.is_primary)?<span className="inline-flex items-center gap-1 text-xs font-bold text-amber-700 bg-amber-100 px-2 py-0.5 rounded-full">★ Primary</span>:<span className="text-gray-300 text-xs">—</span>},{h:'Status',v:r=><Pill status={r.status}/>}] },
     leads:         { icon:'🎯', label:'Leads',          createLabel:'Lead',        data:leads.filter(m),
       cols:[{h:'Name',v:r=>r.name},{h:'Source',v:r=>r.source||'-'},{h:'Amount',v:r=>fmt(r.amount)},{h:'Owner',v:r=>r.owner||'-'},{h:'Status',v:r=><Pill status={r.status}/>}] },
     opportunities: { icon:'💼', label:'Opportunities',  createLabel:'Opportunity', data:opportunities.filter(m),
@@ -252,85 +297,6 @@ function Customer360({ customer, onSubRecordOpen, onCreateFor }) {
 }
 
 
-// ─── SubRecordViewer — simple read/edit panel for Customer360 sub-records ─────
-// Avoids recursive import of RecordDetailPanel
-function SubRecordViewer({ page, record, onClose }) {
-  const { updateRecord, customers, contacts, products, enterpriseUsers, organizations, businessUnits } = useApp();
-  const [edited, setEdited] = useState({ ...record });
-  const [saving, setSaving] = useState(false);
-  const set = (k,v) => setEdited(p => ({...p,[k]:v}));
-  const statusOpts = getStatusOptions(page);
-  const fmt = n => new Intl.NumberFormat('en-IN',{style:'currency',currency:'INR',maximumFractionDigits:0}).format(n||0);
-  const ownerUser = enterpriseUsers.find(u => u.id === record.owner_id || u.email === record.owner);
-
-  const handleSave = async () => {
-    setSaving(true);
-    await updateRecord(page, edited, []);
-    setSaving(false);
-    onClose();
-  };
-
-  return (
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[130] overflow-y-auto flex items-center justify-center p-4">
-      <div className="bg-white rounded-[28px] shadow-2xl w-full max-w-2xl overflow-hidden">
-        <div className="bg-gradient-to-r from-[#0F172A] to-blue-900 px-6 py-4 flex items-center justify-between">
-          <div>
-            <h3 className="text-xl font-bold text-white">{edited.name || edited.subject || getPageLabel(page)}</h3>
-            <p className="text-blue-300 text-sm">{record.id} · {getPageLabel(page)}{ownerUser?` · 👤 ${ownerUser.first_name} ${ownerUser.last_name}`:''}</p>
-          </div>
-          <button onClick={onClose} className="w-9 h-9 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center text-lg">✕</button>
-        </div>
-        <div className="p-6 space-y-4 max-h-[70vh] overflow-y-auto">
-          <div className="grid grid-cols-2 gap-4">
-            {getObjectFields(page).map(field => {
-              const v = edited[field];
-              return (
-                <div key={field} className="bg-gray-50 rounded-2xl p-3 border border-blue-100">
-                  <label className="text-xs font-bold uppercase text-gray-400 block mb-1.5">{field.replace(/([A-Z])/g,' $1').trim()}</label>
-                  {field==='status'
-                    ? <select value={v||''} onChange={e=>set(field,e.target.value)} className={sCls}>{statusOpts.map(s=><option key={s}>{s}</option>)}</select>
-                    : field==='customer'
-                    ? <SearchableSelect
-              value={edited.customerId||''}
-              onChange={v=>{const c=customers.find(x=>x.id===v);setEdited(p=>({...p,customerId:c?.id||'',customer:c?.name||''}));}}
-              options={customers.map(c=>({value:c.id,label:c.name,sub:[c.email,c.phone,c.industry,c.city].filter(Boolean).join(' · ')}))}
-              placeholder="Select customer" emptyLabel="No customer"
-            />
-                    : field==='owner'
-                    ? <SearchableSelect
-              value={edited.owner_id||''}
-              onChange={v=>{const u=enterpriseUsers.find(x=>x.id===v);setEdited(p=>({...p,owner_id:u?.id||'',owner:u?.email||''}));}}
-              options={enterpriseUsers.map(u=>({value:u.id,label:`${u.first_name||''} ${u.last_name||''}`.trim(),sub:u.designation||u.email||''}))}
-              placeholder="Select owner" emptyLabel="Unassigned"
-            />
-                    : ['closeDate','activityDate','deliveryDate','dueDate'].includes(field)
-                    ? <input type="date" value={v||''} onChange={e=>set(field,e.target.value)} className={iCls}/>
-                    : ['amount','price'].includes(field)
-                    ? <input type="number" value={v||''} onChange={e=>set(field,e.target.value)} className={iCls}/>
-                    : field==='notes'
-                    ? <textarea rows={3} value={v||''} onChange={e=>set(field,e.target.value)} className={tCls}/>
-                    : <input type="text" value={v||''} onChange={e=>set(field,e.target.value)} className={iCls}/>
-                  }
-                </div>
-              );
-            })}
-          </div>
-          <div className="grid grid-cols-2 gap-3 pt-2 border-t border-blue-100">
-            {[['Created By',record.created_by],['Updated By',record.updated_by],['Organization',organizations.find(o=>o.id===record.organization_id)?.name],['Business Unit',businessUnits.find(b=>b.id===record.business_unit_id)?.name]].map(([l,v])=>(
-              <div key={l}><div className="text-xs text-gray-400 font-bold uppercase mb-1">{l}</div><div className="text-sm text-[#0F172A] bg-gray-50 rounded-xl px-3 py-2">{v||'-'}</div></div>
-            ))}
-          </div>
-        </div>
-        <div className="px-6 py-4 border-t border-blue-100 flex justify-end gap-3">
-          <button onClick={onClose} className="px-5 py-2.5 rounded-2xl border border-blue-200 text-sm font-semibold text-[#0F172A] hover:bg-blue-50">Close</button>
-          <button onClick={handleSave} disabled={saving} className="px-5 py-2.5 rounded-2xl bg-gradient-to-r from-[#0F172A] to-blue-800 text-white text-sm font-semibold disabled:opacity-50">
-            {saving?'Saving…':'Save Changes'}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
 
 // ─── Main RecordDetailPanel ───────────────────────────────────────────────────
 export default function RecordDetailPanel({ page, record, onClose }) {
@@ -338,8 +304,8 @@ export default function RecordDetailPanel({ page, record, onClose }) {
     customers, contacts, products, organizations, businessUnits, enterpriseUsers,
     updateRecord, submitForApproval, checkMatchingApprovalProcess,
     convertLeadToOpportunity, createInvoiceFromOrder, createOrderFromOpportunity,
-    createQuotationFromOpportunity, fetchLineItems,
-    currentUserPermissions, permissionsLoaded, appPreferences,
+    createQuotationFromOpportunity, fetchLineItems, fetchEnterpriseUsers,
+    currentUserPermissions, permissionsLoaded, appPreferences, currentUser,
   } = useApp();
 
   // Local permission helper (mirrors CRMListPage canDo)
@@ -358,13 +324,13 @@ export default function RecordDetailPanel({ page, record, onClose }) {
   const [matchingProcess, setMatchingProcess] = useState(null);
   const [checkingApproval,setCheckingApproval]= useState(false);
   // Sub-record state for Customer360
-  const [subRecord,   setSubRecord]   = useState(null); // { page, record }
   const [createForPage, setCreateForPage] = useState(null); // page string
+
+
 
   useEffect(() => {
     setEdited({ ...record });
     setTab('details');
-    setSubRecord(null);
 
     // Check matching approval process
     const checkApproval = async () => {
@@ -409,14 +375,14 @@ export default function RecordDetailPanel({ page, record, onClose }) {
 
   // Section definitions per page
   const PAGE_SECTIONS = {
-    customers:    [{icon:'🏢',title:'Basic Info',fields:['name','industry','website','gstNumber']},{icon:'📞',title:'Contact Info',fields:['phone','email','primaryContact']},{icon:'👤',title:'Ownership',fields:['owner','status']}],
-    contacts:     [{icon:'👤',title:'Personal Info',fields:['name','designation','department','isPrimary']},{icon:'📞',title:'Contact Info',fields:['email','phone','mobile','linkedIn']},{icon:'🏢',title:'Relationship',fields:['customer','owner','status']}],
-    leads:        [{icon:'🎯',title:'Lead Info',fields:['name','source','amount','expectedCloseDate']},{icon:'🏢',title:'Relationship',fields:['customer','contact','email','phone']},{icon:'👤',title:'Ownership',fields:['owner','status']}],
-    opportunities:[{icon:'💼',title:'Opportunity Info',fields:['name','stage','amount','closeDate','probability']},{icon:'🏢',title:'Relationship',fields:['customer','contact','campaign']},{icon:'👤',title:'Ownership',fields:['owner','status']}],
-    orders:       [{icon:'🛒',title:'Order Info',fields:['name','currency','paymentTerms','deliveryDate']},{icon:'🏢',title:'Relationship',fields:['customer','contact']},{icon:'👤',title:'Ownership',fields:['owner','status']}],
-    invoices:     [{icon:'🧾',title:'Invoice Info',fields:['name','dueDate','paymentTerms']},{icon:'🏢',title:'Relationship',fields:['customer','contact']},{icon:'👤',title:'Ownership',fields:['owner','status']}],
-    activities:   [{icon:'📅',title:'Activity Info',fields:['name','activityType','activityDate','dueDate','priority']},{icon:'🏢',title:'Relationship',fields:['customer','contact']},{icon:'👤',title:'Ownership',fields:['owner','status']}],
-    products:     [{icon:'📦',title:'Product Info',fields:['name','productFamily','category','sku','unit']},{icon:'💰',title:'Pricing',fields:['price','cost','taxRate']},{icon:'📊',title:'Status',fields:['status']}],
+    customers:    [{icon:'🏢',title:'Basic Info',fields:['name','industry','website','gstNumber']},{icon:'📞',title:'Contact Info',fields:['phone','email']},{icon:'👤',title:'Ownership',fields:['owner','status']},{icon:'💬',title:'Comments',fields:['comments']}],
+    contacts:     [{icon:'👤',title:'Personal Info',fields:['name','designation','department','isPrimary']},{icon:'📞',title:'Contact Info',fields:['email','phone','mobile','linkedIn']},{icon:'🏢',title:'Relationship',fields:['customer','owner','status']},{icon:'💬',title:'Comments',fields:['comments']}],
+    leads:        [{icon:'🎯',title:'Lead Info',fields:['name','source','amount','expectedCloseDate']},{icon:'🏢',title:'Relationship',fields:['customer','contact','email','phone']},{icon:'📍',title:'Addresses',fields:['billingAddress','shippingAddress']},{icon:'👤',title:'Ownership',fields:['owner','status']},{icon:'💬',title:'Comments',fields:['comments']}],
+    opportunities:[{icon:'💼',title:'Opportunity Info',fields:['name','stage','amount','closeDate','probability']},{icon:'🏢',title:'Relationship',fields:['customer','contact','campaign']},{icon:'📍',title:'Addresses',fields:['billingAddress','shippingAddress']},{icon:'👤',title:'Ownership',fields:['owner','status']},{icon:'💬',title:'Comments',fields:['comments']}],
+    orders:       [{icon:'🛒',title:'Order Info',fields:['name','currency','paymentTerms','deliveryDate']},{icon:'🏢',title:'Relationship',fields:['customer','contact']},{icon:'👤',title:'Ownership',fields:['owner','status']},{icon:'💬',title:'Comments',fields:['comments']}],
+    invoices:     [{icon:'🧾',title:'Invoice Info',fields:['name','dueDate','paymentTerms']},{icon:'🏢',title:'Relationship',fields:['customer','contact']},{icon:'👤',title:'Ownership',fields:['owner','status']},{icon:'💬',title:'Comments',fields:['comments']}],
+    activities:   [{icon:'📅',title:'Activity Info',fields:['name','activityType','activityDate','dueDate','priority']},{icon:'🏢',title:'Relationship',fields:['customer','contact']},{icon:'👤',title:'Ownership',fields:['owner','status']},{icon:'💬',title:'Comments',fields:['comments']}],
+    products:     [{icon:'📦',title:'Product Info',fields:['name','productFamily','category','sku','unit']},{icon:'💰',title:'Pricing',fields:['price','cost','taxRate']},{icon:'📊',title:'Status',fields:['status']},{icon:'💬',title:'Comments',fields:['comments']}],
   };
 
   const sections = PAGE_SECTIONS[page] || [{icon:'📋',title:'Details',fields:fields}];
@@ -433,7 +399,7 @@ export default function RecordDetailPanel({ page, record, onClose }) {
     paymentTerms:'Payment Terms', deliveryDate:'Delivery Date', currency:'Currency',
     notes:'Notes', source:'Lead Source', productFamily:'Product Family', category:'Category',
     sku:'SKU / Code', price:'Unit Price', cost:'Cost Price', taxRate:'Tax Rate (%)',
-    unit:'Unit of Measure',
+    unit:'Unit of Measure', comments:'Comments',
   };
 
   const PRIORITY_OPTS = ['Low','Medium','High','Critical'];
@@ -463,20 +429,35 @@ export default function RecordDetailPanel({ page, record, onClose }) {
               options={contacts.map(c=>({value:c.id,label:c.name,sub:[c.email,c.phone,c.designation,c.customer].filter(Boolean).join(' · ')}))}
               placeholder="Select contact" emptyLabel="No contact"
             />;
-    if (field==='owner')        return <SearchableSelect
-              value={edited.owner_id||''}
-              onChange={v=>{const u=enterpriseUsers.find(x=>x.id===v);setEdited(p=>({...p,owner_id:u?.id||'',owner:u?.email||''}));}}
-              options={enterpriseUsers.map(u=>({value:u.id,label:`${u.first_name||''} ${u.last_name||''}`.trim(),sub:u.designation||u.email||''}))}
-              placeholder="Select owner" emptyLabel="Unassigned"
-            />;
-    if (field==='stage')        return <select value={v||''} onChange={e=>set(field,e.target.value)} className={sCls}>{['Qualification','Proposal Sent','Negotiation','Closed Won','Closed Lost'].map(s=><option key={s}>{s}</option>)}</select>;
-    if (field==='source')       return <select value={v||''} onChange={e=>set(field,e.target.value)} className={sCls}>{['Website','Campaign','Referral','Cold Call','Trade Show','Partner'].map(s=><option key={s}>{s}</option>)}</select>;
-    if (field==='activityType') return <select value={v||''} onChange={e=>set(field,e.target.value)} className={sCls}>{['Call','Meeting','Email','Task','Demo'].map(s=><option key={s}>{s}</option>)}</select>;
-    if (field==='paymentTerms') return <select value={v||''} onChange={e=>set(field,e.target.value)} className={sCls}>{['Due on Receipt','Net 15','Net 30','Net 45'].map(s=><option key={s}>{s}</option>)}</select>;
-    if (field==='isPrimary')    return <select value={v?'Yes':'No'} onChange={e=>set(field,e.target.value==='Yes')} className={sCls}><option>No</option><option>Yes</option></select>;
+    if (field==='owner')
+      return <OwnerField
+        record={record}
+        edited={edited}
+        onPick={u => { set('owner_id', u?.id || ''); set('owner', u?.email || ''); }}
+      />;
+    if (field==='stage')        return <select value={v||''} onChange={e=>set(field,e.target.value)} className={sCls}>{STAGES.map(s=><option key={s}>{s}</option>)}</select>;
+    if (field==='source')       return <select value={v||''} onChange={e=>set(field,e.target.value)} className={sCls}><option value=''>Select source</option>{LEAD_SOURCES.map(s=><option key={s}>{s}</option>)}</select>;
+    if (field==='activityType') return <select value={v||''} onChange={e=>set(field,e.target.value)} className={sCls}><option value=''>Select type</option>{ACTIVITY_TYPES.map(s=><option key={s}>{s}</option>)}</select>;
+    if (field==='paymentTerms') return <select value={v||''} onChange={e=>set(field,e.target.value)} className={sCls}><option value=''>Select terms</option>{PAYMENT_TERMS_OPTS.map(s=><option key={s}>{s}</option>)}</select>;
+    if (field==='isPrimary')    return <label className='flex items-center gap-2 cursor-pointer pt-1'><input type='checkbox' checked={!!v} onChange={e=>set(field,e.target.checked)} className='w-4 h-4 accent-blue-600'/><span className='text-sm text-[#0F172A]'>Yes, mark as primary contact</span></label>;
     if (field==='category')     return <select value={v||''} onChange={e=>set(field,e.target.value)} className={sCls}><option value="">Select</option>{['Software','Hardware','Service','Subscription','Consulting','Other'].map(s=><option key={s}>{s}</option>)}</select>;
     if (field==='productFamily') return <select value={v||''} onChange={e=>set(field,e.target.value)} className={sCls}><option value="">Select Family</option>{['Software Products','Hardware Products','Professional Services','Managed Services','Subscriptions','Other'].map(s=><option key={s}>{s}</option>)}</select>;
-    if (['closeDate','activityDate','deliveryDate','dueDate','validity_date'].includes(field)) return <input type="date" value={v||''} onChange={e=>set(field,e.target.value)} className={iCls}/>;
+    if (field==='industry')
+      return <select value={v||''} onChange={e=>set(field,e.target.value)} className={sCls}>
+        <option value="">Select industry</option>
+        {INDUSTRIES.map(i=><option key={i}>{i}</option>)}
+      </select>;
+    if (['billingAddress','shippingAddress'].includes(field))
+      return <AddressSelector
+        customerId={edited.customerId || edited.customer_id}
+        value={v || ''}
+        onChange={val => set(field, val)}
+        placeholder="Select saved address or type"
+      />;
+    if (['closeDate','activityDate','deliveryDate','dueDate','validity_date','expectedCloseDate','activityDate'].includes(field))
+      return <input type="date" value={v||''} onChange={e=>set(field,e.target.value)} className={iCls}/>;
+    if (field==='comments')
+      return <textarea rows={3} value={v||''} onChange={e=>set(field,e.target.value)} className={tCls} placeholder="Add comments or working notes..."/>;
     if (field==='notes'||field==='internal_notes') return <textarea rows={4} value={v||''} onChange={e=>set(field,e.target.value)} className={tCls} placeholder="Notes..."/>;
     return <input type={['amount','price','overall_discount','shipping_cost'].includes(field)?'number':'text'} value={v||''} onChange={e=>set(field,e.target.value)} placeholder={field.replace(/([A-Z])/g,' $1').trim()} className={iCls}/>;
   };
@@ -559,7 +540,17 @@ export default function RecordDetailPanel({ page, record, onClose }) {
             {page==='customers'&&tab==='360'&&(
               <Customer360
                 customer={edited}
-                onSubRecordOpen={(subPage, subRec) => setSubRecord({ page: subPage, record: subRec })}
+                onSubRecordOpen={(subPage, subRec) => {
+                  // Navigate to object's list page, with returnTo = this customer
+                  window.dispatchEvent(new CustomEvent('open-crm-record', {
+                    detail: {
+                      page:     subPage,
+                      record:   subRec,
+                      returnTo: { page: 'customers', record: edited }
+                    }
+                  }));
+                  onClose();
+                }}
                 onCreateFor={(subPage) => setCreateForPage(subPage)}
               />
             )}
@@ -571,14 +562,14 @@ export default function RecordDetailPanel({ page, record, onClose }) {
 
               <div className="space-y-5">
                 {sections.map(section=>(
-                  <div key={section.title} className="bg-white rounded-[20px] border border-blue-100 shadow-sm overflow-hidden">
+                  <div key={section.title} className="bg-white rounded-[20px] border border-blue-100 shadow-sm">
                     <div className="px-5 py-3 bg-gradient-to-r from-slate-50 to-blue-50 border-b border-blue-100 flex items-center gap-2">
                       <span className="text-lg">{section.icon}</span>
                       <span className="font-bold text-[#0F172A] text-sm">{section.title}</span>
                     </div>
                     <div className="p-5 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-                      {section.fields.filter(f=>fields.includes(f)||['notes','description'].includes(f)).map(field=>(
-                        <div key={field} className={`space-y-1.5 ${['notes','description','billingAddress','shippingAddress'].includes(field)?'md:col-span-2 xl:col-span-3':''}`}>
+                      {section.fields.filter(f=>fields.includes(f)||['notes','description','comments'].includes(f)).map(field=>(
+                        <div key={field} className={`space-y-1.5 ${['notes','description','comments','billingAddress','shippingAddress'].includes(field)?'md:col-span-2 xl:col-span-3':''}`}>
                           <label className="text-xs font-bold uppercase tracking-wider text-gray-400 block">
                             {LABEL_MAP[field] || field.replace(/([A-Z])/g,' $1').trim()}
                           </label>
@@ -590,7 +581,7 @@ export default function RecordDetailPanel({ page, record, onClose }) {
                 ))}
                 {/* Address Manager for customers and contacts */}
                 {(page==='customers'||page==='contacts') && record.id && (
-                  <div className="bg-white rounded-[20px] border border-blue-100 shadow-sm overflow-hidden">
+                  <div className="bg-white rounded-[20px] border border-blue-100 shadow-sm">
                     <div className="px-5 py-3 bg-gradient-to-r from-slate-50 to-blue-50 border-b border-blue-100 flex items-center gap-2">
                       <span className="text-lg">📍</span>
                       <span className="font-bold text-[#0F172A] text-sm">Addresses</span>
@@ -651,13 +642,7 @@ export default function RecordDetailPanel({ page, record, onClose }) {
       </div>
 
       {/* Sub-record quick view (from Customer360 row click) */}
-      {subRecord && (
-        <SubRecordViewer
-          page={subRecord.page}
-          record={subRecord.record}
-          onClose={() => setSubRecord(null)}
-        />
-      )}
+
 
       {/* Create record for Customer360 */}
       {createForPage && (

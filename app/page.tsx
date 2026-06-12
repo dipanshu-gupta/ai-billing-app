@@ -135,7 +135,7 @@ const CRM_PAGES = ['customers', 'products', 'leads', 'opportunities', 'activitie
 const NON_CRM_PAGES = ['dashboard', 'approvals', 'adminTools', 'quotations', 'reports'];
 
 function AppShell() {
-  const { session, authLoading, appPreferences } = useApp();
+  const { session, authLoading, appPreferences, setPendingReturnTo } = useApp();
   const [activePage,       setActivePage]       = useState('dashboard');
   const [pendingOpenRecord, setPendingOpenRecord] = useState(null); // { page, record }
 
@@ -149,12 +149,19 @@ function AppShell() {
   // Listen for open-record event from GlobalSearch — open panel directly from AppShell
   React.useEffect(() => {
     const h = (e) => {
-      const { page, record } = e.detail;
+      const { page, record, returnTo } = e.detail;
       setActivePage(page);
       setPendingOpenRecord({ page, record });
+      if (returnTo) setPendingReturnTo(returnTo);
     };
-    window.addEventListener('open-record', h);
-    return () => window.removeEventListener('open-record', h);
+    // open-record: from global search
+    // open-crm-record: from Customer360 sub-tab click
+    window.addEventListener('open-record',     h);
+    window.addEventListener('open-crm-record', h);
+    return () => {
+      window.removeEventListener('open-record',     h);
+      window.removeEventListener('open-crm-record', h);
+    };
   }, []);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(true);
   const [profileOpen, setProfileOpen] = useState(false);
