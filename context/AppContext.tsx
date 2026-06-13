@@ -319,7 +319,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     if (data) {
       setProducts(data.map((p: any) => ({
         ...p,
-        id: p.product_number || p.id, name: p.name, category: p.category,
+        id: p.product_number || p.id, _uuid: p.id, name: p.name, category: p.category,
         price: Number(p.price || 0), status: p.status,
         created_by: p.created_by, created_at: p.created_at, updated_by: p.updated_by, updated_at: p.updated_at,
         organization_id: p.organization_id, business_unit_id: p.business_unit_id,
@@ -731,7 +731,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         }
         case 'products': {
           const id = generateId('PROD');
-          const { error } = await supabase.from('products').insert([{ ...sys, owner: data.owner||currentUser?.email||'', owner_id: data.owner_id||currentUser?.id||null, comments: data.comments||'', product_number: id, name: data.name, category: data.category, price: Number(data.price || 0), status: data.status || 'Active' }]);
+          const { error } = await supabase.from('products').insert([{ ...sys, owner: data.owner||currentUser?.email||'', owner_id: data.owner_id||currentUser?.id||null, comments: data.comments||'', name: data.name, category: data.category, price: Number(data.price || 0), status: data.status || 'Active' }]);
           if (error) throw error;
           await fetchProducts(); break;
         }
@@ -824,7 +824,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         }
         await fetchContacts(); await fetchCustomers(); break; }
       case 'products': {
-        const { error: e_products } = await supabase.from('products').update({ ...sys, name: record.name, product_family: record.productFamily||'', category: record.category||'', sku: record.sku||'', price: Number(record.price||0), cost: Number(record.cost||0), unit: record.unit||'', tax_rate: Number(record.taxRate||record.tax_rate||0), description: record.description||'', owner: record.owner||'', status: record.status, comments: record.comments||'' }).eq(String(record.id).startsWith('PROD') ? 'product_number' : 'id', record.id);
+        const { error: e_products } = await supabase.from('products').update({ ...sys, name: record.name, product_family: record.productFamily||'', category: record.category||'', sku: record.sku||'', price: Number(record.price||0), cost: Number(record.cost||0), unit: record.unit||'', tax_rate: Number(record.taxRate||record.tax_rate||0), description: record.description||'', owner: record.owner||'', status: record.status, comments: record.comments||'' }).eq('id', record._uuid || record.id);
         if (e_products) { console.error('update products:', e_products.message); alert('Save failed: ' + e_products.message); return; }
         await fetchProducts(); break; }
       case 'leads': {
@@ -1431,6 +1431,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     if (!supabase||!window.confirm('Delete this record?')) return;
     const tableMap = { customers:'customers', leads:'leads', opportunities:'opportunities', orders:'orders', invoices:'invoices', contacts:'contacts', activities:'activities', products:'products' };
     const idFieldMap = { customers:'id', leads:'lead_number', opportunities:'opportunity_number', orders:'order_number', invoices:'invoice_number', contacts:'contact_number', activities:'activity_number', products:'id' };
+    // For products, recordId may be PROD-xxx (product_number); resolve to UUID
+    if (page === 'products' && String(recordId).startsWith('PROD')) {
+      const prod = (await supabase.from('products').select('id').eq('product_number', recordId).maybeSingle()).data;
+      if (prod?.id) recordId = prod.id;
+    }
     const table=tableMap[page]; const idField=idFieldMap[page]; if(!table)return;
     const f = (page==='products' && String(recordId).startsWith('PROD')) ? 'product_number' : idField;
     await supabase.from(table).delete().eq(f, recordId);
