@@ -7,6 +7,8 @@ import Sidebar from '@/components/layout/Sidebar';
 import Header from '@/components/layout/Header';
 import DashboardPage from '@/components/dashboard/DashboardPage';
 import CRMListPage from '@/components/crm/CRMListPage';
+import RetailListPage from '@/components/retail/RetailListPage';
+import RetailDashboard from '@/components/retail/RetailDashboard';
 import AdminToolsPage from '@/components/admin/AdminToolsPage';
 import ApprovalsInboxPage from '@/components/approvals/ApprovalsInboxPage';
 import QuotationsPage from '@/components/quotations/QuotationsPage';
@@ -133,12 +135,11 @@ function ProfileModal({ open, onClose }) {
 
 const CRM_PAGES = ['customers', 'products', 'leads', 'opportunities', 'activities', 'contacts', 'orders', 'invoices'];
 const NON_CRM_PAGES = ['dashboard', 'approvals', 'adminTools', 'quotations', 'reports'];
+const RETAIL_PAGES = ['retailCustomers', 'retailProducts', 'retailActivities', 'retailOrders', 'retailInvoices'];
 
 function AppShell() {
-  const { session, authLoading, appPreferences, setPendingReturnTo } = useApp();
+  const { session, authLoading, appPreferences, setPendingReturnTo, setPendingRecord } = useApp();
   const [activePage,       setActivePage]       = useState('dashboard');
-  const [pendingOpenRecord, setPendingOpenRecord] = useState(null); // { page, record }
-
   // Listen for profile open event from Header
   React.useEffect(() => {
     const h = () => setProfileOpen(true);
@@ -150,8 +151,10 @@ function AppShell() {
   React.useEffect(() => {
     const h = (e) => {
       const { page, record, returnTo } = e.detail;
+      // Store the target record in AppContext so it survives the page switch,
+      // even though CRMListPage for the new page hasn't mounted yet.
+      setPendingRecord({ page, record });
       setActivePage(page);
-      setPendingOpenRecord({ page, record });
       if (returnTo) setPendingReturnTo(returnTo);
     };
     // open-record: from global search
@@ -193,8 +196,9 @@ function AppShell() {
       <div className="flex-1 flex flex-col min-w-0">
         <Header activePage={activePage} onNavigate={(page) => setActivePage(page)} />
         <main className="flex-1 p-6 overflow-y-auto">
-          {activePage === 'dashboard' && <DashboardPage />}
+          {activePage === 'dashboard' && (appPreferences?.b2c_mode === true ? <RetailDashboard /> : <DashboardPage />)}
           {CRM_PAGES.includes(activePage) && !NON_CRM_PAGES.includes(activePage) && <CRMListPage page={activePage} />}
+          {RETAIL_PAGES.includes(activePage) && <RetailListPage page={activePage} />}
           {activePage === 'quotations' && appPreferences?.cpq_enabled !== false && <QuotationsPage />}
           {activePage === 'reports' && <FastReportsPage />}
           {activePage === 'approvals' && <ApprovalsInboxPage />}
@@ -203,14 +207,6 @@ function AppShell() {
       </div>
       <ProfileModal open={profileOpen} onClose={() => setProfileOpen(false)} />
 
-      {/* Global search record detail — opens directly from AppShell */}
-      {pendingOpenRecord && pendingOpenRecord.record && (
-        <RecordDetailPanel
-          page={pendingOpenRecord.page}
-          record={pendingOpenRecord.record}
-          onClose={() => setPendingOpenRecord(null)}
-        />
-      )}
       <AIAdvisorChat />
     </div>
   );

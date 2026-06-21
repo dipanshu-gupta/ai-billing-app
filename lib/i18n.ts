@@ -30,6 +30,8 @@ const dict: Record<string, Record<string,string>> = {
     products:'Products', quotations:'Quotations', orders:'Orders',
     invoices:'Invoices', reports:'Fast Reports', approvals:'My Approvals',
     adminTools:'Admin Tools', sales:'Sales', operations:'Operations',
+    retail:'Retail', retailCustomers:'Customers', retailActivities:'Activities',
+    retailProducts:'Products', retailOrders:'Orders', retailInvoices:'Invoices',
     save:'Save', cancel:'Cancel', delete:'Delete', create:'Create',
     edit:'Edit', search:'Search', filter:'Filter', export:'Export',
     name:'Name', status:'Status', owner:'Owner', amount:'Amount',

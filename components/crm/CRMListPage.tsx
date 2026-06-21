@@ -61,7 +61,7 @@ function StatusBadge({ status }) {
 
 function SavedSearchPanel({ page, currentFilters, onApply, onClose }) {
   const { currentUser, savedSearches, fetchSavedSearches, createSavedSearch, deleteSavedSearch, setDefaultSavedSearch,
-    appPreferences, createOrderFromOpportunity, fetchOrders,
+    appPreferences, createOrderFromOpportunity, fetchOrders, pendingRecord, setPendingRecord,
   } = useApp();
   const [saveName,   setSaveName]   = useState('');
   const [saveDef,    setSaveDef]    = useState(false);
@@ -142,11 +142,47 @@ export default function CRMListPage({ page }) {
     enterpriseUsers, savedSearches, fetchSavedSearches,
     convertLeadToOpportunity, createOrderFromOpportunity, createInvoiceFromOrder,
     createQuotationFromOpportunity, fetchQuotations,
-    currentUserPermissions, permissionsLoaded, appPreferences,
-    fetchOrders, pendingReturnTo, setPendingReturnTo,
+    currentUserPermissions, permissionsLoaded, appPreferences, hasPermission,
+    fetchOrders, pendingReturnTo, setPendingReturnTo, pendingRecord, setPendingRecord,
   } = useApp();
 
   const [successDialog, setSuccessDialog] = useState(null); // { title, message }
+
+  // RBAC: map page to permission codes
+  const PAGE_PERMS = {
+    customers:'customers_view', leads:'leads_view', opportunities:'opportunities_view',
+    contacts:'contacts_view', activities:'activities_view', products:'products_view',
+    orders:'orders_view', invoices:'invoices_view',
+  };
+  const PAGE_EDIT_PERMS = {
+    customers:'customers_edit', leads:'leads_edit', opportunities:'opportunities_edit',
+    contacts:'contacts_edit', activities:'activities_edit', products:'products_edit',
+    orders:'orders_edit', invoices:'invoices_edit',
+  };
+  const PAGE_CREATE_PERMS = {
+    customers:'customers_create', leads:'leads_create', opportunities:'opportunities_create',
+    contacts:'contacts_create', activities:'activities_create', products:'products_create',
+    orders:'orders_create', invoices:'invoices_create',
+  };
+  const PAGE_DELETE_PERMS = {
+    customers:'customers_delete', leads:'leads_delete', opportunities:'opportunities_delete',
+    contacts:'contacts_delete', activities:'activities_delete', products:'products_delete',
+    orders:'orders_delete', invoices:'invoices_delete',
+  };
+  const canView   = hasPermission ? hasPermission(PAGE_PERMS[page] || page+'_view') : true;
+  const canCreate = hasPermission ? hasPermission(PAGE_CREATE_PERMS[page] || page+'_create') : true;
+  const canEdit   = hasPermission ? hasPermission(PAGE_EDIT_PERMS[page] || page+'_edit') : true;
+  const canDelete = hasPermission ? hasPermission(PAGE_DELETE_PERMS[page] || page+'_delete') : true;
+
+  // Pick up a record-to-open that AppShell stashed in AppContext when navigating
+  // here from Customer 360 sub-tabs or global search. This survives the page
+  // switch/remount race that a plain window event cannot.
+  useEffect(() => {
+    if (pendingRecord && pendingRecord.page === page && pendingRecord.record) {
+      setSelectedRecord(pendingRecord.record);
+      setPendingRecord(null);
+    }
+  }, [pendingRecord, page]);
   const [search,       setSearch]       = useState('');
   const [statusFilter, setStatusFilter] = useState('All');
   const [timePeriod,   setTimePeriod]   = useState('');

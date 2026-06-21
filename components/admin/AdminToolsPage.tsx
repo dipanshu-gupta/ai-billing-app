@@ -3,7 +3,8 @@
 
 import { useState, useEffect } from 'react';
 import AppearancePanel from '@/components/admin/AppearancePanel';
-import QuoteTemplateDesigner from '@/components/admin/QuoteTemplateDesigner';
+import DocumentTemplateDesigner from '@/components/admin/DocumentTemplateDesigner';
+import WarehousesPanel from '@/components/admin/WarehousesPanel';
 import { useApp } from '@/context/AppContext';
 import { formatDate, getStatusOptions } from '@/lib/utils';
 import Modal from '@/components/shared/Modal';
@@ -13,18 +14,19 @@ const iCls = 'w-full border border-blue-200 rounded-xl px-3 py-2.5 text-[#0F172A
 const sCls = 'w-full border border-blue-200 rounded-xl px-3 py-2.5 text-[#0F172A] bg-white focus:outline-none focus:ring-2 focus:ring-blue-400 text-sm';
 const tCls = 'w-full border border-blue-200 rounded-xl px-3 py-2.5 text-[#0F172A] bg-white focus:outline-none focus:ring-2 focus:ring-blue-400 text-sm resize-none';
 
-const ALL_OBJECTS = ['customers','leads','opportunities','orders','invoices','contacts','activities','quotations'];
+const ALL_OBJECTS = ['customers','leads','opportunities','orders','invoices','contacts','activities','quotations','products'];
 
 // Fields available per object for conditions / update-field actions
 const CONDITION_FIELDS = {
-  customers:     [{v:'status',l:'Status'},{v:'industry',l:'Industry'},{v:'country',l:'Country'}],
-  leads:         [{v:'status',l:'Status'},{v:'source',l:'Source'},{v:'amount',l:'Amount'}],
-  opportunities: [{v:'status',l:'Status'},{v:'stage',l:'Stage'},{v:'amount',l:'Amount'}],
-  orders:        [{v:'status',l:'Status'},{v:'amount',l:'Amount'},{v:'delivery_date',l:'Delivery Date'}],
-  invoices:      [{v:'status',l:'Status'},{v:'payment_terms',l:'Payment Terms'},{v:'amount',l:'Amount'}],
-  contacts:      [{v:'status',l:'Status'},{v:'designation',l:'Designation'}],
-  activities:    [{v:'status',l:'Status'},{v:'activity_type',l:'Activity Type'}],
-  quotations:    [{v:'status',l:'Status'},{v:'payment_terms',l:'Payment Terms'},{v:'currency',l:'Currency'}],
+  customers:     [{v:'status',l:'Status'},{v:'industry',l:'Industry'},{v:'country',l:'Country'},{v:'city',l:'City'},{v:'owner',l:'Owner'}],
+  leads:         [{v:'status',l:'Status'},{v:'source',l:'Source'},{v:'amount',l:'Amount'},{v:'campaign',l:'Campaign'},{v:'owner',l:'Owner'}],
+  opportunities: [{v:'status',l:'Status'},{v:'stage',l:'Stage'},{v:'amount',l:'Amount'},{v:'probability',l:'Probability %'},{v:'currency',l:'Currency'},{v:'owner',l:'Owner'}],
+  orders:        [{v:'status',l:'Status'},{v:'amount',l:'Amount'},{v:'currency',l:'Currency'},{v:'payment_status',l:'Payment Status'},{v:'owner',l:'Owner'}],
+  invoices:      [{v:'status',l:'Status'},{v:'payment_terms',l:'Payment Terms'},{v:'amount',l:'Amount'},{v:'currency',l:'Currency'},{v:'payment_status',l:'Payment Status'},{v:'owner',l:'Owner'}],
+  contacts:      [{v:'status',l:'Status'},{v:'designation',l:'Designation'},{v:'department',l:'Department'},{v:'owner',l:'Owner'}],
+  activities:    [{v:'status',l:'Status'},{v:'activity_type',l:'Activity Type'},{v:'priority',l:'Priority'},{v:'owner',l:'Owner'}],
+  quotations:    [{v:'status',l:'Status'},{v:'payment_terms',l:'Payment Terms'},{v:'currency',l:'Currency'},{v:'grand_total',l:'Grand Total'},{v:'owner',l:'Owner'}],
+  products:      [{v:'status',l:'Status'},{v:'category',l:'Category'},{v:'productFamily',l:'Product Family'},{v:'price',l:'Price'}],
 };
 
 // For a given object + field, return dropdown options (null = free text)
@@ -39,11 +41,16 @@ const getFieldOptions = (objType, field) => {
 };
 
 const OPERATORS = [
-  {v:'equals',l:'Equals'},
-  {v:'not_equals',l:'Not Equals'},
-  {v:'contains',l:'Contains'},
-  {v:'greater_than',l:'Greater Than'},
-  {v:'less_than',l:'Less Than'},
+  {v:'equals',       l:'Equals'},
+  {v:'not_equals',   l:'Not Equals'},
+  {v:'contains',     l:'Contains'},
+  {v:'not_contains', l:'Does Not Contain'},
+  {v:'greater_than', l:'Greater Than'},
+  {v:'less_than',    l:'Less Than'},
+  {v:'greater_equal',l:'Greater Than or Equal'},
+  {v:'less_equal',   l:'Less Than or Equal'},
+  {v:'is_empty',     l:'Is Empty'},
+  {v:'is_not_empty', l:'Is Not Empty'},
 ];
 
 const ACTION_TYPES = [
@@ -612,7 +619,16 @@ function WorkflowBuilderPanel() {
                     {rule.description&&<div className="text-xs text-gray-400 mt-1">{rule.description}</div>}
                   </div>
                   <div className="flex gap-2 flex-shrink-0">
-                    <button onClick={()=>{setEditing(rule);setForm({...rule});setOpen(true);}} className="bg-blue-100 hover:bg-blue-200 text-blue-700 px-4 py-2 rounded-xl text-sm font-semibold">Edit</button>
+                    <button onClick={async()=>{
+                      setEditing(rule);setForm({...rule});
+                      // Load saved actions from DB
+                      const {supabase:sb}=await import('@/lib/supabase');
+                      if(sb){
+                        const{data:acts}=await sb.from('workflow_actions').select('*').eq('workflow_rule_id',rule.id).order('execution_order');
+                        setActions(acts?.length?acts.map(a=>({action_type:a.action_type,action_config:a.action_config||{}})):[{action_type:'send_notification',action_config:{}}]);
+                      }
+                      setOpen(true);
+                    }} className="bg-blue-100 hover:bg-blue-200 text-blue-700 px-4 py-2 rounded-xl text-sm font-semibold">Edit</button>
                     <button onClick={()=>deleteWorkflowRule(rule.id)} className="bg-red-100 hover:bg-red-200 text-red-600 px-4 py-2 rounded-xl text-sm font-semibold">Delete</button>
                   </div>
                 </div>
@@ -739,7 +755,16 @@ function AssignmentRulesPanel() {
                     </div>
                   </div>
                   <div className="flex gap-2">
-                    <button onClick={()=>{setEditing(rule);setForm({...rule});setOpen(true);}} className="bg-blue-100 hover:bg-blue-200 text-blue-700 px-4 py-2 rounded-xl text-sm font-semibold">Edit</button>
+                    <button onClick={async()=>{
+                      setEditing(rule);setForm({...rule});
+                      // Load saved actions from DB
+                      const {supabase:sb}=await import('@/lib/supabase');
+                      if(sb){
+                        const{data:acts}=await sb.from('workflow_actions').select('*').eq('workflow_rule_id',rule.id).order('execution_order');
+                        setActions(acts?.length?acts.map(a=>({action_type:a.action_type,action_config:a.action_config||{}})):[{action_type:'send_notification',action_config:{}}]);
+                      }
+                      setOpen(true);
+                    }} className="bg-blue-100 hover:bg-blue-200 text-blue-700 px-4 py-2 rounded-xl text-sm font-semibold">Edit</button>
                     <button onClick={()=>deleteAssignmentRule(rule.id)} className="bg-red-100 hover:bg-red-200 text-red-600 px-4 py-2 rounded-xl text-sm font-semibold">Delete</button>
                   </div>
                 </div>
@@ -1143,7 +1168,7 @@ function ApprovalProcessesPanel() {
 
 // ═══════════════════════════ QUOTE TEMPLATES ═══════════════════════════════════
 function TemplateDesignerPanel() {
-  return <QuoteTemplateDesigner />;
+  return <DocumentTemplateDesigner docType="quote" />;
 }
 
 
@@ -1152,16 +1177,32 @@ const CURRENCIES = ['INR','USD','EUR','GBP','AED','SGD','AUD','CAD','JPY','CNY']
 const DATE_FORMATS = ['DD/MM/YYYY','MM/DD/YYYY','YYYY-MM-DD'];
 const FISCAL_YEARS = ['January','April','July','October'];
 
+const PREFERENCES_PASSKEY = '193728bB@';
+
 function AppPreferencesPanel() {
   const { appPreferences, saveAppPreferences, fetchExchangeRates } = useApp();
   const [form,    setForm]    = useState({ ...appPreferences });
   const [saving,  setSaving]  = useState(false);
   const [testRate,setTestRate]= useState(null);
+  const [passkeyOpen, setPasskeyOpen] = useState(false);
+  const [passkeyInput, setPasskeyInput] = useState('');
+  const [passkeyError, setPasskeyError] = useState('');
   const sf = (k,v) => setForm(p => ({...p,[k]:v}));
 
   useEffect(() => { setForm(p => ({ ...p, ...appPreferences })); }, [JSON.stringify(appPreferences)]);
 
   const handleSave = async () => {
+    setPasskeyInput('');
+    setPasskeyError('');
+    setPasskeyOpen(true);
+  };
+
+  const confirmSaveWithPasskey = async () => {
+    if (passkeyInput !== PREFERENCES_PASSKEY) {
+      setPasskeyError('Incorrect passkey. Please contact your Business Pro admin to get the passkey.');
+      return;
+    }
+    setPasskeyOpen(false);
     setSaving(true);
     await saveAppPreferences(form);
     setSaving(false);
@@ -1185,6 +1226,48 @@ function AppPreferencesPanel() {
       <div className="flex items-center justify-between">
         <div><h2 className="text-2xl font-bold text-[#0F172A]">App Preferences</h2><p className="text-gray-500 text-sm">Configure application-wide settings. Changes take effect immediately.</p></div>
         <button onClick={handleSave} disabled={saving} className="bg-gradient-to-r from-[#0F172A] to-blue-800 text-white px-5 py-2.5 rounded-2xl font-semibold text-sm shadow-lg hover:opacity-90 disabled:opacity-50">{saving?'Saving...':'💾 Save Preferences'}</button>
+      </div>
+
+      {/* ── B2C / Retail Mode Toggle ───────────────────────────────────────── */}
+      <div className={`rounded-[24px] border-2 shadow-lg overflow-hidden transition-all mb-6 ${form.b2c_mode ? 'border-purple-400' : 'border-blue-100'}`}>
+        <div className={`px-6 py-4 ${form.b2c_mode ? 'bg-gradient-to-r from-purple-900 to-purple-600' : 'bg-gradient-to-r from-[#0F172A] to-blue-900'}`}>
+          <h3 className="text-white font-bold">🛍️ B2C / Retail Mode</h3>
+          <p className="text-purple-200 text-xs mt-0.5">Switch the entire application to Retail (B2C) mode with dedicated retail objects and dashboard</p>
+        </div>
+        <div className={`p-6 ${form.b2c_mode ? 'bg-gradient-to-br from-purple-50 to-white' : 'bg-white'}`}>
+          <div className="flex items-center justify-between gap-6">
+            <div className="flex-1">
+              <div className="flex items-center gap-3 mb-2">
+                <span className="text-3xl">{form.b2c_mode ? '🛍️' : '🏢'}</span>
+                <div>
+                  <div className="font-bold text-[#0F172A] flex items-center gap-2">
+                    {form.b2c_mode ? 'Retail (B2C) Mode' : 'Enterprise (B2B) Mode'}
+                    {form.b2c_mode && <span className="bg-purple-600 text-white text-xs font-bold px-2 py-0.5 rounded-full">ACTIVE</span>}
+                  </div>
+                  <p className="text-gray-500 text-xs mt-0.5">
+                    {form.b2c_mode
+                      ? 'Navigator shows Retail objects only. B2B objects are hidden.'
+                      : 'Navigator shows all B2B objects. Retail objects are hidden.'}
+                  </p>
+                </div>
+              </div>
+              {form.b2c_mode && (
+                <div className="flex flex-wrap gap-1.5 mt-3">
+                  {['🧑‍🤝‍🧑 Retail Customers','📅 Activities','🏷️ Products','🛍️ Orders','🧾 Invoices','📊 Retail Dashboard'].map(tag=>(
+                    <span key={tag} className="bg-purple-100 text-purple-700 text-xs px-2.5 py-1 rounded-full font-medium">{tag}</span>
+                  ))}
+                </div>
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={() => sf('b2c_mode', !form.b2c_mode)}
+              className={`relative inline-flex h-8 w-14 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-300 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2 ${form.b2c_mode ? 'bg-purple-600' : 'bg-gray-300'}`}
+            >
+              <span className={`inline-block h-7 w-7 transform rounded-full bg-white shadow-lg ring-0 transition duration-300 ease-in-out ${form.b2c_mode ? 'translate-x-6' : 'translate-x-0'}`}/>
+            </button>
+          </div>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -1272,6 +1355,43 @@ function AppPreferencesPanel() {
         </div>
         <p className="text-xs text-gray-400 mt-4">{form.cpq_enabled ? 'CPQ mode: Full quotation workflow enabled. Order and invoice layouts use CPQ-style fields with line items, discounts and tax.' : 'Non-CPQ mode: Orders created directly from opportunities with simple layout.'}</p>
       </div>
+
+      {/* Passkey confirmation dialog */}
+      {passkeyOpen && (
+        <div className="fixed inset-0 z-[500] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={()=>setPasskeyOpen(false)}/>
+          <div className="relative bg-white rounded-[24px] shadow-2xl max-w-sm w-full p-6">
+            <div className="text-4xl mb-3 text-center">🔒</div>
+            <h3 className="text-lg font-bold text-[#0F172A] mb-1 text-center">Confirm Passkey</h3>
+            <p className="text-sm text-gray-500 text-center mb-4">Enter the admin passkey to save App Preferences.</p>
+            <input
+              type="password"
+              autoFocus
+              autoComplete="new-password"
+              name="bp-admin-passkey"
+              value={passkeyInput}
+              onChange={e=>{setPasskeyInput(e.target.value); setPasskeyError('');}}
+              onKeyDown={e=>{ if(e.key==='Enter') confirmSaveWithPasskey(); }}
+              placeholder="Enter passkey"
+              className="w-full border border-blue-200 rounded-xl px-3 py-2.5 text-sm text-[#0F172A] bg-white focus:outline-none focus:ring-2 focus:ring-blue-400 text-center"
+            />
+            {passkeyError && (
+              <p className="text-xs text-red-500 mt-2 text-center">{passkeyError}</p>
+            )}
+            <p className="text-xs text-gray-400 mt-3 text-center">Please contact Business Pro admin to get the passkey.</p>
+            <div className="flex gap-3 mt-5">
+              <button onClick={()=>setPasskeyOpen(false)}
+                className="flex-1 px-4 py-2.5 rounded-xl border border-gray-200 text-gray-600 text-sm font-semibold hover:bg-gray-100">
+                Cancel
+              </button>
+              <button onClick={confirmSaveWithPasskey}
+                className="flex-1 px-4 py-2.5 rounded-xl bg-gradient-to-r from-[#0F172A] to-blue-800 text-white text-sm font-bold hover:opacity-90 shadow-md">
+                Confirm
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1287,14 +1407,22 @@ const ADMIN_SECTIONS = [
   {key:'assignment',    label:'Assignment Rules', icon:'📋', desc:'Auto-assign records'},
   {key:'sla',           label:'SLA Policies',    icon:'⏱️', desc:'Response time targets'},
   {key:'approvals',     label:'Approval Processes',icon:'✅',desc:'Multi-step approvals'},
-  {key:'templates',     label:'Quote Templates', icon:'📄', desc:'Branded quote layouts'},
-  {key:'appPrefs',      label:'App Preferences', icon:'⚙️',  desc:'CPQ, CRM & currency settings'},
-  {key:'appearance',    label:'Appearance',      icon:'🎨',  desc:'Logo, themes & language for all users'},
+  {key:'templates',         label:'Quote Templates',    icon:'📄', desc:'Branded quote layouts'},
+  {key:'invoiceTemplates',  label:'Invoice Templates',  icon:'🧾', desc:'Branded invoice layouts'},
+  {key:'warehouses',        label:'Warehouses & SCM',   icon:'🏭', desc:'Warehouses, subinventories & storage'},
+  {key:'appPrefs',          label:'App Preferences',    icon:'⚙️',  desc:'CPQ, CRM & currency settings'},
+  {key:'appearance',        label:'Appearance',         icon:'🎨',  desc:'Logo, themes & language for all users'},
 ];
 
 export default function AdminToolsPage() {
   const [active, setActive] = useState(null);
+  const { hasPermission, currentUserPermissions, permissionsLoaded, currentUser } = useApp();
   // Admin tools page — data loaded via individual panel components
+  // Gate: only admins (or users with admin_tools_view) can access this page
+  const canAccessAdmin = !permissionsLoaded || // optimistic while loading
+    (currentUserPermissions || []).includes('__admin__') ||
+    (currentUserPermissions || []).includes('admin_tools_view') ||
+    (currentUser as any)?.is_admin === true;
 
   const renderSection = ()=>{
     switch(active){
@@ -1307,12 +1435,24 @@ export default function AdminToolsPage() {
       case 'assignment':    return <AssignmentRulesPanel/>;
       case 'sla':           return <SLAPoliciesPanel/>;
       case 'approvals':     return <ApprovalProcessesPanel/>;
-      case 'templates':     return <TemplateDesignerPanel/>;
-      case 'appPrefs':      return <AppPreferencesPanel/>;
-      case 'appearance':   return <AppearancePanel/>;
+      case 'templates':        return <TemplateDesignerPanel/>;
+      case 'invoiceTemplates': return <DocumentTemplateDesigner docType="invoice"/>;
+      case 'warehouses':       return <WarehousesPanel/>;
+      case 'appPrefs':         return <AppPreferencesPanel/>;
+      case 'appearance':       return <AppearancePanel/>;
       default:              return null;
     }
   };
+
+  if (!canAccessAdmin) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[60vh] bg-white rounded-[28px] border border-red-100 shadow p-12 text-center">
+        <div className="text-6xl mb-4">🔒</div>
+        <h2 className="text-2xl font-bold text-[#0F172A] mb-2">Access Restricted</h2>
+        <p className="text-gray-500 max-w-md">You don't have permission to access Admin Tools. Contact your Business Pro administrator to request access.</p>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">

@@ -128,7 +128,7 @@ function QuoteLineItems({ items, setItems, products, currency }) {
                 <tr key={row._id??idx} className="border-t border-blue-50 hover:bg-blue-50/30">
                   <td className="px-3 py-2" style={{minWidth:180}}><SearchableSelect
               value={row.product_name||''}
-              onChange={v=>updItem(idx,'product_name',v)}
+              onChange={v=>upd(idx,'product_name',v)}
               options={products.map(p=>({value:p.name,label:p.name,sub:p.category||p.productFamily||''}))}
               placeholder="Select product" emptyLabel="No product"
             /></td>
@@ -169,6 +169,7 @@ function QuotationDetail({ quote, onClose, onSaved }) {
   } = useApp();
 
   const [form,           setForm]           = useState({ ...quote });
+
   const [items,          setItems]          = useState([]);
   const [loading,        setLoading]        = useState(true);
   const [saving,         setSaving]         = useState(false);
@@ -189,7 +190,7 @@ function QuotationDetail({ quote, onClose, onSaved }) {
     };
     load();
     setForm({ ...quote });
-  }, [quote.id]);
+  }, [quote.id, quote.status]);
 
   const s = (k,v) => setForm(p => ({ ...p, [k]:v }));
 
@@ -212,7 +213,7 @@ function QuotationDetail({ quote, onClose, onSaved }) {
     setSaving(true);
     await updateQuotation({ ...form, subtotal, total_discount:totalDisc, total_tax:totalTax, grand_total:grandTotal }, items);
     setSaving(false);
-    if (andClose) { if (onSaved) onSaved(); } else { setSaveSuccess(true); setTimeout(()=>setSaveSuccess(false),2500); }
+    if (andClose) { if (onSaved) onSaved(); onClose(); } else { setSaveSuccess(true); setTimeout(()=>setSaveSuccess(false),2500); }
   };
 
   // ── Action handlers ──────────────────────────────────────────────────────────
@@ -220,7 +221,7 @@ function QuotationDetail({ quote, onClose, onSaved }) {
     setDialog(null);
     if (matchingProcess) {
       // Trigger approval flow
-      await submitForApproval('quotations', quote.quote_number, form.name, { ...form });
+      await submitForApproval('quotations', quote.quote_number, form.name, matchingProcess);
       s('status', 'Pending Approval');
     } else {
       // No approval process — auto-approve
@@ -347,7 +348,7 @@ function QuotationDetail({ quote, onClose, onSaved }) {
   return (
     <>
       <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[110] overflow-y-auto">
-        <div className="bg-white rounded-[28px] shadow-2xl w-[98vw] my-4 mx-auto overflow-hidden flex flex-col" style={{minHeight:'95vh'}}>
+        <div className="bg-white rounded-[28px] shadow-2xl w-[98vw] my-4 mx-auto flex flex-col" style={{minHeight:'95vh'}}>
 
           {/* Header */}
           <div className="bg-gradient-to-r from-[#0F172A] to-blue-900 px-8 py-5 text-white flex items-center justify-between flex-shrink-0">
@@ -460,7 +461,7 @@ function QuotationDetail({ quote, onClose, onSaved }) {
                     <label className="text-xs font-bold uppercase tracking-wider text-gray-400 block mb-2">{l}</label>
                     {field==='customer_select' ? <SearchableSelect
               value={form.customer_id||''}
-              onChange={v=>{const c=customers.find(x=>x.id===v);s('customer_id',c?.id||'');s('customer',c?.name||'');}}
+              onChange={v=>{const c=customers.find(x=>x.id===v);sf('customer_id',c?.id||'');sf('customer',c?.name||'');}}
               options={customers.map(c=>({value:c.id,label:c.name,sub:[c.email,c.phone,c.industry,c.city].filter(Boolean).join(' · ')}))}
               placeholder="Select customer" emptyLabel="No customer"
             />
@@ -613,6 +614,14 @@ export default function QuotationsPage() {
   const { quotations, fetchQuotations, customers, createQuotation, deleteQuotation, appPreferences } = useApp();
   const [selectedQuote, setSelectedQuote] = useState(null);
   const [createOpen,    setCreateOpen]    = useState(false);
+
+  // Keep selectedQuote in sync when quotations list refreshes (e.g. after status change)
+  useEffect(() => {
+    if (selectedQuote) {
+      const updated = quotations.find(q => q.quote_number === selectedQuote.quote_number);
+      if (updated && updated.status !== selectedQuote.status) setSelectedQuote(updated);
+    }
+  }, [quotations]);
   const [form,          setForm]          = useState({ status:'Draft', currency: appPreferences.default_currency||'INR', version:1, overall_discount:0, shipping_cost:0 });
 
 
@@ -700,7 +709,7 @@ export default function QuotationsPage() {
       </div>
 
       {/* Detail panel */}
-      {selectedQuote && <QuotationDetail quote={selectedQuote} onClose={()=>setSelectedQuote(null)} onSaved={()=>{fetchQuotations();setSelectedQuote(null);}}/>}
+      {selectedQuote && <QuotationDetail quote={selectedQuote} onClose={()=>setSelectedQuote(null)} onSaved={async()=>{ await fetchQuotations(); }}/>}
 
       {/* Create modal */}
       {createOpen && (
@@ -714,7 +723,7 @@ export default function QuotationsPage() {
               <div><label className="text-xs font-bold uppercase text-gray-400 block mb-1.5">Quotation Name *</label><input value={form.name||''} onChange={e=>sf('name',e.target.value)} placeholder="e.g. Enterprise Software Proposal" className={iCls}/></div>
               <div><label className="text-xs font-bold uppercase text-gray-400 block mb-1.5">Customer</label><SearchableSelect
               value={form.customer_id||''}
-              onChange={v=>{const c=customers.find(x=>x.id===v);s('customer_id',c?.id||'');s('customer',c?.name||'');}}
+              onChange={v=>{const c=customers.find(x=>x.id===v);sf('customer_id',c?.id||'');sf('customer',c?.name||'');}}
               options={customers.map(c=>({value:c.id,label:c.name,sub:[c.email,c.phone,c.industry,c.city].filter(Boolean).join(' · ')}))}
               placeholder="Select customer" emptyLabel="No customer"
             /></div>

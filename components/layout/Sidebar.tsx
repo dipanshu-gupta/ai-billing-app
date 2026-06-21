@@ -10,20 +10,28 @@ const TOP_ITEMS = [
 ];
 
 const SALES_GROUP = [
-  { key:'customers',     label:'customers',     icon:'👥', permission:'customers_view'  },
+  { key:'customers',     label:'customers',     icon:'👥', permission:'customers_view',     requiresCRM:true },
   { key:'contacts',      label:'contacts',      icon:'📇', permission:'contacts_view',      requiresCRM:true },
   { key:'leads',         label:'leads',         icon:'🎯', permission:'leads_view',          requiresCRM:true },
   { key:'opportunities', label:'opportunities', icon:'💼', permission:'opportunities_view',  requiresCRM:true },
-  { key:'activities',    label:'activities',    icon:'📅', permission:'activities_view' },
-  { key:'products',      label:'products',      icon:'📦', permission:'products_view'   },
-  { key:'quotations',    label:'quotations',    icon:'📄', permission:null, requiresCPQ:true },
+  { key:'activities',    label:'activities',    icon:'📅', permission:'activities_view',     requiresCRM:true },
+  { key:'products',      label:'products',      icon:'📦', permission:'products_view',       requiresCRM:true },
+  { key:'quotations',    label:'quotations',    icon:'📄', permission:null, requiresCPQ:true, requiresCRM:true },
+];
+
+const RETAIL_GROUP = [
+  { key:'retailCustomers',  label:'retailCustomers',  icon:'🧑‍🤝‍🧑', permission:null, requiresB2C:true },
+  { key:'retailActivities', label:'retailActivities', icon:'📅',       permission:null, requiresB2C:true },
+  { key:'retailProducts',   label:'retailProducts',   icon:'🏷️',       permission:null, requiresB2C:true },
+  { key:'retailOrders',     label:'retailOrders',     icon:'🛍️',       permission:null, requiresB2C:true },
+  { key:'retailInvoices',   label:'retailInvoices',   icon:'🧾',       permission:null, requiresB2C:true },
 ];
 
 const BOTTOM_ITEMS = [
-  { key:'orders',     label:'orders',      icon:'🛒', permission:'orders_view' },
-  { key:'invoices',   label:'invoices',    icon:'🧾', permission:'invoices_view' },
+  { key:'orders',     label:'orders',      icon:'🛒', permission:'orders_view',   requiresCRM:true },
+  { key:'invoices',   label:'invoices',    icon:'🧾', permission:'invoices_view', requiresCRM:true },
   { key:'reports',    label:'reports',     icon:'⚡', permission:null },
-  { key:'approvals',  label:'approvals',   icon:'✅', permission:null },
+  { key:'approvals',  label:'approvals',   icon:'✅', permission:null, requiresCRM:true },
   { key:'adminTools', label:'adminTools',  icon:'⚙️', permission:'admin_tools_view' },
 ];
 
@@ -44,7 +52,10 @@ export default function Sidebar({ activePage, setActivePage, collapsed, setColla
   }, [collapsed, setCollapsed]);
 
   const canSee = (item) => {
-    if (item.requiresCRM && appPreferences?.crm_enabled === false) return false;
+    // requiresCRM items hide entirely when CRM/B2B mode is off (B2C mode active)
+    if (item.requiresCRM && appPreferences?.b2c_mode === true) return false;
+    // requiresB2C items only show when CRM/B2B mode is off (B2C mode active)
+    if (item.requiresB2C && appPreferences?.b2c_mode !== true) return false;
     if (item.requiresCPQ && appPreferences?.cpq_enabled === false) return false;
     if (!item.permission) return true;
     if (!permissionsLoaded) return true;
@@ -122,23 +133,45 @@ export default function Sidebar({ activePage, setActivePage, collapsed, setColla
         {/* Dashboard */}
         {TOP_ITEMS.map(item => <NavItem key={item.key} item={item}/>)}
 
-        {/* Sales group */}
-        <div className="mt-2">
-          {!collapsed ? (
-            <button
-              onClick={() => setSalesOpen(!salesOpen)}
-              className="w-full flex items-center justify-between px-3 py-1.5 text-xs font-bold text-blue-400 uppercase tracking-widest hover:text-blue-200 transition-colors"
-            >
-              <span>Sales</span>
-              <span style={{transform: salesOpen?'rotate(180deg)':'rotate(0)', transition:'transform 0.2s'}}>▾</span>
-            </button>
-          ) : (
-            <div className="border-t border-white/10 my-2"/>
-          )}
-          <div style={{overflow:'hidden', maxHeight: (!collapsed && !salesOpen) ? '0' : '500px', transition:'max-height 0.3s ease'}}>
-            {SALES_GROUP.map(item => <NavItem key={item.key} item={item}/>)}
+        {/* Sales group — B2B mode only */}
+        {appPreferences?.b2c_mode !== true && (
+          <div className="mt-2">
+            {!collapsed ? (
+              <button
+                onClick={() => setSalesOpen(!salesOpen)}
+                className="w-full flex items-center justify-between px-3 py-1.5 text-xs font-bold text-blue-400 uppercase tracking-widest hover:text-blue-200 transition-colors"
+              >
+                <span>Sales</span>
+                <span style={{transform: salesOpen?'rotate(180deg)':'rotate(0)', transition:'transform 0.2s'}}>▾</span>
+              </button>
+            ) : (
+              <div className="border-t border-white/10 my-2"/>
+            )}
+            <div style={{overflow:'hidden', maxHeight: (!collapsed && !salesOpen) ? '0' : '500px', transition:'max-height 0.3s ease'}}>
+              {SALES_GROUP.map(item => <NavItem key={item.key} item={item}/>)}
+            </div>
           </div>
-        </div>
+        )}
+
+        {/* Retail group — B2C mode only */}
+        {appPreferences?.b2c_mode === true && (
+          <div className="mt-2">
+            {!collapsed ? (
+              <button
+                onClick={() => setSalesOpen(!salesOpen)}
+                className="w-full flex items-center justify-between px-3 py-1.5 text-xs font-bold text-blue-400 uppercase tracking-widest hover:text-blue-200 transition-colors"
+              >
+                <span>Retail</span>
+                <span style={{transform: salesOpen?'rotate(180deg)':'rotate(0)', transition:'transform 0.2s'}}>▾</span>
+              </button>
+            ) : (
+              <div className="border-t border-white/10 my-2"/>
+            )}
+            <div style={{overflow:'hidden', maxHeight: (!collapsed && !salesOpen) ? '0' : '500px', transition:'max-height 0.3s ease'}}>
+              {RETAIL_GROUP.map(item => <NavItem key={item.key} item={item}/>)}
+            </div>
+          </div>
+        )}
 
         {/* Divider */}
         <div className="border-t border-white/10 my-2"/>
