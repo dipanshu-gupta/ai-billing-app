@@ -41,6 +41,31 @@ export const formatFileSize = (bytes: number): string => {
 
 export const generateId = (prefix: string): string => `${prefix}-${Date.now()}`;
 
+// ─── Sequential Display Number ───────────────────────────────────────────────
+// Formats the clean sequential number for display (e.g. CUST-00001)
+export const formatDisplayNumber = (prefix: string, num: number | null | undefined): string => {
+  if (!num) return '';
+  return `${prefix}-${String(num).padStart(5, '0')}`;
+};
+
+// Page → display prefix mapping
+export const PAGE_DISPLAY_PREFIX: Record<string, string> = {
+  customers:        'CUST',
+  leads:            'LEAD',
+  opportunities:    'OPP',
+  orders:           'ORD',
+  invoices:         'INV',
+  contacts:         'CONT',
+  activities:       'ACT',
+  products:         'PROD',
+  quotations:       'QUO',
+  retailCustomers:  'RCUST',
+  retailProducts:   'RPROD',
+  retailActivities: 'RACT',
+  retailOrders:     'RORD',
+  retailInvoices:   'RINV',
+};
+
 // ─── Page label ────────────────────────────────────────────────────────────────
 
 export const getPageLabel = (page: string): string => {
@@ -116,6 +141,10 @@ export const getStatusColor = (status: string): string => {
     'Pending Approval': 'bg-purple-100 text-purple-700',
     Approved:           'bg-green-100 text-green-700',
     Rejected:           'bg-red-100 text-red-700',
+    VIP:                'bg-amber-100 text-amber-700',
+    Blocked:            'bg-red-100 text-red-700',
+    Refunded:           'bg-orange-100 text-orange-700',
+    Sent:               'bg-blue-100 text-blue-700',
   };
   return map[status] || 'bg-gray-100 text-gray-600';
 };

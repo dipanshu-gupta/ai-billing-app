@@ -1,5 +1,6 @@
 // @ts-nocheck
 'use client';
+import React from 'react';
 
 import { useState, useRef, useCallback } from 'react';
 import { useApp } from '@/context/AppContext';
@@ -14,7 +15,9 @@ const FONTS = [
   { v:"'Trebuchet MS', sans-serif",     l:'Trebuchet MS' },
   { v:"'Courier New', monospace",       l:'Courier New' },
 ];
-const PAPER_SIZES = ['A4','A5','Letter','Legal'];
+const PAPER_SIZES = ['A4','A5','Letter','Legal','Thermal 80mm','Thermal 58mm','Thermal 57mm'];
+const PAPER_WIDTHS_MM = { 'A4':210,'A5':148,'Letter':216,'Legal':216,'Thermal 80mm':80,'Thermal 58mm':58,'Thermal 57mm':57 };
+const PAPER_HEIGHTS_MM = { 'A4':297,'A5':210,'Letter':279,'Legal':356,'Thermal 80mm':null,'Thermal 58mm':null,'Thermal 57mm':null }; // null = continuous roll
 const LOGO_POSITIONS = ['left','center','right'];
 const WATERMARKS = ['','DRAFT','CONFIDENTIAL','SAMPLE','VOID','FOR APPROVAL'];
 
@@ -436,6 +439,8 @@ function SectionSettings({ section, onUpdate, docType }) {
 function LivePreview({ sections, pageSettings, globalSettings, docType }) {
   const enabled = [...sections].filter(s=>s.enabled).sort((a,b)=>a.order-b.order);
   const font = pageSettings?.fontFamily || 'Arial, sans-serif';
+  const isThermal = (pageSettings?.paperSize||'A4').startsWith('Thermal');
+  const thermalWidth = pageSettings?.paperSize==='Thermal 58mm'||pageSettings?.paperSize==='Thermal 57mm' ? 164 : 227; // px at 96dpi
   const fmt = v => '₹' + Number(v||0).toLocaleString('en-IN');
   const SAMPLE_ITEMS = [
     {n:'Software License — Enterprise', hsn:'9983', sku:'SWL-001', q:5, u:'License', p:12000, d:10, tax:18},
@@ -487,7 +492,10 @@ function LivePreview({ sections, pageSettings, globalSettings, docType }) {
 
       case 'doc_info': {
         const DOC_LABELS = { quote_number:'Quote #', invoice_number:'Invoice #', date:'Date', invoice_date:'Invoice Date', valid_until:'Valid Until', due_date:'Due Date', po_number:'PO Number', version:'Version', currency:'Currency', payment_terms:'Payment Terms', reference:'Reference' };
+        const RETAIL_DOC_LABELS = { invoice_number:'Invoice #', date:'Date', due_date:'Due Date', customer:'Customer', customer_phone:'Phone', payment_method:'Payment Method', payment_status:'Payment Status', subtotal:'Subtotal', total_discount:'Discount', total_tax:'Tax', amount:'Total Amount' };
+        const isRetailInvoice = docType === 'retail_invoice';
         const DOC_VALUES = { quote_number:'QUO-000001', invoice_number:'INV-000001', date:'15 Jan 2025', invoice_date:'15 Jan 2025', valid_until:'14 Feb 2025', due_date:'14 Feb 2025', po_number:'PO-2025-001', version:'v1', currency:'INR', payment_terms:'Net 30', reference:'REF-001' };
+        const activeDOCLabels = isRetailInvoice ? RETAIL_DOC_LABELS : DOC_LABELS;
         const fields = s.fields || [];
         return (
           <div key={sec.id} style={{background:s.bgColor,color:s.textColor,padding:'10px 24px',borderBottom:borderStyle,display:'grid',gridTemplateColumns:`repeat(${Math.min(fields.length,4)},1fr)`,gap:8,fontSize:11}}>
@@ -533,13 +541,28 @@ function LivePreview({ sections, pageSettings, globalSettings, docType }) {
                   const net = item.q*item.p*(1-item.d/100);
                   const ROWVALS = {...VALS,sno:idx+1,name:item.n,hsn:item.hsn,sku:item.sku,qty:item.q,unit:item.u,unit_price:item.p,discount:item.d,tax:item.tax,cgst:item.tax/2,sgst:item.tax/2,igst:0,amount:net*(1+item.tax/100)};
                   return (
-                    <tr key={idx} style={{background:s.altRowColor&&idx%2===1?s.altRowColor:'#FFF'}}>
+                    <React.Fragment key={idx}>
+                    <tr style={{background:s.altRowColor&&idx%2===1?s.altRowColor:'#FFF'}}>
                       {cols.map(c=>(
                         <td key={c} style={{...cellStyle,textAlign:c==='sno'?'center':['unit_price','discount','tax','cgst','sgst','igst','qty','amount'].includes(c)?'right':'left',color:c==='sno'?'#94A3B8':c==='amount'?'#0F172A':'inherit',fontWeight:c==='amount'?600:400,borderRight:s.showColumnBorders?`1px solid ${s.borderColor||'#E2E8F0'}`:'none'}}>
                           {c==='amount'?fmt(ROWVALS[c]):c==='unit_price'?fmt(ROWVALS[c]):c==='description'?<span style={{fontSize:(s.fontSize||11)-1,color:'#64748B'}}>{item.n+' — '+ROWVALS[c]}</span>:String(ROWVALS[c]||'')}
                         </td>
                       ))}
                     </tr>
+                    {/* Configuration attributes — shown inline under line item like Oracle CPQ */}
+                    {idx===0&&(
+                      <tr style={{background:'#F0F7FF'}}>
+                        <td/>
+                        <td colSpan={cols.length-1} style={{padding:'4px 8px 6px',fontSize:9.5,color:'#334155'}}>
+                          <div style={{display:'flex',gap:16,flexWrap:'wrap'}}>
+                            {[['Colour','Blue'],['Size','Large'],['Material','Steel']].map(([k,v])=>(
+                              <span key={k}><strong style={{color:'#64748B'}}>{k}:</strong> {v}</span>
+                            ))}
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                    </React.Fragment>
                   );
                 })}
               </tbody>
@@ -636,7 +659,7 @@ function LivePreview({ sections, pageSettings, globalSettings, docType }) {
 
   const watermark = globalSettings?.watermark;
   return (
-    <div style={{fontFamily:font,border:'1px solid #E2E8F0',borderRadius:8,overflow:'hidden',background:'#FFF',position:'relative',minHeight:600,boxShadow:'0 4px 24px rgba(0,0,0,0.08)'}}>
+    <div style={{fontFamily:font,border:'1px solid #E2E8F0',borderRadius:8,overflow:'hidden',background:'#FFF',position:'relative',minHeight:isThermal?'auto':600,width:isThermal?thermalWidth:'100%',maxWidth:'100%',boxShadow:'0 4px 24px rgba(0,0,0,0.08)'}}>
       {watermark && <div style={{position:'absolute',top:'50%',left:'50%',transform:'translate(-50%,-50%) rotate(-35deg)',fontSize:48,fontWeight:900,color:'rgba(0,0,0,0.07)',pointerEvents:'none',zIndex:10,whiteSpace:'nowrap',letterSpacing:8}}>{watermark}</div>}
       {enabled.map(renderSection)}
       <div style={{textAlign:'center',padding:6,fontSize:8,color:'#CBD5E1',borderTop:'1px solid #F1F5F9'}}>Generated by Business Pro</div>

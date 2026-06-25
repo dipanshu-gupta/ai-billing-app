@@ -3,6 +3,8 @@
 
 import { useState, useEffect } from 'react';
 import AppearancePanel from '@/components/admin/AppearancePanel';
+import AppComposer from '@/components/admin/AppComposer';
+import RetailInvoiceDesigner from '@/components/admin/RetailInvoiceDesigner';
 import DocumentTemplateDesigner from '@/components/admin/DocumentTemplateDesigner';
 import WarehousesPanel from '@/components/admin/WarehousesPanel';
 import { useApp } from '@/context/AppContext';
@@ -15,7 +17,18 @@ const sCls = 'w-full border border-blue-200 rounded-xl px-3 py-2.5 text-[#0F172A
 const tCls = 'w-full border border-blue-200 rounded-xl px-3 py-2.5 text-[#0F172A] bg-white focus:outline-none focus:ring-2 focus:ring-blue-400 text-sm resize-none';
 
 const ALL_OBJECTS = ['customers','leads','opportunities','orders','invoices','contacts','activities','quotations','products'];
-
+const RETAIL_OBJECTS_LIST = ['retailCustomers','retailProducts','retailActivities','retailOrders','retailInvoices'];
+const RETAIL_OBJECT_LABELS: Record<string,string> = {
+  retailCustomers: 'Retail Customers', retailProducts: 'Retail Products',
+  retailActivities: 'Retail Activities', retailOrders: 'Retail Orders', retailInvoices: 'Retail Invoices',
+};
+const RETAIL_CONDITION_FIELDS: Record<string,{v:string,l:string}[]> = {
+  retailCustomers:  [{v:'status',l:'Status'},{v:'loyalty_tier',l:'Loyalty Tier'},{v:'gender',l:'Gender'},{v:'city',l:'City'},{v:'owner',l:'Owner'}],
+  retailProducts:   [{v:'status',l:'Status'},{v:'category',l:'Category'},{v:'brand',l:'Brand'},{v:'price',l:'Price'},{v:'stock_quantity',l:'Stock Qty'}],
+  retailActivities: [{v:'status',l:'Status'},{v:'activity_type',l:'Activity Type'},{v:'priority',l:'Priority'},{v:'owner',l:'Owner'}],
+  retailOrders:     [{v:'status',l:'Status'},{v:'payment_status',l:'Payment Status'},{v:'payment_method',l:'Payment Method'},{v:'amount',l:'Amount'},{v:'owner',l:'Owner'}],
+  retailInvoices:   [{v:'status',l:'Status'},{v:'payment_status',l:'Payment Status'},{v:'amount',l:'Amount'},{v:'due_date',l:'Due Date'},{v:'owner',l:'Owner'}],
+};
 // Fields available per object for conditions / update-field actions
 const CONDITION_FIELDS = {
   customers:     [{v:'status',l:'Status'},{v:'industry',l:'Industry'},{v:'country',l:'Country'},{v:'city',l:'City'},{v:'owner',l:'Owner'}],
@@ -78,12 +91,12 @@ function ConditionValue({ objType, field, value, onChange }) {
 }
 
 // ─── Workflow Action Config row ───────────────────────────────────────────────
-function ActionConfig({ action, idx, objType, onUpdate, onRemove, users }) {
+function ActionConfig({ action, idx, objType, onUpdate, onRemove, users, conditionFields = CONDITION_FIELDS }) {
   const cfg = action.action_config || {};
   const setCfg = (k,v) => onUpdate(idx, {...action, action_config:{...cfg, [k]:v}});
   const setType = (v) => onUpdate(idx, {...action, action_type:v, action_config:{}});
 
-  const condFields = CONDITION_FIELDS[objType] || [];
+  const condFields = conditionFields[objType] || [];
   const statusOpts = getStatusOptions(objType);
   const selectedField = cfg.field_name;
   const fieldValueOpts = getFieldOptions(objType, selectedField);
@@ -563,7 +576,7 @@ function SecurityConsolePanel() {
 }
 
 // ═══════════════════════════ WORKFLOW BUILDER ══════════════════════════════════
-function WorkflowBuilderPanel() {
+function WorkflowBuilderPanel({ objectList = ALL_OBJECTS, conditionFields = CONDITION_FIELDS, objectLabels = null }) {
   const { workflowRules, enterpriseUsers, saveWorkflowRule, deleteWorkflowRule } = useApp();
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(null);
@@ -591,7 +604,7 @@ function WorkflowBuilderPanel() {
     }catch(e){alert('Save failed: '+(e?.message||'Unknown error'));}
   };
 
-  const condFields = CONDITION_FIELDS[form.object_type]||[];
+  const condFields = conditionFields[form.object_type]||[];
   const triggerFieldOpts = getFieldOptions(form.object_type, form.trigger_field);
 
   return (
@@ -648,7 +661,7 @@ function WorkflowBuilderPanel() {
             <div>
               <L t="Object Type"/>
               <select value={form.object_type||'leads'} onChange={e=>s('object_type',e.target.value)} className={sCls}>
-                {ALL_OBJECTS.map(o=><option key={o} value={o}>{o}</option>)}
+                {objectList.map(o=><option key={o} value={o}>{objectLabels?.[o]||o}</option>)}
               </select>
             </div>
             <div>
@@ -697,7 +710,7 @@ function WorkflowBuilderPanel() {
             </div>
             <div className="space-y-4">
               {actions.map((action,idx)=>(
-                <ActionConfig key={idx} action={action} idx={idx} objType={form.object_type||'leads'} onUpdate={updateAction} onRemove={removeAction} users={enterpriseUsers}/>
+                <ActionConfig key={idx} action={action} idx={idx} objType={form.object_type||'leads'} onUpdate={updateAction} onRemove={removeAction} users={enterpriseUsers} conditionFields={conditionFields}/>
               ))}
             </div>
           </div>
@@ -708,14 +721,14 @@ function WorkflowBuilderPanel() {
 }
 
 // ═══════════════════════════ ASSIGNMENT RULES ══════════════════════════════════
-function AssignmentRulesPanel() {
+function AssignmentRulesPanel({ objectList = ALL_OBJECTS, conditionFields = CONDITION_FIELDS, objectLabels = null }) {
   const { assignmentRules, enterpriseUsers, userGroups, saveAssignmentRule, deleteAssignmentRule } = useApp();
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState({ object_type:'leads', condition_operator:'equals', priority:1, is_active:true });
   const s = (k,v)=>setForm(f=>({...f,[k]:v}));
 
-  const condFields = CONDITION_FIELDS[form.object_type]||[];
+  const condFields = conditionFields[form.object_type]||[];
   const valueOpts = getFieldOptions(form.object_type, form.condition_field);
 
   const handleSave = async()=>{
@@ -781,7 +794,7 @@ function AssignmentRulesPanel() {
           <div>
             <L t="Object Type"/>
             <select value={form.object_type||'leads'} onChange={e=>{s('object_type',e.target.value);s('condition_field','');s('condition_value','');}} className={sCls}>
-              {ALL_OBJECTS.map(o=><option key={o} value={o}>{o}</option>)}
+              {objectList.map(o=><option key={o} value={o}>{objectLabels?.[o]||o}</option>)}
             </select>
           </div>
           <div><L t="Priority (1 = highest)"/><input type="number" min={1} value={form.priority||1} onChange={e=>s('priority',Number(e.target.value))} className={iCls}/></div>
@@ -837,14 +850,14 @@ function AssignmentRulesPanel() {
 }
 
 // ═══════════════════════════ SLA POLICIES ════════════════════════════════════
-function SLAPoliciesPanel() {
+function SLAPoliciesPanel({ objectList = ALL_OBJECTS, conditionFields = CONDITION_FIELDS, objectLabels = null }) {
   const { slaPolicies, enterpriseUsers, userGroups, saveSLAPolicy, deleteSLAPolicy } = useApp();
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState({ object_type:'leads', response_time_hours:2, resolution_time_hours:24, warning_threshold_pct:80, is_active:true });
   const s = (k,v)=>setForm(f=>({...f,[k]:v}));
 
-  const condFields = CONDITION_FIELDS[form.object_type]||[];
+  const condFields = conditionFields[form.object_type]||[];
   const valueOpts = getFieldOptions(form.object_type, form.condition_field);
 
   const handleSave = async()=>{
@@ -894,7 +907,7 @@ function SLAPoliciesPanel() {
           <div>
             <L t="Object Type"/>
             <select value={form.object_type||'leads'} onChange={e=>{s('object_type',e.target.value);s('condition_field','');s('condition_value','');}} className={sCls}>
-              {ALL_OBJECTS.map(o=><option key={o} value={o}>{o}</option>)}
+              {objectList.map(o=><option key={o} value={o}>{objectLabels?.[o]||o}</option>)}
             </select>
           </div>
           <div><L t="Active"/><select value={form.is_active?'Yes':'No'} onChange={e=>s('is_active',e.target.value==='Yes')} className={sCls}><option>Yes</option><option>No</option></select></div>
@@ -946,7 +959,7 @@ function SLAPoliciesPanel() {
 }
 
 // ═══════════════════════════ APPROVAL PROCESSES ═══════════════════════════════
-function ConditionBuilder({ conditions, setConditions, objectType }) {
+function ConditionBuilder({ conditions, setConditions, objectType, conditionFields = CONDITION_FIELDS }) {
   const conds = conditions?.conditions || [];
   const logic  = conditions?.logic || 'AND';
 
@@ -974,7 +987,7 @@ function ConditionBuilder({ conditions, setConditions, objectType }) {
                   {idx === 0 && <L t="Field"/>}
                   <select value={cond.field||''} onChange={e=>upd(idx,'field',e.target.value)} className={sCls}>
                     <option value="">Select field</option>
-                    {(CONDITION_FIELDS[objectType]||[]).map(f=><option key={f.v} value={f.v}>{f.l}</option>)}
+                    {(conditionFields[objectType]||[]).map(f=><option key={f.v} value={f.v}>{f.l}</option>)}
                   </select>
                 </div>
                 <div>
@@ -1001,7 +1014,7 @@ function ConditionBuilder({ conditions, setConditions, objectType }) {
   );
 }
 
-function ApprovalProcessesPanel() {
+function ApprovalProcessesPanel({ objectList = ALL_OBJECTS, conditionFields = CONDITION_FIELDS, objectLabels = null }) {
   const { approvalProcesses, enterpriseUsers, userGroups, saveApprovalProcess, deleteApprovalProcess } = useApp();
   const [open,     setOpen]     = useState(false);
   const [editing,  setEditing]  = useState(null);
@@ -1107,7 +1120,7 @@ function ApprovalProcessesPanel() {
             <div>
               <L t="Object Type"/>
               <select value={form.object_type||'opportunities'} onChange={e=>{s('object_type',e.target.value);setConditions({logic:'AND',conditions:[]});}} className={sCls}>
-                {ALL_OBJECTS.map(o=><option key={o} value={o}>{o}</option>)}
+                {objectList.map(o=><option key={o} value={o}>{objectLabels?.[o]||o}</option>)}
               </select>
             </div>
             <div><L t="Active"/><select value={form.is_active?'Yes':'No'} onChange={e=>s('is_active',e.target.value==='Yes')} className={sCls}><option>Yes</option><option>No</option></select></div>
@@ -1116,7 +1129,7 @@ function ApprovalProcessesPanel() {
           {/* Conditions */}
           <div className="bg-blue-50 rounded-2xl p-5 space-y-4">
             <div><h4 className="font-bold text-[#0F172A]">Approval Conditions</h4><p className="text-xs text-gray-500 mt-1">The "Submit for Approval" button appears on records that meet these conditions.</p></div>
-            <ConditionBuilder conditions={conditions} setConditions={setConditions} objectType={form.object_type||'opportunities'}/>
+            <ConditionBuilder conditions={conditions} setConditions={setConditions} objectType={form.object_type||'opportunities'} conditionFields={conditionFields}/>
           </div>
 
           {/* Steps */}
@@ -1397,26 +1410,76 @@ function AppPreferencesPanel() {
 }
 
 // ═══════════════════════════ ADMIN HOME ════════════════════════════════════════
-const ADMIN_SECTIONS = [
-  {key:'organizations', label:'Organizations',   icon:'🏢', desc:'Companies & tenants'},
-  {key:'businessUnits', label:'Business Units',  icon:'🏗️', desc:'Divisions & departments'},
-  {key:'users',         label:'Users',           icon:'👤', desc:'Enterprise accounts'},
-  {key:'groups',        label:'User Groups',     icon:'👥', desc:'Group access & assignment'},
-  {key:'security',      label:'Security Console',icon:'🔐', desc:'Roles & permissions'},
-  {key:'workflow',      label:'Workflow Builder', icon:'⚙️', desc:'Auto-trigger on events'},
-  {key:'assignment',    label:'Assignment Rules', icon:'📋', desc:'Auto-assign records'},
-  {key:'sla',           label:'SLA Policies',    icon:'⏱️', desc:'Response time targets'},
-  {key:'approvals',     label:'Approval Processes',icon:'✅',desc:'Multi-step approvals'},
-  {key:'templates',         label:'Quote Templates',    icon:'📄', desc:'Branded quote layouts'},
-  {key:'invoiceTemplates',  label:'Invoice Templates',  icon:'🧾', desc:'Branded invoice layouts'},
-  {key:'warehouses',        label:'Warehouses & SCM',   icon:'🏭', desc:'Warehouses, subinventories & storage'},
-  {key:'appPrefs',          label:'App Preferences',    icon:'⚙️',  desc:'CPQ, CRM & currency settings'},
-  {key:'appearance',        label:'Appearance',         icon:'🎨',  desc:'Logo, themes & language for all users'},
+// B2B Enterprise Admin sections
+const B2B_SECTIONS = [
+  {key:'organizations', label:'Organizations',     icon:'🏢', desc:'Companies & tenants'},
+  {key:'businessUnits', label:'Business Units',    icon:'🏗️', desc:'Divisions & departments'},
+  {key:'users',         label:'Users',             icon:'👤', desc:'Enterprise accounts'},
+  {key:'groups',        label:'User Groups',       icon:'👥', desc:'Group access & assignment'},
+  {key:'security',      label:'Security Console',  icon:'🔐', desc:'Roles & permissions'},
+  {key:'workflow',      label:'Workflow Builder',  icon:'⚙️', desc:'Auto-trigger on events'},
+  {key:'assignment',    label:'Assignment Rules',  icon:'📋', desc:'Auto-assign records'},
+  {key:'sla',           label:'SLA Policies',      icon:'⏱️', desc:'Response time targets'},
+  {key:'approvals',     label:'Approval Processes',icon:'✅', desc:'Multi-step approvals'},
+  {key:'templates',     label:'Quote Templates',   icon:'📄', desc:'Branded quote layouts'},
+  {key:'invoiceTemplates',label:'Invoice Templates',icon:'🧾',desc:'Branded invoice layouts'},
+  {key:'warehouses',    label:'Warehouses & SCM',  icon:'🏭', desc:'Warehouses, subinventories & storage'},
+  {key:'appPrefs',      label:'App Preferences',   icon:'⚙️', desc:'CPQ, CRM & currency settings'},
+  {key:'appearance',    label:'Appearance',        icon:'🎨', desc:'Logo, themes & language'},
 ];
+
+// B2C Retail Admin sections — enabled only in B2C mode
+const B2C_SECTIONS = [
+  {key:'r_organizations', label:'Organizations',     icon:'🏢', desc:'Retail org structure'},
+  {key:'r_businessUnits', label:'Business Units',    icon:'🏗️', desc:'Retail divisions'},
+  {key:'r_users',         label:'Users',             icon:'👤', desc:'Retail user accounts'},
+  {key:'r_groups',        label:'User Groups',       icon:'👥', desc:'Group access & roles'},
+  {key:'r_security',      label:'Security Console',  icon:'🔐', desc:'Retail roles & permissions'},
+  {key:'r_invoiceTemplates',label:'Invoice Template',icon:'🧾', desc:'Retail invoice layouts'},
+  {key:'r_approvals',     label:'Approval Processes',icon:'✅', desc:'Retail approval chains'},
+  {key:'r_workflow',      label:'Workflow Builder',  icon:'⚙️', desc:'Retail event automation'},
+  {key:'r_assignment',    label:'Assignment Rules',  icon:'📋', desc:'Retail record assignment'},
+  {key:'r_sla',           label:'SLA Policies',      icon:'⏱️', desc:'Retail response targets'},
+  {key:'r_composer',      label:'App Composer',      icon:'🎛️', desc:'Custom fields & layouts'},
+  {key:'appPrefs',        label:'App Preferences',   icon:'⚙️', desc:'Global settings'},
+  {key:'appearance',      label:'Appearance',        icon:'🎨', desc:'Themes & branding'},
+];
+
+// Legacy alias for renderSection compatibility
+const ADMIN_SECTIONS = B2B_SECTIONS;
+
+// ─── Retail Admin Context Wrapper ─────────────────────────────────────────────
+// Shown above any B2B panel when accessed from B2C Admin — provides retail context
+function RetailAdminWrapper({ title, icon, desc, objects, children }) {
+    const scope = objects || Object.values(RETAIL_OBJECT_LABELS);
+  return (
+    <div className="space-y-5">
+      {/* Retail context banner */}
+      <div className="bg-gradient-to-r from-purple-900 to-purple-700 rounded-[20px] p-5 text-white">
+        <div className="flex items-start gap-4">
+          <div className="text-3xl">{icon}</div>
+          <div className="flex-1">
+            <h2 className="text-xl font-bold">{title} <span className="text-purple-300 text-sm font-normal">— Retail (B2C)</span></h2>
+            <p className="text-purple-200 text-sm mt-1">{desc}</p>
+            <div className="flex flex-wrap gap-2 mt-3">
+              {scope.map(obj=>(
+                <span key={obj} className="bg-white/15 text-white text-xs px-2.5 py-1 rounded-full font-semibold">{obj}</span>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+      {/* The actual panel */}
+      {children}
+    </div>
+  );
+}
 
 export default function AdminToolsPage() {
   const [active, setActive] = useState(null);
-  const { hasPermission, currentUserPermissions, permissionsLoaded, currentUser } = useApp();
+  const [adminMode, setAdminMode] = useState('b2b'); // 'b2b' | 'b2c'
+  const { hasPermission, currentUserPermissions, permissionsLoaded, currentUser, appPreferences } = useApp();
+  const isB2CMode = appPreferences?.b2c_mode === true;
   // Admin tools page — data loaded via individual panel components
   // Gate: only admins (or users with admin_tools_view) can access this page
   const canAccessAdmin = !permissionsLoaded || // optimistic while loading
@@ -1440,7 +1503,21 @@ export default function AdminToolsPage() {
       case 'warehouses':       return <WarehousesPanel/>;
       case 'appPrefs':         return <AppPreferencesPanel/>;
       case 'appearance':       return <AppearancePanel/>;
-      default:              return null;
+
+      // ── B2C Retail Admin ──────────────────────────────────────────────────
+      // Panels render inside a retail context wrapper that scopes to B2C objects
+      case 'r_organizations':    return <RetailAdminWrapper title="Organizations" icon="🏢" desc="Manage retail organisation structure"><OrganizationsPanel/></RetailAdminWrapper>;
+      case 'r_businessUnits':    return <RetailAdminWrapper title="Business Units" icon="🏗️" desc="Manage retail divisions and departments"><BusinessUnitsPanel/></RetailAdminWrapper>;
+      case 'r_users':            return <RetailAdminWrapper title="Users" icon="👤" desc="Retail platform user accounts and roles"><UsersPanel/></RetailAdminWrapper>;
+      case 'r_groups':           return <RetailAdminWrapper title="User Groups" icon="👥" desc="Retail user group access and assignment"><UserGroupsPanel/></RetailAdminWrapper>;
+      case 'r_security':         return <RetailAdminWrapper title="Security Console" icon="🔐" desc="Retail roles, permissions and data access"><SecurityConsolePanel/></RetailAdminWrapper>;
+      case 'r_invoiceTemplates': return <RetailInvoiceDesigner/>;
+      case 'r_approvals':        return <RetailAdminWrapper title="Approval Processes" icon="✅" desc="Multi-step approvals for Retail Orders and Invoices" objects={Object.values(RETAIL_OBJECT_LABELS)}><ApprovalProcessesPanel objectList={RETAIL_OBJECTS_LIST} conditionFields={RETAIL_CONDITION_FIELDS} objectLabels={RETAIL_OBJECT_LABELS}/></RetailAdminWrapper>;
+      case 'r_workflow':         return <RetailAdminWrapper title="Workflow Builder" icon="⚙️" desc="Auto-trigger actions on Retail data object events" objects={Object.values(RETAIL_OBJECT_LABELS)}><WorkflowBuilderPanel objectList={RETAIL_OBJECTS_LIST} conditionFields={RETAIL_CONDITION_FIELDS} objectLabels={RETAIL_OBJECT_LABELS}/></RetailAdminWrapper>;
+      case 'r_assignment':       return <RetailAdminWrapper title="Assignment Rules" icon="📋" desc="Auto-assign Retail records to users" objects={Object.values(RETAIL_OBJECT_LABELS)}><AssignmentRulesPanel objectList={RETAIL_OBJECTS_LIST} conditionFields={RETAIL_CONDITION_FIELDS} objectLabels={RETAIL_OBJECT_LABELS}/></RetailAdminWrapper>;
+      case 'r_sla':              return <RetailAdminWrapper title="SLA Policies" icon="⏱️" desc="Response and resolution SLA for Retail objects" objects={Object.values(RETAIL_OBJECT_LABELS)}><SLAPoliciesPanel objectList={RETAIL_OBJECTS_LIST} conditionFields={RETAIL_CONDITION_FIELDS} objectLabels={RETAIL_OBJECT_LABELS}/></RetailAdminWrapper>;
+      case 'r_composer':         return <AppComposer/>;
+      default:                   return null;
     }
   };
 
@@ -1454,20 +1531,51 @@ export default function AdminToolsPage() {
     );
   }
 
+  const currentSections = adminMode==='b2c' ? B2C_SECTIONS : B2B_SECTIONS;
+  const isB2CAdminTool = adminMode==='b2c';
+
   return (
     <div className="space-y-6">
-      {/* Show header only when no panel is active */}
+      {/* Header */}
       {!active && (
-        <div className="bg-gradient-to-r from-[#0F172A] to-blue-900 rounded-[28px] p-6 text-white">
-          <h1 className="text-3xl font-bold">⚙️ Admin Tools</h1>
-          <p className="text-blue-200 mt-1">Configure your enterprise platform — users, automation, SLA, approvals, and more.</p>
+        <div className={`rounded-[28px] p-6 text-white ${isB2CAdminTool?'bg-gradient-to-r from-purple-900 to-purple-700':'bg-gradient-to-r from-[#0F172A] to-blue-900'}`}>
+          <div className="flex items-center justify-between flex-wrap gap-4">
+            <div>
+              <h1 className="text-3xl font-bold">⚙️ Admin Tools</h1>
+              <p className="text-blue-200 mt-1">{isB2CAdminTool?'Configure your Retail (B2C) platform — retail users, composer, templates, and more.':'Configure your enterprise platform — users, automation, SLA, approvals, and more.'}</p>
+            </div>
+            {/* B2B / B2C Mode Switcher */}
+            <div className="flex bg-white/10 rounded-2xl p-1 gap-1">
+              <button onClick={()=>{setAdminMode('b2b');setActive(null);}}
+                className={`px-4 py-2 rounded-xl text-sm font-bold transition-all ${adminMode==='b2b'?'bg-white text-[#0F172A] shadow':'text-white/70 hover:text-white'}`}>
+                🏢 B2B Enterprise
+              </button>
+              <button onClick={()=>{setAdminMode('b2c');setActive(null);}}
+                disabled={!isB2CMode}
+                title={!isB2CMode?'Enable B2C mode in App Preferences first':''}
+                className={`px-4 py-2 rounded-xl text-sm font-bold transition-all disabled:opacity-40 disabled:cursor-not-allowed ${adminMode==='b2c'?'bg-purple-500 text-white shadow':'text-white/70 hover:text-white'}`}>
+                🛍️ B2C Retail {!isB2CMode&&<span className="text-xs opacity-60">(disabled)</span>}
+              </button>
+            </div>
+          </div>
+          {!isB2CMode && adminMode==='b2b' && (
+            <p className="text-xs text-blue-300 mt-3">💡 Enable B2C mode in App Preferences to unlock Retail Admin Tools.</p>
+          )}
         </div>
       )}
 
-      {/* Grid — hidden when a panel is open */}
-      {!active && (
+      {/* Back button */}
+      {active && (
+        <button onClick={()=>setActive(null)}
+          className="flex items-center gap-2 text-sm text-gray-500 hover:text-[#0F172A] font-semibold transition-all px-1">
+          ← Back to Admin Tools
+        </button>
+      )}
+
+      {/* B2B sections grid */}
+      {!active && adminMode==='b2b' && (
         <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-4">
-          {ADMIN_SECTIONS.map(section=>(
+          {B2B_SECTIONS.map(section=>(
             <button key={section.key} onClick={()=>setActive(section.key)}
               className="rounded-[24px] p-5 text-left border border-blue-100 bg-white hover:border-blue-400 hover:shadow-xl transition-all shadow-lg hover:scale-[1.02] group">
               <div className="text-3xl mb-3">{section.icon}</div>
@@ -1478,13 +1586,47 @@ export default function AdminToolsPage() {
         </div>
       )}
 
-      {/* Active panel — full width, no grid */}
+      {/* B2C sections grid */}
+      {!active && adminMode==='b2c' && (
+        <div className="space-y-4">
+          {!isB2CMode && (
+            <div className="bg-amber-50 border border-amber-200 rounded-[20px] p-5 flex items-start gap-4">
+              <span className="text-3xl">⚠️</span>
+              <div>
+                <h3 className="font-bold text-amber-800">B2C Mode is Disabled</h3>
+                <p className="text-amber-700 text-sm mt-1">Go to App Preferences → toggle B2C Mode ON to enable Retail Admin Tools.</p>
+              </div>
+            </div>
+          )}
+          <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-4">
+            {B2C_SECTIONS.map(section=>{
+              const isAlwaysOn = section.key==='appPrefs'||section.key==='appearance';
+              const disabled = !isB2CMode && !isAlwaysOn;
+              return (
+                <button key={section.key}
+                  onClick={()=>{ if(!disabled) setActive(section.key); }}
+                  disabled={disabled}
+                  className={`rounded-[24px] p-5 text-left border transition-all shadow-lg group relative ${
+                    disabled
+                      ? 'border-gray-100 bg-gray-50 opacity-50 cursor-not-allowed'
+                      : 'border-purple-100 bg-white hover:border-purple-400 hover:shadow-xl hover:scale-[1.02]'
+                  }`}>
+                  {disabled && (
+                    <div className="absolute top-2 right-2 bg-gray-200 text-gray-500 text-[10px] font-bold px-2 py-0.5 rounded-full">OFF</div>
+                  )}
+                  <div className="text-3xl mb-3">{section.icon}</div>
+                  <div className={`font-bold text-sm ${disabled?'text-gray-400':'text-[#0F172A] group-hover:text-purple-700'}`}>{section.label}</div>
+                  <div className="text-xs mt-1 text-gray-400">{section.desc}</div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Active panel */}
       {active && (
         <div className="space-y-5">
-          <button onClick={()=>setActive(null)}
-            className="flex items-center gap-2 text-sm text-gray-500 hover:text-[#0F172A] font-semibold transition-all px-1">
-            ← Back to Admin Tools
-          </button>
           {renderSection()}
         </div>
       )}

@@ -4,9 +4,11 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useApp } from '@/context/AppContext';
 import { supabase } from '@/lib/supabase';
-import { formatCurrency, getStatusColor } from '@/lib/utils';
+import { formatCurrency, getStatusColor, formatDisplayNumber } from '@/lib/utils';
 import AISummary from '@/components/ai/AISummary';
 import SearchableSelect from '@/components/shared/SearchableSelect';
+import ConfigureLineItemModal from '@/components/shared/ConfigureLineItemModal';
+import QuickCreateModal from '@/components/shared/QuickCreateModal';
 import AddressSelector from '@/components/shared/AddressSelector';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -31,6 +33,7 @@ const CURRENCIES = ['INR','USD','EUR','GBP','AED','SGD','AUD','CAD','JPY','CNY']
 function ConfirmDialog({ open, title, message, confirmLabel, confirmClass, onConfirm, onCancel, children }) {
   if (!open) return null;
   return (
+    <>
     <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[200] flex items-center justify-center p-4">
       <div className="bg-white rounded-[28px] shadow-2xl w-full max-w-md overflow-hidden">
         <div className="px-8 py-6 border-b border-gray-100">
@@ -44,6 +47,7 @@ function ConfirmDialog({ open, title, message, confirmLabel, confirmClass, onCon
         </div>
       </div>
     </div>
+    </>
   );
 }
 
@@ -91,11 +95,22 @@ const buildQuoteHTML = (quote, items, template) => {
 
 // ─── Line Items Editor ─────────────────────────────────────────────────────────
 function QuoteLineItems({ items, setItems, products, currency }) {
+  const [configModal, setConfigModal] = useState(null);
   const fmt = n => new Intl.NumberFormat('en-IN',{style:'currency',currency:currency||'INR',maximumFractionDigits:0}).format(n||0);
   const iCls = 'w-full border border-blue-200 rounded-lg px-2 py-2 text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-blue-400 text-xs';
   const sCls = 'w-full border border-blue-200 rounded-lg px-2 py-2 text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-blue-400 text-xs';
 
-  const add    = () => setItems(p => [...p, { _id:Date.now(), product_name:'', product_code:'', description:'', quantity:1, unit_price:0, list_price:0, discount_pct:0, tax_pct:18, extended_price:0 }]);
+  const add    = () => setItems(p => [...p, { _id:Date.now(), product_name:'', product_code:'', description:'', quantity:1, unit_price:0, list_price:0, discount_pct:0, tax_pct:18, extended_price:0, configuration:{} }]);
+  const openConfig = (idx) => {
+    const row=items[idx]; const pr=products.find(x=>x.name===(row.product_name||row.product));
+    if(!pr)return;
+    setConfigModal({rowIdx:idx,productName:pr.name,productId:pr._uuid||pr.id,productNumber:pr.id,answers:row.configuration||{}});
+  };
+  const saveConfig = (answers) => {
+    if(configModal===null)return;
+    setItems(p=>p.map((r,i)=>i===configModal.rowIdx?{...r,configuration:answers}:r));
+    setConfigModal(null);
+  };
   const remove = idx => setItems(p => p.filter((_,i) => i !== idx));
   const upd    = (idx, field, val) => setItems(p => p.map((r,i) => {
     if (i !== idx) return r;
@@ -111,6 +126,7 @@ function QuoteLineItems({ items, setItems, products, currency }) {
   const totalTax  = items.reduce((s,i) => s + (i.quantity*i.unit_price*(1-i.discount_pct/100))*i.tax_pct/100, 0);
 
   return (
+    <>
     <div className="bg-white rounded-[20px] border border-blue-100 shadow overflow-hidden">
       <div className="bg-gradient-to-r from-[#0F172A] to-blue-900 px-5 py-3.5 flex items-center justify-between">
         <div><h3 className="text-white font-bold">Line Items</h3><p className="text-blue-300 text-xs mt-0.5">Products · Pricing · Discounts · Tax</p></div>
@@ -126,12 +142,21 @@ function QuoteLineItems({ items, setItems, products, currency }) {
               ? <tr><td colSpan={9} className="px-5 py-8 text-center text-gray-400">No line items. Click + Add Line.</td></tr>
               : items.map((row,idx)=>(
                 <tr key={row._id??idx} className="border-t border-blue-50 hover:bg-blue-50/30">
-                  <td className="px-3 py-2" style={{minWidth:180}}><SearchableSelect
-              value={row.product_name||''}
-              onChange={v=>upd(idx,'product_name',v)}
-              options={products.map(p=>({value:p.name,label:p.name,sub:p.category||p.productFamily||''}))}
-              placeholder="Select product" emptyLabel="No product"
-            /></td>
+                  <td className="px-3 py-2" style={{minWidth:180}}>
+                  <div className="flex items-center gap-1">
+                    <div className="flex-1"><SearchableSelect
+                      value={row.product_name||''}
+                      onChange={v=>upd(idx,'product_name',v)}
+                      options={products.map(p=>({value:p.name,label:p.name,sub:p.category||p.productFamily||''}))}
+                      placeholder="Select product" emptyLabel="No product"
+                    /></div>
+                    {(row.product_name||row.product) && (
+                      <button onClick={()=>openConfig(idx)} title="Configure"
+                        className={`flex-shrink-0 w-6 h-6 rounded-md flex items-center justify-center text-xs transition-all ${Object.keys(row.configuration||{}).length>0?'bg-blue-600 text-white':'bg-gray-100 hover:bg-blue-100 text-gray-400 hover:text-blue-600'}`}>⚙️</button>
+                    )}
+                  </div>
+                  {Object.keys(row.configuration||{}).length>0&&<div className="text-xs text-blue-600 mt-0.5 truncate">✓ {Object.keys(row.configuration).length} configured</div>}
+                </td>
                   <td className="px-3 py-2" style={{minWidth:140}}><input value={row.description||''} onChange={e=>upd(idx,'description',e.target.value)} placeholder="Description" className={iCls}/></td>
                   <td className="px-3 py-2 w-16"><input type="number" min={1} value={row.quantity} onChange={e=>upd(idx,'quantity',e.target.value)} className={`${iCls} text-center`}/></td>
                   <td className="px-3 py-2 text-right text-gray-400 whitespace-nowrap">{fmt(row.list_price)}</td>
@@ -155,6 +180,18 @@ function QuoteLineItems({ items, setItems, products, currency }) {
         </table>
       </div>
     </div>
+    {configModal && (
+      <ConfigureLineItemModal
+        open={!!configModal}
+        onClose={()=>setConfigModal(null)}
+        productName={configModal.productName}
+        productId={configModal.productId}
+        productNumber={configModal.productNumber}
+        existingAnswers={configModal.answers}
+        onSave={saveConfig}
+      />
+    )}
+    </>
   );
 }
 
@@ -173,6 +210,9 @@ function QuotationDetail({ quote, onClose, onSaved }) {
   const [items,          setItems]          = useState([]);
   const [loading,        setLoading]        = useState(true);
   const [saving,         setSaving]         = useState(false);
+  const [quickCreate,    setQuickCreate]    = useState(null);
+  const [pendingCustomers, setPendingCustomers] = useState([]);
+  const [pendingContacts,  setPendingContacts]  = useState([]);
   const [printing,       setPrinting]       = useState(false);
   const [creatingOrder,  setCreatingOrder]  = useState(false);
   const [matchingProcess,setMatchingProcess]= useState(null);
@@ -362,7 +402,12 @@ function QuotationDetail({ quote, onClose, onSaved }) {
                 <span className="bg-white/20 text-white text-xs font-semibold px-3 py-1 rounded-full">v{form.version||1}</span>
                 {ownerUser && <span className="bg-white/10 text-white text-xs px-3 py-1 rounded-full">👤 {ownerUser.first_name} {ownerUser.last_name}</span>}
               </div>
-              <p className="text-blue-300 text-sm mt-1">{form.quote_number} · {form.customer}</p>
+              <p className="text-blue-300 text-sm mt-1 flex items-center gap-2 flex-wrap">
+                <span className="bg-blue-600 text-white font-mono font-bold px-3 py-0.5 rounded-full text-xs tracking-wider shadow-sm">
+                  {form.displayNumber ? formatDisplayNumber('QUO', form.displayNumber) : form.quote_number}
+                </span>
+                <span className="text-blue-300">{form.customer || 'Quotation'}</span>
+              </p>
             </div>
             <div className="flex items-center gap-2 flex-wrap">
               <button onClick={() => {
@@ -461,11 +506,20 @@ function QuotationDetail({ quote, onClose, onSaved }) {
                     <label className="text-xs font-bold uppercase tracking-wider text-gray-400 block mb-2">{l}</label>
                     {field==='customer_select' ? <SearchableSelect
               value={form.customer_id||''}
-              onChange={v=>{const c=customers.find(x=>x.id===v);sf('customer_id',c?.id||'');sf('customer',c?.name||'');}}
-              options={customers.map(c=>({value:c.id,label:c.name,sub:[c.email,c.phone,c.industry,c.city].filter(Boolean).join(' · ')}))}
+              onChange={v=>{const c=[...customers,...(pendingCustomers||[])].find(x=>x.id===v);if(c){sf('customer_id',c.id);sf('customer',c.name);}else if(v){sf('customer_id',v);}}}
+              options={[...customers,...(pendingCustomers||[]).filter(pc=>!customers.find(c=>c.id===pc.id))].map(c=>({value:c.id,label:c.name,sub:[c.email,c.phone,c.industry,c.city].filter(Boolean).join(' · ')}))}
               placeholder="Select customer" emptyLabel="No customer"
+              onCreateNew={q=>setQuickCreate({type:'customer',prefillName:q,onCreated:(id,name)=>{setForm(f=>({...f,customer_id:id,customer:name}));setPendingCustomers(p=>[...p,{id,name}]);}})}
+              createLabel="Create Customer"
             />
-                    :field==='contact_select'  ? <select value={form.contact_id||''} onChange={e=>{const c=contacts.find(x=>x.id===e.target.value);s('contact_id',c?.id||'');s('contact',c?.name||'');}} className={sCls}><option value="">Select</option>{contacts.filter(c=>!form.customer_id||c.customerId===form.customer_id).map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select>
+                    :field==='contact_select'  ? <SearchableSelect
+                      value={form.contact_id||''}
+                      onChange={v=>{const c=[...contacts,...(pendingContacts||[])].find(x=>x.id===v);if(c){s('contact_id',c.id);s('contact',c.name);}else if(v){s('contact_id',v);}}}
+                      options={[...contacts,...(pendingContacts||[]).filter(pc=>!contacts.find(c=>c.id===pc.id))].filter(c=>!form.customer_id||c.customerId===form.customer_id||c.customer_id===form.customer_id).map(c=>({value:c.id,label:c.name,sub:[c.email,c.phone,c.designation].filter(Boolean).join(' · ')}))}
+                      placeholder="Select contact" emptyLabel="No contact"
+                      onCreateNew={q=>{const custId=form.customer_id;const custName=form.customer;setQuickCreate({type:'contact',prefillName:q,prefillExtra:{customerId:custId,customer:custName},onCreated:(id,name)=>{s('contact_id',id);s('contact',name);setPendingContacts(p=>[...p,{id,name,contact_number:id,customerId:custId,customer_id:custId}]);}});}}
+                      createLabel="Create Contact"
+                    />
                     :field==='owner_select'    ? <select value={form.owner_id||''} onChange={e=>{const u=enterpriseUsers.find(x=>x.id===e.target.value);s('owner_id',u?.id||'');s('owner',u?.email||'');}} className={sCls}><option value="">Unassigned</option>{enterpriseUsers.map(u=><option key={u.id} value={u.id}>{u.first_name} {u.last_name}</option>)}</select>
                     :field==='template_id'     ? <select value={form.template_id||''} onChange={e=>s('template_id',e.target.value)} className={sCls}><option value="">Default Template</option>{quoteTemplates.map(t=><option key={t.id} value={t.id}>{t.name}{t.isDefault?' (Default)':''}</option>)}</select>
                     :type==='select'           ? <select value={form[field]||''} onChange={e=>s(field,e.target.value)} className={sCls}><option value="">Select</option>{(opts||[]).map(o=><option key={o}>{o}</option>)}</select>
@@ -605,6 +659,16 @@ function QuotationDetail({ quote, onClose, onSaved }) {
         message={`Create a new version (v${(form.version||1)+1}) of "${form.name}"? A copy will be created as a Draft for revision.`}
         confirmLabel="Create New Version" confirmClass="bg-gray-600 hover:bg-gray-700"
         onConfirm={doNewVersion} onCancel={()=>setDialog(null)}/>
+      {quickCreate && (
+        <QuickCreateModal
+          objectType={quickCreate?.type}
+          open={!!quickCreate}
+          onClose={()=>setQuickCreate(null)}
+          prefill={quickCreate?.prefillName?{name:quickCreate.prefillName}:{}}
+          prefillExtra={quickCreate?.prefillExtra||{}}
+          onCreated={(id,name)=>{quickCreate?.onCreated?.(id,name);setQuickCreate(null);}}
+        />
+      )}
     </>
   );
 }
@@ -614,6 +678,8 @@ export default function QuotationsPage() {
   const { quotations, fetchQuotations, customers, createQuotation, deleteQuotation, appPreferences } = useApp();
   const [selectedQuote, setSelectedQuote] = useState(null);
   const [createOpen,    setCreateOpen]    = useState(false);
+  const [quickCreate,   setQuickCreate]   = useState(null);
+  const [pendingCustomers, setPendingCustomers] = useState([]);
 
   // Keep selectedQuote in sync when quotations list refreshes (e.g. after status change)
   useEffect(() => {
@@ -686,7 +752,11 @@ export default function QuotationsPage() {
                     const sm = STATUS_META[q.status] || STATUS_META['Draft'];
                     return (
                       <tr key={q.id} className="border-t border-blue-50 hover:bg-blue-50/40">
-                        <td className="px-5 py-3.5 font-mono text-xs text-gray-400">{q.quote_number}</td>
+                        <td className="px-5 py-3.5">
+                        <span className="text-xs font-mono font-bold text-blue-700 bg-blue-50 px-2.5 py-1 rounded-full border border-blue-100">
+                          {q.displayNumber ? formatDisplayNumber('QUO', q.displayNumber) : formatDisplayNumber('QUO', q.display_number) || q.quote_number}
+                        </span>
+                      </td>
                         <td className="px-5 py-3.5"><button onClick={()=>setSelectedQuote(q)} className="font-semibold text-[#0F172A] hover:text-blue-700 hover:underline text-left">{q.name||q.quote_number}</button></td>
                         <td className="px-5 py-3.5 text-gray-600">{q.customer||'-'}</td>
                         <td className="px-5 py-3.5 text-center"><span className="bg-blue-100 text-blue-700 text-xs font-bold px-2.5 py-1 rounded-full">v{q.version||1}</span></td>
@@ -723,9 +793,11 @@ export default function QuotationsPage() {
               <div><label className="text-xs font-bold uppercase text-gray-400 block mb-1.5">Quotation Name *</label><input value={form.name||''} onChange={e=>sf('name',e.target.value)} placeholder="e.g. Enterprise Software Proposal" className={iCls}/></div>
               <div><label className="text-xs font-bold uppercase text-gray-400 block mb-1.5">Customer</label><SearchableSelect
               value={form.customer_id||''}
-              onChange={v=>{const c=customers.find(x=>x.id===v);sf('customer_id',c?.id||'');sf('customer',c?.name||'');}}
-              options={customers.map(c=>({value:c.id,label:c.name,sub:[c.email,c.phone,c.industry,c.city].filter(Boolean).join(' · ')}))}
+              onChange={v=>{const c=[...customers,...(pendingCustomers||[])].find(x=>x.id===v);if(c){sf('customer_id',c.id);sf('customer',c.name);}else if(v){sf('customer_id',v);}}}
+              options={[...customers,...(pendingCustomers||[]).filter(pc=>!customers.find(c=>c.id===pc.id))].map(c=>({value:c.id,label:c.name,sub:[c.email,c.phone,c.industry,c.city].filter(Boolean).join(' · ')}))}
               placeholder="Select customer" emptyLabel="No customer"
+              onCreateNew={q=>setQuickCreate({type:'customer',prefillName:q,onCreated:(id,name)=>{setForm(f=>({...f,customer_id:id,customer:name}));setPendingCustomers(p=>[...p,{id,name}]);}})}
+              createLabel="Create Customer"
             /></div>
               <div><label className="text-xs font-bold uppercase text-gray-400 block mb-1.5">Validity Date</label><input type="date" value={form.validity_date||''} onChange={e=>sf('validity_date',e.target.value)} className={iCls}/></div>
               <div><label className="text-xs font-bold uppercase text-gray-400 block mb-1.5">Currency</label><select value={form.currency||'INR'} onChange={e=>sf('currency',e.target.value)} className={sCls}>{CURRENCIES.map(c=><option key={c}>{c}</option>)}</select></div>

@@ -6,8 +6,13 @@ import { useApp } from '@/context/AppContext';
 import {
   getObjectFields, getStatusOptions, getPageLabel,
   formatCurrency, formatDateTime, getStatusColor,
+  formatDisplayNumber, PAGE_DISPLAY_PREFIX,
 } from '@/lib/utils';
 import { supabase } from '@/lib/supabase';
+import ApprovalBanner from '@/components/crm/ApprovalBanner';
+import ProductConfigurator from '@/components/products/ProductConfigurator';
+import ConfigureLineItemModal from '@/components/shared/ConfigureLineItemModal';
+import QuickCreateModal from '@/components/shared/QuickCreateModal';
 import CreateRecordModal from '@/components/crm/CreateRecordModal';
 import AISummary from '@/components/ai/AISummary';
 import SearchableSelect from '@/components/shared/SearchableSelect';
@@ -76,140 +81,123 @@ function OwnerField({ record, edited, onPick }) {
 
 
 // ─── Approval Banner ──────────────────────────────────────────────────────────
-function ApprovalBanner({ recordId, recordType, onDecision }) {
-  const { currentUser, approvalRequests, processApproval,
-    appPreferences, createOrderFromOpportunity,
-    checkMatchingApprovalProcess, submitForApproval, fetchLineItems, createQuotationFromOpportunity, convertLeadToOpportunity, createInvoiceFromOrder
-  } = useApp();
-  const [request,    setRequest]    = useState(null);
-  const [step,       setStep]       = useState(null);
-  const [isApprover, setIsApprover] = useState(false);
-  const [comment,    setComment]    = useState('');
-  const [deciding,   setDeciding]   = useState(false);
-
-  useEffect(() => {
-    const load = async () => {
-      if (!supabase || !currentUser || !recordId) return;
-      const { data: reqs } = await supabase.from('approval_requests').select('*')
-        .eq('record_id', recordId).eq('record_type', recordType).eq('status','Pending');
-      if (!reqs?.length) { setRequest(null); setIsApprover(false); return; }
-      const req = reqs[0]; setRequest(req);
-      const { data: stepData } = await supabase.from('approval_steps').select('*').eq('id', req.current_step_id).single();
-      if (!stepData) return;
-      setStep(stepData);
-      setIsApprover(stepData.approver_user_id === currentUser.id);
-    };
-    load();
-  }, [recordId, recordType, currentUser?.id, approvalRequests.length]);
-
-  if (!request) return null;
-
-  const handleDecision = async (decision) => {
-    setDeciding(true);
-    await processApproval(request.id, decision, comment);
-    setComment(''); setDeciding(false);
-    if (onDecision) onDecision();
-  };
-
-  return (
-    <div className={`rounded-[24px] border-2 p-5 ${isApprover ? 'border-yellow-300 bg-yellow-50' : 'border-blue-200 bg-blue-50'}`}>
-      <div className="flex items-start gap-4">
-        <div className="text-3xl">⏳</div>
-        <div className="flex-1">
-          <div className="font-bold text-[#0F172A] text-lg mb-1">Pending Approval</div>
-          <div className="text-sm text-gray-600 mb-1">Submitted by <span className="font-semibold">{request.submitted_by}</span>
-            {step && <span> · Step: <span className="font-semibold">{step.step_name}</span></span>}
-          </div>
-          <div className="text-xs text-gray-400">Request #{request.request_number}</div>
-          {isApprover ? (
-            <div className="mt-4 space-y-3">
-              <div className="bg-white rounded-2xl border border-yellow-200 p-3">
-                <p className="text-sm font-semibold text-yellow-800 mb-2">✋ Your approval is required</p>
-                <input value={comment} onChange={e=>setComment(e.target.value)} placeholder="Add a comment (optional)..." className={iCls}/>
-              </div>
-              <div className="flex gap-3">
-                <button onClick={()=>handleDecision('Approved')} disabled={deciding} className="flex-1 bg-green-500 hover:bg-green-600 text-white py-3 rounded-2xl font-bold text-sm disabled:opacity-50 shadow-lg">
-                  {deciding ? 'Processing...' : '✅ Approve'}
-                </button>
-                <button onClick={()=>handleDecision('Rejected')} disabled={deciding} className="flex-1 bg-red-500 hover:bg-red-600 text-white py-3 rounded-2xl font-bold text-sm disabled:opacity-50 shadow-lg">
-                  {deciding ? 'Processing...' : '❌ Reject'}
-                </button>
-              </div>
-            </div>
-          ) : (
-            <div className="mt-3 bg-white rounded-2xl border border-blue-200 px-4 py-3">
-              <p className="text-sm text-blue-700">Waiting for approver to review this record.</p>
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
+// ApprovalBanner imported from shared component
 
 // ─── Line Items Table ─────────────────────────────────────────────────────────
 function LineItemsTable({ items, setItems, products }) {
-  const add    = () => setItems(p => [...p, { _id:Date.now(), product:'', quantity:1, price:0, discount:0 }]);
-  const remove = idx => setItems(p => p.filter((_,i)=>i!==idx));
+  const [configModal, setConfigModal] = useState(null);
+
+  const iCls = 'w-full border border-blue-200 rounded-xl px-3 py-2.5 text-sm text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-blue-400';
+
+  const add    = () => setItems(p => [...p, { _id:Date.now(), product:'', quantity:1, price:0, discount:0, configuration:{} }]);
+  const remove = (idx) => setItems(p => p.filter((_,i) => i !== idx));
   const upd    = (idx, field, raw) => setItems(p => p.map((r,i) => {
     if (i !== idx) return r;
-    if (field==='product') { const pr=products.find(x=>x.name===raw); return {...r,product:raw,price:pr?pr.price:r.price}; }
+    if (field === 'product') {
+      const pr = products.find(x => x.name === raw);
+      return { ...r, product: raw, price: pr ? pr.price : r.price, product_id: pr?._uuid||pr?.id||null, configuration: {} };
+    }
     return { ...r, [field]: ['quantity','price','discount'].includes(field) ? Number(raw) : raw };
   }));
-  const sub   = items.reduce((s,r)=>s+r.quantity*r.price,0);
-  const disc  = items.reduce((s,r)=>s+r.quantity*r.price*(r.discount/100),0);
+
+  const openConfig = (idx) => {
+    const row = items[idx];
+    const pr  = products.find(x => x.name === (row.product || row.product_name));
+    if (!pr) return;
+    setConfigModal({ rowIdx: idx, productName: pr.name, productId: pr._uuid||pr.id, productNumber: pr.id, answers: row.configuration || {} });
+  };
+
+  const saveConfig = (answers) => {
+    if (configModal === null) return;
+    setItems(p => p.map((r,i) => i === configModal.rowIdx ? { ...r, configuration: answers } : r));
+    setConfigModal(null);
+  };
+
+  const sub   = items.reduce((s,r) => s + r.quantity * r.price, 0);
+  const disc  = items.reduce((s,r) => s + r.quantity * r.price * (r.discount/100), 0);
   const grand = sub - disc;
   const fmt   = n => new Intl.NumberFormat('en-IN',{style:'currency',currency:'INR',maximumFractionDigits:0}).format(n);
 
   return (
-    <div className="bg-white rounded-[24px] border border-blue-100 shadow-lg overflow-hidden">
-      <div className="bg-gradient-to-r from-[#0F172A] to-blue-900 px-6 py-4 flex items-center justify-between">
-        <div><h3 className="text-white font-bold text-lg">Line Items</h3><p className="text-blue-300 text-xs mt-0.5">Products · Discounts · Totals</p></div>
-        <button onClick={add} className="bg-white text-[#0F172A] px-4 py-2 rounded-xl text-sm font-bold hover:bg-blue-50">+ Add Item</button>
+    <>
+      <div className="bg-white rounded-[24px] border border-blue-100 shadow-lg overflow-hidden">
+        <div className="bg-gradient-to-r from-[#0F172A] to-blue-900 px-6 py-4 flex items-center justify-between">
+          <div><h3 className="text-white font-bold text-lg">Line Items</h3><p className="text-blue-300 text-xs mt-0.5">Products · Discounts · Totals</p></div>
+          <button onClick={add} className="bg-white text-[#0F172A] px-4 py-2 rounded-xl text-sm font-bold hover:bg-blue-50">+ Add Item</button>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead><tr className="bg-blue-50 border-b border-blue-100">
+              <th className="px-4 py-3 text-left text-xs font-bold uppercase text-gray-500" style={{minWidth:220}}>Product</th>
+              <th className="px-4 py-3 text-center text-xs font-bold uppercase text-gray-500 w-20">Qty</th>
+              <th className="px-4 py-3 text-right text-xs font-bold uppercase text-gray-500 w-32">Price (₹)</th>
+              <th className="px-4 py-3 text-center text-xs font-bold uppercase text-gray-500 w-28">Disc (%)</th>
+              <th className="px-4 py-3 text-right text-xs font-bold uppercase text-gray-500 w-32">Total</th>
+              <th className="w-10"/>
+            </tr></thead>
+            <tbody>
+              {items.length === 0
+                ? <tr><td colSpan={6} className="px-5 py-10 text-center text-gray-400 text-sm">No items. Click + Add Item.</td></tr>
+                : items.map((row, idx) => {
+                    const lt = row.quantity * row.price * (1 - row.discount/100);
+                    const hasConfig = Object.keys(row.configuration||{}).length > 0;
+                    return (
+                      <tr key={row._id ?? idx} className="border-t border-blue-50 hover:bg-slate-50">
+                        <td className="px-4 py-2">
+                          <div className="flex items-center gap-1.5">
+                            <div className="flex-1">
+                              <SearchableSelect
+                                value={row.product||row.product_name||''}
+                                onChange={v => upd(idx,'product',v)}
+                                options={products.map(p=>({value:p.name,label:p.name,sub:p.category||''}))}
+                                placeholder="Select product" emptyLabel="No product"
+                              />
+                            </div>
+                            {(row.product||row.product_name) && (
+                              <button onClick={()=>openConfig(idx)} title="Configure product"
+                                className={`flex-shrink-0 w-7 h-7 rounded-lg flex items-center justify-center text-sm transition-all ${hasConfig?'bg-blue-600 text-white shadow-sm':'bg-gray-100 hover:bg-blue-100 text-gray-500 hover:text-blue-600'}`}>
+                                ⚙️
+                              </button>
+                            )}
+                          </div>
+                          {hasConfig && (
+                            <div className="text-xs text-blue-600 mt-1 pl-1">
+                              ✓ {Object.keys(row.configuration).length} attribute{Object.keys(row.configuration).length!==1?'s':''} configured
+                            </div>
+                          )}
+                        </td>
+                        <td className="px-4 py-2"><input type="number" min={1} value={row.quantity} onChange={e=>upd(idx,'quantity',e.target.value)} className={`${iCls} text-center`}/></td>
+                        <td className="px-4 py-2"><input type="number" min={0} value={row.price} onChange={e=>upd(idx,'price',e.target.value)} className={`${iCls} text-right`}/></td>
+                        <td className="px-4 py-2"><input type="number" min={0} max={100} value={row.discount} onChange={e=>upd(idx,'discount',e.target.value)} className={`${iCls} text-center ${row.discount>0?'border-green-300 bg-green-50':''}`}/></td>
+                        <td className="px-4 py-2 text-right font-bold text-[#0F172A]">{fmt(lt)}</td>
+                        <td className="px-2 py-2 text-center"><button onClick={()=>remove(idx)} className="w-7 h-7 rounded-full bg-red-100 hover:bg-red-200 text-red-500 text-xs font-bold flex items-center justify-center">✕</button></td>
+                      </tr>
+                    );
+                  })
+              }
+            </tbody>
+            {items.length > 0 && (
+              <tfoot className="border-t-2 border-blue-100">
+                <tr className="bg-gray-50"><td colSpan={4} className="px-5 py-2.5 text-right text-sm text-gray-500">Subtotal</td><td className="px-4 py-2.5 text-right text-sm font-semibold">{fmt(sub)}</td><td/></tr>
+                {disc>0 && <tr className="bg-green-50"><td colSpan={4} className="px-5 py-2.5 text-right text-sm text-green-600">Discount</td><td className="px-4 py-2.5 text-right text-sm font-semibold text-green-600">- {fmt(disc)}</td><td/></tr>}
+                <tr className="bg-[#0F172A]"><td colSpan={4} className="px-5 py-3 text-right font-bold text-white">Grand Total</td><td className="px-4 py-3 text-right font-bold text-white text-lg">{fmt(grand)}</td><td/></tr>
+              </tfoot>
+            )}
+          </table>
+        </div>
       </div>
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead><tr className="bg-blue-50 border-b border-blue-100">
-            <th className="px-4 py-3 text-left text-xs font-bold uppercase text-gray-500" style={{minWidth:200}}>Product</th>
-            <th className="px-4 py-3 text-center text-xs font-bold uppercase text-gray-500 w-20">Qty</th>
-            <th className="px-4 py-3 text-right text-xs font-bold uppercase text-gray-500 w-32">Price (₹)</th>
-            <th className="px-4 py-3 text-center text-xs font-bold uppercase text-gray-500 w-28">Disc (%)</th>
-            <th className="px-4 py-3 text-right text-xs font-bold uppercase text-gray-500 w-32">Total</th>
-            <th className="w-10"/>
-          </tr></thead>
-          <tbody>
-            {items.length===0
-              ? <tr><td colSpan={6} className="px-5 py-10 text-center text-gray-400 text-sm">No items. Click + Add Item.</td></tr>
-              : items.map((row,idx)=>{
-                  const lt=row.quantity*row.price*(1-row.discount/100);
-                  return (
-                    <tr key={row._id??idx} className="border-t border-blue-50 hover:bg-slate-50">
-                      <td className="px-4 py-2"><SearchableSelect
-                        value={row.product||row.product_name||''}
-                        onChange={v=>upd(idx,'product',v)}
-                        options={products.map(p=>({value:p.name,label:p.name,sub:p.category||''}))}
-                        placeholder="Select product" emptyLabel="No product"
-                      /></td>
-                      <td className="px-4 py-2"><input type="number" min={1} value={row.quantity} onChange={e=>upd(idx,'quantity',e.target.value)} className={`${iCls} text-center`}/></td>
-                      <td className="px-4 py-2"><input type="number" min={0} value={row.price} onChange={e=>upd(idx,'price',e.target.value)} className={`${iCls} text-right`}/></td>
-                      <td className="px-4 py-2"><input type="number" min={0} max={100} value={row.discount} onChange={e=>upd(idx,'discount',e.target.value)} className={`${iCls} text-center ${row.discount>0?'border-green-300 bg-green-50':''}`}/></td>
-                      <td className="px-4 py-2 text-right font-bold text-[#0F172A]">{fmt(lt)}</td>
-                      <td className="px-2 py-2 text-center"><button onClick={()=>remove(idx)} className="w-7 h-7 rounded-full bg-red-100 hover:bg-red-200 text-red-500 text-xs font-bold flex items-center justify-center">✕</button></td>
-                    </tr>
-                  );
-                })
-            }
-          </tbody>
-          {items.length>0&&(
-            <tfoot className="border-t-2 border-blue-100">
-              <tr className="bg-gray-50"><td colSpan={4} className="px-5 py-2.5 text-right text-sm text-gray-500">Subtotal</td><td className="px-4 py-2.5 text-right text-sm font-semibold">{fmt(sub)}</td><td/></tr>
-              {disc>0&&<tr className="bg-green-50"><td colSpan={4} className="px-5 py-2.5 text-right text-sm text-green-600">Discount</td><td className="px-4 py-2.5 text-right text-sm font-semibold text-green-600">- {fmt(disc)}</td><td/></tr>}
-              <tr className="bg-[#0F172A]"><td colSpan={4} className="px-5 py-3 text-right font-bold text-white">Grand Total</td><td className="px-4 py-3 text-right font-bold text-white text-lg">{fmt(grand)}</td><td/></tr>
-            </tfoot>
-          )}
-        </table>
-      </div>
-    </div>
+      {configModal && (
+        <ConfigureLineItemModal
+          open={!!configModal}
+          onClose={()=>setConfigModal(null)}
+          productName={configModal.productName}
+          productId={configModal.productId}
+          productNumber={configModal.productNumber}
+          existingAnswers={configModal.answers}
+          onSave={saveConfig}
+        />
+      )}
+    </>
   );
 }
 
@@ -299,7 +287,7 @@ function Customer360({ customer, onSubRecordOpen, onCreateFor }) {
 
 
 // ─── Main RecordDetailPanel ───────────────────────────────────────────────────
-export default function RecordDetailPanel({ page, record, onClose }) {
+export default function RecordDetailPanel({ page, record, onClose, prefillCustomer, initialTab = null }) {
   const {
     customers, contacts, products, organizations, businessUnits, enterpriseUsers,
     updateRecord, submitForApproval, checkMatchingApprovalProcess,
@@ -316,13 +304,17 @@ export default function RecordDetailPanel({ page, record, onClose }) {
   };
 
   const [edited,          setEdited]          = useState({ ...record });
+  const [isDirty,         setIsDirty]         = useState(false);
   const [lineItems,       setLineItems]       = useState([]);
   const [loadingLI,       setLoadingLI]       = useState(false);
   const [saving,          setSaving]          = useState(false);
   const [submitting,      setSubmitting]      = useState(false);
-  const [tab,             setTab]             = useState('details');
+  const [tab,             setTab]             = useState(initialTab || 'details');
   const [matchingProcess, setMatchingProcess] = useState(null);
   const [checkingApproval,setCheckingApproval]= useState(false);
+  const [quickCreate,      setQuickCreate]      = useState(null);
+  const [pendingCustomers, setPendingCustomers] = useState([]);
+  const [pendingContacts,  setPendingContacts]  = useState([]);
   // Sub-record state for Customer360
   const [createForPage, setCreateForPage] = useState(null); // page string
 
@@ -330,7 +322,8 @@ export default function RecordDetailPanel({ page, record, onClose }) {
 
   useEffect(() => {
     setEdited({ ...record });
-    setTab('details');
+    setTab(initialTab || 'details');
+    setIsDirty(false);
 
     // Check matching approval process
     const checkApproval = async () => {
@@ -352,7 +345,19 @@ export default function RecordDetailPanel({ page, record, onClose }) {
     });
   }, [record.id, page]);
 
-  const set = (k,v) => setEdited(p=>({...p,[k]:v}));
+  const set = (k,v) => { setIsDirty(true); setEdited(p=>({...p,[k]:v})); };
+
+  // Inline field validation
+  const [fieldErrors, setFieldErrors] = useState({});
+  const setFieldError = (k, msg) => setFieldErrors(p=>({...p,[k]:msg}));
+  const clearFieldError = (k) => setFieldErrors(p=>({...p,[k]:''}));
+  const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  const validateEmail = (v) => !v || EMAIL_RE.test(v) ? '' : 'Invalid email address';
+  const validatePhone = (v) => {
+    if (!v) return '';
+    const digits = v.replace(/\D/g,'');
+    return digits.length >= 7 && digits.length <= 15 ? '' : 'Phone: 7–15 digits';
+  };
   const fields     = getObjectFields(page);
   const statusOpts = getStatusOptions(page);
 
@@ -361,6 +366,7 @@ export default function RecordDetailPanel({ page, record, onClose }) {
   const handleSave = async (andClose = false) => {
     setSaving(true);
     await updateRecord(page, edited, lineItems);
+    setIsDirty(false);
     setSaving(false);
     if (andClose) { onClose(); } else { setSaveSuccess(true); setTimeout(() => setSaveSuccess(false), 2500); }
   };
@@ -419,15 +425,19 @@ export default function RecordDetailPanel({ page, record, onClose }) {
     );
     if (field==='customer')     return <SearchableSelect
               value={edited.customerId||''}
-              onChange={v=>{const c=customers.find(x=>x.id===v);setEdited(p=>({...p,customerId:c?.id||'',customer:c?.name||''}));}}
-              options={customers.map(c=>({value:c.id,label:c.name,sub:[c.email,c.phone,c.industry,c.city].filter(Boolean).join(' · ')}))}
+              onChange={v=>{const c=[...customers,...pendingCustomers].find(x=>x.id===v);if(c)setEdited(p=>({...p,customerId:c.id,customer:c.name}));}}
+              options={[...customers,...pendingCustomers.filter(pc=>!customers.find(c=>c.id===pc.id))].map(c=>({value:c.id,label:c.name,sub:[c.email,c.phone,c.industry,c.city].filter(Boolean).join(' · ')}))}
               placeholder="Select customer" emptyLabel="No customer"
+              onCreateNew={q=>setQuickCreate({type:'customer',prefillName:q,onCreated:(id,name)=>{setEdited(p=>({...p,customerId:id,customer:name}));setPendingCustomers(prev=>[...prev,{id,name}]);}})}
+              createLabel="Create Customer"
             />;
     if (field==='contact')      return <SearchableSelect
               value={edited.contactId||''}
-              onChange={v=>{const c=contacts.find(x=>x.id===v);setEdited(p=>({...p,contactId:c?.id||'',contact:c?.name||''}));}}
-              options={contacts.map(c=>({value:c.id,label:c.name,sub:[c.email,c.phone,c.designation,c.customer].filter(Boolean).join(' · ')}))}
+              onChange={v=>{const c=[...contacts,...pendingContacts].find(x=>x.id===v);if(c)setEdited(p=>({...p,contactId:c.id,contact:c.name}));}}
+              options={[...contacts,...pendingContacts.filter(pc=>!contacts.find(c=>c.id===pc.id))].map(c=>({value:c.id,label:c.name,sub:[c.email,c.phone,c.designation,c.customer].filter(Boolean).join(' · ')}))}
               placeholder="Select contact" emptyLabel="No contact"
+              onCreateNew={q=>setQuickCreate({type:'contact',prefillName:q,prefillExtra:{customerId:edited.customerId,customer:edited.customer},onCreated:(id,name)=>{setEdited(p=>({...p,contactId:id,contact:name}));setPendingContacts(prev=>[...prev,{id,name}]);}})}
+              createLabel="Create Contact"
             />;
     if (field==='owner')
       return <OwnerField
@@ -459,12 +469,35 @@ export default function RecordDetailPanel({ page, record, onClose }) {
     if (field==='comments')
       return <textarea rows={3} value={v||''} onChange={e=>set(field,e.target.value)} className={tCls} placeholder="Add comments or working notes..."/>;
     if (field==='notes'||field==='internal_notes') return <textarea rows={4} value={v||''} onChange={e=>set(field,e.target.value)} className={tCls} placeholder="Notes..."/>;
-    return <input type={['amount','price','overall_discount','shipping_cost'].includes(field)?'number':'text'} value={v||''} onChange={e=>set(field,e.target.value)} placeholder={field.replace(/([A-Z])/g,' $1').trim()} className={iCls}/>;
+    { // Default field with type-aware validation
+      const isEmail = ['email'].includes(field);
+      const isPhone = ['phone','mobile','fax'].includes(field);
+      const inputType = ['amount','price','overall_discount','shipping_cost'].includes(field)?'number':isEmail?'email':'text';
+      const handleChange = (e) => {
+        let val = e.target.value;
+        if (isPhone) val = val.replace(/[^0-9+\-() ]/g,''); // strip non-phone chars
+        set(field, val);
+        if (isEmail) setFieldError(field, validateEmail(val));
+        if (isPhone) setFieldError(field, validatePhone(val));
+      };
+      return (
+        <div>
+          <input type={inputType} value={v||''} onChange={handleChange}
+            placeholder={isEmail?'name@company.com':isPhone?'Phone number':field.replace(/([A-Z])/g,' $1').trim()}
+            maxLength={isPhone?16:undefined}
+            className={`${iCls} ${fieldErrors[field]?'border-red-400 ring-1 ring-red-300':''}`}/>
+          {fieldErrors[field] && <p className="text-xs text-red-500 mt-1">{fieldErrors[field]}</p>}
+        </div>
+      );
+    }
   };
 
   const isPendingApproval = edited.status === 'Pending Approval';
-  const decisionStatuses  = ['Approved','Rejected','Pending Approval'];
-  const canSubmitForApproval = matchingProcess != null && !decisionStatuses.includes(edited.status) && !checkingApproval;
+  // Hide Submit button when record is in these statuses
+  const noSubmitStatuses  = ['Pending Approval', 'Approved'];
+  const canSubmitForApproval = matchingProcess != null
+    && !noSubmitStatuses.includes(edited.status)
+    && !checkingApproval;
 
   const ownerUser = enterpriseUsers.find(u => u.id === edited.owner_id || u.email === edited.owner);
 
@@ -481,7 +514,14 @@ export default function RecordDetailPanel({ page, record, onClose }) {
                 <Pill status={edited.status}/>
                 {ownerUser && <span className="bg-white/20 text-white text-xs px-3 py-1 rounded-full">👤 {ownerUser.first_name} {ownerUser.last_name}</span>}
               </div>
-              <p className="text-blue-300 text-sm mt-1">ID: {record.id} · {getPageLabel(page)}</p>
+              <p className="text-blue-300 text-sm mt-1 flex items-center gap-2 flex-wrap">
+                <span className="bg-blue-600 text-white font-mono font-bold px-3 py-0.5 rounded-full text-xs tracking-wider shadow-sm">
+                  {record.displayNumber
+                    ? formatDisplayNumber(PAGE_DISPLAY_PREFIX[page]||'REC', record.displayNumber)
+                    : `${PAGE_DISPLAY_PREFIX[page]||'REC'}-${String(record.id||'').slice(-5).padStart(5,'0')}`}
+                </span>
+                <span className="text-blue-300">{getPageLabel(page)}</span>
+              </p>
             </div>
             <div className="flex items-center gap-2 flex-wrap">
               {page==='leads'&&record.status==='Qualified'&&<button onClick={()=>{convertLeadToOpportunity(record);onClose();}} className="bg-white/20 hover:bg-white/30 text-white px-4 py-2 rounded-xl text-sm font-semibold">🔀 Convert</button>}
@@ -509,120 +549,130 @@ export default function RecordDetailPanel({ page, record, onClose }) {
                 <button onClick={onClose} className="px-4 py-2 text-sm rounded-xl font-semibold bg-white border border-gray-200 text-gray-600 hover:bg-gray-50">
                   Cancel
                 </button>
-                <button onClick={() => handleSave(false)} disabled={saving} className="px-4 py-2 text-sm rounded-xl font-semibold bg-blue-100 hover:bg-blue-200 text-blue-700 disabled:opacity-50">
+                <button onClick={() => handleSave(false)} disabled={saving || !isDirty} className={`px-4 py-2 text-sm rounded-xl font-semibold transition-all ${isDirty&&!saving?'bg-blue-100 hover:bg-blue-200 text-blue-700':'bg-gray-100 text-gray-400 cursor-not-allowed'} disabled:opacity-50`}>
                   {saving ? 'Saving…' : 'Save Changes'}
                 </button>
-                <button onClick={() => handleSave(true)} disabled={saving} className="px-5 py-2 text-sm rounded-xl font-semibold bg-gradient-to-r from-[#0F172A] to-blue-800 text-white hover:opacity-90 disabled:opacity-50 shadow-md">
+                <button onClick={() => handleSave(true)} disabled={saving || !isDirty} className="px-5 py-2 text-sm rounded-xl font-semibold bg-gradient-to-r from-[#0F172A] to-blue-800 text-white hover:opacity-90 disabled:opacity-50 shadow-md">
                   {saving ? 'Saving…' : 'Save & Close'}
                 </button>
               </div>
             )}
           </div>
 
-          {/* Customer tabs */}
-          {page==='customers'&&(
+          {/* Tabs — shown for customers (360 tab) and products (configuration tab) */}
+          {(page==='customers'||page==='products')&&(
             <div className="flex gap-1 px-8 pt-4 bg-gray-50 border-b border-blue-100">
-              {[{key:'details',label:'📋 Details'},{key:'360',label:'🔄 Customer 360'}].map(t=>(
+              {(page==='products'
+              ? [{key:'details',label:'📋 Details'},{key:'configuration',label:'⚙️ Configuration'}]
+              : page==='customers'
+              ? [{key:'details',label:'📋 Details'},{key:'360',label:'🔄 Customer 360'}]
+              : [{key:'details',label:'📋 Details'}]
+            ).map(t=>(
                 <button key={t.key} onClick={()=>setTab(t.key)} className={`px-5 py-2.5 rounded-t-xl text-sm font-semibold whitespace-nowrap transition-all ${tab===t.key?'bg-white text-[#0F172A] border border-b-white border-blue-200 -mb-px shadow-sm':'text-gray-500 hover:text-[#0F172A]'}`}>{t.label}</button>
               ))}
             </div>
           )}
 
           {/* Body */}
-          <div className="flex-1 overflow-y-auto p-8 bg-gradient-to-br from-white to-blue-50 space-y-6">
+          <div className="flex-1 overflow-y-auto bg-gradient-to-br from-white to-blue-50 p-8 space-y-6">
 
-            {/* Approval banner */}
-            {(page!=='customers'||tab==='details')&&(
-              <ApprovalBanner recordId={record.id} recordType={page} onDecision={()=>setEdited(p=>({...p,status:'—'}))}/>
+            {/* Approval banner — only on details tab */}
+            {tab==='details' && (
+              <ApprovalBanner recordId={record.id} recordType={page} onDecision={async()=>{
+                if(supabase && record.id){
+                  const tbl={'customers':'customers','leads':'leads','opportunities':'opportunities','orders':'orders','invoices':'invoices','contacts':'contacts','activities':'activities','products':'products'}[page];
+                  if(tbl){const idField={'customers':'customer_number','leads':'lead_number','opportunities':'opportunity_number','orders':'order_number','invoices':'invoice_number','contacts':'contact_number','activities':'activity_number','products':'product_number'}[page]||'id';const{data:fresh}=await supabase.from(tbl).select('status').eq(idField,record.id).maybeSingle();if(fresh?.status)setEdited(p=>({...p,status:fresh.status}));}
+                }
+                const proc=await checkMatchingApprovalProcess(page,{...edited});setMatchingProcess(proc);
+              }}/>
             )}
 
-            {/* Customer 360 */}
-            {page==='customers'&&tab==='360'&&(
+            {/* ── Product Configuration tab ─────────────────────────────── */}
+            {page==='products' && tab==='configuration' && (
+              <ProductConfigurator product={record}/>
+            )}
+
+            {/* ── Customer 360 tab ──────────────────────────────────────── */}
+            {page==='customers' && tab==='360' && (
               <Customer360
                 customer={edited}
-                onSubRecordOpen={(subPage, subRec) => {
-                  // Navigate to object's list page, with returnTo = this customer
-                  window.dispatchEvent(new CustomEvent('open-crm-record', {
-                    detail: {
-                      page:     subPage,
-                      record:   subRec,
-                      returnTo: { page: 'customers', record: edited }
-                    }
-                  }));
+                onSubRecordOpen={(subPage,subRec)=>{
+                  window.dispatchEvent(new CustomEvent('open-crm-record',{detail:{page:subPage,record:subRec,returnTo:{page:'customers',record:edited,tab:'360'}}}));
                   onClose();
                 }}
-                onCreateFor={(subPage) => setCreateForPage(subPage)}
+                onCreateFor={(subPage)=>setCreateForPage(subPage)}
               />
             )}
 
-            {/* Details */}
-            {(page!=='customers'||tab==='details')&&(<>
-              {/* AI Summary */}
-              <AISummary page={page} record={record}/>
-
-              <div className="space-y-5">
-                {sections.map(section=>(
-                  <div key={section.title} className="bg-white rounded-[20px] border border-blue-100 shadow-sm">
-                    <div className="px-5 py-3 bg-gradient-to-r from-slate-50 to-blue-50 border-b border-blue-100 flex items-center gap-2">
-                      <span className="text-lg">{section.icon}</span>
-                      <span className="font-bold text-[#0F172A] text-sm">{section.title}</span>
-                    </div>
-                    <div className="p-5 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-                      {section.fields.filter(f=>fields.includes(f)||['notes','description','comments'].includes(f)).map(field=>(
-                        <div key={field} className={`space-y-1.5 ${['notes','description','comments','billingAddress','shippingAddress'].includes(field)?'md:col-span-2 xl:col-span-3':''}`}>
-                          <label className="text-xs font-bold uppercase tracking-wider text-gray-400 block">
-                            {LABEL_MAP[field] || field.replace(/([A-Z])/g,' $1').trim()}
-                          </label>
-                          {renderField(field)}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                ))}
-                {/* Address Manager for customers and contacts */}
-                {(page==='customers'||page==='contacts') && record.id && (
-                  <div className="bg-white rounded-[20px] border border-blue-100 shadow-sm">
-                    <div className="px-5 py-3 bg-gradient-to-r from-slate-50 to-blue-50 border-b border-blue-100 flex items-center gap-2">
-                      <span className="text-lg">📍</span>
-                      <span className="font-bold text-[#0F172A] text-sm">Addresses</span>
-                    </div>
-                    <div className="p-5">
-                      <AddressManager ownerType={page==='customers'?'customer':'contact'} ownerId={record.id}/>
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              {HAS_LI.includes(page)&&(loadingLI
-                ? <div className="bg-white rounded-[24px] border border-blue-100 p-8 text-center text-gray-400">Loading line items…</div>
-                : <LineItemsTable items={lineItems} setItems={setLineItems} products={products}/>
-              )}
-
-              {/* System Information */}
-              <div className="bg-white rounded-[24px] border border-blue-100 shadow overflow-hidden">
-                <div className="px-6 py-4 bg-gradient-to-r from-slate-50 to-blue-50 border-b border-blue-100 flex items-center justify-between">
-                  <h3 className="text-lg font-bold text-[#0F172A]">System Information</h3>
-                  <span className="text-2xl">🛡️</span>
+            {/* ── Details tab ───────────────────────────────────────────── */}
+            {tab==='details' && (
+              <>
+                {/* Record Number badge */}
+                <div className="flex items-center gap-3 px-1">
+                  <span className="text-xs font-bold uppercase tracking-wider text-gray-400">{getPageLabel(page)} Number</span>
+                  <span className="font-mono font-bold text-blue-700 bg-blue-50 px-3 py-1 rounded-full text-sm border border-blue-200">
+                    {record.displayNumber
+                      ? formatDisplayNumber(PAGE_DISPLAY_PREFIX[page]||'REC', record.displayNumber)
+                      : `${PAGE_DISPLAY_PREFIX[page]||'REC'}-${String(record.id||'').replace(/[^0-9]/g,'').slice(-5).padStart(5,'0')||'00001'}`}
+                  </span>
                 </div>
-                <div className="p-6 grid grid-cols-2 md:grid-cols-4 gap-4">
-                  {[
-                    ['Created By',    record.created_by || '-'],
-                    ['Created At',    record.created_at ? formatDateTime(record.created_at) : '-'],
-                    ['Updated By',    record.updated_by || '-'],
-                    ['Updated At',    record.updated_at ? formatDateTime(record.updated_at) : '-'],
-                    ['Organization',  organizations.find(o=>o.id===record.organization_id)?.name || '-'],
-                    ['Business Unit', businessUnits.find(b=>b.id===record.business_unit_id)?.name || '-'],
-                    ['Record ID',     record.id || '-'],
-                    ['Owner',         ownerUser ? `${ownerUser.first_name} ${ownerUser.last_name}` : (record.owner || '-')],
-                  ].map(([lbl,val])=>(
-                    <div key={lbl}>
-                      <div className="text-xs font-bold uppercase tracking-wider text-gray-400 mb-1">{lbl}</div>
-                      <div className="text-sm text-[#0F172A] font-medium bg-gray-50 rounded-xl px-3 py-2 truncate">{val}</div>
+
+                {/* AI Summary */}
+                <AISummary page={page} record={record}/>
+
+                {/* Field sections */}
+                <div className="space-y-5">
+                  {sections.map(section=>(
+                    <div key={section.title} className="bg-white rounded-[20px] border border-blue-100 shadow-sm">
+                      <div className="px-5 py-3 bg-gradient-to-r from-slate-50 to-blue-50 border-b border-blue-100 flex items-center gap-2">
+                        <span className="text-lg">{section.icon}</span>
+                        <span className="font-bold text-[#0F172A] text-sm">{section.title}</span>
+                      </div>
+                      <div className="p-5 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                        {section.fields.filter(f=>fields.includes(f)||['notes','description','comments'].includes(f)).map(field=>(
+                          <div key={field} className={`space-y-1.5 ${['notes','description','comments','billingAddress','shippingAddress'].includes(field)?'md:col-span-2 xl:col-span-3':''}`}>
+                            <label className="text-xs font-bold uppercase tracking-wider text-gray-400 block">
+                              {LABEL_MAP[field]||field.replace(/([A-Z])/g,' $1').trim()}
+                            </label>
+                            {renderField(field)}
+                          </div>
+                        ))}
+                      </div>
                     </div>
                   ))}
+                  {(page==='customers'||page==='contacts') && record.id && (
+                    <div className="bg-white rounded-[20px] border border-blue-100 shadow-sm">
+                      <div className="px-5 py-3 bg-gradient-to-r from-slate-50 to-blue-50 border-b border-blue-100 flex items-center gap-2">
+                        <span className="text-lg">📍</span><span className="font-bold text-[#0F172A] text-sm">Addresses</span>
+                      </div>
+                      <div className="p-5"><AddressManager ownerType={page==='customers'?'customer':'contact'} ownerId={record.id}/></div>
+                    </div>
+                  )}
                 </div>
-              </div>
-            </>)}
+
+                {/* Line Items */}
+                {HAS_LI.includes(page) && (loadingLI
+                  ? <div className="bg-white rounded-[24px] border border-blue-100 p-8 text-center text-gray-400">Loading line items…</div>
+                  : <LineItemsTable items={lineItems} setItems={setLineItems} products={products}/>
+                )}
+
+                {/* System Information */}
+                <div className="bg-white rounded-[24px] border border-blue-100 shadow overflow-hidden">
+                  <div className="px-6 py-4 bg-gradient-to-r from-slate-50 to-blue-50 border-b border-blue-100 flex items-center justify-between">
+                    <h3 className="text-lg font-bold text-[#0F172A]">System Information</h3>
+                    <span className="text-2xl">🛡️</span>
+                  </div>
+                  <div className="p-6 grid grid-cols-2 md:grid-cols-4 gap-4">
+                    {[['Created By',record.created_by||'-'],['Created At',record.created_at?formatDateTime(record.created_at):'-'],['Updated By',record.updated_by||'-'],['Updated At',record.updated_at?formatDateTime(record.updated_at):'-'],['Organization',organizations.find(o=>o.id===record.organization_id)?.name||'-'],['Business Unit',businessUnits.find(b=>b.id===record.business_unit_id)?.name||'-'],['Record ID',record.id||'-'],['Owner',ownerUser?`${ownerUser.first_name} ${ownerUser.last_name}`:(record.owner||'-')]].map(([lbl,val])=>(
+                      <div key={lbl}>
+                        <div className="text-xs font-bold uppercase tracking-wider text-gray-400 mb-1">{lbl}</div>
+                        <div className="text-sm text-[#0F172A] font-medium bg-gray-50 rounded-xl px-3 py-2 truncate">{val}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </>
+            )}
           </div>
 
           {/* Footer — approval + line item count only */}
@@ -653,6 +703,14 @@ export default function RecordDetailPanel({ page, record, onClose }) {
           onClose={() => setCreateForPage(null)}
         />
       )}
+      <QuickCreateModal
+        objectType={quickCreate?.type}
+        open={!!quickCreate}
+        onClose={()=>setQuickCreate(null)}
+        prefill={quickCreate?.prefillName ? { name: quickCreate.prefillName } : {}}
+        prefillExtra={quickCreate?.prefillExtra||{}}
+        onCreated={(id,name)=>{quickCreate?.onCreated?.(id,name);setQuickCreate(null);}}
+      />
     </>
   );
 }

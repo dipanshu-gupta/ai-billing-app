@@ -140,15 +140,24 @@ Used in ${usedInOpps.length} opportunities.`;
   }
 };
 
+// ─── Module-level cache: survives component remounts/re-navigations ──────────
+// Key: "{page}:{record.id}" → { summary, error }
+const summaryCache: Record<string, { summary: string; error: string }> = {};
+
 // ─── AI Summary Component ─────────────────────────────────────────────────────
 export default function AISummary({ page, record }) {
   const appData = useApp();
-  const [summary, setSummary] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [error,   setError]   = useState('');
-  const [generated, setGenerated] = useState(false);
+  const cacheKey = record?.id ? `${page}:${record.id}` : null;
+
+  // Initialise state from cache so navigating back shows the same summary instantly
+  const cached = cacheKey ? summaryCache[cacheKey] : null;
+  const [summary,   setSummary]   = useState(cached?.summary || '');
+  const [loading,   setLoading]   = useState(false);
+  const [error,     setError]     = useState(cached?.error   || '');
+  const [generated, setGenerated] = useState(!!cached);
 
   const generate = useCallback(async () => {
+    if (!record?.id) return;
     setLoading(true);
     setError('');
     setSummary('');
@@ -165,23 +174,42 @@ export default function AISummary({ page, record }) {
       });
       const data = await res.json();
       if (data.error) throw new Error(data.error);
-      setSummary(data.content?.[0]?.text || 'Unable to generate summary.');
+      const text = data.content?.[0]?.text || 'Unable to generate summary.';
+      setSummary(text);
       setGenerated(true);
+      // Store in module-level cache so re-navigating to same record shows same summary
+      if (cacheKey) summaryCache[cacheKey] = { summary: text, error: '' };
     } catch (e) {
-      setError(e.message?.includes('GROQ_API_KEY') || e.message?.includes('ANTHROPIC') || e.message?.includes('GEMINI')
+      const msg = e.message?.includes('GROQ_API_KEY') || e.message?.includes('ANTHROPIC') || e.message?.includes('GEMINI')
         ? 'AI not configured — add API key to .env.local'
-        : 'Summary unavailable');
+        : 'Summary unavailable';
+      setError(msg);
+      if (cacheKey) summaryCache[cacheKey] = { summary: '', error: msg };
     } finally {
       setLoading(false);
     }
   }, [page, record?.id]);
 
-  // Auto-generate when record opens
+  // Auto-generate only on first open — skip if already cached
   useEffect(() => {
-    if (record?.id) generate();
+    if (record?.id && !generated && !summaryCache[`${page}:${record.id}`]) {
+      generate();
+    }
   }, [record?.id]);
 
-  if (!loading && !summary && !error) return null;
+  if (!loading && !summary && !error && !generated) {
+    return (
+      <div className="rounded-[20px] border border-dashed border-blue-200 p-4 flex items-center justify-between bg-blue-50/40">
+        <div className="flex items-center gap-2">
+          <span className="text-lg">✨</span>
+          <span className="text-sm text-blue-600 font-medium">AI Summary available</span>
+        </div>
+        <button onClick={generate} className="text-xs bg-gradient-to-r from-[#0F172A] to-blue-700 text-white px-3 py-1.5 rounded-xl font-semibold hover:opacity-90 shadow-sm">
+          Generate
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className={`rounded-[20px] border p-4 transition-all ${

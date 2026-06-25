@@ -150,10 +150,10 @@ function AppShell() {
   // Listen for open-record event from GlobalSearch — open panel directly from AppShell
   React.useEffect(() => {
     const h = (e) => {
-      const { page, record, returnTo } = e.detail;
+      const { page, record, returnTo, tab } = e.detail;
       // Store the target record in AppContext so it survives the page switch,
       // even though CRMListPage for the new page hasn't mounted yet.
-      setPendingRecord({ page, record });
+      setPendingRecord({ page, record, tab });
       setActivePage(page);
       if (returnTo) setPendingReturnTo(returnTo);
     };

@@ -4,6 +4,7 @@
 import { useState, useEffect } from 'react';
 import { useApp } from '@/context/AppContext';
 import SearchableSelect from '@/components/shared/SearchableSelect';
+import QuickCreateModal from '@/components/shared/QuickCreateModal';
 
 const iCls = 'w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm text-[#0F172A] bg-white focus:outline-none focus:ring-2 focus:ring-blue-400';
 const sCls = iCls;
@@ -143,6 +144,11 @@ export default function CreateRecordModal({ page, open, prefillCustomer, onClose
   const [form, setForm]     = useState(defaultForm);
   const [saving, setSaving] = useState(false);
   const [errors, setErrors] = useState<Record<string,string>>({});
+  const [quickCreate, setQuickCreate] = useState(null);
+  // Locally track records created via QuickCreate so they appear in dropdowns
+  // before the global state (contacts/customers) refreshes from DB
+  const [pendingContacts,  setPendingContacts]  = useState([]);
+  const [pendingCustomers, setPendingCustomers] = useState([]);
 
   // Reset form with correct per-object defaults whenever the modal opens or the page changes
   useEffect(() => {
@@ -153,14 +159,31 @@ export default function CreateRecordModal({ page, open, prefillCustomer, onClose
 
   const s = (k, v) => setForm(p => ({ ...p, [k]: v }));
 
-  const filteredContacts = contacts.filter(c =>
+  const allContacts = [
+    ...contacts,
+    ...pendingContacts.filter(pc => !contacts.find(c => c.id === pc.id)),
+  ];
+  const filteredContacts = allContacts.filter(c =>
     !form.customerId || c.customerId === form.customerId || c.customer_id === form.customerId
   );
+  const allCustomers = [
+    ...customers,
+    ...pendingCustomers.filter(pc => !customers.find(c => c.id === pc.id)),
+  ];
 
+  const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
   const validate = () => {
     const errs: Record<string,string> = {};
-    fields.filter(f => f.required).forEach(f => {
-      if (!form[f.key]) errs[f.key] = `${f.label} is required`;
+    fields.forEach(f => {
+      const val = (form[f.key] || '').toString().trim();
+      if (f.required && !val) {
+        errs[f.key] = `${f.label.replace(' *','')} is required`;
+      } else if (f.type === 'email' && val && !EMAIL_RE.test(val)) {
+        errs[f.key] = 'Enter a valid email (e.g. name@company.com)';
+      } else if (f.type === 'tel' && val) {
+        const digits = val.replace(/\D/g,'');
+        if (digits.length < 7 || digits.length > 15) errs[f.key] = 'Phone: 7–15 digits only';
+      }
     });
     setErrors(errs);
     return Object.keys(errs).length === 0;
@@ -211,23 +234,25 @@ export default function CreateRecordModal({ page, open, prefillCustomer, onClose
       <SearchableSelect
         value={v || ''}
         onChange={val => {
-          const c = customers.find(x => x.id === val);
-          s('customerId', c?.id || '');
-          s('customer',   c?.name || '');
-          s('contactId',  '');
-          s('contact',    '');
+          const c = [...customers,...pendingCustomers].find(x => x.id === val);
+          if(c){s('customerId',c.id);s('customer',c.name);}
+          s('contactId',''); s('contact','');
         }}
-        options={customers.map(c => ({ value:c.id, label:c.name, sub:[c.email,c.phone,c.industry].filter(Boolean).join(' · ') }))}
+        options={allCustomers.map(c => ({ value:c.id, label:c.name, sub:[c.email,c.phone,c.industry].filter(Boolean).join(' · ') }))}
         placeholder="Search customers..." emptyLabel="No customer"
+        onCreateNew={q=>setQuickCreate({type:'customer',prefillName:q,onCreated:(id,name)=>{setForm(f=>({...f,customerId:id,customer:name,contactId:'',contact:''}));setPendingCustomers(p=>[...p,{id,name,customer_number:id}]);}})}
+        createLabel="Create Customer"
       />
     );
 
     if (type === 'contact') return wrap(
       <SearchableSelect
         value={v || ''}
-        onChange={val => { const c = contacts.find(x => x.id === val); s('contactId', c?.id || ''); s('contact', c?.name || ''); }}
+        onChange={val => { const c = [...contacts,...pendingContacts].find(x => x.id === val); if(c){s('contactId',c.id);s('contact',c.name);}else if(val){s('contactId',val);}}}
         options={filteredContacts.map(c => ({ value:c.id, label:c.name, sub:[c.email,c.phone,c.designation].filter(Boolean).join(' · ') }))}
         placeholder="Search contacts..." emptyLabel="No contact"
+        onCreateNew={q=>{const custId=form.customerId;const custName=form.customer;setQuickCreate({type:'contact',prefillName:q,prefillExtra:{customerId:custId,customer:custName},onCreated:(id,name)=>{setForm(f=>({...f,contactId:id,contact:name}));setPendingContacts(p=>[...p,{id,name,contact_number:id,customerId:custId,customer_id:custId}]);}});}}
+        createLabel="Create Contact"
       />
     );
 
@@ -262,8 +287,8 @@ export default function CreateRecordModal({ page, open, prefillCustomer, onClose
 
     if (type === 'date')   return wrap(<input type="date"   value={v||''} onChange={e=>s(key,e.target.value)} className={iCls}/>);
     if (type === 'number') return wrap(<input type="number" min={0} value={v||''} onChange={e=>s(key,parseFloat(e.target.value)||0)} className={iCls}/>);
-    if (type === 'email')  return wrap(<input type="email"  value={v||''} onChange={e=>s(key,e.target.value)} className={iCls} placeholder={label}/>);
-    if (type === 'tel')    return wrap(<input type="tel"    value={v||''} onChange={e=>s(key,e.target.value)} className={iCls} placeholder={label}/>);
+    if (type === 'email')  return wrap(<input type="email"  value={v||''} onChange={e=>{s(key,e.target.value);if(errors[key])setErrors(p=>({...p,[key]:''}));}} className={`${iCls} ${errors[key]?'border-red-400':''}`} placeholder="name@company.com"/>);
+    if (type === 'tel')    return wrap(<input type="tel"    value={v||''} onChange={e=>{const d=e.target.value.replace(/[^0-9+\-() ]/g,'');s(key,d);if(errors[key])setErrors(p=>({...p,[key]:''}));}} className={`${iCls} ${errors[key]?'border-red-400':''}`} placeholder="Phone number" maxLength={16}/>);
     if (type === 'url')    return wrap(<input type="url"    value={v||''} onChange={e=>s(key,e.target.value)} className={iCls} placeholder="https://..."/>);
     return wrap(<input type="text" value={v||''} onChange={e=>s(key,e.target.value)} className={iCls} placeholder={label}/>);
   };
@@ -272,6 +297,7 @@ export default function CreateRecordModal({ page, open, prefillCustomer, onClose
     activities:'Activity', products:'Product', orders:'Order', invoices:'Invoice' }[page] || page;
 
   return (
+    <>
     <div className="fixed inset-0 z-[500] flex items-center justify-center p-4">
       {/* Backdrop */}
       <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose}/>
@@ -309,5 +335,14 @@ export default function CreateRecordModal({ page, open, prefillCustomer, onClose
         </div>
       </div>
     </div>
+      <QuickCreateModal
+        objectType={quickCreate?.type}
+        open={!!quickCreate}
+        onClose={()=>setQuickCreate(null)}
+        prefill={quickCreate?.prefillName?{name:quickCreate.prefillName}:{}}
+        prefillExtra={quickCreate?.prefillExtra||{}}
+        onCreated={(id,name)=>{quickCreate?.onCreated?.(id,name);setQuickCreate(null);}}
+      />
+    </>
   );
 }

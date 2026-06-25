@@ -4,7 +4,9 @@
 import { useState, useEffect } from 'react';
 import { useApp } from '@/context/AppContext';
 import { supabase } from '@/lib/supabase';
-import { getStatusOptions, getStatusColor, getPageLabel, formatDateTime } from '@/lib/utils';
+import ApprovalBanner from '@/components/crm/ApprovalBanner';
+import QuickCreateModal from '@/components/shared/QuickCreateModal';
+import { getStatusOptions, getStatusColor, getPageLabel, formatDateTime, formatDisplayNumber, PAGE_DISPLAY_PREFIX } from '@/lib/utils';
 import AISummary from '@/components/ai/AISummary';
 import AddressSelector from '@/components/shared/AddressSelector';
 import SearchableSelect from '@/components/shared/SearchableSelect';
@@ -131,12 +133,19 @@ export default function CPQRecordDetail({ page, record, onClose }) {
   const {
     customers, contacts, products, enterpriseUsers, organizations, businessUnits,
     updateRecord, createInvoiceFromOrder, appPreferences,
+    checkMatchingApprovalProcess, submitForApproval, approvalRequests,
   } = useApp();
 
-  const [edited,   setEdited]   = useState({ ...record });
-  const [items,    setItems]    = useState([]);
-  const [loading,  setLoading]  = useState(true);
-  const [saving,   setSaving]   = useState(false);
+  const [edited,          setEdited]          = useState({ ...record });
+  const [items,           setItems]           = useState([]);
+  const [loading,         setLoading]         = useState(true);
+  const [saving,          setSaving]          = useState(false);
+  const [matchingProcess, setMatchingProcess] = useState(null);
+  const [checkingApproval,setCheckingApproval]= useState(false);
+  const [submitting,      setSubmitting]      = useState(false);
+  const [quickCreate,     setQuickCreate]     = useState(null);
+  const [pendingCustomers,setPendingCustomers]= useState([]);
+  const [pendingContacts, setPendingContacts] = useState([]);
 
   // Map table names
   const LI_TABLE  = page === 'orders' ? 'order_line_items'   : 'invoice_line_items';
@@ -216,11 +225,19 @@ export default function CPQRecordDetail({ page, record, onClose }) {
           <div>
             <div className="flex items-center gap-3 flex-wrap">
               <span className="text-3xl">{pageIcon}</span>
-              <h2 className="text-2xl font-bold">{edited.name || record.id}</h2>
+              <h2 className="text-2xl font-bold">{edited.name || formatDisplayNumber(PAGE_DISPLAY_PREFIX[page]||'REC', record.displayNumber) || record.id}</h2>
               <span className={`flex items-center gap-1.5 px-4 py-1.5 rounded-full text-sm font-bold border-2 ${statusMeta}`}>{edited.status}</span>
               {ownerUser && <span className="bg-white/10 text-white text-xs px-3 py-1 rounded-full">👤 {ownerUser.first_name} {ownerUser.last_name}</span>}
             </div>
-            <p className="text-blue-300 text-sm mt-1">{record.id} · {getPageLabel(page)}{edited.quote_number ? ` · From Quote: ${edited.quote_number}` : ''}</p>
+            <p className="text-blue-300 text-sm mt-1 flex items-center gap-2 flex-wrap">
+                {record.displayNumber && (
+                  <span className="bg-blue-600 text-white font-mono font-bold px-3 py-0.5 rounded-full text-xs tracking-wider shadow-sm">
+                    {formatDisplayNumber(PAGE_DISPLAY_PREFIX[page]||'REC', record.displayNumber)}
+                  </span>
+                )}
+                <span>{getPageLabel(page)}</span>
+                {edited.quote_number && <span className="text-blue-400 text-xs">· From Quote: {edited.quote_number}</span>}
+              </p>
           </div>
           <div className="flex items-center gap-2">
             {page==='orders' && <button onClick={()=>{createInvoiceFromOrder(record);onClose();}} className="bg-white/20 hover:bg-white/30 text-white px-4 py-2 rounded-xl text-sm font-semibold">🧾 Create Invoice</button>}
@@ -234,6 +251,13 @@ export default function CPQRecordDetail({ page, record, onClose }) {
           <div className="flex items-center gap-3">
             {saveSuccess && <span className="text-green-600 text-sm font-semibold">✓ Saved</span>}
             <button onClick={onClose} className="px-4 py-2 text-sm rounded-xl font-semibold border border-gray-200 text-gray-600 hover:bg-gray-50">Cancel</button>
+            {matchingProcess && !['Pending Approval','Approved'].includes(edited.status) && (
+              <button onClick={async()=>{setSubmitting(true);await submitForApproval(page,record.id,record.name||record.order_number||record.invoice_number,matchingProcess);setSubmitting(false);setForm(p=>({...p,status:'Pending Approval'}));setMatchingProcess(null);}} disabled={submitting}
+                className="flex items-center gap-2 px-4 py-2 text-sm rounded-xl font-semibold bg-purple-600 hover:bg-purple-700 text-white disabled:opacity-50 shadow">
+                {submitting?'Submitting…':'📋 Submit for Approval'}
+                <span className="bg-purple-300 text-purple-900 text-xs px-2 py-0.5 rounded-full">{matchingProcess?.name}</span>
+              </button>
+            )}
             <button onClick={()=>handleSave(false)} disabled={saving} className="px-4 py-2 text-sm rounded-xl font-semibold bg-blue-100 hover:bg-blue-200 text-blue-700 disabled:opacity-50">{saving?'Saving…':'Save Changes'}</button>
             <button onClick={()=>handleSave(true)} disabled={saving} className="px-5 py-2 text-sm rounded-xl font-semibold bg-gradient-to-r from-[#0F172A] to-blue-800 text-white hover:opacity-90 disabled:opacity-50 shadow-md">{saving?'Saving…':'Save & Close'}</button>
           </div>
@@ -243,7 +267,21 @@ export default function CPQRecordDetail({ page, record, onClose }) {
         {loading ? (
           <div className="flex-1 flex items-center justify-center text-gray-400"><div className="text-4xl animate-pulse">{pageIcon}</div></div>
         ) : (
-          <div className="flex-1 overflow-y-auto p-8 bg-gradient-to-br from-white to-blue-50 space-y-6">
+          <div className="flex-1 overflow-y-auto bg-gradient-to-br from-white to-blue-50">
+            {/* ── Approval Banner ── */}
+            {edited.status === 'Pending Approval' && (
+              <div className="px-6 pt-5">
+                <ApprovalBanner recordId={record.id} recordType={page} onDecision={async()=>{
+                  const tbl=page==='orders'?'orders':'invoices';
+                  const idField=page==='orders'?'order_number':'invoice_number';
+                  const{data:fresh}=await supabase.from(tbl).select('status').eq(idField,record.id).maybeSingle();
+                  if(fresh?.status) setForm(p=>({...p,status:fresh.status}));
+                  const proc=await checkMatchingApprovalProcess(page,{...edited});
+                  setMatchingProcess(proc);
+                }}/>
+              </div>
+            )}
+            <div className="p-8 space-y-6">
 
             {/* AI Summary */}
             <AISummary page={page} record={record}/>
@@ -265,6 +303,8 @@ export default function CPQRecordDetail({ page, record, onClose }) {
                   onChange={v=>{const c=customers.find(x=>x.id===v);setEdited(p=>({...p,customerId:c?.id||'',customer_id:c?.id||'',customer:c?.name||''}));}}
                   options={customers.map(c=>({value:c.id,label:c.name,sub:[c.email,c.phone,c.industry,c.city].filter(Boolean).join(' · ')}))}
                   placeholder="Select customer" emptyLabel="No customer"
+                  onCreateNew={q=>setQuickCreate({type:'customer',prefillName:q,onCreated:(id,name)=>{setEdited(p=>({...p,customerId:id,customer_id:id,customer:name}))}})}
+                  createLabel="Create Customer"
                 />
               </div>
               {/* Contact */}
@@ -275,6 +315,8 @@ export default function CPQRecordDetail({ page, record, onClose }) {
                   onChange={v=>{const c=contacts.find(x=>x.id===v);setEdited(p=>({...p,contactId:c?.id||'',contact_id:c?.id||'',contact:c?.name||''}));}}
                   options={contacts.map(c=>({value:c.id,label:c.name,sub:[c.email,c.phone,c.designation,c.customer].filter(Boolean).join(' · ')}))}
                   placeholder="Select contact" emptyLabel="No contact"
+                  onCreateNew={q=>setQuickCreate({type:'contact',prefillName:q,onCreated:(id,name)=>{setEdited(p=>({...p,contactId:id,contact_id:id,contact:name}))}})}
+                  createLabel="Create Contact"
                 />
               </div>
               {/* Currency */}
@@ -369,6 +411,7 @@ export default function CPQRecordDetail({ page, record, onClose }) {
               </div>
             </div>
           </div>
+          </div>
         )}
 
         {/* Footer */}
@@ -377,6 +420,14 @@ export default function CPQRecordDetail({ page, record, onClose }) {
           <div className="text-sm text-gray-400">{items.length} line item{items.length!==1?'s':''} · GT: <span className="font-bold text-[#0F172A]">{fmt(grandTotal)}</span></div>
         </div>
       </div>
+      <QuickCreateModal
+        objectType={quickCreate?.type}
+        open={!!quickCreate}
+        onClose={()=>setQuickCreate(null)}
+        prefill={quickCreate?.prefillName?{name:quickCreate.prefillName}:{}}
+        prefillExtra={quickCreate?.prefillExtra||{}}
+        onCreated={(id,name)=>{quickCreate?.onCreated?.(id,name);setQuickCreate(null);}}
+      />
     </div>
   );
 }

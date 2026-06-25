@@ -3,7 +3,7 @@
 
 import { useState, useMemo, useEffect, useRef } from 'react';
 import { useApp } from '@/context/AppContext';
-import { getPageLabel, getStatusOptions, getStatusColor, formatCurrency } from '@/lib/utils';
+import { getPageLabel, getStatusOptions, getStatusColor, formatCurrency, formatDisplayNumber, PAGE_DISPLAY_PREFIX } from '@/lib/utils';
 import RecordDetailPanel from '@/components/crm/RecordDetailPanel';
 import CreateRecordModal from '@/components/crm/CreateRecordModal';
 import CPQRecordDetail from '@/components/crm/CPQRecordDetail';
@@ -180,10 +180,14 @@ export default function CRMListPage({ page }) {
   useEffect(() => {
     if (pendingRecord && pendingRecord.page === page && pendingRecord.record) {
       setSelectedRecord(pendingRecord.record);
+      if (pendingRecord.tab) setInitialTab(pendingRecord.tab);
       setPendingRecord(null);
     }
   }, [pendingRecord, page]);
   const [search,       setSearch]       = useState('');
+  const [initialTab,   setInitialTab]   = useState(null);
+  const [pageSize,     setPageSize]     = useState(25);
+  const [currentPage,  setCurrentPage]  = useState(1);
   const [statusFilter, setStatusFilter] = useState('All');
   const [timePeriod,   setTimePeriod]   = useState('');
   const [fieldFilter,  setFieldFilter]  = useState({ field:'', value:'' });
@@ -266,6 +270,12 @@ export default function CRMListPage({ page }) {
     return data;
   }, [page, customers, products, leads, opportunities, orders, invoices, contacts, activities, search, statusFilter, timePeriod, fieldFilter, ownerFilter]);
 
+  // Pagination
+  const totalRecords = filtered.length;
+  const totalPages   = Math.max(1, Math.ceil(totalRecords / pageSize));
+  const safePage     = Math.min(currentPage, totalPages);
+  const pagedRecords = filtered.slice((safePage - 1) * pageSize, safePage * pageSize);
+
   const pageLabel    = getPageLabel(page);
   const hasAmount    = ['leads','opportunities','orders','invoices'].includes(page);
   const hasPrice     = page === 'products';
@@ -301,7 +311,7 @@ export default function CRMListPage({ page }) {
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5 gap-3">
           <input value={search} onChange={e=>setSearch(e.target.value)} placeholder={`Search ${page}…`}
             className="border border-blue-200 rounded-xl px-4 py-2.5 text-sm text-[#0F172A] focus:outline-none focus:ring-2 focus:ring-blue-300 placeholder:text-gray-400"/>
-          <select value={statusFilter} onChange={e=>setStatusFilter(e.target.value)} className="border border-blue-200 rounded-xl px-4 py-2.5 text-sm text-[#0F172A] bg-white focus:outline-none focus:ring-2 focus:ring-blue-300">
+          <select value={statusFilter} onChange={e=>{setStatusFilter(e.target.value);setCurrentPage(1);}} className="border border-blue-200 rounded-xl px-4 py-2.5 text-sm text-[#0F172A] bg-white focus:outline-none focus:ring-2 focus:ring-blue-300">
             <option>All</option>
             {getStatusOptions(page).map(s=><option key={s}>{s}</option>)}
           </select>
@@ -362,11 +372,15 @@ export default function CRMListPage({ page }) {
                     {activeCount > 0 && <button onClick={clearFilters} className="mt-3 text-blue-600 text-sm font-semibold hover:underline">Clear all filters</button>}
                   </td>
                 </tr>
-              ) : filtered.map(record => {
+              ) : pagedRecords.map(record => {
                 const ownerUser = enterpriseUsers.find(u => u.email === record.owner || u.id === record.owner_id);
                 return (
                   <tr key={record.id} className="border-t border-blue-50 hover:bg-blue-50/40 transition-all">
-                    <td className="px-5 py-3.5 text-xs font-mono text-gray-400">{record.id}</td>
+                    <td className="px-5 py-3.5">
+                      <span className="text-xs font-mono font-bold text-blue-700 bg-blue-50 px-2.5 py-1 rounded-full border border-blue-100">
+                        {record.displayNumber ? formatDisplayNumber(PAGE_DISPLAY_PREFIX[page]||'REC', record.displayNumber) : record.id}
+                      </span>
+                    </td>
                     <td className="px-5 py-3.5">
                       {canDo('view')
                         ? <button onClick={()=>setSelectedRecord(record)} className="font-semibold text-[#0F172A] hover:text-blue-700 hover:underline text-sm text-left">{record.name||record.subject||'—'}</button>
@@ -415,6 +429,38 @@ export default function CRMListPage({ page }) {
             </tbody>
           </table>
         </div>
+
+        {/* Pagination footer */}
+        {totalRecords > 0 && (
+          <div className="px-6 py-3 border-t border-blue-50 bg-white flex items-center justify-between flex-wrap gap-3">
+            <div className="flex items-center gap-3">
+              <span className="text-xs text-gray-400">
+                Showing <strong className="text-[#0F172A]">{(safePage-1)*pageSize+1}–{Math.min(safePage*pageSize,totalRecords)}</strong> of <strong className="text-[#0F172A]">{totalRecords}</strong> {pageLabel.toLowerCase()}s
+              </span>
+              <select value={pageSize} onChange={e=>{setPageSize(Number(e.target.value));setCurrentPage(1);}}
+                className="border border-blue-200 rounded-lg px-2 py-1 text-xs text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-blue-400">
+                {[10,25,50,100].map(n=><option key={n} value={n}>{n} per page</option>)}
+              </select>
+            </div>
+            {totalPages > 1 && (
+              <div className="flex items-center gap-1">
+                <button onClick={()=>setCurrentPage(1)} disabled={safePage===1} className="px-2 py-1 rounded-lg text-xs font-semibold text-gray-500 hover:bg-blue-50 disabled:opacity-30">«</button>
+                <button onClick={()=>setCurrentPage(p=>Math.max(1,p-1))} disabled={safePage===1} className="px-3 py-1 rounded-lg text-xs font-semibold text-gray-500 hover:bg-blue-50 disabled:opacity-30">‹ Prev</button>
+                {Array.from({length:Math.min(5,totalPages)},(_,i)=>{
+                  const pg = Math.max(1,Math.min(totalPages-4,safePage-2))+i;
+                  return (
+                    <button key={pg} onClick={()=>setCurrentPage(pg)}
+                      className={`px-3 py-1 rounded-lg text-xs font-bold transition-all ${pg===safePage?'bg-[#0F172A] text-white':'text-gray-500 hover:bg-blue-50'}`}>
+                      {pg}
+                    </button>
+                  );
+                })}
+                <button onClick={()=>setCurrentPage(p=>Math.min(totalPages,p+1))} disabled={safePage===totalPages} className="px-3 py-1 rounded-lg text-xs font-semibold text-gray-500 hover:bg-blue-50 disabled:opacity-30">Next ›</button>
+                <button onClick={()=>setCurrentPage(totalPages)} disabled={safePage===totalPages} className="px-2 py-1 rounded-lg text-xs font-semibold text-gray-500 hover:bg-blue-50 disabled:opacity-30">»</button>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {selectedRecord && (() => {
@@ -430,8 +476,8 @@ export default function CRMListPage({ page }) {
             }
           }}/>;
         }
-        return <RecordDetailPanel page={page} record={selectedRecord} onClose={()=>{
-          setSelectedRecord(null);
+        return <RecordDetailPanel page={page} record={selectedRecord} initialTab={initialTab} onClose={()=>{
+          setInitialTab(null); setSelectedRecord(null);
           if (pendingReturnTo) {
             const rt = pendingReturnTo;
             setPendingReturnTo(null);

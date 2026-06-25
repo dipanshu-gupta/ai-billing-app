@@ -3,7 +3,9 @@
 
 import { useState, useMemo, useEffect } from 'react';
 import { useApp } from '@/context/AppContext';
-import { getStatusColor, formatCurrency } from '@/lib/utils';
+import { getStatusColor, formatCurrency, formatDisplayNumber, PAGE_DISPLAY_PREFIX } from '@/lib/utils';
+// useCustomFields hook used inline below
+import { supabase } from '@/lib/supabase';
 import { getTaxRegime } from '@/lib/taxConfig';
 import SearchableSelect from '@/components/shared/SearchableSelect';
 
@@ -28,14 +30,15 @@ const RETAIL_CONFIG = {
     ],
     searchFields: ['name','phone','email','customer_number'],
     sections: [
-      { icon:'🧑', title:'Basic Info', fields:[
+      { icon:'🧑', title:'Customer Details', fields:[
         { key:'name', label:'Full Name', type:'text', required:true },
         { key:'phone', label:'Phone', type:'tel' },
         { key:'email', label:'Email', type:'email' },
         { key:'date_of_birth', label:'Date of Birth', type:'date' },
         { key:'gender', label:'Gender', type:'select', opts:['Male','Female','Other','Prefer not to say'] },
+        { key:'status', label:'Status', type:'status' },
       ]},
-      { icon:'📍', title:'Address', fields:[
+      { icon:'📍', title:'Address & Contact', fields:[
         { key:'address_line1', label:'Address Line 1', type:'text' },
         { key:'address_line2', label:'Address Line 2', type:'text' },
         { key:'city', label:'City', type:'text' },
@@ -48,12 +51,8 @@ const RETAIL_CONFIG = {
         { key:'loyalty_tier', label:'Loyalty Tier', type:'select', opts:['Standard','Silver','Gold','Platinum'] },
         { key:'preferred_contact', label:'Preferred Contact', type:'select', opts:['Phone','Email','SMS','WhatsApp'] },
         { key:'marketing_opt_in', label:'Marketing Opt-in', type:'checkbox' },
-        { key:'status', label:'Status', type:'status' },
         { key:'owner', label:'Owner', type:'owner' },
-      ]},
-      { icon:'💬', title:'Notes', fields:[
         { key:'notes', label:'Notes', type:'textarea', full:true },
-        { key:'comments', label:'Comments', type:'textarea', full:true },
       ]},
     ],
   },
@@ -71,26 +70,28 @@ const RETAIL_CONFIG = {
     ],
     searchFields: ['name','sku','barcode','category','product_number'],
     sections: [
-      { icon:'🏷️', title:'Basic Info', fields:[
+      { icon:'🏷️', title:'Product Details', fields:[
         { key:'name', label:'Product Name', type:'text', required:true },
         { key:'category', label:'Category', type:'text' },
         { key:'brand', label:'Brand', type:'text' },
         { key:'sku', label:'SKU', type:'text' },
         { key:'barcode', label:'Barcode', type:'text' },
         { key:'unit', label:'Unit', type:'select', opts:['pc','kg','g','ltr','ml','box','pack','dozen'] },
+        { key:'status', label:'Status', type:'status' },
+        { key:'owner', label:'Owner', type:'owner' },
       ]},
-      { icon:'💰', title:'Pricing & Stock', fields:[
+      { icon:'💰', title:'Pricing & Inventory', fields:[
         { key:'price', label:'Selling Price', type:'number' },
         { key:'mrp', label:'MRP', type:'number' },
         { key:'cost', label:'Cost Price', type:'number' },
         { key:'stock_quantity', label:'Stock Quantity', type:'number' },
         { key:'reorder_level', label:'Reorder Level', type:'number' },
-        { key:'status', label:'Status', type:'status' },
       ]},
-      { icon:'🧾', title:'Tax Information', fields: 'TAX_PRODUCT' },
-      { icon:'📝', title:'Description', fields:[
+      { icon:'🧾', title:'Tax & Description', fields:[
+        { key:'hsn_code', label:'HSN/SAC Code', type:'text' },
+        { key:'gst_rate', label:'GST Rate (%)', type:'number' },
+        { key:'taxable', label:'Taxable', type:'checkbox' },
         { key:'description', label:'Description', type:'textarea', full:true },
-        { key:'owner', label:'Owner', type:'owner' },
         { key:'comments', label:'Comments', type:'textarea', full:true },
       ]},
     ],
@@ -109,7 +110,7 @@ const RETAIL_CONFIG = {
     ],
     searchFields: ['subject','customer','activity_number'],
     sections: [
-      { icon:'📅', title:'Activity Info', fields:[
+      { icon:'📅', title:'Activity Details', fields:[
         { key:'subject', label:'Subject', type:'text', required:true },
         { key:'activity_type', label:'Type', type:'select', opts:['Visit','Call','WhatsApp','Complaint','Feedback','Service'] },
         { key:'customer_id', label:'Customer', type:'retailCustomer' },
@@ -119,8 +120,12 @@ const RETAIL_CONFIG = {
         { key:'status', label:'Status', type:'status' },
         { key:'owner', label:'Owner', type:'owner' },
       ]},
-      { icon:'💬', title:'Notes', fields:[
+      { icon:'📋', title:'Description & Outcome', fields:[
         { key:'description', label:'Description', type:'textarea', full:true },
+        { key:'outcome', label:'Outcome', type:'textarea', full:true },
+        { key:'follow_up_date', label:'Follow-up Date', type:'date' },
+      ]},
+      { icon:'💬', title:'Notes & Comments', fields:[
         { key:'notes', label:'Notes', type:'textarea', full:true },
         { key:'comments', label:'Comments', type:'textarea', full:true },
       ]},
@@ -133,7 +138,7 @@ const RETAIL_CONFIG = {
     statusOptions: ['Draft','Completed','Cancelled','Refunded'],
     hasLineItems: true,
     listColumns: [
-      { h: 'Order #', v: r => r.order_number, mono:true },
+      { h: 'Order #', v: r => r.displayNumber ? formatDisplayNumber('RORD', r.displayNumber) : r.order_number, mono:true },
       { h: 'Customer', v: r => r.customer || '-' },
       { h: 'Channel', v: r => r.channel || '-' },
       { h: 'Date', v: r => r.order_date || '-' },
@@ -141,24 +146,25 @@ const RETAIL_CONFIG = {
     ],
     searchFields: ['order_number','customer','customer_phone'],
     sections: [
-      { icon:'🛍️', title:'Order Info', fields:[
+      { icon:'🛍️', title:'Order Details', fields:[
         { key:'customer_id', label:'Customer', type:'retailCustomer' },
         { key:'customer_phone', label:'Customer Phone', type:'tel' },
         { key:'order_date', label:'Order Date', type:'date' },
         { key:'channel', label:'Channel', type:'select', opts:['In-Store','Online','Phone','WhatsApp'] },
         { key:'currency', label:'Currency', type:'select', opts:['INR','USD','GBP','EUR','AED','SGD'] },
         { key:'status', label:'Status', type:'status' },
+        { key:'owner', label:'Owner', type:'owner' },
       ]},
-      { icon:'💳', title:'Payment & Delivery', fields:[
+      { icon:'💳', title:'Payment & Tax', fields:[
         { key:'payment_method', label:'Payment Method', type:'select', opts:['Cash','Card','UPI','Net Banking','Wallet','COD'] },
         { key:'payment_status', label:'Payment Status', type:'select', opts:['Paid','Pending','Partially Paid','Refunded'] },
+        { key:'place_of_supply', label:'Place of Supply (State)', type:'select', opts:['Maharashtra','Delhi','Karnataka','Tamil Nadu','Gujarat','Rajasthan','Uttar Pradesh','West Bengal','Telangana','Kerala','Punjab','Haryana','Bihar','Odisha','Madhya Pradesh','Other'] },
+        { key:'customer_gstin', label:'Customer GSTIN', type:'text' },
+      ]},
+      { icon:'🚚', title:'Delivery & Notes', fields:[
         { key:'delivery_method', label:'Delivery Method', type:'select', opts:['Pickup','Home Delivery','Courier'] },
         { key:'delivery_date', label:'Delivery Date', type:'date' },
         { key:'delivery_address', label:'Delivery Address', type:'textarea', full:true },
-        { key:'owner', label:'Owner', type:'owner' },
-      ]},
-      { icon:'🧾', title:'Tax Information', fields: 'TAX_DOCUMENT' },
-      { icon:'💬', title:'Notes', fields:[
         { key:'notes', label:'Notes', type:'textarea', full:true },
         { key:'comments', label:'Comments', type:'textarea', full:true },
       ]},
@@ -171,7 +177,7 @@ const RETAIL_CONFIG = {
     statusOptions: ['Draft','Sent','Paid','Overdue','Refunded','Cancelled'],
     hasLineItems: true,
     listColumns: [
-      { h: 'Invoice #', v: r => r.invoice_number, mono:true },
+      { h: 'Invoice #', v: r => r.displayNumber ? formatDisplayNumber('RINV', r.displayNumber) : r.invoice_number, mono:true },
       { h: 'Customer', v: r => r.customer || '-' },
       { h: 'Order #', v: r => r.order_number || '-', mono:true },
       { h: 'Date', v: r => r.invoice_date || '-' },
@@ -179,22 +185,24 @@ const RETAIL_CONFIG = {
     ],
     searchFields: ['invoice_number','customer','order_number'],
     sections: [
-      { icon:'🧾', title:'Invoice Info', fields:[
+      { icon:'🧾', title:'Invoice Details', fields:[
         { key:'customer_id', label:'Customer', type:'retailCustomer' },
         { key:'customer_phone', label:'Customer Phone', type:'tel' },
-        { key:'order_number', label:'Linked Order #', type:'text', readOnly:true },
         { key:'invoice_date', label:'Invoice Date', type:'date' },
         { key:'due_date', label:'Due Date', type:'date' },
+        { key:'order_number', label:'Linked Order #', type:'text', readOnly:true },
         { key:'currency', label:'Currency', type:'select', opts:['INR','USD','GBP','EUR','AED','SGD'] },
         { key:'status', label:'Status', type:'status' },
+        { key:'invoice_template_id', label:'Invoice Template', type:'retailInvoiceTemplate' },
       ]},
-      { icon:'💳', title:'Payment', fields:[
+      { icon:'💳', title:'Payment & Owner', fields:[
         { key:'payment_method', label:'Payment Method', type:'select', opts:['Cash','Card','UPI','Net Banking','Wallet','COD'] },
         { key:'payment_status', label:'Payment Status', type:'select', opts:['Paid','Pending','Partially Paid','Refunded'] },
+        { key:'place_of_supply', label:'Place of Supply (State)', type:'select', opts:['Maharashtra','Delhi','Karnataka','Tamil Nadu','Gujarat','Rajasthan','Uttar Pradesh','West Bengal','Telangana','Kerala','Punjab','Haryana','Bihar','Odisha','Madhya Pradesh','Other'] },
+        { key:'customer_gstin', label:'Customer GSTIN', type:'text' },
         { key:'owner', label:'Owner', type:'owner' },
       ]},
-      { icon:'🧾', title:'Tax Information', fields: 'TAX_DOCUMENT' },
-      { icon:'💬', title:'Notes', fields:[
+      { icon:'💬', title:'Notes & Comments', fields:[
         { key:'notes', label:'Notes', type:'textarea', full:true },
         { key:'comments', label:'Comments', type:'textarea', full:true },
       ]},
@@ -248,18 +256,31 @@ function RetailLineItems({ items, setItems, products, taxRegime }) {
         <button type="button" onClick={add} className="bg-white text-[#0F172A] px-4 py-1.5 rounded-xl text-sm font-bold hover:bg-blue-50">+ Add Item</button>
       </div>
       <div style={{overflowX:'auto', overflowY:'visible'}}>
-        <table className="w-full text-xs" style={{overflowY:'visible'}}>
+        <table className="w-full text-xs" style={{tableLayout:'fixed',overflowY:'visible'}}>
+          <colgroup>
+            <col style={{width:'28%'}}/>
+            <col style={{width:'6%'}}/>
+            <col style={{width:'10%'}}/>
+            <col style={{width:'7%'}}/>
+            {taxCols.map(tc=><col key={tc.key} style={{width:tc.type==='select'?'10%':'8%'}}/>)}
+            <col style={{width:'11%'}}/>
+            <col style={{width:'4%'}}/>
+          </colgroup>
           <thead><tr className="bg-blue-50 border-b border-blue-100">
-            {['Product','Qty','Unit Price','Disc %', ...taxCols.map(t=>t.label), 'Extended',''].map(h=>
-              <th key={h} className="px-3 py-2.5 text-left font-bold text-gray-500 uppercase whitespace-nowrap">{h}</th>
-            )}
+            <th className="px-3 py-2.5 text-left font-bold text-gray-500 uppercase text-xs">Product</th>
+            <th className="px-3 py-2.5 text-center font-bold text-gray-500 uppercase text-xs">Qty</th>
+            <th className="px-3 py-2.5 text-right font-bold text-gray-500 uppercase text-xs">Unit Price</th>
+            <th className="px-3 py-2.5 text-center font-bold text-gray-500 uppercase text-xs">Disc %</th>
+            {taxCols.map(tc=><th key={tc.key} className="px-3 py-2.5 text-center font-bold text-gray-500 uppercase text-xs whitespace-nowrap">{tc.label}</th>)}
+            <th className="px-3 py-2.5 text-right font-bold text-gray-500 uppercase text-xs">Extended</th>
+            <th></th>
           </tr></thead>
           <tbody>
             {items.length===0
               ? <tr><td colSpan={6+taxCols.length} className="px-5 py-8 text-center text-gray-400">No items. Click + Add Item.</td></tr>
               : items.map((row,idx)=>(
                 <tr key={row._id??idx} className="border-t border-blue-50 hover:bg-blue-50/30">
-                  <td className="px-3 py-2" style={{minWidth:200, position:'relative', zIndex: items.length - idx + 10}}>
+                  <td className="px-2 py-2" style={{position:'relative', zIndex: items.length - idx + 10, overflow:'visible'}}>
                     <SearchableSelect
                       value={row.product_name||''}
                       onChange={v=>upd(idx,'product_name',v)}
@@ -288,14 +309,245 @@ function RetailLineItems({ items, setItems, products, taxRegime }) {
           </tbody>
         </table>
       </div>
-      {items.length>0 && (
-        <div className="px-5 py-4 border-t border-blue-100 grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
-          <div><div className="text-gray-400 text-xs uppercase font-bold">Subtotal</div><div className="font-bold text-[#0F172A]">{formatCurrency(subtotal)}</div></div>
-          <div><div className="text-gray-400 text-xs uppercase font-bold">Discount</div><div className="font-bold text-red-500">-{formatCurrency(totalDisc)}</div></div>
-          <div><div className="text-gray-400 text-xs uppercase font-bold">{taxRegime.shortLabel}</div><div className="font-bold text-[#0F172A]">{formatCurrency(totalTax)}</div></div>
-          <div><div className="text-gray-400 text-xs uppercase font-bold">Grand Total</div><div className="font-bold text-blue-700 text-base">{formatCurrency(grandTotal)}</div></div>
+      {items.length>0 && (() => {
+        // Compute CGST/SGST/IGST breakdown for INR
+        const breakdown = taxRegime.regime === 'india_gst'
+          ? items.reduce((acc, item) => {
+              const lb = taxRegime.computeLineTax(item);
+              Object.entries(lb.breakdown).forEach(([k,v]) => { acc[k] = (acc[k]||0) + (v as number); });
+              return acc;
+            }, {} as Record<string,number>)
+          : null;
+        return (
+          <div className="px-5 py-4 border-t border-blue-100 text-sm">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-3">
+              <div><div className="text-gray-400 text-xs uppercase font-bold">Subtotal</div><div className="font-bold text-[#0F172A]">{formatCurrency(subtotal)}</div></div>
+              <div><div className="text-gray-400 text-xs uppercase font-bold">Discount</div><div className="font-bold text-red-500">-{formatCurrency(totalDisc)}</div></div>
+              <div><div className="text-gray-400 text-xs uppercase font-bold">{taxRegime.shortLabel}</div><div className="font-bold text-[#0F172A]">{formatCurrency(totalTax)}</div></div>
+              <div><div className="text-gray-400 text-xs uppercase font-bold">Grand Total</div><div className="font-bold text-blue-700 text-base">{formatCurrency(grandTotal)}</div></div>
+            </div>
+            {breakdown && Object.keys(breakdown).length > 0 && (
+              <div className="flex flex-wrap gap-3 pt-2 border-t border-blue-50">
+                {Object.entries(breakdown).map(([k,v]) => v > 0 && (
+                  <div key={k} className="bg-blue-50 rounded-lg px-3 py-1.5 text-xs">
+                    <span className="text-gray-500 uppercase font-bold mr-1.5">{k.toUpperCase()}</span>
+                    <span className="font-bold text-[#0F172A]">{formatCurrency(v as number)}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      })()}
+    </div>
+  );
+}
+
+// ─── Print HTML Builder ──────────────────────────────────────────────────────
+function buildRetailPrintHTML(t, record, items) {
+  const isTh = t.paper_size?.startsWith('thermal');
+  const widthMM = t.paper_size==='thermal_58'||t.paper_size==='thermal_57' ? 58 : t.paper_size==='thermal_80' ? 80 : t.paper_size==='A5' ? 148 : 210;
+  const font   = t.font_family || 'monospace';
+  const brand  = t.brand_color || '#0F172A';
+  const accent = t.accent_color || '#2563EB';
+  const bg     = t.bg_color || '#FFFFFF';
+  const fs     = (n) => isTh ? Math.max(8, n-2) : n;
+  const fmt    = (n) => '₹' + Number(n||0).toLocaleString('en-IN', {minimumFractionDigits:2});
+  const divider = t.show_dividers
+    ? `<hr style="border:none;border-top:1px ${t.border_style||'dashed'} #ccc;margin:6px 0;"/>`
+    : '';
+
+  const rows = (items||[]).map((item, i) => {
+    const bg2 = t.alt_row && i%2===1 ? t.alt_row_color||'#F9FAFB' : 'transparent';
+    return `<tr style="background:${bg2}">
+      ${t.col_item!==false ? `<td style="padding:3px 4px;font-size:${fs(11)}px">${item.product||item.product_name||''}</td>` : ''}
+      ${t.col_qty!==false  ? `<td style="padding:3px 4px;text-align:right;font-size:${fs(11)}px">${item.quantity||0}</td>` : ''}
+      ${t.col_price!==false? `<td style="padding:3px 4px;text-align:right;font-size:${fs(11)}px">${fmt(item.unit_price)}</td>` : ''}
+      ${t.col_tax          ? `<td style="padding:3px 4px;text-align:right;font-size:${fs(9)}px;color:#6B7280">${item.tax_rate||0}%</td>` : ''}
+      ${t.col_hsn          ? `<td style="padding:3px 4px;text-align:right;font-size:${fs(8)}px;color:#6B7280">${item.hsn_code||''}</td>` : ''}
+      ${t.col_total!==false? `<td style="padding:3px 4px;text-align:right;font-size:${fs(11)}px;font-weight:600">${fmt(item.extended_price||item.unit_price*item.quantity)}</td>` : ''}
+    </tr>`;
+  }).join('');
+
+  const colHeaders = [
+    t.col_item!==false  && `<th style="padding:3px 4px;text-align:left;font-size:${fs(9)}px;color:#6B7280;text-transform:uppercase">Item</th>`,
+    t.col_qty!==false   && `<th style="padding:3px 4px;text-align:right;font-size:${fs(9)}px;color:#6B7280;text-transform:uppercase">Qty</th>`,
+    t.col_price!==false && `<th style="padding:3px 4px;text-align:right;font-size:${fs(9)}px;color:#6B7280;text-transform:uppercase">Price</th>`,
+    t.col_tax           && `<th style="padding:3px 4px;text-align:right;font-size:${fs(9)}px;color:#6B7280;text-transform:uppercase">Tax</th>`,
+    t.col_hsn           && `<th style="padding:3px 4px;text-align:right;font-size:${fs(9)}px;color:#6B7280;text-transform:uppercase">HSN</th>`,
+    t.col_total!==false && `<th style="padding:3px 4px;text-align:right;font-size:${fs(9)}px;color:#6B7280;text-transform:uppercase">Total</th>`,
+  ].filter(Boolean).join('');
+
+  return `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8"/>
+  <title>Invoice ${record.invoice_number||''}</title>
+  <style>
+    * { box-sizing:border-box; margin:0; padding:0; }
+    body { font-family:${font}; background:${bg}; color:#111827; }
+    .page { width:${widthMM}mm; margin:0 auto; padding:${isTh?'0':'8mm'}; background:${bg}; }
+    .header { background:${brand}; color:#fff; padding:${isTh?'8px 10px':'14px 18px'}; text-align:${t.header_align||'center'}; }
+    .header .store-name { font-weight:800; font-size:${fs(14)}px; letter-spacing:1.5px; }
+    .header .store-sub  { font-size:${fs(9)}px; opacity:.82; margin-top:3px; line-height:1.5; }
+    .header .tagline    { font-size:${fs(9)}px; opacity:.7; font-style:italic; margin-top:2px; }
+    .body { padding:${isTh?'6px 10px':'12px 18px'}; }
+    .inv-meta { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:${isTh?'5px':'8px'}; }
+    .inv-num  { font-weight:800; font-size:${fs(13)}px; }
+    .inv-date { font-size:${fs(9)}px; color:#6B7280; margin-top:2px; }
+    .barcode  { font-size:${isTh?'18':'22'}px; color:#9CA3AF; letter-spacing:-2px; }
+    .meta-row { display:flex; justify-content:space-between; margin-bottom:${isTh?'2px':'3px'}; }
+    .meta-l   { font-size:${fs(10)}px; color:#6B7280; }
+    .meta-v   { font-size:${fs(11)}px; font-weight:500; color:#111827; }
+    .meta-vb  { font-size:${fs(11)}px; font-weight:700; color:#111827; }
+    table     { width:100%; border-collapse:collapse; }
+    thead tr  { border-bottom:1px solid ${brand}40; }
+    .totals-row { display:flex; justify-content:space-between; margin-bottom:${isTh?'2px':'3px'}; }
+    .total-final{ display:flex; justify-content:space-between; font-weight:800; font-size:${fs(14)}px; padding-top:${isTh?'5px':'7px'}; margin-top:${isTh?'4px':'6px'}; border-top:2px solid ${brand}; }
+    .loyalty-box{ background:${accent}12; border:1px solid ${accent}30; border-radius:6px; padding:${isTh?'5px 8px':'8px 12px'}; text-align:center; margin:${isTh?'4px 0':'6px 0'}; }
+    .savings    { text-align:center; color:#15803D; font-weight:600; background:#F0FDF4; border-radius:5px; padding:3px 8px; margin:${isTh?'3px 0':'5px 0'}; }
+    .footer-msg { text-align:center; color:#4B5563; line-height:1.6; padding-bottom:${isTh?'6px':'10px'}; }
+    @media print {
+      body { -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+      .page { width:${widthMM}mm; }
+      @page { size:${isTh?widthMM+'mm 1000mm':'A4'}; margin:${isTh?'0':'10mm'}; }
+    }
+  </style>
+</head>
+<body>
+<div class="page">
+  <!-- HEADER -->
+  <div class="header">
+    ${t.show_logo && t.logo_url ? `<div style="margin-bottom:6px;text-align:${t.header_align||'center'}"><img src="${t.logo_url}" style="height:${t.logo_size||48}px;object-fit:contain"/></div>` : ''}
+    <div class="store-name">${t.store_name||'Store'}</div>
+    ${t.tagline ? `<div class="tagline">${t.tagline}</div>` : ''}
+    ${t.show_store_info ? `<div class="store-sub">
+      ${t.store_address||''}${t.store_phone?'<br>'+t.store_phone:''}
+      ${t.store_email?'<br>'+t.store_email:''}
+      ${t.store_website?'<br>'+t.store_website:''}
+      ${t.show_gst&&t.store_gstin?'<br>GSTIN: '+t.store_gstin:''}
+    </div>` : ''}
+  </div>
+
+  <div class="body">
+    <!-- META -->
+    <div class="inv-meta">
+      <div>
+        <div class="inv-num">${t.headline||'RECEIPT'} #${record.invoice_number||''}</div>
+        <div class="inv-date">${record.invoice_date||new Date().toLocaleDateString('en-IN')}</div>
+      </div>
+      ${t.show_barcode ? '<div class="barcode">▌▌▌▌▌▌</div>' : ''}
+    </div>
+
+    ${divider}
+
+    <!-- CUSTOMER -->
+    ${t.show_customer ? `
+    <div class="meta-row"><span class="meta-l">Customer</span><span class="meta-vb">${record.customer||''}</span></div>
+    <div class="meta-row"><span class="meta-l">Phone</span><span class="meta-v">${record.customer_phone||''}</span></div>
+    ` : ''}
+
+    ${divider}
+
+    <!-- LINE ITEMS -->
+    <table>
+      <thead><tr>${colHeaders}</tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+
+    ${divider}
+
+    <!-- TOTALS -->
+    <div class="totals-row"><span class="meta-l">Subtotal</span><span class="meta-v">${fmt(record.subtotal)}</span></div>
+    <div class="totals-row"><span class="meta-l">Discount</span><span class="meta-v">-${fmt(record.total_discount)}</span></div>
+    <div class="totals-row"><span class="meta-l">Tax</span><span class="meta-v">${fmt(record.total_tax)}</span></div>
+    <div class="total-final"><span>TOTAL</span><span>${fmt(record.amount)}</span></div>
+
+    <!-- PAYMENT -->
+    ${t.show_payment ? `${divider}
+    <div class="meta-row"><span class="meta-l">Payment Method</span><span class="meta-vb">${record.payment_method||''}</span></div>
+    <div class="meta-row"><span class="meta-l">Status</span><span class="meta-v">${record.payment_status||record.status||''}</span></div>
+    ` : ''}
+
+    <!-- LOYALTY -->
+    ${t.show_loyalty && record.loyalty_points_earned ? `${divider}
+    <div class="loyalty-box">
+      <div style="font-size:${fs(9)}px;color:#6B7280">Loyalty Points Earned</div>
+      <div style="font-weight:800;font-size:${fs(15)}px;color:#111827">+${record.loyalty_points_earned} pts</div>
+    </div>` : ''}
+
+    <!-- SAVINGS -->
+    ${t.show_savings && record.total_discount > 0 ? `
+    <div class="savings">🎉 You saved ${fmt(record.total_discount)} on this purchase!</div>` : ''}
+
+    <!-- FOOTER -->
+    ${t.show_footer && t.footer_msg ? `${divider}
+    <div class="footer-msg">${t.footer_msg}</div>` : ''}
+
+    <!-- WATERMARK -->
+    ${t.watermark ? `<div style="position:fixed;top:50%;left:50%;transform:translate(-50%,-50%) rotate(-35deg);font-size:48px;font-weight:900;color:rgba(0,0,0,0.05);pointer-events:none;white-space:nowrap;letter-spacing:6px">${t.watermark}</div>` : ''}
+  </div>
+</div>
+</body>
+</html>`;
+}
+
+// ─── Print Preview Modal ──────────────────────────────────────────────────────
+function RetailInvoicePrintModal({ template, record, items, onClose, onPrint }) {
+  if (!template) return (
+    <div className="fixed inset-0 bg-black/60 z-[200] flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-white rounded-[20px] p-8 max-w-md text-center shadow-2xl" onClick={e=>e.stopPropagation()}>
+        <div className="text-4xl mb-4">⚠️</div>
+        <h3 className="font-bold text-[#0F172A] text-lg mb-2">No Template Selected</h3>
+        <p className="text-gray-500 text-sm mb-5">Please select an Invoice Template in the Invoice Info section first. You can create templates in Admin Tools → B2C Retail → Invoice Template.</p>
+        <button onClick={onClose} className="bg-[#0F172A] text-white px-6 py-2.5 rounded-xl font-bold text-sm">Close</button>
+      </div>
+    </div>
+  );
+
+  const html = buildRetailPrintHTML(template, record, items);
+  const ps   = template.paper_size;
+  const isTh = ps?.startsWith('thermal');
+  const previewW = ps==='thermal_58'||ps==='thermal_57' ? 219 : ps==='thermal_80' ? 303 : ps==='A5' ? 480 : 595;
+
+  return (
+    <div className="fixed inset-0 bg-black/70 z-[200] flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-white rounded-[24px] shadow-2xl flex flex-col overflow-hidden" style={{maxWidth:900,width:'100%',maxHeight:'90vh'}} onClick={e=>e.stopPropagation()}>
+        {/* Header */}
+        <div className="bg-gradient-to-r from-[#0F172A] to-indigo-900 px-6 py-4 flex items-center justify-between flex-shrink-0">
+          <div>
+            <h3 className="text-white font-bold text-lg">🖨️ Print Preview</h3>
+            <p className="text-blue-200 text-xs mt-0.5">Template: {template.name} · {template.paper_size}</p>
+          </div>
+          <div className="flex items-center gap-3">
+            <button onClick={onPrint}
+              className="bg-green-500 hover:bg-green-600 text-white px-5 py-2.5 rounded-xl text-sm font-bold shadow transition-all">
+              🖨️ Print Now
+            </button>
+            <button onClick={onClose}
+              className="text-white/60 hover:text-white text-2xl leading-none">✕</button>
+          </div>
         </div>
-      )}
+
+        {/* Preview iframe */}
+        <div className="flex-1 overflow-auto bg-gray-100 p-6 flex justify-center">
+          <div style={{width:previewW,flexShrink:0}}>
+            <iframe
+              srcDoc={html}
+              style={{width:'100%',height:isTh?800:1000,border:'none',borderRadius:8,boxShadow:'0 4px 20px rgba(0,0,0,0.15)',background:'white'}}
+              title="Invoice Preview"/>
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div className="px-6 py-4 border-t border-gray-100 flex items-center justify-between bg-gray-50 flex-shrink-0">
+          <p className="text-xs text-gray-400">Preview may differ slightly from printed output depending on printer settings.</p>
+          <div className="flex gap-3">
+            <button onClick={onClose} className="px-4 py-2 border border-gray-200 rounded-xl text-sm font-semibold text-gray-600 hover:bg-gray-100">Close</button>
+            <button onClick={onPrint} className="bg-green-500 hover:bg-green-600 text-white px-5 py-2.5 rounded-xl text-sm font-bold">🖨️ Print</button>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -308,6 +560,54 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo }) 
   const taxRegime = getTaxRegime(appPreferences?.default_currency);
 
   const [edited, setEdited] = useState({ ...record });
+  // Retail invoice templates (for retailInvoices page)
+  const [invoiceTemplates,    setInvoiceTemplates]    = useState([]);
+  const [selectedTemplateId,  setSelectedTemplateId]  = useState('');
+  const [showPrintPreview,    setShowPrintPreview]    = useState(false);
+
+  useEffect(() => {
+    if (page !== 'retailInvoices' || !supabase) return;
+    supabase.from('retail_invoice_templates').select('*').order('created_at')
+      .then(({ data }) => {
+        if (!data) return;
+        setInvoiceTemplates(data);
+        // Auto-select: use record's saved template, else the default, else first
+        const saved    = data.find(t => t.id === (record?.invoice_template_id || edited.invoice_template_id));
+        const defTpl   = data.find(t => t.is_default);
+        const fallback = data[0];
+        const pick = saved || defTpl || fallback;
+        if (pick) setSelectedTemplateId(pick.id);
+      });
+  }, [page, record?.id]);
+
+  // Custom fields — fetch directly, bypass cache issues
+  const [customFields, setCustomFields] = useState([]);
+  useEffect(() => {
+    if (!supabase || !page) return;
+    (async () => {
+      try {
+        // First try with is_published filter
+        const { data, error } = await supabase
+          .from('app_custom_fields')
+          .select('id,label,api_name,field_type,options,required,sort_order,show_on,is_published,is_active')
+          .eq('object_type', page)
+          .order('sort_order');
+        if (error) {
+          console.error('[CustomFields] DB error:', error.message, error.code);
+          setCustomFields([]);
+          return;
+        }
+        console.log('[CustomFields] all active for', page, ':', data?.length, 'rows', data?.map(f=>({label:f.label,published:f.is_published,active:f.is_active})));
+        // Only show active AND published fields
+        const published = (data||[]).filter(f => f.is_active !== false && f.is_published === true);
+        console.log('[CustomFields] published:', published.length);
+        setCustomFields(published.map(f => ({ ...f, options: f.options || [], show_on: f.show_on || 'both' })));
+      } catch(e) {
+        console.error('[CustomFields] exception:', e);
+        setCustomFields([]);
+      }
+    })();
+  }, [page, record?.id]);
   const [items, setItems] = useState([]);
   const [loadingLI, setLoadingLI] = useState(cfg.hasLineItems);
   const [saving, setSaving] = useState(false);
@@ -330,7 +630,10 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo }) 
 
   const handleSave = async (andClose=false) => {
     setSaving(true);
-    let payload = { ...edited };
+    // Strip client-side computed fields that don't exist as DB columns
+    // Strip client-side computed fields — keep custom_data as it's a real DB column
+    const { displayNumber, _uuid, ...editedClean } = edited;
+    let payload = { ...editedClean, custom_data: edited.custom_data || {} };
     if (cfg.hasLineItems) {
       const subtotal  = items.reduce((s,i) => s + i.quantity*i.unit_price, 0);
       const totalDisc = items.reduce((s,i) => s + i.quantity*i.unit_price*i.discount_pct/100, 0);
@@ -392,6 +695,24 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo }) 
       options={retailCustomers.map(c=>({value:c.id,label:c.name,sub:[c.phone,c.email].filter(Boolean).join(' · ')}))}
       placeholder="Search customers..." emptyLabel="No customer"
     />;
+    if (field.type === 'retailInvoiceTemplate') return (
+      <select
+        value={selectedTemplateId}
+        onChange={e => {
+          setSelectedTemplateId(e.target.value);
+          set('invoice_template_id', e.target.value);
+        }}
+        className={sCls}>
+        {invoiceTemplates.length === 0
+          ? <option value="">No templates — create one in Admin Tools → B2C Retail → Invoice Template</option>
+          : invoiceTemplates.map(t => (
+              <option key={t.id} value={t.id}>
+                {t.name}{t.is_default ? ' ★ Default' : ''}
+              </option>
+            ))
+        }
+      </select>
+    );
     if (field.type === 'select') return (
       <select value={v||field.defaultValue||''} onChange={e=>set(field.key,e.target.value)} className={sCls}>
         {!field.defaultValue && <option value="">Select {field.label}</option>}
@@ -411,7 +732,20 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo }) 
     return <input type={field.type==='email'?'email':field.type==='tel'?'tel':'text'} value={v||''} onChange={e=>set(field.key,e.target.value)} className={iCls} placeholder={field.label}/>;
   };
 
+  // ── Print engine ──────────────────────────────────────────────────────────
+  function handleDirectPrint(template, record, lineItems) {
+    if (!template) { alert('Please select an invoice template first.'); return; }
+    const html = buildRetailPrintHTML(template, record, lineItems);
+    const win = window.open('', '_blank', 'width=800,height=900');
+    if (!win) { alert('Pop-up blocked. Please allow pop-ups for this site.'); return; }
+    win.document.write(html);
+    win.document.close();
+    win.focus();
+    setTimeout(() => { win.print(); win.close(); }, 600);
+  }
+
   return (
+    <>
     <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[110] overflow-y-auto">
       <div className="bg-white rounded-[28px] shadow-2xl w-[98vw] my-4 mx-auto flex flex-col" style={{minHeight:'95vh'}}>
         {/* Header */}
@@ -422,7 +756,14 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo }) 
               <h2 className="text-white text-xl font-bold">{edited.name || edited.subject || edited[cfg.idField]}</h2>
               <span className={`px-2.5 py-0.5 rounded-full text-xs font-semibold ${getStatusColor(edited.status)}`}>{edited.status}</span>
             </div>
-            <p className="text-blue-300 text-xs mt-1 font-mono">{edited[cfg.idField]}</p>
+            <p className="text-blue-300 text-xs mt-1 flex items-center gap-2">
+              {record.displayNumber && (
+                <span className="bg-blue-600 text-white font-mono font-bold px-2.5 py-0.5 rounded-full text-xs tracking-wider">
+                  {formatDisplayNumber(PAGE_DISPLAY_PREFIX[page]||'REC', record.displayNumber)}
+                </span>
+              )}
+              <span className="font-mono opacity-60">{edited[cfg.idField]}</span>
+            </p>
           </div>
           <div className="flex items-center gap-2">
             {saveSuccess && <span className="text-green-300 text-sm font-semibold mr-2">✓ Saved</span>}
@@ -431,6 +772,20 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo }) 
                 className="bg-purple-500 text-white px-4 py-2 rounded-xl text-sm font-bold hover:bg-purple-600 disabled:opacity-50">
                 {creatingInvoice?'Creating...':'🧾 Create Invoice'}
               </button>
+            )}
+            {page==='retailInvoices' && (
+              <>
+                <button
+                  onClick={() => { setShowPrintPreview(true); }}
+                  className="bg-indigo-500 hover:bg-indigo-600 text-white px-4 py-2 rounded-xl text-sm font-bold transition-all">
+                  👁️ Preview & Print
+                </button>
+                <button
+                  onClick={() => handleDirectPrint(invoiceTemplates.find(t=>t.id===selectedTemplateId), edited, items)}
+                  className="bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded-xl text-sm font-bold transition-all">
+                  🖨️ Print
+                </button>
+              </>
             )}
             <button onClick={()=>handleSave(false)} disabled={saving}
               className="bg-white/10 text-white px-4 py-2 rounded-xl text-sm font-bold hover:bg-white/20 disabled:opacity-50">
@@ -446,6 +801,7 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo }) 
 
         {/* Body */}
         <div className="flex-1 overflow-y-auto p-6 space-y-6">
+
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
             {cfg.sections.map(section => {
               const fields = resolveFields(section.fields);
@@ -472,6 +828,56 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo }) 
             })}
           </div>
 
+          {/* Additional Information — App Composer custom fields, only when published */}
+          {customFields.filter(cf => cf.show_on !== 'create').length > 0 && (
+            <div className="bg-white rounded-[20px] border border-blue-100 shadow-sm">
+              <div className="px-5 py-3 bg-gradient-to-r from-slate-50 to-blue-50 border-b border-blue-100 rounded-t-[20px] flex items-center gap-2">
+                <span>🎛️</span>
+                <span className="font-bold text-[#0F172A] text-sm">Additional Information</span>
+                <span className="text-[10px] bg-blue-100 text-blue-600 px-2 py-0.5 rounded-full font-semibold ml-auto">App Composer</span>
+              </div>
+              <div className="p-5 grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {customFields.filter(cf => cf.show_on !== 'create').map(cf => {
+                  const cdVal = (edited.custom_data || {})[cf.api_name];
+                  const setCdVal = (val) => setEdited(p => ({ ...p, custom_data: { ...(p.custom_data||{}), [cf.api_name]: val } }));
+                  return (
+                    <div key={cf.api_name} className={cf.field_type==='multi_select'?'sm:col-span-2':''}>
+                      {cf.field_type !== 'checkbox' && (
+                        <label className="block text-xs font-bold uppercase tracking-wider text-gray-400 mb-1.5">
+                          {cf.label}{cf.required && <span className="text-red-400 ml-1">*</span>}
+                        </label>
+                      )}
+                      {cf.field_type==='single_select'
+                        ? <select value={cdVal||''} onChange={e=>setCdVal(e.target.value)} className="w-full border border-blue-200 rounded-xl px-3 py-2.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-400 text-[#0F172A]">
+                            <option value="">Select {cf.label}...</option>
+                            {cf.options.map(o=><option key={o} value={o}>{o}</option>)}
+                          </select>
+                        : cf.field_type==='multi_select'
+                        ? <div className="space-y-2">{cf.options.map(o=>(
+                            <label key={o} className="flex items-center gap-2.5 cursor-pointer">
+                              <input type="checkbox" className="w-4 h-4 accent-blue-600 rounded"
+                                checked={(cdVal||'').split('||').includes(o)}
+                                onChange={e=>{const cur=(cdVal||'').split('||').filter(Boolean);const nxt=e.target.checked?[...cur,o]:cur.filter(x=>x!==o);setCdVal(nxt.join('||'));}}/>
+                              <span className="text-sm text-[#0F172A]">{o}</span>
+                            </label>
+                          ))}</div>
+                        : cf.field_type==='checkbox'
+                        ? <label className="flex items-center gap-2.5 cursor-pointer pt-1">
+                            <input type="checkbox" className="w-4 h-4 accent-blue-600 rounded" checked={!!cdVal} onChange={e=>setCdVal(e.target.checked)}/>
+                            <span className="text-sm font-semibold text-[#0F172A]">{cf.label}</span>
+                          </label>
+                        : <input
+                            type={cf.field_type==='number'||cf.field_type==='currency'?'number':cf.field_type==='date'?'date':cf.field_type==='datetime'?'datetime-local':cf.field_type==='email'?'email':cf.field_type==='url'?'url':'text'}
+                            value={cdVal||''} onChange={e=>setCdVal(e.target.value)} placeholder={cf.label}
+                            className="w-full border border-blue-200 rounded-xl px-3 py-2.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-400 text-[#0F172A]"/>
+                      }
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
           {/* Line items for Orders/Invoices */}
           {cfg.hasLineItems && (
             loadingLI
@@ -489,6 +895,18 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo }) 
         </div>
       </div>
     </div>
+
+    {/* Print Preview Modal */}
+    {showPrintPreview && page==='retailInvoices' && (
+      <RetailInvoicePrintModal
+        template={invoiceTemplates.find(t=>t.id===selectedTemplateId)}
+        record={edited}
+        items={items}
+        onClose={()=>setShowPrintPreview(false)}
+        onPrint={()=>handleDirectPrint(invoiceTemplates.find(t=>t.id===selectedTemplateId), edited, items)}
+      />
+    )}
+    </>
   );
 }
 
@@ -516,6 +934,21 @@ function RetailCreateModal({ page, open, onClose, onCreated }) {
   const [form, setForm] = useState(defaultForm);
   const [saving, setSaving] = useState(false);
   const [errors, setErrors] = useState({});
+  const [createCustomFields, setCreateCustomFields] = useState([]);
+
+  useEffect(() => {
+    if (!open || !supabase || !page) return;
+    supabase
+      .from('app_custom_fields')
+      .select('id,label,api_name,field_type,options,required,sort_order,show_on')
+      .eq('object_type', page)
+      .eq('is_active', true)
+      .eq('is_published', true)
+      .in('show_on', ['create','both'])
+      .order('sort_order')
+      .then(({ data }) => setCreateCustomFields((data||[]).map(f=>({...f,options:f.options||[]}))))
+      .catch(()=>setCreateCustomFields([]));
+  }, [open, page]);
 
   useEffect(() => { if (open) { setForm(defaultForm()); setErrors({}); } }, [open, page]);
 
@@ -575,6 +1008,24 @@ function RetailCreateModal({ page, open, onClose, onCreated }) {
       options={retailCustomers.map(c=>({value:c.id,label:c.name,sub:[c.phone,c.email].filter(Boolean).join(' · ')}))}
       placeholder="Search customers..." emptyLabel="No customer"
     />;
+    if (field.type === 'retailInvoiceTemplate') return (
+      <select
+        value={selectedTemplateId}
+        onChange={e => {
+          setSelectedTemplateId(e.target.value);
+          set('invoice_template_id', e.target.value);
+        }}
+        className={sCls}>
+        {invoiceTemplates.length === 0
+          ? <option value="">No templates — create one in Admin Tools → B2C Retail → Invoice Template</option>
+          : invoiceTemplates.map(t => (
+              <option key={t.id} value={t.id}>
+                {t.name}{t.is_default ? ' ★ Default' : ''}
+              </option>
+            ))
+        }
+      </select>
+    );
     if (field.type === 'select') return (
       <select value={v??field.defaultValue??''} onChange={e=>s(field.key,e.target.value)} className={sCls}>
         {!field.defaultValue && <option value="">Select {field.label}</option>}
@@ -614,6 +1065,35 @@ function RetailCreateModal({ page, open, onClose, onCreated }) {
               </div>
             ))}
           </div>
+
+          {/* Additional Information — custom fields shown on create */}
+          {createCustomFields.filter(cf=>!cf.show_on||cf.show_on==='both'||cf.show_on==='create').length > 0 && (
+            <div className="mt-4 bg-blue-50/40 rounded-[18px] border border-blue-100 p-4">
+              <h4 className="text-xs font-bold uppercase tracking-wider text-gray-400 mb-3 flex items-center gap-2">
+                <span>🎛️</span> Additional Information
+              </h4>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {createCustomFields.filter(cf=>!cf.show_on||cf.show_on==='both'||cf.show_on==='create').map(cf=>{
+                  const cdVal=(form.custom_data||{})[cf.api_name];
+                  const setCdVal=(val)=>setForm(p=>({...p,custom_data:{...(p.custom_data||{}),[cf.api_name]:val}}));
+                  const isWide=cf.field_type==='multi_select';
+                  return (
+                    <div key={cf.api_name} className={isWide?'sm:col-span-2':''}>
+                      {cf.field_type!=='checkbox'&&<label className="block text-xs font-bold uppercase tracking-wider text-gray-500 mb-1.5">{cf.label}{cf.required&&<span className="text-red-400 ml-1">*</span>}</label>}
+                      {cf.field_type==='single_select'
+                        ?<select value={cdVal||''} onChange={e=>setCdVal(e.target.value)} className="w-full border border-blue-200 rounded-xl px-3 py-2 text-sm bg-white focus:outline-none focus:ring-1 focus:ring-blue-400"><option value="">Select {cf.label}...</option>{cf.options.map(o=><option key={o}>{o}</option>)}</select>
+                        :cf.field_type==='multi_select'
+                        ?<div className="flex flex-wrap gap-3">{cf.options.map(o=>(<label key={o} className="flex items-center gap-1.5 text-sm cursor-pointer"><input type="checkbox" className="w-4 h-4 accent-blue-600" checked={(cdVal||'').split('||').includes(o)} onChange={e=>{const cur=(cdVal||'').split('||').filter(Boolean);const nxt=e.target.checked?[...cur,o]:cur.filter(x=>x!==o);setCdVal(nxt.join('||'));}}/>{o}</label>))}</div>
+                        :cf.field_type==='checkbox'
+                        ?<label className="flex items-center gap-2 cursor-pointer pt-1"><input type="checkbox" className="w-4 h-4 accent-blue-600" checked={!!cdVal} onChange={e=>setCdVal(e.target.checked)}/><span className="text-sm font-semibold">{cf.label}</span></label>
+                        :<input type={cf.field_type==='number'||cf.field_type==='currency'?'number':cf.field_type==='date'?'date':cf.field_type==='datetime'?'datetime-local':cf.field_type==='email'?'email':cf.field_type==='url'?'url':'text'} value={cdVal||''} onChange={e=>setCdVal(e.target.value)} placeholder={cf.label} className="w-full border border-blue-200 rounded-xl px-3 py-2.5 text-sm bg-white focus:outline-none focus:ring-1 focus:ring-blue-400"/>
+                      }
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </div>
         <div className="px-6 py-4 border-t border-gray-100 flex items-center justify-end gap-3 flex-shrink-0 bg-gray-50">
           <button onClick={onClose} className="px-5 py-2.5 rounded-xl border border-gray-200 text-gray-600 text-sm font-semibold hover:bg-gray-100">Cancel</button>
@@ -704,7 +1184,15 @@ export default function RetailListPage({ page }) {
                     {cfg.listColumns.map((c,ci) => (
                       <td key={c.h} className={`px-5 py-3.5 ${c.align==='right'?'text-right font-semibold':''} ${c.mono?'font-mono text-xs text-gray-400':'text-gray-700'}`}>
                         {ci === 0
-                          ? <button onClick={()=>setSelectedRecord(r)} className="font-semibold text-[#0F172A] hover:text-blue-700 hover:underline text-left">{c.v(r)}</button>
+                          ? <button onClick={()=>setSelectedRecord(r)} className="text-left">
+                              {c.h.includes('#')
+                                ? <span className="text-xs font-mono font-bold text-blue-700 bg-blue-50 hover:bg-blue-100 px-2.5 py-1 rounded-full border border-blue-100 cursor-pointer transition-all">{c.v(r)}</span>
+                                : <div>
+                                    <div className="font-semibold text-[#0F172A] hover:text-blue-700">{c.v(r)}</div>
+                                    {r.displayNumber && <span className="text-xs font-mono text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full border border-blue-100 mt-0.5 inline-block">{formatDisplayNumber(PAGE_DISPLAY_PREFIX[page]||'REC', r.displayNumber)}</span>}
+                                  </div>
+                              }
+                            </button>
                           : c.v(r)}
                       </td>
                     ))}

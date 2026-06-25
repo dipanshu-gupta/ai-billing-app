@@ -38,7 +38,8 @@ const DATE_RANGES = [
 // filterable: true = show in filter panel
 const OBJECT_FIELDS = {
   customers: [
-    { k:'name',        l:'Name',         t:'text' },
+    { k:'id',           l:'Customer #',   t:'text' },
+    { k:'name',         l:'Name',         t:'text' },
     { k:'industry',    l:'Industry',     t:'text',     filterable:true },
     { k:'status',      l:'Status',       t:'status',   filterable:true },
     { k:'city',        l:'City',         t:'text',     filterable:true },
@@ -50,6 +51,7 @@ const OBJECT_FIELDS = {
     { k:'updated_at',  l:'Updated Date', t:'date' },
   ],
   leads: [
+    { k:'id', l:'Lead #', t:'text' },
     { k:'name',        l:'Name',         t:'text' },
     { k:'customer',    l:'Company',      t:'text' },
     { k:'source',      l:'Source',       t:'text',     filterable:true },
@@ -60,6 +62,7 @@ const OBJECT_FIELDS = {
     { k:'created_at',  l:'Created Date', t:'date',     filterable:true },
   ],
   opportunities: [
+    { k:'id', l:'Opportunity #', t:'text' },
     { k:'name',        l:'Name',         t:'text' },
     { k:'customer',    l:'Customer',     t:'text' },
     { k:'stage',       l:'Stage',        t:'text',     filterable:true },
@@ -73,6 +76,7 @@ const OBJECT_FIELDS = {
     { k:'created_at',  l:'Created Date', t:'date',     filterable:true },
   ],
   orders: [
+    { k:'id', l:'Order #', t:'text' },
     { k:'name',           l:'Name',            t:'text' },
     { k:'customer',       l:'Customer',         t:'text' },
     { k:'amount',         l:'Amount',           t:'currency' },
@@ -85,6 +89,7 @@ const OBJECT_FIELDS = {
     { k:'created_at',     l:'Created Date',     t:'date',     filterable:true },
   ],
   invoices: [
+    { k:'id', l:'Invoice #', t:'text' },
     { k:'name',           l:'Name',            t:'text' },
     { k:'customer',       l:'Customer',         t:'text' },
     { k:'amount',         l:'Amount',           t:'currency' },
@@ -97,6 +102,7 @@ const OBJECT_FIELDS = {
     { k:'created_at',     l:'Created Date',     t:'date',     filterable:true },
   ],
   contacts: [
+    { k:'id', l:'Contact #', t:'text' },
     { k:'name',        l:'Name',          t:'text' },
     { k:'customer',    l:'Company',       t:'text' },
     { k:'designation', l:'Designation',   t:'text',     filterable:true },
@@ -108,6 +114,7 @@ const OBJECT_FIELDS = {
     { k:'created_at',  l:'Created Date',  t:'date',     filterable:true },
   ],
   activities: [
+    { k:'id', l:'Activity #', t:'text' },
     { k:'name',         l:'Subject',       t:'text' },
     { k:'customer',     l:'Customer',      t:'text' },
     { k:'activityType', l:'Type',          t:'text',     filterable:true },
@@ -133,6 +140,7 @@ const OBJECT_FIELDS = {
     { k:'created_at',   l:'Created Date',  t:'date',     filterable:true },
   ],
   products: [
+    { k:'id', l:'Product #', t:'text' },
     { k:'name',          l:'Name',          t:'text' },
     { k:'category',      l:'Category',      t:'text',     filterable:true },
     { k:'productFamily', l:'Product Family',t:'text',     filterable:true },
@@ -853,7 +861,9 @@ export default function FastReportsPage() {
                                     ? <span className="font-medium">{v!=null ? Number(v).toLocaleString('en-IN') : '-'}</span>
                                     : k==='status'
                                     ? <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-blue-100 text-blue-700 border border-blue-200">{v||'-'}</span>
-                                    : <span className="text-gray-700">{v||'-'}</span>
+                                    : k==='id' && row.displayNumber
+                                ? <span className="text-xs font-mono font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded-full">{formatDisplayNumber(PAGE_DISPLAY_PREFIX[objType]||'REC', row.displayNumber)}</span>
+                                : <span className="text-gray-700">{v||'-'}</span>
                                   }
                                 </td>
                               );

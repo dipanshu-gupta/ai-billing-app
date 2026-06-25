@@ -323,7 +323,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       const secured = applyDataSecurity(data);
       setCustomers(secured.map((c: any) => ({
         ...c,
-        id: c.customer_number, primaryContactId: c.primary_contact_id, primaryContact: c.primary_contact||'',
+        id: c.customer_number, displayNumber: c.display_number, primaryContactId: c.primary_contact_id, primaryContact: c.primary_contact||'',
         name: c.name, email: c.email, phone: c.phone, company: c.company, industry: c.industry,
         billingAddress: c.billing_address, shippingAddress: c.shipping_address,
         city: c.city, state: c.state, postalCode: c.postal_code, country: c.country,
@@ -343,7 +343,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     if (data) {
       setContacts(data.map((c: any) => ({
         ...c,
-        id: c.contact_number, customerId: c.customer_id, customer: c.customer,
+        id: c.contact_number, displayNumber: c.display_number, customerId: c.customer_id, customer: c.customer,
         name: c.name, email: c.email, phone: c.phone, designation: c.designation,
         department: c.department, isPrimary: c.is_primary || false, status: c.status,
         created_by: c.created_by, created_at: c.created_at, updated_by: c.updated_by, updated_at: c.updated_at,
@@ -359,7 +359,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     if (data) {
       setProducts(data.map((p: any) => ({
         ...p,
-        id: p.product_number || p.id, _uuid: p.id, name: p.name, category: p.category,
+        id: p.product_number || p.id, displayNumber: p.display_number, _uuid: p.id, name: p.name, category: p.category,
         price: Number(p.price || 0), status: p.status,
         created_by: p.created_by, created_at: p.created_at, updated_by: p.updated_by, updated_at: p.updated_at,
         organization_id: p.organization_id, business_unit_id: p.business_unit_id,
@@ -374,7 +374,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     if (data) {
       setLeads(data.map((l: any) => ({
         ...l,
-        id: l.lead_number, name: l.name, customer: l.customer, customerId: l.customer_id,
+        id: l.lead_number, displayNumber: l.display_number, name: l.name, customer: l.customer, customerId: l.customer_id,
         contact: l.contact, contactId: l.contact_id, email: l.email, phone: l.phone,
         source: l.source, amount: Number(l.amount || 0), status: l.status,
         created_by: l.created_by, created_at: l.created_at, updated_by: l.updated_by, updated_at: l.updated_at,
@@ -390,7 +390,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     if (data) {
       setOpportunities(data.map((o: any) => ({
         ...o,
-        id: o.opportunity_number, name: o.name, customer: o.customer, customerId: o.customer_id,
+        id: o.opportunity_number, displayNumber: o.display_number, name: o.name, customer: o.customer, customerId: o.customer_id,
         contact: o.contact, contactId: o.contact_id, stage: o.stage,
         amount: Number(o.amount || 0), closeDate: o.close_date, status: o.status,
         created_by: o.created_by, created_at: o.created_at, updated_by: o.updated_by, updated_at: o.updated_at,
@@ -406,7 +406,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     if (data) {
       setOrders(data.map((o: any) => ({
         ...o,
-        id: o.order_number, name: o.name, customer: o.customer, customerId: o.customer_id,
+        id: o.order_number, displayNumber: o.display_number, name: o.name, customer: o.customer, customerId: o.customer_id,
         contact: o.contact, contactId: o.contact_id, amount: Number(o.amount || 0),
         shippingAddress: o.shipping_address, deliveryDate: o.delivery_date, status: o.status,
         created_by: o.created_by, created_at: o.created_at, updated_by: o.updated_by, updated_at: o.updated_at,
@@ -422,7 +422,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     if (data) {
       setInvoices(data.map((inv: any) => ({
         ...inv,
-        id: inv.invoice_number, name: inv.name, customer: inv.customer, customerId: inv.customer_id,
+        id: inv.invoice_number, displayNumber: inv.display_number, name: inv.name, customer: inv.customer, customerId: inv.customer_id,
         contact: inv.contact, contactId: inv.contact_id, amount: Number(inv.amount || 0),
         dueDate: inv.due_date, paymentTerms: inv.payment_terms, billingAddress: inv.billing_address,
         status: inv.status,
@@ -439,7 +439,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     if (data) {
       setActivities(data.map((a: any) => ({
         ...a,
-        id: a.activity_number, name: a.name, customer: a.customer, customerId: a.customer_id,
+        id: a.activity_number, displayNumber: a.display_number, name: a.name, customer: a.customer, customerId: a.customer_id,
         contact: a.contact, contactId: a.contact_id, subject: a.subject,
         activityType: a.activity_type, activityDate: a.activity_date, notes: a.notes, status: a.status,
         created_by: a.created_by, created_at: a.created_at, updated_by: a.updated_by, updated_at: a.updated_at,
@@ -505,35 +505,35 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     if (!supabase) return;
     const { data, error } = await supabase.from('retail_customers').select('*').order('created_at', { ascending: false });
     if (error) { if (!String(error.message).includes('does not exist')) console.error('fetchRetailCustomers:', error.message); return; }
-    if (data) setRetailCustomers(applyDataSecurity(data).map((c: any) => ({ ...c, id: c.customer_number, _uuid: c.id })));
+    if (data) setRetailCustomers(applyDataSecurity(data).map((c: any) => ({ ...c, id: c.customer_number, _uuid: c.id, displayNumber: c.display_number })));
   };
 
   const fetchRetailProducts = async () => {
     if (!supabase) return;
     const { data, error } = await supabase.from('retail_products').select('*').order('created_at', { ascending: false });
     if (error) { if (!String(error.message).includes('does not exist')) console.error('fetchRetailProducts:', error.message); return; }
-    if (data) setRetailProducts(applyDataSecurity(data).map((p: any) => ({ ...p, id: p.product_number, _uuid: p.id })));
+    if (data) setRetailProducts(applyDataSecurity(data).map((p: any) => ({ ...p, id: p.product_number, _uuid: p.id, displayNumber: p.display_number })));
   };
 
   const fetchRetailActivities = async () => {
     if (!supabase) return;
     const { data, error } = await supabase.from('retail_activities').select('*').order('created_at', { ascending: false });
     if (error) { if (!String(error.message).includes('does not exist')) console.error('fetchRetailActivities:', error.message); return; }
-    if (data) setRetailActivities(applyDataSecurity(data).map((a: any) => ({ ...a, id: a.activity_number, _uuid: a.id })));
+    if (data) setRetailActivities(applyDataSecurity(data).map((a: any) => ({ ...a, id: a.activity_number, _uuid: a.id, displayNumber: a.display_number })));
   };
 
   const fetchRetailOrders = async () => {
     if (!supabase) return;
     const { data, error } = await supabase.from('retail_orders').select('*').order('created_at', { ascending: false });
     if (error) { if (!String(error.message).includes('does not exist')) console.error('fetchRetailOrders:', error.message); return; }
-    if (data) setRetailOrders(applyDataSecurity(data).map((o: any) => ({ ...o, id: o.order_number, _uuid: o.id })));
+    if (data) setRetailOrders(applyDataSecurity(data).map((o: any) => ({ ...o, id: o.order_number, _uuid: o.id, displayNumber: o.display_number })));
   };
 
   const fetchRetailInvoices = async () => {
     if (!supabase) return;
     const { data, error } = await supabase.from('retail_invoices').select('*').order('created_at', { ascending: false });
     if (error) { if (!String(error.message).includes('does not exist')) console.error('fetchRetailInvoices:', error.message); return; }
-    if (data) setRetailInvoices(applyDataSecurity(data).map((i: any) => ({ ...i, id: i.invoice_number, _uuid: i.id })));
+    if (data) setRetailInvoices(applyDataSecurity(data).map((i: any) => ({ ...i, id: i.invoice_number, _uuid: i.id, displayNumber: i.display_number })));
   };
 
   // ─── Retail line items (orders / invoices) ────────────────────────────────
@@ -600,11 +600,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   // Allowed columns per retail table — prevents cross-object default fields leaking into wrong table
   const RETAIL_ALLOWED_COLS: Record<string, string[]> = {
-    retail_customers:  ['name','phone','email','date_of_birth','gender','address_line1','address_line2','city','state','postal_code','country','loyalty_points','loyalty_tier','preferred_contact','marketing_opt_in','notes','comments','status','owner','owner_id','organization_id','business_unit_id'],
-    retail_products:   ['name','category','brand','sku','barcode','unit','price','mrp','cost','stock_quantity','reorder_level','description','hsn_code','gst_rate','taxable','tax_category','vat_rate','tax_rate','status','owner','owner_id','comments','organization_id','business_unit_id'],
-    retail_activities: ['subject','activity_type','customer','customer_id','activity_date','due_date','priority','status','description','notes','comments','owner','owner_id','organization_id','business_unit_id'],
-    retail_orders:     ['customer','customer_id','customer_phone','order_date','channel','currency','payment_method','payment_status','delivery_method','delivery_address','delivery_date','subtotal','total_discount','total_tax','shipping_cost','amount','place_of_supply','gstin','tax_state','resale_certificate','vat_registration_number','tax_registration_number','status','notes','comments','owner','owner_id','organization_id','business_unit_id'],
-    retail_invoices:   ['order_number','customer','customer_id','customer_phone','invoice_date','due_date','currency','subtotal','total_discount','total_tax','shipping_cost','amount','payment_method','payment_status','place_of_supply','gstin','tax_state','resale_certificate','vat_registration_number','tax_registration_number','status','notes','comments','owner','owner_id','organization_id','business_unit_id'],
+    retail_customers:  ['name','phone','email','date_of_birth','gender','address_line1','address_line2','city','state','postal_code','country','loyalty_points','loyalty_tier','preferred_contact','marketing_opt_in','notes','comments','status','owner','owner_id','organization_id','business_unit_id','custom_data'],
+    retail_products:   ['name','category','brand','sku','barcode','unit','price','mrp','cost','stock_quantity','reorder_level','description','hsn_code','gst_rate','taxable','tax_category','vat_rate','tax_rate','status','owner','owner_id','comments','organization_id','business_unit_id','custom_data'],
+    retail_activities: ['subject','activity_type','customer','customer_id','activity_date','due_date','priority','status','description','notes','comments','owner','owner_id','organization_id','business_unit_id','custom_data'],
+    retail_orders:     ['customer','customer_id','customer_phone','order_date','channel','currency','payment_method','payment_status','delivery_method','delivery_address','delivery_date','subtotal','total_discount','total_tax','shipping_cost','amount','place_of_supply','gstin','tax_state','resale_certificate','vat_registration_number','tax_registration_number','status','notes','comments','owner','owner_id','organization_id','business_unit_id','custom_data'],
+    retail_invoices:   ['order_number','customer','customer_id','customer_phone','invoice_date','due_date','currency','subtotal','total_discount','total_tax','shipping_cost','amount','payment_method','payment_status','place_of_supply','gstin','tax_state','resale_certificate','vat_registration_number','tax_registration_number','status','notes','comments','owner','owner_id','organization_id','business_unit_id','custom_data','invoice_template_id'],
   };
 
   const createRetailRecord = async (page: keyof typeof RETAIL_TABLE_MAP, data: any, items: any[] = []) => {
@@ -641,9 +641,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const cfg = RETAIL_TABLE_MAP[page];
     if (!cfg) return;
     const payload: any = { ...record, ...buildSystemFields(true) };
-    delete payload.id; delete payload._uuid; delete payload[cfg.idField];
-    delete payload.customer; // computed display fields not stored redundantly are fine to keep actually — but strip nothing else
-    payload.customer = record.customer; // keep customer name
+    // Strip all client-side computed fields that have no DB column
+    delete payload.id;
+    delete payload._uuid;
+    delete payload[cfg.idField];
+    delete payload.displayNumber;
+    delete payload.display_number;
+    delete payload.customerId;
+    delete payload.primaryContactId;
+    payload.customer    = record.customer;    // keep customer name
+    payload.custom_data = record.custom_data || {}; // keep JSONB custom fields
     const { error } = await supabase.from(cfg.table).update(payload).eq(cfg.idField, record.id);
     if (error) { console.error(`update ${cfg.table}:`, error.message); alert('Save failed: ' + error.message); return; }
     if (cfg.lineItemTable) {
@@ -968,7 +975,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   // \u2500\u2500\u2500 CRM CRUD \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 
-  const createRecord = async (page: string, data: any, lineItems: LineItem[] = []): Promise<boolean> => {
+  const createRecord = async (page: string, data: any, lineItems: LineItem[] = []): Promise<{id:string,name:string}|null> => {
     if (!supabase || !currentUser) return false;
     const sys = buildSystemFields();
     const calcAmount = (lineItems||[]).reduce((s, i) => s + (i.quantity||1) * (i.price||0), 0);
@@ -980,13 +987,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           const { error } = await supabase.from('customers').insert([{ ...sys, owner: data.owner||currentUser?.email||'', owner_id: data.owner_id||currentUser?.id||null, comments: data.comments||'', customer_number: id, name: data.name, company: data.company, industry: data.industry, email: data.email, phone: data.phone, website: data.website, billing_address: data.billingAddress, shipping_address: data.shippingAddress, city: data.city, state: data.state, postal_code: data.postalCode, country: data.country, gst_number: data.gstNumber, status: data.status || 'Active' }]);
           if (error) throw error;
           await logAudit({ recordType: 'customer', recordId: id, recordName: data.name, action: 'created' });
-          await fetchCustomers(); break;
+          await fetchCustomers(); return { id, name: data.name };
         }
         case 'products': {
           const id = generateId('PROD');
           const { error } = await supabase.from('products').insert([{ ...sys, owner: data.owner||currentUser?.email||'', owner_id: data.owner_id||currentUser?.id||null, comments: data.comments||'', name: data.name, category: data.category, price: Number(data.price || 0), status: data.status || 'Active' }]);
           if (error) throw error;
-          await fetchProducts(); break;
+          await fetchProducts(); return { id, name: data.name };
         }
         case 'leads': {
           const id = generateId('LEAD');
@@ -995,8 +1002,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           if (lineItems.length) await supabase.from('lead_line_items').insert(lineItems.map(i => ({ lead_number: id, product_name: i.product, quantity: i.quantity, price: i.price })));
           await logAudit({ recordType: 'lead', recordId: id, recordName: data.name, action: 'created' });
           await runAssignmentRules('lead', id, data);
-          await fetchLeads(); await autoSetCustomerStatus(data.customerId, 'Prospect');
-          break;
+          await fetchLeads(); await autoSetCustomerStatus(data.customerId, 'Prospect'); return { id, name: data.name };
         }
         case 'opportunities': {
           const id = generateId('OPP');
@@ -1004,8 +1010,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           if (error) throw error;
           if (lineItems.length) await supabase.from('opportunity_line_items').insert(lineItems.map(i => ({ opportunity_number: id, product_name: i.product, quantity: i.quantity, price: i.price })));
           await logAudit({ recordType: 'opportunity', recordId: id, recordName: data.name, action: 'created' });
-          await fetchOpportunities(); await autoSetCustomerStatus(data.customerId, 'Prospect');
-          break;
+          await fetchOpportunities(); await autoSetCustomerStatus(data.customerId, 'Prospect'); return { id, name: data.name };
         }
         case 'orders': {
           const id = generateId('ORD');
@@ -1013,8 +1018,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           if (error) throw error;
           if (lineItems.length) await supabase.from('order_line_items').insert(lineItems.map(i => ({ order_number: id, product_name: i.product, quantity: i.quantity, price: i.price })));
           await logAudit({ recordType: 'order', recordId: id, recordName: data.name, action: 'created' });
-          await fetchOrders(); await autoSetCustomerStatus(data.customerId, 'Active');
-          break;
+          await fetchOrders(); await autoSetCustomerStatus(data.customerId, 'Active'); return { id, name: data.name };
         }
         case 'invoices': {
           const id = generateId('INV');
@@ -1022,8 +1026,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           if (error) throw error;
           if (lineItems.length) await supabase.from('invoice_line_items').insert(lineItems.map(i => ({ invoice_number: id, product_name: i.product, quantity: i.quantity, price: i.price })));
           await logAudit({ recordType: 'invoice', recordId: id, recordName: data.name, action: 'created' });
-          await fetchInvoices(); await autoSetCustomerStatus(data.customerId, 'Active');
-          break;
+          await fetchInvoices(); await autoSetCustomerStatus(data.customerId, 'Active'); return { id, name: data.name };
         }
         case 'contacts': {
           const id = generateId('CONT');
@@ -1033,20 +1036,20 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             await supabase.from('customers').update({ primary_contact_id: id }).eq('customer_number', data.customerId);
           }
           if (error) throw error;
-          await fetchContacts(); break;
+          await fetchContacts(); return { id, name: data.name };
         }
         case 'activities': {
           const id = generateId('ACT');
           const { error } = await supabase.from('activities').insert([{ ...sys, owner: data.owner||currentUser?.email||'', owner_id: data.owner_id||currentUser?.id||null, comments: data.comments||'', activity_number: id, name: data.name, customer: data.customer, customer_id: data.customerId, contact: data.contact, contact_id: data.contactId, subject: data.subject, activity_type: data.activityType, activity_date: data.activityDate, notes: data.notes, status: data.status || 'Open' }]);
           if (error) throw error;
-          await fetchActivities(); break;
+          await fetchActivities(); return { id, name: data.name };
         }
       }
-      return true;
+      return null;
     } catch (err: any) {
       console.error(err);
       alert(`Failed to create record: ${err.message}`);
-      return false;
+      return null;
     }
   };
 
@@ -1079,7 +1082,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       case 'products': {
         const { error: e_products } = await supabase.from('products').update({ ...sys, name: record.name, product_family: record.productFamily||'', category: record.category||'', sku: record.sku||'', price: Number(record.price||0), cost: Number(record.cost||0), unit: record.unit||'', tax_rate: Number(record.taxRate||record.tax_rate||0), hsn_code: record.hsn_code||'', gst_rate: record.gst_rate!=null?Number(record.gst_rate):null, taxable: record.taxable||'', tax_category: record.tax_category||'', vat_rate: record.vat_rate!=null?Number(record.vat_rate):null, description: record.description||'', owner: record.owner||'', status: record.status, comments: record.comments||'' }).eq('id', record._uuid || record.id);
         if (e_products) { console.error('update products:', e_products.message); alert('Save failed: ' + e_products.message); return; }
-        await fetchProducts(); break; }
+        await fetchProducts(); return { id, name: data.name }; }
       case 'leads': {
         const { error: e_leads } = await supabase.from('leads').update({ ...sys, name: record.name, customer: record.customer, customer_id: record.customerId||null, contact: record.contact, contact_id: record.contactId||null, email: record.email||'', phone: record.phone||'', source: record.source||'', amount: calcAmount||Number(record.amount||0), expected_close_date: record.expectedCloseDate||null, billing_address: record.billingAddress||record.billing_address||'', shipping_address: record.shippingAddress||record.shipping_address||'', description: record.description||'', owner: record.owner||'', owner_id: record.owner_id||null, status: record.status, comments: record.comments||'' }).eq('lead_number', record.id);
         if (e_leads) { console.error('update leads:', e_leads.message); alert('Save failed: ' + e_leads.message); return; }
@@ -1146,7 +1149,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const totalAmount = leadItems.reduce((s, i) => s + i.quantity * i.price, 0);
     const id = generateId('OPP');
     await supabase.from('opportunities').insert([{ ...buildSystemFields(), owner: lead.owner||currentUser?.email||'', owner_id: lead.owner_id||currentUser?.id||null, opportunity_number: id, name: lead.name, customer: lead.customer, customer_id: lead.customerId, contact: lead.contact, contact_id: lead.contactId, stage: 'Qualification', amount: totalAmount, close_date: null, status: 'Open' }]);
-    if (leadItems.length) await supabase.from('opportunity_line_items').insert(leadItems.map(i => ({ opportunity_number: id, product_name: i.product, quantity: i.quantity, price: i.price })));
+    if (leadItems.length) await supabase.from('opportunity_line_items').insert(leadItems.map(i => ({ opportunity_number: id, product_name: i.product||i.product_name, product_id: i.product_id||null, quantity: i.quantity, price: i.price, unit_price: i.unit_price||i.price, discount_pct: i.discount_pct||i.discount||0, tax_pct: i.tax_pct||0, configuration: i.configuration||{} })));
     await logAudit({ recordType: 'lead', recordId: lead.id, recordName: lead.name, action: 'converted_to_opportunity' });
     await fetchOpportunities();
   };
@@ -1537,6 +1540,25 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const request = approvalRequests.find(r => r.id === requestId);
     if (!request) return;
 
+    // ── Helper: update the underlying business record's status field ──────────
+    const RECORD_TABLE_MAP: Record<string, { table: string; idField: string; approvedStatus: string; rejectedStatus: string; pendingStatus: string }> = {
+      customers:     { table:'customers',     idField:'customer_number',     approvedStatus:'Active',         rejectedStatus:'Draft',           pendingStatus:'Pending Approval' },
+      leads:         { table:'leads',         idField:'lead_number',         approvedStatus:'Approved',       rejectedStatus:'Rejected',        pendingStatus:'Pending Approval' },
+      opportunities: { table:'opportunities', idField:'opportunity_number',  approvedStatus:'Approved',       rejectedStatus:'Rejected',        pendingStatus:'Pending Approval' },
+      orders:        { table:'orders',        idField:'order_number',        approvedStatus:'Approved',       rejectedStatus:'Rejected',        pendingStatus:'Pending Approval' },
+      invoices:      { table:'invoices',      idField:'invoice_number',      approvedStatus:'Approved',       rejectedStatus:'Rejected',        pendingStatus:'Pending Approval' },
+      quotations:    { table:'quotations',    idField:'quote_number',        approvedStatus:'Approved',       rejectedStatus:'Draft',           pendingStatus:'Pending Approval' },
+      contacts:      { table:'contacts',      idField:'contact_number',      approvedStatus:'Active',         rejectedStatus:'Draft',           pendingStatus:'Pending Approval' },
+      activities:    { table:'activities',    idField:'activity_number',     approvedStatus:'Approved',       rejectedStatus:'Rejected',        pendingStatus:'Pending Approval' },
+      products:      { table:'products',      idField:'product_number',      approvedStatus:'Active',         rejectedStatus:'Draft',           pendingStatus:'Pending Approval' },
+    };
+
+    const updateRecordStatus = async (status: string) => {
+      const cfg = RECORD_TABLE_MAP[request.record_type];
+      if (!cfg || !request.record_id) return;
+      await supabase.from(cfg.table).update({ status, updated_at: new Date().toISOString() }).eq(cfg.idField, request.record_id);
+    };
+
     // Record this step's decision
     await supabase.from('approval_decisions').insert([{
       approval_request_id: requestId,
@@ -1548,41 +1570,56 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       decided_at: new Date().toISOString(),
     }]);
 
-    const totalSteps = request.total_steps || 1;
+    const totalSteps    = request.total_steps || 1;
     const currentStepNum = request.current_step_number || 1;
 
     if (decision === 'Rejected') {
-      // Rejection always terminates the process regardless of step
+      // Rejection terminates the process — update request AND underlying record
       await supabase.from('approval_requests').update({ status: 'Rejected', comments }).eq('id', requestId);
+      await updateRecordStatus(RECORD_TABLE_MAP[request.record_type]?.rejectedStatus || 'Rejected');
       await logAudit({ recordType: request.record_type, recordId: request.record_id, recordName: request.record_name, action: 'approval_rejected' });
       const submitter = enterpriseUsers.find(u => u.email === request.submitted_by);
       if (submitter) {
-        await createNotification({ recipientEmail: submitter.email, type: 'approval', title: 'Approval Rejected', body: `"${request.record_name}" was rejected at step ${currentStepNum} by ${currentUser.email}. ${comments ? 'Reason: ' + comments : ''}`, recordType: request.record_type, recordId: request.record_id });
+        await createNotification({
+          recipientEmail: submitter.email, type: 'approval', title: '❌ Approval Rejected',
+          body: `"${request.record_name}" was rejected at step ${currentStepNum} of ${totalSteps} by ${currentUser.email}.${comments ? ' Reason: ' + comments : ''}`,
+          recordType: request.record_type, recordId: request.record_id,
+        });
       }
     } else if (currentStepNum >= totalSteps) {
-      // Final step approved — mark request fully approved
+      // Final step approved — mark request AND underlying record as approved
       await supabase.from('approval_requests').update({ status: 'Approved', comments }).eq('id', requestId);
+      await updateRecordStatus(RECORD_TABLE_MAP[request.record_type]?.approvedStatus || 'Approved');
       await logAudit({ recordType: request.record_type, recordId: request.record_id, recordName: request.record_name, action: 'approval_approved' });
       const submitter = enterpriseUsers.find(u => u.email === request.submitted_by);
       if (submitter) {
-        await createNotification({ recipientEmail: submitter.email, type: 'approval', title: 'Approval Granted ✓', body: `"${request.record_name}" has been fully approved (all ${totalSteps} step${totalSteps > 1 ? 's' : ''} completed).`, recordType: request.record_type, recordId: request.record_id });
+        await createNotification({
+          recipientEmail: submitter.email, type: 'approval', title: '✅ Approval Granted',
+          body: `"${request.record_name}" has been fully approved (all ${totalSteps} step${totalSteps > 1 ? 's' : ''} completed).`,
+          recordType: request.record_type, recordId: request.record_id,
+        });
       }
     } else {
-      // Intermediate step approved — advance to next step
+      // Intermediate step approved — advance to next step, keep record in Pending Approval
       const nextStepNum = currentStepNum + 1;
-      const { data: nextStepRows } = await supabase.from('approval_steps')
+      const { data: nextStep } = await supabase.from('approval_steps')
         .select('*').eq('approval_process_id', request.approval_process_id)
         .eq('step_number', nextStepNum).maybeSingle();
-      if (nextStepRows) {
+      if (nextStep) {
         await supabase.from('approval_requests').update({
-          current_step_id: nextStepRows.id,
+          current_step_id: nextStep.id,
           current_step_number: nextStepNum,
           status: 'Pending',
         }).eq('id', requestId);
-        // Notify next approver
-        const nextApprover = enterpriseUsers.find(u => u.id === nextStepRows.approver_user_id);
+        // Record remains in Pending Approval status
+        await updateRecordStatus('Pending Approval');
+        const nextApprover = enterpriseUsers.find(u => u.id === nextStep.approver_user_id);
         if (nextApprover) {
-          await createNotification({ recipientEmail: nextApprover.email, type: 'approval', title: 'Approval Required', body: `"${request.record_name}" requires your approval (Step ${nextStepNum} of ${totalSteps}: ${nextStepRows.step_name}).`, recordType: request.record_type, recordId: request.record_id });
+          await createNotification({
+            recipientEmail: nextApprover.email, type: 'approval', title: '⏳ Approval Required',
+            body: `"${request.record_name}" requires your approval (Step ${nextStepNum} of ${totalSteps}: ${nextStep.step_name}).`,
+            recordType: request.record_type, recordId: request.record_id,
+          });
         }
         await logAudit({ recordType: request.record_type, recordId: request.record_id, recordName: request.record_name, action: `approval_step_${currentStepNum}_approved` });
       }
@@ -1792,7 +1829,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     if (!supabase) return;
     const { data, error } = await supabase.from('quotations').select('*').order('created_at', { ascending: false });
     if (error) console.error('fetchQuotations:', error);
-    if (data) setQuotations(applyDataSecurity(data).map(q => ({ ...q, customerId: q.customer_id })));
+    if (data) setQuotations(applyDataSecurity(data).map(q => ({ ...q, customerId: q.customer_id, displayNumber: q.display_number })));
   };
   const createQuotation = async (data,items=[]) => { if(!supabase||!currentUser)return null; const qNum=generateId('QUO'); const{data:inserted,error}=await supabase.from('quotations').insert([{...buildSystemFields(),quote_number:qNum,...data,status:data.status||'Draft',version:1,owner:data.owner||currentUser.email,owner_id:data.owner_id||currentUser.id}]).select().single(); if(error){alert('Failed: '+error.message);return null;} if(items.length)await upsertLineItemsGeneric('quotation_line_items','quote_number',qNum,items); await autoSetCustomerStatus(data.customer_id, 'Prospect'); await fetchQuotations(); return {...inserted, customerId: inserted.customer_id}; };
   const updateQuotation = async (data,items=[]) => { if(!supabase)return; const{quote_number,_uuid,id,customerId,...rest}=data; const{error}=await supabase.from('quotations').update({...rest,...buildSystemFields(true)}).eq('quote_number',quote_number); if(error){console.error('updateQuotation:',error.message);alert('Save failed: '+error.message);return;} if(items)await upsertLineItemsGeneric('quotation_line_items','quote_number',quote_number,items); await fetchQuotations(); };
@@ -1807,7 +1844,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const totalDisc = items.reduce((s,i)=>s+Number(i.quantity||1)*Number(i.price||i.unit_price||0)*Number(i.discount||i.discount_pct||0)/100,0);
     const totalTax  = items.reduce((s,i)=>{const net=Number(i.quantity||1)*Number(i.price||i.unit_price||0)*(1-Number(i.discount||i.discount_pct||0)/100);return s+net*Number(i.tax_pct||0)/100;},0);
     const grandTotal = items.length ? (subtotal - totalDisc + totalTax) : Number(opp.amount||0);
-    const{data:inserted,error}=await supabase.from('quotations').insert([{...buildSystemFields(),quote_number:qNum,name:`Quote - ${opp.name}`,status:'Draft',version:1,customer:opp.customer||'',customer_id:opp.customerId||null,contact:opp.contact||'',contact_id:opp.contactId||null,opportunity_id:opp.id,currency:opp.currency||'INR',subtotal:Number(subtotal.toFixed(2)),total_discount:Number(totalDisc.toFixed(2)),total_tax:Number(totalTax.toFixed(2)),grand_total:Number(grandTotal.toFixed(2)),billing_address:opp.billingAddress||opp.billing_address||'',shipping_address:opp.shippingAddress||opp.shipping_address||'',payment_terms:opp.paymentTerms||opp.payment_terms||'',owner:opp.owner||currentUser.email,owner_id:opp.owner_id||currentUser.id}]).select().single(); if(error){alert('Failed: '+error.message);return null;} if(items.length)await supabase.from('quotation_line_items').insert(items.map((i,idx)=>({quote_number:qNum,product_name:i.product||i.product_name||'',quantity:Number(i.quantity||1),unit_price:Number(i.price||0),list_price:Number(i.list_price||i.price||0),discount_pct:Number(i.discount||0),tax_pct:Number(i.tax_pct||0),extended_price:Number(i.quantity||1)*Number(i.price||0)*(1-Number(i.discount||0)/100),sort_order:idx}))); await autoSetCustomerStatus(opp.customerId, 'Prospect'); await supabase.from('opportunities').update({ status:'Negotiation', stage:'Negotiation', updated_at:new Date().toISOString() }).eq('opportunity_number', opp.id);
+    const{data:inserted,error}=await supabase.from('quotations').insert([{...buildSystemFields(),quote_number:qNum,name:`Quote - ${opp.name}`,status:'Draft',version:1,customer:opp.customer||'',customer_id:opp.customerId||null,contact:opp.contact||'',contact_id:opp.contactId||null,opportunity_id:opp.id,currency:opp.currency||'INR',subtotal:Number(subtotal.toFixed(2)),total_discount:Number(totalDisc.toFixed(2)),total_tax:Number(totalTax.toFixed(2)),grand_total:Number(grandTotal.toFixed(2)),billing_address:opp.billingAddress||opp.billing_address||'',shipping_address:opp.shippingAddress||opp.shipping_address||'',payment_terms:opp.paymentTerms||opp.payment_terms||'',owner:opp.owner||currentUser.email,owner_id:opp.owner_id||currentUser.id}]).select().single(); if(error){alert('Failed: '+error.message);return null;} if(items.length)await supabase.from('quotation_line_items').insert(items.map((i,idx)=>({quote_number:qNum,product_name:i.product||i.product_name||'',product_id:i.product_id||null,quantity:Number(i.quantity||1),unit_price:Number(i.price||0),list_price:Number(i.list_price||i.price||0),discount_pct:Number(i.discount||i.discount_pct||0),tax_pct:Number(i.tax_pct||0),extended_price:Number(i.quantity||1)*Number(i.price||0)*(1-Number(i.discount||i.discount_pct||0)/100),sort_order:idx,configuration:i.configuration||{}}))); await autoSetCustomerStatus(opp.customerId, 'Prospect'); await supabase.from('opportunities').update({ status:'Negotiation', stage:'Negotiation', updated_at:new Date().toISOString() }).eq('opportunity_number', opp.id);
     await fetchOpportunities();
     await fetchQuotations(); return{...inserted, customerId: inserted.customer_id}; };
 

@@ -11,14 +11,16 @@ interface Option {
 }
 
 interface SearchableSelectProps {
-  options:     Option[];
-  value:       string;
-  onChange:    (value: string) => void;
-  placeholder?: string;
-  disabled?:   boolean;
-  className?:  string;
-  emptyLabel?: string;    // label for the blank/none option
-  showEmpty?:  boolean;
+  options:      Option[];
+  value:        string;
+  onChange:     (value: string) => void;
+  placeholder?:  string;
+  disabled?:    boolean;
+  className?:   string;
+  emptyLabel?:  string;    // label for the blank/none option
+  showEmpty?:   boolean;
+  onCreateNew?: (query: string) => void;  // if provided, shows "+ Create New" button
+  createLabel?: string;                   // e.g. "Create Customer"
 }
 
 export default function SearchableSelect({
@@ -28,6 +30,8 @@ export default function SearchableSelect({
   className = '',
   emptyLabel = 'None',
   showEmpty = true,
+  onCreateNew,
+  createLabel = 'Create New',
 }: SearchableSelectProps) {
   const [open,   setOpen]   = useState(false);
   const [query,  setQuery]  = useState('');
@@ -165,8 +169,15 @@ export default function SearchableSelect({
           )}
 
           {filtered.length === 0 ? (
-            <div className="px-4 py-6 text-center text-sm text-gray-400">
+            <div className="px-4 py-4 text-center text-sm text-gray-400">
               {query ? `No results for "${query}"` : 'No options available'}
+              {onCreateNew && (
+                <button
+                  onMouseDown={e=>{e.preventDefault();e.stopPropagation();onCreateNew(query);setOpen(false);setQuery('');}}
+                  className="mt-2 w-full flex items-center justify-center gap-1.5 px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition-colors">
+                  <span>+</span> {query ? `Create "${query}"` : `${createLabel}`}
+                </button>
+              )}
             </div>
           ) : (
             filtered.map((opt, i) => {
@@ -196,6 +207,15 @@ export default function SearchableSelect({
                 </div>
               );
             })
+          )}
+          {onCreateNew && (
+            <div
+              onMouseDown={e=>{e.preventDefault();e.stopPropagation();onCreateNew(query);setOpen(false);setQuery('');}}
+              className="px-4 py-2.5 border-t border-blue-50 flex items-center gap-2 cursor-pointer text-blue-600 hover:bg-blue-50 transition-colors sticky bottom-0 bg-white"
+            >
+              <span className="w-5 h-5 rounded-full bg-blue-600 text-white text-xs flex items-center justify-center font-bold flex-shrink-0">+</span>
+              <span className="text-sm font-semibold">{query ? `Create "${query}"` : createLabel}</span>
+            </div>
           )}
         </div>
       )}

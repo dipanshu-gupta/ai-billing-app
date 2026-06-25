@@ -2,6 +2,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { supabase } from '@/lib/supabase';
 
 const ADDR_TYPES = ['Billing','Shipping','Registered','Branch','Warehouse','Other'];
@@ -46,7 +47,26 @@ function AddressCard({ addr, onEdit, onDelete, onSetDefault }) {
 
 function AddressForm({ initial, onSave, onCancel }) {
   const [form, setForm] = useState({ ...emptyAddr(), ...initial });
-  const s = (k, v) => setForm(p => ({ ...p, [k]: v }));
+  const [errors, setErrors] = useState({});
+  const s = (k, v) => { setForm(p => ({ ...p, [k]: v })); setErrors(e=>({...e,[k]:''})); };
+
+  // Strip pure-special-character input — allow alphanumeric + common address chars
+  const safeAddr = (v) => v.replace(/[^a-zA-Z0-9 ,.\/\-#&'()]/g, '');
+  const safeAlpha = (v) => v.replace(/[^a-zA-Z ]/g, '');
+  const safePin   = (v) => v.replace(/[^a-zA-Z0-9 \-]/g, '');
+
+  const validate = () => {
+    const e = {};
+    if (!form.line1?.trim()) e.line1 = 'Address Line 1 is required';
+    if (!form.city?.trim())  e.city  = 'City is required';
+    if (form.postal_code && !/^[a-zA-Z0-9 \-]{3,10}$/.test(form.postal_code)) e.postal_code = 'Invalid postal code';
+    setErrors(e);
+    return Object.keys(e).length === 0;
+  };
+
+  const handleSave = () => {
+    if (validate()) onSave(form);
+  };
 
   return (
     <div className="bg-blue-50 rounded-2xl border-2 border-blue-200 p-5 space-y-4">
@@ -68,24 +88,24 @@ function AddressForm({ initial, onSave, onCancel }) {
       </div>
       <div>
         <label className="text-xs font-bold uppercase text-gray-500 block mb-1.5">Address Line 1</label>
-        <input value={form.line1} onChange={e=>s('line1',e.target.value)} placeholder="Street address, building" className={iCls}/>
+        <><input value={form.line1} onChange={e=>s('line1',safeAddr(e.target.value))} placeholder="Street address, building" className={`${iCls} ${errors.line1?'border-red-400':''}`}/>{errors.line1&&<p className="text-xs text-red-500 mt-1">{errors.line1}</p>}</>
       </div>
       <div>
         <label className="text-xs font-bold uppercase text-gray-500 block mb-1.5">Address Line 2</label>
-        <input value={form.line2} onChange={e=>s('line2',e.target.value)} placeholder="Apartment, suite, floor (optional)" className={iCls}/>
+        <input value={form.line2} onChange={e=>s('line2',safeAddr(e.target.value))} placeholder="Apartment, suite, floor (optional)" className={iCls}/>
       </div>
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <div>
           <label className="text-xs font-bold uppercase text-gray-500 block mb-1.5">City</label>
-          <input value={form.city} onChange={e=>s('city',e.target.value)} placeholder="City" className={iCls}/>
+          <><input value={form.city} onChange={e=>s('city',safeAlpha(e.target.value))} placeholder="City" className={`${iCls} ${errors.city?'border-red-400':''}`}/>{errors.city&&<p className="text-xs text-red-500 mt-1">{errors.city}</p>}</>
         </div>
         <div>
           <label className="text-xs font-bold uppercase text-gray-500 block mb-1.5">State / Province</label>
-          <input value={form.state} onChange={e=>s('state',e.target.value)} placeholder="State" className={iCls}/>
+          <input value={form.state} onChange={e=>s('state',safeAlpha(e.target.value))} placeholder="State / Province" className={iCls}/>
         </div>
         <div>
           <label className="text-xs font-bold uppercase text-gray-500 block mb-1.5">Postal Code</label>
-          <input value={form.postal_code} onChange={e=>s('postal_code',e.target.value)} placeholder="PIN / ZIP" className={iCls}/>
+          <><input value={form.postal_code} onChange={e=>s('postal_code',safePin(e.target.value))} placeholder="PIN / ZIP" maxLength={10} className={`${iCls} ${errors.postal_code?'border-red-400':''}`}/>{errors.postal_code&&<p className="text-xs text-red-500 mt-1">{errors.postal_code}</p>}</>
         </div>
         <div>
           <label className="text-xs font-bold uppercase text-gray-500 block mb-1.5">Country</label>
@@ -100,7 +120,7 @@ function AddressForm({ initial, onSave, onCancel }) {
       </label>
       <div className="flex gap-3 pt-2">
         <button onClick={onCancel} className="px-4 py-2 text-sm rounded-xl border border-gray-200 text-gray-600 hover:bg-gray-50">Cancel</button>
-        <button onClick={()=>onSave(form)} className="px-5 py-2 text-sm rounded-xl bg-gradient-to-r from-[#0F172A] to-blue-800 text-white font-semibold hover:opacity-90 shadow-md">
+        <button onClick={handleSave} className="px-5 py-2 text-sm rounded-xl bg-gradient-to-r from-[#0F172A] to-blue-800 text-white font-semibold hover:opacity-90 shadow-md">
           {initial?.id ? 'Update Address' : 'Add Address'}
         </button>
       </div>
@@ -113,6 +133,7 @@ export default function AddressManager({ ownerType, ownerId, disabled = false })
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(null);
   const [adding, setAdding] = useState(false);
+  const [deleteConfirm, setDeleteConfirm] = useState(null); // address id to delete
 
   const load = async () => {
     if (!supabase || !ownerId) return;
@@ -148,8 +169,13 @@ export default function AddressManager({ ownerType, ownerId, disabled = false })
   };
 
   const handleDelete = async (id) => {
-    if (!supabase || !window.confirm('Remove this address?')) return;
-    await supabase.from('addresses').delete().eq('id', id);
+    setDeleteConfirm(id);
+  };
+
+  const confirmDelete = async () => {
+    if (!supabase || !deleteConfirm) return;
+    await supabase.from('addresses').delete().eq('id', deleteConfirm);
+    setDeleteConfirm(null);
     await load();
   };
 
@@ -194,6 +220,28 @@ export default function AddressManager({ ownerType, ownerId, disabled = false })
           {adding && <AddressForm initial={null} onSave={handleSave} onCancel={() => setAdding(false)}/>}
         </div>
       )}
+      {/* Delete confirmation modal — rendered via portal to escape overflow/stacking context */}
+      {deleteConfirm && typeof document !== 'undefined' && createPortal(
+        <div className="flex items-center justify-center p-4" style={{position:'fixed',inset:0,zIndex:99999,backgroundColor:'rgba(0,0,0,0.45)',backdropFilter:'blur(4px)'}}>
+          <div style={{position:'relative',background:'#fff',borderRadius:24,boxShadow:'0 25px 60px rgba(0,0,0,0.25)',maxWidth:400,width:'100%',padding:24,textAlign:'center'}}>
+            <div style={{fontSize:40,marginBottom:12}}>🗑️</div>
+            <h3 style={{fontWeight:700,fontSize:18,color:'#0F172A',marginBottom:8}}>Remove Address?</h3>
+            <p style={{fontSize:14,color:'#6B7280',marginBottom:20}}>This address will be permanently removed. This action cannot be undone.</p>
+            <div style={{display:'flex',gap:12}}>
+              <button onClick={()=>setDeleteConfirm(null)}
+                style={{flex:1,border:'1px solid #E5E7EB',color:'#6B7280',padding:'10px 0',borderRadius:12,fontWeight:600,fontSize:14,cursor:'pointer',background:'#fff'}}>
+                Cancel
+              </button>
+              <button onClick={confirmDelete}
+                style={{flex:1,background:'#EF4444',color:'#fff',padding:'10px 0',borderRadius:12,fontWeight:700,fontSize:14,cursor:'pointer',border:'none',boxShadow:'0 4px 12px rgba(239,68,68,0.4)'}}>
+                Remove
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
     </div>
   );
 }
+
