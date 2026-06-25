@@ -3,6 +3,7 @@
 
 import { useState, useMemo, useEffect, useCallback } from 'react';
 import { useApp } from '@/context/AppContext';
+import { formatDisplayNumber, PAGE_DISPLAY_PREFIX, formatCurrency } from '@/lib/utils';
 import {
   BarChart, Bar, LineChart, Line, PieChart, Pie, Cell, AreaChart, Area,
   XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,

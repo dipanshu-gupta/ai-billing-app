@@ -4,6 +4,7 @@
 import { useState, useEffect } from 'react';
 import AppearancePanel from '@/components/admin/AppearancePanel';
 import AppComposer from '@/components/admin/AppComposer';
+import TenantAdminPanel from '@/components/admin/TenantAdminPanel';
 import RetailInvoiceDesigner from '@/components/admin/RetailInvoiceDesigner';
 import DocumentTemplateDesigner from '@/components/admin/DocumentTemplateDesigner';
 import WarehousesPanel from '@/components/admin/WarehousesPanel';
@@ -1426,6 +1427,7 @@ const B2B_SECTIONS = [
   {key:'warehouses',    label:'Warehouses & SCM',  icon:'🏭', desc:'Warehouses, subinventories & storage'},
   {key:'appPrefs',      label:'App Preferences',   icon:'⚙️', desc:'CPQ, CRM & currency settings'},
   {key:'appearance',    label:'Appearance',        icon:'🎨', desc:'Logo, themes & language'},
+  {key:'tenants', label:'Tenant Admin', icon:'🌐', desc:'Manage client workspaces & subscriptions'},
 ];
 
 // B2C Retail Admin sections — enabled only in B2C mode
@@ -1517,6 +1519,7 @@ export default function AdminToolsPage() {
       case 'r_assignment':       return <RetailAdminWrapper title="Assignment Rules" icon="📋" desc="Auto-assign Retail records to users" objects={Object.values(RETAIL_OBJECT_LABELS)}><AssignmentRulesPanel objectList={RETAIL_OBJECTS_LIST} conditionFields={RETAIL_CONDITION_FIELDS} objectLabels={RETAIL_OBJECT_LABELS}/></RetailAdminWrapper>;
       case 'r_sla':              return <RetailAdminWrapper title="SLA Policies" icon="⏱️" desc="Response and resolution SLA for Retail objects" objects={Object.values(RETAIL_OBJECT_LABELS)}><SLAPoliciesPanel objectList={RETAIL_OBJECTS_LIST} conditionFields={RETAIL_CONDITION_FIELDS} objectLabels={RETAIL_OBJECT_LABELS}/></RetailAdminWrapper>;
       case 'r_composer':         return <AppComposer/>;
+      case 'tenants':            return <TenantAdminPanel/>;
       default:                   return null;
     }
   };

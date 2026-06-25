@@ -3,6 +3,7 @@
 
 import React, { useState } from 'react';
 import { AppProvider, useApp } from '@/context/AppContext';
+import { TenantProvider, useTenant } from '@/context/TenantContext';
 import Sidebar from '@/components/layout/Sidebar';
 import Header from '@/components/layout/Header';
 import DashboardPage from '@/components/dashboard/DashboardPage';
@@ -139,6 +140,7 @@ const RETAIL_PAGES = ['retailCustomers', 'retailProducts', 'retailActivities', '
 
 function AppShell() {
   const { session, authLoading, appPreferences, setPendingReturnTo, setPendingRecord } = useApp();
+  const { tenant, loading: tenantLoading } = useTenant();
   const [activePage,       setActivePage]       = useState('dashboard');
   // Listen for profile open event from Header
   React.useEffect(() => {
@@ -216,8 +218,10 @@ function AppShell() {
 
 export default function RootPage() {
   return (
-    <AppProvider>
-      <AppShell />
-    </AppProvider>
+    <TenantProvider>
+      <AppProvider>
+        <AppShell />
+      </AppProvider>
+    </TenantProvider>
   );
 }

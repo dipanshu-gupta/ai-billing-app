@@ -552,6 +552,177 @@ function RetailInvoicePrintModal({ template, record, items, onClose, onPrint }) 
   );
 }
 
+// ─── Retail Customer 360 ─────────────────────────────────────────────────────
+function RC360Table({ cols, rows, emptyMsg }) {
+  if (rows.length === 0) return (
+    <div className="px-5 py-10 text-center text-gray-400 text-sm">{emptyMsg}</div>
+  );
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="bg-gray-50 border-b border-gray-100">
+            {cols.map(c => (
+              <th key={c.h} className="px-4 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider whitespace-nowrap">{c.h}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r, i) => (
+            <tr key={r.id || i} className="border-t border-gray-50 hover:bg-blue-50/20 transition-colors">
+              {cols.map(c => (
+                <td key={c.h} className="px-4 py-3 text-sm">{c.v(r)}</td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function RetailCustomer360({ customer }) {
+  const [tab, setTab]         = useState('orders');
+  const [data, setData]       = useState({ orders: [], invoices: [], activities: [] });
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (!supabase || !customer?.id) return;
+    setLoading(true);
+    Promise.all([
+      supabase.from('retail_orders')    .select('*').eq('customer_id', customer.id).order('created_at', { ascending: false }),
+      supabase.from('retail_invoices')  .select('*').eq('customer_id', customer.id).order('created_at', { ascending: false }),
+      supabase.from('retail_activities').select('*').eq('customer_id', customer.id).order('created_at', { ascending: false }),
+    ]).then(([{ data: orders }, { data: invoices }, { data: activities }]) => {
+      setData({ orders: orders || [], invoices: invoices || [], activities: activities || [] });
+      setLoading(false);
+    });
+  }, [customer?.id]);
+
+  const fmt          = n => formatCurrency(n || 0);
+  const totalSpent   = data.invoices.reduce((s, i) => s + (i.amount || 0), 0);
+  const paidInvoices = data.invoices.filter(i => i.payment_status === 'Paid' || i.status === 'Paid').length;
+  const openActs     = data.activities.filter(a => a.status === 'Open' || a.status === 'In Progress').length;
+
+  const TABS = [
+    { k: 'orders',     icon: '🛍️', label: 'Orders',     count: data.orders.length },
+    { k: 'invoices',   icon: '🧾', label: 'Invoices',   count: data.invoices.length },
+    { k: 'activities', icon: '📅', label: 'Activities', count: data.activities.length },
+  ];
+
+  const SP = ({ status }) => (
+    <span className={`px-2.5 py-0.5 rounded-full text-xs font-semibold ${getStatusColor(status)}`}>{status || '-'}</span>
+  );
+
+  const orderCols = [
+    { h: 'Order #',   v: r => (<span className="font-mono text-xs text-blue-600 font-bold">{r.order_number || r.id?.slice(0, 8)}</span>) },
+    { h: 'Date',      v: r => (<span className="text-gray-600">{r.order_date || r.created_at?.slice(0, 10) || '-'}</span>) },
+    { h: 'Channel',   v: r => (<span className="text-gray-600">{r.channel || '-'}</span>) },
+    { h: 'Payment',   v: r => (<span className="text-gray-600">{r.payment_method || '-'}</span>) },
+    { h: 'Pay Status',v: r => (<SP status={r.payment_status}/>) },
+    { h: 'Status',    v: r => (<SP status={r.status}/>) },
+    { h: 'Amount',    v: r => (<span className="font-bold text-[#0F172A]">{fmt(r.amount)}</span>) },
+  ];
+
+  const invoiceCols = [
+    { h: 'Invoice #',  v: r => (<span className="font-mono text-xs text-purple-600 font-bold">{r.invoice_number || r.id?.slice(0, 8)}</span>) },
+    { h: 'Date',       v: r => (<span className="text-gray-600">{r.invoice_date || r.created_at?.slice(0, 10) || '-'}</span>) },
+    { h: 'Due Date',   v: r => (<span className="text-gray-600">{r.due_date || '-'}</span>) },
+    { h: 'Payment',    v: r => (<span className="text-gray-600">{r.payment_method || '-'}</span>) },
+    { h: 'Pay Status', v: r => (<SP status={r.payment_status}/>) },
+    { h: 'Status',     v: r => (<SP status={r.status}/>) },
+    { h: 'Tax',        v: r => (<span className="text-gray-600">{fmt(r.total_tax)}</span>) },
+    { h: 'Amount',     v: r => (<span className="font-bold text-[#0F172A]">{fmt(r.amount)}</span>) },
+  ];
+
+  const typeIcon = t => t === 'Call' ? '📞' : t === 'Visit' ? '🏪' : t === 'WhatsApp' ? '💬' : t === 'Complaint' ? '⚠️' : '📋';
+
+  const activityCols = [
+    { h: 'Subject',  v: r => (<span className="font-semibold text-[#0F172A]">{r.subject}</span>) },
+    { h: 'Type',     v: r => (<span className="text-gray-600">{typeIcon(r.activity_type)} {r.activity_type || '-'}</span>) },
+    { h: 'Date',     v: r => (<span className="text-gray-600">{r.activity_date || r.created_at?.slice(0, 10) || '-'}</span>) },
+    { h: 'Due Date', v: r => (<span className="text-gray-600">{r.due_date || '-'}</span>) },
+    { h: 'Priority', v: r => (<span className={`text-xs font-semibold ${r.priority === 'High' || r.priority === 'Critical' ? 'text-red-600' : r.priority === 'Medium' ? 'text-amber-600' : 'text-gray-400'}`}>{r.priority || '-'}</span>) },
+    { h: 'Owner',    v: r => (<span className="text-gray-600">{r.owner || '-'}</span>) },
+    { h: 'Status',   v: r => (<SP status={r.status}/>) },
+  ];
+
+  const kpis = [
+    { l: 'Total Orders',    v: data.orders.length,               icon: '🛍️', bg: 'bg-blue-50',   border: 'border-blue-200',   text: 'text-blue-700' },
+    { l: 'Total Spent',     v: fmt(totalSpent),                  icon: '💰', bg: 'bg-green-50',  border: 'border-green-200',  text: 'text-green-700' },
+    { l: 'Paid Invoices',   v: paidInvoices + '/' + data.invoices.length, icon: '🧾', bg: 'bg-purple-50', border: 'border-purple-200', text: 'text-purple-700' },
+    { l: 'Open Activities', v: openActs,                         icon: '📅', bg: 'bg-amber-50',  border: 'border-amber-200',  text: 'text-amber-700' },
+  ];
+
+  const activeCols = tab === 'orders' ? orderCols : tab === 'invoices' ? invoiceCols : activityCols;
+  const activeRows = tab === 'orders' ? data.orders : tab === 'invoices' ? data.invoices : data.activities;
+  const activeTab  = TABS.find(t => t.k === tab);
+
+  return (
+    <div className="space-y-5">
+      {/* KPI row */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+        {kpis.map(k => (
+          <div key={k.l} className={`rounded-[20px] border ${k.bg} ${k.border} p-4`}>
+            <div className="text-2xl mb-2">{k.icon}</div>
+            <div className={`text-xl font-bold ${k.text}`}>{k.v}</div>
+            <div className="text-xs text-gray-500 font-semibold uppercase tracking-wider mt-0.5">{k.l}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Loyalty card */}
+      {(customer.loyalty_points > 0 || customer.loyalty_tier) && (
+        <div className="bg-gradient-to-r from-[#0F172A] to-blue-900 rounded-[20px] p-5 text-white flex items-center gap-5">
+          <div className="text-4xl">🎁</div>
+          <div className="flex-1">
+            <div className="font-bold text-lg">{customer.loyalty_tier || 'Standard'} Member</div>
+            <div className="text-blue-200 text-sm mt-0.5">{customer.name}</div>
+          </div>
+          <div className="text-right">
+            <div className="text-3xl font-black">{customer.loyalty_points || 0}</div>
+            <div className="text-blue-300 text-xs uppercase tracking-wider">Loyalty Points</div>
+          </div>
+        </div>
+      )}
+
+      {/* Sub-tabs */}
+      <div className="flex flex-wrap gap-2">
+        {TABS.map(tb => (
+          <button key={tb.k} onClick={() => setTab(tb.k)}
+            className={`flex items-center gap-2 px-4 py-2.5 rounded-2xl text-sm font-semibold transition-all ${
+              tab === tb.k
+                ? 'bg-gradient-to-r from-[#0F172A] to-blue-800 text-white shadow-lg'
+                : 'bg-white text-gray-600 border border-gray-200 hover:border-blue-400 hover:text-blue-700'
+            }`}>
+            <span>{tb.icon}</span>
+            <span>{tb.label}</span>
+            <span className={`text-xs px-2 py-0.5 rounded-full font-bold ${tab === tb.k ? 'bg-white/20 text-white' : 'bg-gray-100 text-gray-500'}`}>
+              {tb.count}
+            </span>
+          </button>
+        ))}
+      </div>
+
+      {/* Table */}
+      {loading ? (
+        <div className="flex justify-center py-12">
+          <div className="w-8 h-8 border-4 border-blue-200 border-t-blue-600 rounded-full animate-spin"/>
+        </div>
+      ) : (
+        <div className="bg-white rounded-[20px] border border-blue-100 shadow-sm overflow-hidden">
+          <div className="px-5 py-3 bg-gradient-to-r from-slate-50 to-blue-50 border-b border-blue-100 flex items-center gap-2">
+            <span>{activeTab?.icon}</span>
+            <span className="font-bold text-[#0F172A] text-sm">{activeTab?.label}</span>
+            <span className="ml-auto text-xs text-gray-400">{activeRows.length} records</span>
+          </div>
+          <RC360Table cols={activeCols} rows={activeRows} emptyMsg={`No ${activeTab?.label?.toLowerCase()} found for this customer`}/>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Detail Panel ───────────────────────────────────────────────────────────
 function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo }) {
   const { updateRetailRecord, deleteRetailRecord, retailCustomers, retailProducts, enterpriseUsers, currentUser,
@@ -560,6 +731,7 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo }) 
   const taxRegime = getTaxRegime(appPreferences?.default_currency);
 
   const [edited, setEdited] = useState({ ...record });
+  const [activeTab, setActiveTab] = useState('details'); // 'details' | '360'
   // Retail invoice templates (for retailInvoices page)
   const [invoiceTemplates,    setInvoiceTemplates]    = useState([]);
   const [selectedTemplateId,  setSelectedTemplateId]  = useState('');
@@ -695,24 +867,28 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo }) 
       options={retailCustomers.map(c=>({value:c.id,label:c.name,sub:[c.phone,c.email].filter(Boolean).join(' · ')}))}
       placeholder="Search customers..." emptyLabel="No customer"
     />;
-    if (field.type === 'retailInvoiceTemplate') return (
-      <select
-        value={selectedTemplateId}
-        onChange={e => {
-          setSelectedTemplateId(e.target.value);
-          set('invoice_template_id', e.target.value);
-        }}
-        className={sCls}>
-        {invoiceTemplates.length === 0
-          ? <option value="">No templates — create one in Admin Tools → B2C Retail → Invoice Template</option>
-          : invoiceTemplates.map(t => (
-              <option key={t.id} value={t.id}>
-                {t.name}{t.is_default ? ' ★ Default' : ''}
-              </option>
-            ))
-        }
-      </select>
-    );
+    if (field.type === 'retailInvoiceTemplate') {
+      // Only available in detail panel context (not create modal)
+      if (typeof selectedTemplateId === 'undefined') return null;
+      return (
+        <select
+          value={selectedTemplateId}
+          onChange={e => {
+            setSelectedTemplateId(e.target.value);
+            set('invoice_template_id', e.target.value);
+          }}
+          className={sCls}>
+          {invoiceTemplates.length === 0
+            ? <option value="">No templates — create one in Admin Tools → B2C Retail → Invoice Template</option>
+            : invoiceTemplates.map(t => (
+                <option key={t.id} value={t.id}>
+                  {t.name}{t.is_default ? ' ★ Default' : ''}
+                </option>
+              ))
+          }
+        </select>
+      );
+    }
     if (field.type === 'select') return (
       <select value={v||field.defaultValue||''} onChange={e=>set(field.key,e.target.value)} className={sCls}>
         {!field.defaultValue && <option value="">Select {field.label}</option>}
@@ -799,9 +975,32 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo }) 
           </div>
         </div>
 
-        {/* Body */}
+        {/* Tab bar — only for retailCustomers */}
+        {page === 'retailCustomers' && (
+          <div className="flex bg-slate-800 border-b border-slate-700 px-6 flex-shrink-0">
+            {[
+              {k:'details', l:'📋 Details'},
+              {k:'360',     l:'🔄 Customer 360'},
+            ].map(tb => (
+              <button key={tb.k} onClick={()=>setActiveTab(tb.k)}
+                className={`px-5 py-3 text-sm font-semibold border-b-2 transition-all ${
+                  activeTab===tb.k
+                    ? 'border-blue-400 text-white'
+                    : 'border-transparent text-white/50 hover:text-white/80'
+                }`}>
+                {tb.l}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* Body — single scrollable container switching between tabs */}
         <div className="flex-1 overflow-y-auto p-6 space-y-6">
 
+          {page === 'retailCustomers' && activeTab === '360' ? (
+            <RetailCustomer360 customer={record}/>
+          ) : (
+            <div className="space-y-6">
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
             {cfg.sections.map(section => {
               const fields = resolveFields(section.fields);
@@ -884,14 +1083,16 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo }) 
               ? <div className="bg-white rounded-[20px] border border-blue-100 shadow p-8 text-center text-gray-400">Loading line items...</div>
               : <RetailLineItems items={items} setItems={setItems} products={retailProducts} taxRegime={taxRegime}/>
           )}
+            </div>
+          )}
+        </div>{/* end body flex-1 */}
 
-          {/* Delete */}
-          <div className="flex justify-end">
-            <button onClick={async()=>{ await deleteRetailRecord(page, edited.id); onSaved?.(); handleClose(); }}
-              className="text-red-500 hover:text-red-700 text-sm font-semibold px-4 py-2 rounded-xl hover:bg-red-50">
-              🗑️ Delete {cfg.singular}
-            </button>
-          </div>
+        {/* Delete — always visible, outside the scrollable body */}
+        <div className="flex justify-end px-6 py-3 border-t border-gray-100 flex-shrink-0">
+          <button onClick={async()=>{ await deleteRetailRecord(page, edited.id); onSaved?.(); handleClose(); }}
+            className="text-red-500 hover:text-red-700 text-sm font-semibold px-4 py-2 rounded-xl hover:bg-red-50">
+            🗑️ Delete {cfg.singular}
+          </button>
         </div>
       </div>
     </div>
@@ -1008,24 +1209,28 @@ function RetailCreateModal({ page, open, onClose, onCreated }) {
       options={retailCustomers.map(c=>({value:c.id,label:c.name,sub:[c.phone,c.email].filter(Boolean).join(' · ')}))}
       placeholder="Search customers..." emptyLabel="No customer"
     />;
-    if (field.type === 'retailInvoiceTemplate') return (
-      <select
-        value={selectedTemplateId}
-        onChange={e => {
-          setSelectedTemplateId(e.target.value);
-          set('invoice_template_id', e.target.value);
-        }}
-        className={sCls}>
-        {invoiceTemplates.length === 0
-          ? <option value="">No templates — create one in Admin Tools → B2C Retail → Invoice Template</option>
-          : invoiceTemplates.map(t => (
-              <option key={t.id} value={t.id}>
-                {t.name}{t.is_default ? ' ★ Default' : ''}
-              </option>
-            ))
-        }
-      </select>
-    );
+    if (field.type === 'retailInvoiceTemplate') {
+      // Only available in detail panel context (not create modal)
+      if (typeof selectedTemplateId === 'undefined') return null;
+      return (
+        <select
+          value={selectedTemplateId}
+          onChange={e => {
+            setSelectedTemplateId(e.target.value);
+            set('invoice_template_id', e.target.value);
+          }}
+          className={sCls}>
+          {invoiceTemplates.length === 0
+            ? <option value="">No templates — create one in Admin Tools → B2C Retail → Invoice Template</option>
+            : invoiceTemplates.map(t => (
+                <option key={t.id} value={t.id}>
+                  {t.name}{t.is_default ? ' ★ Default' : ''}
+                </option>
+              ))
+          }
+        </select>
+      );
+    }
     if (field.type === 'select') return (
       <select value={v??field.defaultValue??''} onChange={e=>s(field.key,e.target.value)} className={sCls}>
         {!field.defaultValue && <option value="">Select {field.label}</option>}
