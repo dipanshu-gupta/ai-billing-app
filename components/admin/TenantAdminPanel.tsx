@@ -23,6 +23,7 @@ const emptyTenant = () => ({
   b2c_enabled:false, max_users:5,
   modules:[...DEFAULT_MODULES],
   db_url:'', db_anon_key:'',
+  custom_domain:'', logo_url:'',
   trial_ends_at: new Date(Date.now()+14*86400000).toISOString().slice(0,10),
   mrr_usd:0,
 });
@@ -84,6 +85,9 @@ export default function TenantAdminPanel() {
     setForm({
       ...emptyTenant(), ...t,
       modules: t.modules || DEFAULT_MODULES,
+      custom_domain: t.custom_domain || '',
+      db_url: t.db_url || '',
+      db_anon_key: t.db_anon_key || '',
       trial_ends_at: t.trial_ends_at?.slice(0,10) || '',
     });
     setTab('edit');
@@ -111,6 +115,8 @@ export default function TenantAdminPanel() {
       modules:        form.modules||['crm','invoicing'],
       db_url:         form.db_url||null,
       db_anon_key:    form.db_anon_key||null,
+      custom_domain:  form.custom_domain||null,
+      logo_url:       form.logo_url||null,
       trial_ends_at:  form.trial_ends_at ? new Date(form.trial_ends_at).toISOString() : null,
       mrr_usd:        Number(form.mrr_usd)||0,
     };
@@ -477,21 +483,21 @@ export default function TenantAdminPanel() {
                 <h4 className="font-bold text-sm">🌐 Access URLs</h4>
                 <div className="space-y-2 font-mono text-xs">
                   <div className="flex items-center justify-between bg-white/10 rounded-xl px-3 py-2">
-                    <span className="text-white/50">Primary</span>
-                    <span>{form.slug||'slug'}.erp.businesspro.com</span>
-                  </div>
-                  <div className="flex items-center justify-between bg-white/10 rounded-xl px-3 py-2">
-                    <span className="text-white/50">Production</span>
-                    <span>{form.slug||'slug'}.prod.erp.businesspro.com</span>
+                    <span className="text-white/50">Query Param URL</span>
+                    <span className="text-blue-300">{typeof window!=='undefined'?window.location.origin:'https://your-app.vercel.app'}/?tenant={form.slug||'slug'}</span>
                   </div>
                   {form.custom_domain && (
                     <div className="flex items-center justify-between bg-white/10 rounded-xl px-3 py-2">
-                      <span className="text-white/50">Custom</span>
+                      <span className="text-white/50">Custom Domain</span>
                       <span>{form.custom_domain}</span>
                     </div>
                   )}
+                  <div className="flex items-center justify-between bg-white/10 rounded-xl px-3 py-2">
+                    <span className="text-white/50">Future Subdomain</span>
+                    <span className="text-white/30">{form.slug||'slug'}.erp.businesspro.com</span>
+                  </div>
                 </div>
-                <p className="text-white/40 text-[10px]">DNS propagates automatically via wildcard *.erp.businesspro.com</p>
+                <p className="text-white/40 text-[10px]">Share the Query Param URL with your client until domain is configured</p>
               </div>
             </div>
           </div>
