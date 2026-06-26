@@ -382,7 +382,7 @@ function buildRetailPrintHTML(t, record, items) {
 <html>
 <head>
   <meta charset="UTF-8"/>
-  <title>Invoice ${record.invoice_number||''}</title>
+  <title>Invoice #${record.display_number?String(record.display_number).padStart(5,'0'):record.invoice_number||record.id?.slice(0,8)||''}</title>
   <style>
     * { box-sizing:border-box; margin:0; padding:0; }
     body { font-family:${font}; background:${bg}; color:#111827; }
@@ -433,18 +433,23 @@ function buildRetailPrintHTML(t, record, items) {
     <!-- META -->
     <div class="inv-meta">
       <div>
-        <div class="inv-num">${t.headline||'RECEIPT'} #${record.invoice_number||''}</div>
-        <div class="inv-date">${record.invoice_date||new Date().toLocaleDateString('en-IN')}</div>
+        <div class="inv-num">${t.headline||'RECEIPT'}</div>
+        ${(t.show_invoice_number!==false) ? `<div class="inv-date" style="font-weight:600;color:#374151">${record.display_number ? 'RINV-'+String(record.display_number).padStart(5,'0') : record.invoice_number || record.id?.slice(0,8) || ''}</div>` : ''}
+        <div class="inv-date">${record.invoice_date ? new Date(record.invoice_date).toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric'}) : new Date().toLocaleDateString('en-IN')}</div>
+        ${t.show_date&&record.created_at ? `<div class="inv-date">${new Date(record.created_at).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'})}</div>` : ''}
+        ${t.show_cashier&&(record.owner_name||record.owner) ? `<div class="inv-date">Cashier: ${record.owner_name||record.owner}</div>` : ''}
       </div>
       ${t.show_barcode ? '<div class="barcode">▌▌▌▌▌▌</div>' : ''}
+      ${t.show_qr_code ? '<div style="width:40px;height:40px;background:#F3F4F6;border:1px solid #E5E7EB;border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:22px">◼</div>' : ''}
     </div>
 
     ${divider}
 
     <!-- CUSTOMER -->
     ${t.show_customer ? `
-    <div class="meta-row"><span class="meta-l">Customer</span><span class="meta-vb">${record.customer||''}</span></div>
-    <div class="meta-row"><span class="meta-l">Phone</span><span class="meta-v">${record.customer_phone||''}</span></div>
+    <div class="meta-row"><span class="meta-l">Customer</span><span class="meta-vb">${record.customer||'-'}</span></div>
+    ${t.show_customer_phone&&record.customer_phone ? `<div class="meta-row"><span class="meta-l">Phone</span><span class="meta-v">${record.customer_phone}</span></div>` : ''}
+    ${t.show_customer_gstin&&record.customer_gstin ? `<div class="meta-row"><span class="meta-l">GSTIN</span><span class="meta-v">${record.customer_gstin}</span></div>` : ''}
     ` : ''}
 
     ${divider}
@@ -853,7 +858,10 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo }) 
       const subtotal  = items.reduce((s,i) => s + i.quantity*i.unit_price, 0);
       const totalDisc = items.reduce((s,i) => s + i.quantity*i.unit_price*i.discount_pct/100, 0);
       const totalTax  = items.reduce((s,i) => s + taxRegime.computeLineTax(i).totalTax, 0);
-      payload = { ...payload, subtotal, total_discount: totalDisc, total_tax: totalTax, amount: subtotal-totalDisc+totalTax };
+      const computed  = { subtotal, total_discount: totalDisc, total_tax: totalTax, amount: subtotal-totalDisc+totalTax };
+      payload = { ...payload, ...computed };
+      // Update edited state so Preview & Print immediately reflects correct totals
+      setEdited(p => ({ ...p, ...computed }));
     }
     await updateRetailRecord(page, payload, items);
     setSaving(false);
@@ -899,7 +907,7 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo }) 
       const resolved = allUsers.find(u => (edited.owner_id && u.id===edited.owner_id) || (!edited.owner_id && edited.owner && u.email===edited.owner));
       return <SearchableSelect
         value={resolved?.id||''}
-        onChange={uid=>{ const u=allUsers.find(x=>x.id===uid); set('owner_id',u?.id||''); set('owner',u?.email||''); }}
+        onChange={uid=>{ const u=allUsers.find(x=>x.id===uid); set('owner_id',u?.id||''); set('owner',u?.email||''); set('owner_name',((`${u?.first_name||''} ${u?.last_name||''}`.trim())||u?.email||'')); }}
         options={allUsers.map(u=>({value:u.id, label:(`${u.first_name||''} ${u.last_name||''}`.trim())||u.email||'User', sub:u.designation||u.email||''}))}
         placeholder="Select owner" emptyLabel="Unassigned"
       />;
@@ -1071,6 +1079,8 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo }) 
             })}
           </div>
 
+
+
           {/* Additional Information — App Composer custom fields, only when published */}
           {customFields.filter(cf => cf.show_on !== 'create').length > 0 && (
             <div className="bg-white rounded-[20px] border border-blue-100 shadow-sm">
@@ -1127,6 +1137,30 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo }) 
               ? <div className="bg-white rounded-[20px] border border-blue-100 shadow p-8 text-center text-gray-400">Loading line items...</div>
               : <RetailLineItems items={items} setItems={setItems} products={retailProducts} taxRegime={taxRegime}/>
           )}
+
+          {/* System Information */}
+          <div className="bg-white rounded-[20px] border border-gray-100 shadow-sm">
+            <div className="px-5 py-3 bg-gradient-to-r from-gray-50 to-slate-50 border-b border-gray-100 rounded-t-[20px]">
+              <h3 className="font-bold text-gray-500 text-sm flex items-center gap-2">⚙️ System Information</h3>
+            </div>
+            <div className="p-5 grid grid-cols-2 sm:grid-cols-4 gap-4 text-sm">
+              {[
+                { l:'Record ID',    v: edited.id?.slice(0,16)+'...' },
+                { l:'Display #',    v: edited.display_number ? (PAGE_DISPLAY_PREFIX[page]||'REC')+'-'+String(edited.display_number).padStart(5,'0') : '-' },
+                { l:'Created At',   v: edited.created_at ? new Date(edited.created_at).toLocaleString('en-IN',{day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}) : '-' },
+                { l:'Updated At',   v: edited.updated_at ? new Date(edited.updated_at).toLocaleString('en-IN',{day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}) : '-' },
+                { l:'Owner',        v: edited.owner || '-' },
+                { l:'Status',       v: edited.status || '-' },
+                { l:'Currency',     v: edited.currency || '-' },
+                { l:'Created By',   v: edited.created_by || edited.owner || '-' },
+              ].map(f => (
+                <div key={f.l}>
+                  <div className="text-xs font-bold uppercase tracking-wider text-gray-400 mb-1">{f.l}</div>
+                  <div className="text-[#0F172A] font-medium text-xs break-all">{f.v}</div>
+                </div>
+              ))}
+            </div>
+          </div>
             </div>
           )}
         </div>{/* end body flex-1 */}
@@ -1159,10 +1193,20 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo }) 
     {showPrintPreview && page==='retailInvoices' && (
       <RetailInvoicePrintModal
         template={invoiceTemplates.find(t=>t.id===selectedTemplateId)}
-        record={edited}
+        record={(() => {
+          const allUsers = enterpriseUsers?.length > 0 ? enterpriseUsers : (currentUser ? [currentUser] : []);
+          const u = allUsers.find(x => x.id === edited.owner_id || x.email === edited.owner);
+          const ownerName = u ? (`${u.first_name||''} ${u.last_name||''}`.trim() || u.email || '') : edited.owner_name || edited.owner || '';
+          return { ...edited, owner_name: ownerName };
+        })()}
         items={items}
         onClose={()=>setShowPrintPreview(false)}
-        onPrint={()=>handleDirectPrint(invoiceTemplates.find(t=>t.id===selectedTemplateId), edited, items)}
+        onPrint={()=>{
+          const allUsers = enterpriseUsers?.length > 0 ? enterpriseUsers : (currentUser ? [currentUser] : []);
+          const u = allUsers.find(x => x.id === edited.owner_id || x.email === edited.owner);
+          const ownerName = u ? (`${u.first_name||''} ${u.last_name||''}`.trim() || u.email || '') : edited.owner_name || edited.owner || '';
+          handleDirectPrint(invoiceTemplates.find(t=>t.id===selectedTemplateId), {...edited, owner_name: ownerName}, items);
+        }}
       />
     )}
     </>
@@ -1180,7 +1224,12 @@ function RetailCreateModal({ page, open, onClose, onCreated }) {
     status: cfg.statusOptions[0],
     currency: appPreferences?.default_currency || 'INR',
     owner_id: currentUser?.id, owner: currentUser?.email,
-    order_date: new Date().toISOString().split('T')[0],
+    owner_name: (`${currentUser?.first_name||''} ${currentUser?.last_name||''}`.trim()) || currentUser?.email || '',
+    created_by: currentUser?.email,
+    created_at: new Date().toISOString(),
+    invoice_date: new Date().toISOString().slice(0,10),
+    order_date: new Date().toISOString().slice(0,10),
+    activity_date: new Date().toISOString().slice(0,10).split('T')[0],
     invoice_date: new Date().toISOString().split('T')[0],
     activity_date: new Date().toISOString().split('T')[0],
     loyalty_points: 0, loyalty_tier: 'Standard', preferred_contact: 'Phone',
@@ -1257,7 +1306,7 @@ function RetailCreateModal({ page, open, onClose, onCreated }) {
       const allUsers = enterpriseUsers.length>0 ? enterpriseUsers : (currentUser?[currentUser]:[]);
       return <SearchableSelect
         value={form.owner_id||''}
-        onChange={uid=>{ const u=allUsers.find(x=>x.id===uid); s('owner_id',u?.id||''); s('owner',u?.email||''); }}
+        onChange={uid=>{ const u=allUsers.find(x=>x.id===uid); s('owner_id',u?.id||''); s('owner',u?.email||''); s('owner_name',((`${u?.first_name||''} ${u?.last_name||''}`.trim())||u?.email||'')); }}
         options={allUsers.map(u=>({value:u.id,label:(`${u.first_name||''} ${u.last_name||''}`.trim())||u.email||'User', sub:u.designation||u.email||''}))}
         placeholder="Select owner" emptyLabel="Unassigned"
       />;
@@ -1330,6 +1379,30 @@ function RetailCreateModal({ page, open, onClose, onCreated }) {
                 {errors[f.key] && <p className="text-xs text-red-500 mt-1">{errors[f.key]}</p>}
               </div>
             ))}
+          </div>
+
+          {/* System Information */}
+          <div className="bg-white rounded-[20px] border border-gray-100 shadow-sm">
+            <div className="px-5 py-3 bg-gradient-to-r from-gray-50 to-slate-50 border-b border-gray-100 rounded-t-[20px]">
+              <h3 className="font-bold text-gray-500 text-sm flex items-center gap-2">⚙️ System Information</h3>
+            </div>
+            <div className="p-5 grid grid-cols-2 sm:grid-cols-4 gap-4 text-sm">
+              {[
+                { l:'Record ID',    v: edited.id?.slice(0,16)+'...' },
+                { l:'Display #',    v: edited.display_number ? (PAGE_DISPLAY_PREFIX[page]||'REC')+'-'+String(edited.display_number).padStart(5,'0') : '-' },
+                { l:'Created At',   v: edited.created_at ? new Date(edited.created_at).toLocaleString('en-IN',{day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}) : '-' },
+                { l:'Updated At',   v: edited.updated_at ? new Date(edited.updated_at).toLocaleString('en-IN',{day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}) : '-' },
+                { l:'Owner',        v: edited.owner || '-' },
+                { l:'Status',       v: edited.status || '-' },
+                { l:'Currency',     v: edited.currency || '-' },
+                { l:'Created By',   v: edited.created_by || edited.owner || '-' },
+              ].map(f => (
+                <div key={f.l}>
+                  <div className="text-xs font-bold uppercase tracking-wider text-gray-400 mb-1">{f.l}</div>
+                  <div className="text-[#0F172A] font-medium text-xs break-all">{f.v}</div>
+                </div>
+              ))}
+            </div>
           </div>
 
           {/* Additional Information — custom fields shown on create */}

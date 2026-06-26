@@ -91,7 +91,9 @@ export default function Header({ activePage, onNavigate }) {
 
   return (
     <header className="h-16 flex items-center justify-between px-6 shadow-lg flex-shrink-0 sticky top-0 z-30"
-      style={{background: `linear-gradient(135deg, var(--bp-primary, #0F172A), var(--bp-secondary, #1e3a8a))`}}>
+      style={{background: appearance?.themeColors
+        ? `linear-gradient(135deg, ${appearance.themeColors.sidebar}, ${appearance.themeColors.to})`
+        : `linear-gradient(135deg, var(--bp-primary, #0F172A), var(--bp-secondary, #1e3a8a))`}}>
       {/* Left: Company logo / branding */}
       <div className="flex items-center gap-3">
         {appearance?.company_logo_url

@@ -32,7 +32,7 @@ const filterByRange = (items, range, dateField='created_at') => {
 };
 
 export default function RetailDashboard() {
-  const { retailCustomers, retailProducts, retailActivities, retailOrders, retailInvoices, currentUser, appPreferences } = useApp();
+  const { retailCustomers, retailProducts, retailActivities, retailOrders, retailInvoices, currentUser, appPreferences, appearance } = useApp();
   const [dateRange, setDateRange] = useState('month');
 
   const taxRegime = getTaxRegime(appPreferences?.default_currency);
@@ -97,8 +97,32 @@ export default function RetailDashboard() {
   const recentOrders = [...retailOrders].sort((a,b)=>new Date(b.created_at)-new Date(a.created_at)).slice(0,5);
   const recentActivities = [...retailActivities].sort((a,b)=>new Date(b.created_at)-new Date(a.created_at)).slice(0,5);
 
-  const StatCard = ({ label, value, sub, icon, color }) => (
-    <div className={`bg-gradient-to-br ${color} rounded-[20px] p-5 text-white shadow-lg`}>
+  // Build 8-card palette from theme colors
+  const buildPalette = (tc) => {
+    if (!tc) return null;
+    // Each theme contributes its sidebar+accent. We derive 8 variants:
+    // 0: primary (sidebar→to), 1: accent shade, 2-7: fixed complementary colors
+    // that still feel coordinated because they're slightly desaturated
+    return [
+      { from: tc.sidebar,   to: tc.to },          // 0 - primary dark
+      { from: '#059669',    to: '#065f46' },       // 1 - emerald
+      { from: '#2563eb',    to: '#1e40af' },       // 2 - blue
+      { from: '#d97706',    to: '#b45309' },       // 3 - amber
+      { from: '#dc2626',    to: '#991b1b' },       // 4 - red
+      { from: tc.accent,    to: tc.sidebar },      // 5 - accent→primary
+      { from: '#0d9488',    to: '#0f766e' },       // 6 - teal
+      { from: '#db2777',    to: '#9d174d' },       // 7 - pink
+    ];
+  };
+  const palette = buildPalette(appearance?.themeColors);
+
+  const StatCard = ({ label, value, sub, icon, paletteIdx = 1 }) => {
+    const p = palette?.[paletteIdx];
+    const cardStyle = p
+      ? { background: `linear-gradient(135deg, ${p.from}, ${p.to})` }
+      : { background: 'linear-gradient(135deg, #0F172A, #1e3a8a)' };
+    return (
+    <div className="rounded-[20px] p-5 text-white shadow-lg" style={cardStyle}>
       <div className="flex items-start justify-between">
         <div>
           <div className="text-white/70 text-xs font-semibold uppercase tracking-wider mb-1">{label}</div>
@@ -109,6 +133,7 @@ export default function RetailDashboard() {
       </div>
     </div>
   );
+  };
 
   return (
     <div className="space-y-6">
@@ -132,17 +157,17 @@ export default function RetailDashboard() {
 
       {/* KPI Cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <StatCard label="Sales" value={fmtShort(kpis.salesValue)} sub={`${kpis.ordersCount} completed orders`} icon="💰" color="from-[#0F172A] to-blue-900"/>
-        <StatCard label="Avg Order Value" value={fmt(kpis.avgOrderValue)} sub="per completed order" icon="🧾" color="from-emerald-600 to-green-700"/>
-        <StatCard label="New Customers" value={kpis.walkInCustomers} sub={`${kpis.totalCustomers} total customers`} icon="🧑‍🤝‍🧑" color="from-blue-600 to-indigo-700"/>
-        <StatCard label="VIP Customers" value={kpis.vipCustomers} sub="1000+ loyalty points" icon="👑" color="from-amber-500 to-orange-600"/>
+        <StatCard label="Sales" paletteIdx={0} value={fmtShort(kpis.salesValue)} sub={`${kpis.ordersCount} completed orders`} icon="💰"/>
+        <StatCard label="Avg Order Value" paletteIdx={1} value={fmt(kpis.avgOrderValue)} sub="per completed order" icon="🧾"/>
+        <StatCard label="New Customers" paletteIdx={2} value={kpis.walkInCustomers} sub={`${kpis.totalCustomers} total customers`} icon="🧑‍🤝‍🧑"/>
+        <StatCard label="VIP Customers" paletteIdx={3} value={kpis.vipCustomers} sub="1000+ loyalty points" icon="👑"/>
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <StatCard label="Pending Invoices" value={fmtShort(kpis.pendingInvoices)} sub={`${retailInvoices.filter(i=>['Sent','Overdue'].includes(i.status)).length} unpaid`} icon="⚠️" color="from-red-500 to-rose-600"/>
-        <StatCard label="Open Activities" value={kpis.openActivities} sub="follow-ups pending" icon="📅" color="from-purple-600 to-violet-700"/>
-        <StatCard label="Low Stock Items" value={kpis.lowStockProducts} sub="at/below reorder level" icon="📦" color="from-teal-500 to-cyan-600"/>
-        <StatCard label="Total Products" value={retailProducts.length} sub={`${retailProducts.filter(p=>p.status==='Active').length} active`} icon="🏷️" color="from-pink-500 to-rose-500"/>
+        <StatCard label="Pending Invoices" paletteIdx={4} value={fmtShort(kpis.pendingInvoices)} sub={`${retailInvoices.filter(i=>['Sent','Overdue'].includes(i.status)).length} unpaid`} icon="⚠️"/>
+        <StatCard label="Open Activities" paletteIdx={5} value={kpis.openActivities} sub="follow-ups pending" icon="📅"/>
+        <StatCard label="Low Stock Items" paletteIdx={6} value={kpis.lowStockProducts} sub="at/below reorder level" icon="📦"/>
+        <StatCard label="Total Products" paletteIdx={7} value={retailProducts.length} sub={`${retailProducts.filter(p=>p.status==='Active').length} active`} icon="🏷️"/>
       </div>
 
       {/* Charts row */}

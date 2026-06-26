@@ -36,7 +36,7 @@ const fmt = n => new Intl.NumberFormat('en-IN',{style:'currency',currency:'INR',
 const fmtShort = n => n >= 10000000 ? `₹${(n/10000000).toFixed(1)}Cr` : n >= 100000 ? `₹${(n/100000).toFixed(1)}L` : fmt(n);
 
 export default function DashboardPage() {
-  const { leads, opportunities, customers, orders, invoices, activities, quotations, contacts, currentUser, appPreferences } = useApp();
+  const { leads, opportunities, customers, orders, invoices, activities, quotations, contacts, currentUser, appPreferences , appearance } = useApp();
   const [dateRange,   setDateRange]   = useState('month');
   const [activeChart, setActiveChart] = useState('pipeline');
 
@@ -111,8 +111,28 @@ export default function DashboardPage() {
   const recentLeads = [...leads].sort((a,b)=>new Date(b.created_at)-new Date(a.created_at)).slice(0,5);
   const recentOpps  = [...opportunities].sort((a,b)=>new Date(b.created_at)-new Date(a.created_at)).slice(0,5);
 
-  const StatCard = ({ label, value, sub, icon, color, trend }) => (
-    <div className={`bg-gradient-to-br ${color} rounded-[20px] p-5 text-white shadow-lg`}>
+  const buildPalette = (tc) => {
+    if (!tc) return null;
+    return [
+      { from: tc.sidebar,   to: tc.to },
+      { from: '#059669',    to: '#065f46' },
+      { from: '#2563eb',    to: '#1e40af' },
+      { from: '#d97706',    to: '#b45309' },
+      { from: '#dc2626',    to: '#991b1b' },
+      { from: tc.accent,    to: tc.sidebar },
+      { from: '#0d9488',    to: '#0f766e' },
+      { from: '#db2777',    to: '#9d174d' },
+    ];
+  };
+  const palette = buildPalette(appearance?.themeColors);
+
+  const StatCard = ({ label, value, sub, icon, trend, paletteIdx = 0 }) => {
+    const p = palette?.[paletteIdx];
+    const cardStyle = p
+      ? { background: `linear-gradient(135deg, ${p.from}, ${p.to})` }
+      : { background: 'linear-gradient(135deg, #0F172A, #1e3a8a)' };
+    return (
+    <div className="rounded-[20px] p-5 text-white shadow-lg" style={cardStyle}>
       <div className="flex items-start justify-between">
         <div>
           <div className="text-white/70 text-xs font-semibold uppercase tracking-wider mb-1">{label}</div>
@@ -128,6 +148,7 @@ export default function DashboardPage() {
       )}
     </div>
   );
+  };
 
   const chartTabs = [
     { k:'pipeline',  l:'Pipeline' },
@@ -159,17 +180,17 @@ export default function DashboardPage() {
 
       {/* KPI Cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-8 gap-4">
-        <div className="col-span-2"><StatCard label="Pipeline Value" value={fmtShort(kpis.pipelineValue)} sub={`${fOpps.filter(o=>!['Closed Won','Closed Lost'].includes(o.stage)).length} active deals`} icon="💼" color="from-[#0F172A] to-blue-900"/></div>
-        <div className="col-span-2"><StatCard label="Won Revenue" value={fmtShort(kpis.wonValue)} sub={`${kpis.wonCount} deals closed`} icon="🏆" color="from-emerald-600 to-green-700"/></div>
-        <div className="col-span-2"><StatCard label="Orders Value" value={fmtShort(kpis.ordersValue)} sub={`${fOrders.length} orders`} icon="🛒" color="from-blue-600 to-indigo-700"/></div>
-        <div className="col-span-2"><StatCard label="Overdue Invoices" value={fmtShort(kpis.overdueInv)} sub={`${invoices.filter(i=>i.status==='Overdue').length} invoices`} icon="⚠️" color="from-red-500 to-rose-600"/></div>
+        <div className="col-span-2"><StatCard label="Pipeline Value" paletteIdx={0} value={fmtShort(kpis.pipelineValue)} sub={`${fOpps.filter(o=>!['Closed Won','Closed Lost'].includes(o.stage)).length} active deals`} icon="💼"/></div>
+        <div className="col-span-2"><StatCard label="Won Revenue" paletteIdx={1} value={fmtShort(kpis.wonValue)} sub={`${kpis.wonCount} deals closed`} icon="🏆"/></div>
+        <div className="col-span-2"><StatCard label="Orders Value" paletteIdx={2} value={fmtShort(kpis.ordersValue)} sub={`${fOrders.length} orders`} icon="🛒"/></div>
+        <div className="col-span-2"><StatCard label="Overdue Invoices" paletteIdx={4} value={fmtShort(kpis.overdueInv)} sub={`${invoices.filter(i=>i.status==='Overdue').length} invoices`} icon="⚠️"/></div>
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-8 gap-4">
-        <div className="col-span-2"><StatCard label="Open Leads" value={kpis.openLeads} sub={`${fLeads.length} total this period`} icon="🎯" color="from-amber-500 to-orange-600"/></div>
-        <div className="col-span-2"><StatCard label="Win Rate" value={`${winRate}%`} sub={`${kpis.wonCount}W / ${kpis.lostCount}L`} icon="📈" color="from-purple-600 to-violet-700"/></div>
-        <div className="col-span-2"><StatCard label="Customers" value={kpis.totalCustomers} sub={`${customers.filter(c=>c.status==='Active').length} active`} icon="👥" color="from-teal-500 to-cyan-600"/></div>
-        <div className="col-span-2"><StatCard label="Quotes Sent" value={kpis.quotesOut} sub={`${fQuotes.length} total quotes`} icon="📄" color="from-pink-500 to-rose-500"/></div>
+        <div className="col-span-2"><StatCard label="Open Leads" paletteIdx={3} value={kpis.openLeads} sub={`${fLeads.length} total this period`} icon="🎯"/></div>
+        <div className="col-span-2"><StatCard label="Win Rate" paletteIdx={5} value={`${winRate}%`} sub={`${kpis.wonCount}W / ${kpis.lostCount}L`} icon="📈"/></div>
+        <div className="col-span-2"><StatCard label="Customers" paletteIdx={6} value={kpis.totalCustomers} sub={`${customers.filter(c=>c.status==='Active').length} active`} icon="👥"/></div>
+        <div className="col-span-2"><StatCard label="Quotes Sent" paletteIdx={7} value={kpis.quotesOut} sub={`${fQuotes.length} total quotes`} icon="📄"/></div>
       </div>
 
       {/* Main Charts */}

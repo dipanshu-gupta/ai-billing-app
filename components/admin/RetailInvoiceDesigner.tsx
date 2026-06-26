@@ -2,7 +2,7 @@
 'use client';
 import React, { useState, useEffect, useRef } from 'react';
 import { useApp } from '@/context/AppContext';
-import { supabase } from '@/lib/supabase';
+import { useTenant } from '@/context/TenantContext';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const PAPER_SIZES = [
@@ -343,6 +343,7 @@ const Pill = ({active,onClick,children}) => (
 
 // ─── Main Designer ────────────────────────────────────────────────────────────
 export default function RetailInvoiceDesigner() {
+  const { supabase } = useTenant();
   const [templates,  setTemplates]  = useState([]);
   const [activeId,   setActiveId]   = useState(null);
   const [t,          setT]          = useState(defaultTpl());
@@ -367,14 +368,14 @@ export default function RetailInvoiceDesigner() {
     if(!supabase) return;
     setSaving(true);
     const COLS = ['name','headline','sub_headline','paper_size','font_family','font_size',
-      'brand_color','accent_color','bg_color','text_color','muted_color','alt_row_color','watermark',
+      'brand_color','accent_color','bg_color','watermark',
       'show_logo','logo_url','logo_position','logo_size',
       'store_name','store_tagline','store_address','store_phone','store_email','store_website','store_gstin',
       'header_align','show_store_info','show_gst_header',
       'show_invoice_number','show_date','show_cashier','show_barcode','show_qr_code',
       'show_customer','show_customer_phone','show_customer_gstin',
-      'col_sno','col_item','col_qty','col_unit','col_price','col_discount','col_tax_rate','col_hsn','col_total',
-      'alt_row','show_subtotal','show_discount_total','show_tax_total','show_cgst_sgst','show_round_off',
+      'col_sno','col_item','col_qty','col_unit','col_price','col_discount','col_hsn','col_total',
+      'alt_row','alt_row_color','show_subtotal','show_discount_total','show_tax_total','show_cgst_sgst','show_round_off',
       'tax_regime','default_gst_rate','place_of_supply',
       'show_payment','show_payment_mode','show_amount_paid','show_change','show_upi_id','upi_id',
       'show_loyalty','show_return_policy','return_policy','show_signature','signature_label',
@@ -408,13 +409,37 @@ export default function RetailInvoiceDesigner() {
   }
 
   async function uploadLogo(file) {
-    if(!file||!supabase) return;
-    const path=`logos/retail_${Date.now()}_${file.name}`;
-    const {error} = await supabase.storage.from('assets').upload(path,file,{upsert:true});
-    if(error){showToast('Upload failed: '+error.message,'err');return;}
-    const {data:pub} = supabase.storage.from('assets').getPublicUrl(path);
-    upd('logo_url',pub.publicUrl); upd('show_logo',true);
-    showToast('✓ Logo uploaded');
+    if(!file) return;
+    // Use FileReader to convert to base64 for immediate preview
+    // AND upload to storage for persistence
+    const reader = new FileReader();
+    reader.onload = async (e) => {
+      const dataUrl = e.target?.result as string;
+      // Show preview immediately using data URL
+      upd('logo_url', dataUrl);
+      upd('show_logo', true);
+      showToast('✓ Logo loaded — save template to persist');
+    };
+    reader.readAsDataURL(file);
+
+    // Also upload to Supabase storage if available
+    if(supabase) {
+      try {
+        const ext = file.name.split('.').pop();
+        const path = `logos/retail_${Date.now()}.${ext}`;
+        const { error } = await supabase.storage.from('assets').upload(path, file, { upsert: true });
+        if(!error) {
+          const { data: pub } = supabase.storage.from('assets').getPublicUrl(path);
+          if(pub?.publicUrl) {
+            upd('logo_url', pub.publicUrl);
+            showToast('✓ Logo uploaded & saved to storage');
+          }
+        }
+      } catch(e) {
+        // Storage upload failed, data URL preview still works
+        console.warn('[Logo] Storage upload failed, using data URL:', e);
+      }
+    }
   }
 
   const sCls = 'w-full border border-gray-300 rounded-xl px-3 py-2.5 text-sm text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-blue-400';

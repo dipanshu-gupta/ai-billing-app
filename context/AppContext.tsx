@@ -600,11 +600,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   // Allowed columns per retail table — prevents cross-object default fields leaking into wrong table
   const RETAIL_ALLOWED_COLS: Record<string, string[]> = {
-    retail_customers:  ['name','phone','email','date_of_birth','gender','address_line1','address_line2','city','state','postal_code','country','loyalty_points','loyalty_tier','preferred_contact','marketing_opt_in','notes','comments','status','owner','owner_id','organization_id','business_unit_id','custom_data'],
-    retail_products:   ['name','category','brand','sku','barcode','unit','price','mrp','cost','stock_quantity','reorder_level','description','hsn_code','gst_rate','taxable','tax_category','vat_rate','tax_rate','status','owner','owner_id','comments','organization_id','business_unit_id','custom_data'],
-    retail_activities: ['subject','activity_type','customer','customer_id','activity_date','due_date','priority','status','description','notes','comments','owner','owner_id','organization_id','business_unit_id','custom_data'],
-    retail_orders:     ['customer','customer_id','customer_phone','order_date','channel','currency','payment_method','payment_status','delivery_method','delivery_address','delivery_date','subtotal','total_discount','total_tax','shipping_cost','amount','place_of_supply','gstin','tax_state','resale_certificate','vat_registration_number','tax_registration_number','status','notes','comments','owner','owner_id','organization_id','business_unit_id','custom_data'],
-    retail_invoices:   ['order_number','customer','customer_id','customer_phone','invoice_date','due_date','currency','subtotal','total_discount','total_tax','shipping_cost','amount','payment_method','payment_status','place_of_supply','gstin','tax_state','resale_certificate','vat_registration_number','tax_registration_number','status','notes','comments','owner','owner_id','organization_id','business_unit_id','custom_data','invoice_template_id'],
+    retail_customers:  ['name','phone','email','date_of_birth','gender','address_line1','address_line2','city','state','postal_code','country','loyalty_points','loyalty_tier','preferred_contact','marketing_opt_in','notes','comments','status','owner','owner_id','owner_name','organization_id','business_unit_id','custom_data'],
+    retail_products:   ['name','category','brand','sku','barcode','unit','price','mrp','cost','stock_quantity','reorder_level','description','hsn_code','gst_rate','taxable','tax_category','vat_rate','tax_rate','status','owner','owner_id','owner_name','comments','organization_id','business_unit_id','custom_data'],
+    retail_activities: ['subject','activity_type','customer','customer_id','activity_date','due_date','priority','status','description','notes','comments','owner','owner_id','owner_name','organization_id','business_unit_id','custom_data'],
+    retail_orders:     ['customer','customer_id','customer_phone','order_date','channel','currency','payment_method','payment_status','delivery_method','delivery_address','delivery_date','subtotal','total_discount','total_tax','shipping_cost','amount','place_of_supply','gstin','tax_state','resale_certificate','vat_registration_number','tax_registration_number','status','notes','comments','owner','owner_id','owner_name','organization_id','business_unit_id','custom_data'],
+    retail_invoices:   ['order_number','customer','customer_id','customer_phone','invoice_date','due_date','currency','subtotal','total_discount','total_tax','shipping_cost','amount','payment_method','payment_status','place_of_supply','gstin','tax_state','resale_certificate','vat_registration_number','tax_registration_number','status','notes','comments','owner','owner_id','owner_name','organization_id','business_unit_id','custom_data','invoice_template_id'],
   };
 
   const createRetailRecord = async (page: keyof typeof RETAIL_TABLE_MAP, data: any, items: any[] = []) => {
@@ -1702,12 +1702,29 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const _APP_KEY = 'bp_appearance';
   const _DEF_APP = { company_logo_url:'', company_name:'Business Pro', theme:'navy', language:'en', font:'geist' };
 
+  const THEME_COLORS: Record<string,any> = {
+    navy:    { sidebar:'#0F172A', accent:'#3B82F6', to:'#1e3a8a' },
+    slate:   { sidebar:'#1E293B', accent:'#64748B', to:'#334155' },
+    emerald: { sidebar:'#064E3B', accent:'#10B981', to:'#065F46' },
+    purple:  { sidebar:'#3B0764', accent:'#8B5CF6', to:'#581C87' },
+    crimson: { sidebar:'#7F1D1D', accent:'#EF4444', to:'#991B1B' },
+    ocean:   { sidebar:'#134E4A', accent:'#14B8A6', to:'#115E59' },
+    charcoal:{ sidebar:'#111827', accent:'#6B7280', to:'#1F2937' },
+    indigo:  { sidebar:'#1E1B4B', accent:'#6366F1', to:'#3730A3' },
+  };
+
   const [appearance, setAppearance] = useState(() => {
     try {
       const s = typeof window!=='undefined' && window.localStorage.getItem(_APP_KEY);
-      if (s) return { ..._DEF_APP, ...JSON.parse(s) };
+      if (s) {
+        const parsed = { ..._DEF_APP, ...JSON.parse(s) };
+        parsed.themeColors = THEME_COLORS[parsed.theme] || THEME_COLORS['navy'];
+        return parsed;
+      }
     } catch(e) {}
-    return _DEF_APP;
+    const def = { ..._DEF_APP };
+    def.themeColors = THEME_COLORS['navy'];
+    return def;
   });
 
   const fetchAppearance = async () => {
@@ -1715,6 +1732,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       const s = window.localStorage.getItem(_APP_KEY);
       if (s) {
         const parsed = {..._DEF_APP,...JSON.parse(s)};
+        const tc = THEME_COLORS[parsed.theme] || THEME_COLORS['navy'];
+        parsed.themeColors = tc;
         setAppearance(parsed);
         applyAppearance(parsed);  // Apply immediately on load
       }
@@ -1724,6 +1743,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       const { data } = await supabase.from('appearance').select('*').limit(1).maybeSingle();
       if (data) {
         const a = { ..._DEF_APP, ...data };
+        const tc = THEME_COLORS[a.theme] || THEME_COLORS['navy'];
+        a.themeColors = tc;
         setAppearance(a);
         window.localStorage.setItem(_APP_KEY, JSON.stringify(a));
         applyAppearance(a);
@@ -1733,6 +1754,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const saveAppearance = async (data) => {
     const clean = { ..._DEF_APP, ...data };
+    const tc = THEME_COLORS[clean.theme] || THEME_COLORS['navy'];
+    clean.themeColors = tc;
     window.localStorage.setItem(_APP_KEY, JSON.stringify(clean));
     setAppearance(clean);
     applyAppearance(clean);
@@ -1744,21 +1767,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     } catch(e) { console.warn('saveAppearance Supabase error:', e); }
   };
 
-  const THEME_COLORS: Record<string,any> = {
-    navy:    { sidebar:'#0F172A', accent:'#3B82F6', to:'#1e3a8a' },
-    slate:   { sidebar:'#1E293B', accent:'#64748B', to:'#334155' },
-    emerald: { sidebar:'#064E3B', accent:'#10B981', to:'#065F46' },
-    purple:  { sidebar:'#3B0764', accent:'#8B5CF6', to:'#581C87' },
-    crimson: { sidebar:'#7F1D1D', accent:'#EF4444', to:'#991B1B' },
-    ocean:   { sidebar:'#134E4A', accent:'#14B8A6', to:'#115E59' },
-    charcoal:{ sidebar:'#111827', accent:'#6B7280', to:'#1F2937' },
-    indigo:  { sidebar:'#1E1B4B', accent:'#6366F1', to:'#3730A3' },
-  };
   const RTL_LANGS = ['ar'];
 
   const applyAppearance = (app: any) => {
     if (typeof document === 'undefined') return;
     const tc = THEME_COLORS[app.theme] || THEME_COLORS['navy'];
+    // Attach resolved colors to the app object so components can read directly
+    app.themeColors = tc;
 
     // Inject/update a <style> tag that overrides the hardcoded Tailwind color classes
     const styleId = 'bp-theme-override';
