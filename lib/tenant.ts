@@ -147,15 +147,27 @@ export async function resolveTenantBySlug(slug: string): Promise<Tenant> {
 // ─── Extract slug from hostname (client-side) ─────────────────────────────────
 export function extractTenantSlug(): string {
   if (typeof window === 'undefined') return 'demo';
-  const hostname = window.location.hostname;
-  if (hostname === 'localhost' || hostname === '127.0.0.1') return 'demo';
 
-  const BASE_DOMAINS = ['erp.businesspro.com'];
+  // 1. Query param — works on any URL including Vercel free plan
+  //    e.g. ai-billing-app-xi.vercel.app/?tenant=abc
+  const params = new URLSearchParams(window.location.search);
+  const tenantParam = params.get('tenant');
+  if (tenantParam && tenantParam.length >= 2) return tenantParam.toLowerCase();
+
+  const hostname = window.location.hostname;
+
+  // 2. localhost / Vercel preview → always demo
+  if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname.endsWith('.vercel.app')) {
+    return 'demo';
+  }
+
+  // 3. Custom subdomain (once you have a domain)
+  const BASE_DOMAINS = ['erp.businesspro.com', 'businesspro.app'];
   for (const base of BASE_DOMAINS) {
     if (hostname.endsWith('.' + base)) {
-      const prefix = hostname.slice(0, hostname.length - base.length - 1);
-      return prefix.split('.')[0]; // abc.prod → abc
+      return hostname.slice(0, hostname.length - base.length - 1).split('.')[0];
     }
   }
-  return 'demo'; // fallback for custom domains resolved server-side
+
+  return 'demo';
 }

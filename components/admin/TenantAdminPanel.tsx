@@ -8,9 +8,8 @@
  *
  * Only visible when:  tenant.slug === 'demo' && user.is_super_admin === true
  */
-import { useState, useEffect } from 'react';
-import { useTenant } from '@/context/TenantContext';
-import type { Tenant } from '@/lib/tenant';
+import { useState, useEffect , useMemo } from 'react';
+import { createClient } from '@supabase/supabase-js';
 
 const PLANS  = ['trial','shared','dedicated','enterprise'];
 const STATUS = ['trial','active','suspended','expired'];
@@ -42,7 +41,10 @@ function Badge({ label, cls }) {
 }
 
 export default function TenantAdminPanel() {
-  const { supabase, tenant } = useTenant();
+  const supabase = useMemo(() => createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL || '',
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ''
+  ), []);
   const [tenants,  setTenants]  = useState<Tenant[]>([]);
   const [loading,  setLoading]  = useState(true);
   const [selected, setSelected] = useState<Tenant|null>(null);
@@ -88,7 +90,6 @@ export default function TenantAdminPanel() {
   }
 
   async function save() {
-    if (!supabase) return;
     if (!form.slug || !form.name) { showToast('Slug and Name are required', true); return; }
     setSaving(true);
 
@@ -97,42 +98,43 @@ export default function TenantAdminPanel() {
       name:           form.name,
       plan:           form.plan,
       status:         form.status,
-      admin_email:    form.admin_email,
-      admin_name:     form.admin_name,
-      company_size:   form.company_size,
-      industry:       form.industry,
-      country:        form.country,
-      brand_color:    form.brand_color,
-      accent_color:   form.accent_color,
-      app_name:       form.app_name,
-      b2c_enabled:    form.b2c_enabled,
+      admin_email:    form.admin_email||'',
+      admin_name:     form.admin_name||'',
+      company_size:   form.company_size||'',
+      industry:       form.industry||'',
+      country:        form.country||'India',
+      brand_color:    form.brand_color||'#0F172A',
+      accent_color:   form.accent_color||'#2563EB',
+      app_name:       form.app_name||'Business Pro',
+      b2c_enabled:    !!form.b2c_enabled,
       max_users:      Number(form.max_users)||5,
-      modules:        form.modules,
-      db_url:         form.db_url || null,
-      db_anon_key:    form.db_anon_key || null,
+      modules:        form.modules||['crm','invoicing'],
+      db_url:         form.db_url||null,
+      db_anon_key:    form.db_anon_key||null,
       trial_ends_at:  form.trial_ends_at ? new Date(form.trial_ends_at).toISOString() : null,
       mrr_usd:        Number(form.mrr_usd)||0,
-      updated_at:     new Date().toISOString(),
     };
 
-    let err = null;
-    if (selected?.id) {
-      const { error } = await supabase.from('tenants').update(payload).eq('id', selected.id);
-      err = error;
-    } else {
-      const { error } = await supabase.from('tenants').insert({ ...payload, created_at: new Date().toISOString() });
-      err = error;
+    try {
+      let err = null;
+      if (selected?.id) {
+        const { error } = await supabase.from('tenants').update({ ...payload, updated_at: new Date().toISOString() }).eq('id', selected.id);
+        err = error;
+      } else {
+        const { error } = await supabase.from('tenants').insert({ ...payload, created_at: new Date().toISOString() });
+        err = error;
+      }
+      if (err) { showToast('Save failed: ' + err.message, true); setSaving(false); return; }
+      showToast(selected ? '✓ Tenant updated' : '✓ Tenant created');
+      await load();
+      setTab('list');
+    } catch(e) {
+      showToast('Save failed: ' + e.message, true);
     }
-
     setSaving(false);
-    if (err) { showToast('Save failed: '+err.message, true); return; }
-    showToast(selected ? '✓ Tenant updated' : '✓ Tenant created');
-    await load();
-    setTab('list');
   }
 
   async function suspend(id: string, current: string) {
-    if (!supabase) return;
     const next = current === 'suspended' ? 'active' : 'suspended';
     await supabase.from('tenants').update({ status: next }).eq('id', id);
     showToast(next === 'suspended' ? 'Tenant suspended' : 'Tenant reactivated');

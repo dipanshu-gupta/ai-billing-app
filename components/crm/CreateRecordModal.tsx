@@ -3,6 +3,7 @@
 
 import { useState, useEffect } from 'react';
 import { useApp } from '@/context/AppContext';
+import { useCustomFields, invalidateCustomFieldCache } from '@/lib/useCustomFields';
 import SearchableSelect from '@/components/shared/SearchableSelect';
 import QuickCreateModal from '@/components/shared/QuickCreateModal';
 
@@ -141,7 +142,16 @@ export default function CreateRecordModal({ page, open, prefillCustomer, onClose
     return base;
   };
 
-  const [form, setForm]     = useState(defaultForm);
+  const { fields: customFields } = useCustomFields(page);
+
+  // Clear cache and force re-fetch each time modal opens to pick up newly published fields
+  useEffect(() => {
+    if (open) {
+      invalidateCustomFieldCache(page);
+    }
+  }, [open, page]);
+  const [customData, setCustomData] = useState({});
+    const [form, setForm]     = useState(defaultForm);
   const [saving, setSaving] = useState(false);
   const [errors, setErrors] = useState<Record<string,string>>({});
   const [quickCreate, setQuickCreate] = useState(null);
@@ -208,7 +218,7 @@ export default function CreateRecordModal({ page, open, prefillCustomer, onClose
       const u = enterpriseUsers.find(x => x.id === form.owner_id);
       record.owner = u?.email || currentUser?.email || '';
     }
-    await createRecord(page, record);
+    await createRecord(page, { ...record, custom_data: customData });
     setSaving(false);
     setForm(defaultForm());
     onCreated?.();
@@ -316,11 +326,62 @@ export default function CreateRecordModal({ page, open, prefillCustomer, onClose
         </div>
 
         {/* Fields */}
-        <div className="overflow-y-auto flex-1 p-6">
+        <div className="overflow-y-auto flex-1 p-6 space-y-5">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             {fields.map(f => renderField(f))}
           </div>
-        </div>
+
+          {/* Additional Information — custom fields for create */}
+          {customFields.filter(cf => cf.show_on === 'both' || cf.show_on === 'create').length > 0 && (
+            <div className="mt-5 bg-blue-50 rounded-[20px] border border-blue-100 overflow-hidden">
+              <div className="px-4 py-2.5 border-b border-blue-100 flex items-center gap-2">
+                <span>🎛️</span>
+                <span className="font-bold text-[#0F172A] text-sm">Additional Information</span>
+                <span className="ml-auto text-[10px] bg-blue-100 text-blue-600 px-2 py-0.5 rounded-full font-semibold">App Composer</span>
+              </div>
+              <div className="p-4 grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {customFields.filter(cf => cf.show_on === 'both' || cf.show_on === 'create').map(cf => {
+                  const cdVal = (customData || {})[cf.api_name];
+                  const setCdVal = (val) => setCustomData(p => ({ ...p, [cf.api_name]: val }));
+                  return (
+                    <div key={cf.api_name} className={cf.field_type==='multi_select'?'sm:col-span-2':''}>
+                      {cf.field_type !== 'checkbox' && (
+                        <label className="block text-xs font-bold uppercase tracking-wider text-gray-400 mb-1.5">
+                          {cf.label}{cf.required && <span className="text-red-400 ml-1">*</span>}
+                        </label>
+                      )}
+                      {cf.field_type==='single_select'
+                        ? <select value={cdVal||''} onChange={e=>setCdVal(e.target.value)}
+                            className="w-full border border-blue-200 rounded-xl px-3 py-2.5 text-sm text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-blue-400">
+                            <option value="">Select {cf.label}...</option>
+                            {cf.options.map(o=><option key={o} value={o}>{o}</option>)}
+                          </select>
+                        : cf.field_type==='multi_select'
+                        ? <div className="space-y-1.5">{cf.options.map(o=>(
+                            <label key={o} className="flex items-center gap-2 cursor-pointer">
+                              <input type="checkbox" className="w-4 h-4 accent-blue-600 rounded"
+                                checked={(cdVal||'').split('||').includes(o)}
+                                onChange={e=>{const cur=(cdVal||'').split('||').filter(Boolean);const nxt=e.target.checked?[...cur,o]:cur.filter(x=>x!==o);setCdVal(nxt.join('||'));}}/>
+                              <span className="text-sm text-[#0F172A]">{o}</span>
+                            </label>
+                          ))}</div>
+                        : cf.field_type==='checkbox'
+                        ? <label className="flex items-center gap-2 cursor-pointer">
+                            <input type="checkbox" className="w-4 h-4 accent-blue-600 rounded" checked={!!cdVal} onChange={e=>setCdVal(e.target.checked)}/>
+                            <span className="text-sm font-semibold text-[#0F172A]">{cf.label}</span>
+                          </label>
+                        : <input
+                            type={cf.field_type==='number'||cf.field_type==='currency'?'number':cf.field_type==='date'?'date':cf.field_type==='datetime'?'datetime-local':cf.field_type==='email'?'email':cf.field_type==='url'?'url':'text'}
+                            value={cdVal||''} onChange={e=>setCdVal(e.target.value)} placeholder={cf.label}
+                            className="w-full border border-blue-200 rounded-xl px-3 py-2.5 text-sm text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-blue-400"/>
+                      }
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </div>{/* end overflow-y-auto */}
 
         {/* Footer */}
         <div className="px-6 py-4 border-t border-gray-100 flex items-center justify-end gap-3 flex-shrink-0 bg-gray-50">

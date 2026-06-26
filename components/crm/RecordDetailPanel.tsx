@@ -2,6 +2,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { useCustomFields, invalidateCustomFieldCache } from '@/lib/useCustomFields';
 import { useApp } from '@/context/AppContext';
 import {
   getObjectFields, getStatusOptions, getPageLabel,
@@ -288,6 +289,10 @@ function Customer360({ customer, onSubRecordOpen, onCreateFor }) {
 
 // ─── Main RecordDetailPanel ───────────────────────────────────────────────────
 export default function RecordDetailPanel({ page, record, onClose, prefillCustomer, initialTab = null }) {
+  const { fields: customFields } = useCustomFields(page);
+
+  // Always re-fetch custom fields when panel opens (picks up newly published fields)
+  useEffect(() => { invalidateCustomFieldCache(page); }, [page]);
   const {
     customers, contacts, products, organizations, businessUnits, enterpriseUsers,
     updateRecord, submitForApproval, checkMatchingApprovalProcess,
@@ -654,6 +659,56 @@ export default function RecordDetailPanel({ page, record, onClose, prefillCustom
                 {HAS_LI.includes(page) && (loadingLI
                   ? <div className="bg-white rounded-[24px] border border-blue-100 p-8 text-center text-gray-400">Loading line items…</div>
                   : <LineItemsTable items={lineItems} setItems={setLineItems} products={products}/>
+                )}
+
+                {/* Additional Information — B2B App Composer custom fields */}
+                {customFields.filter(cf => cf.show_on !== 'create').length > 0 && (
+                  <div className="bg-white rounded-[24px] border border-blue-100 shadow-sm overflow-hidden">
+                    <div className="px-5 py-3 bg-gradient-to-r from-slate-50 to-blue-50 border-b border-blue-100 flex items-center gap-2">
+                      <span>🎛️</span>
+                      <span className="font-bold text-[#0F172A] text-sm">Additional Information</span>
+                      <a href="#" onClick={e=>{e.preventDefault();}} className="ml-auto text-[10px] bg-blue-100 text-blue-600 px-2 py-0.5 rounded-full font-semibold">App Composer</a>
+                    </div>
+                    <div className="p-5 grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      {customFields.filter(cf => cf.show_on !== 'create').map(cf => {
+                        const cdVal = (edited.custom_data || {})[cf.api_name];
+                        const setCdVal = (val) => { setIsDirty(true); setEdited(p => ({ ...p, custom_data: { ...(p.custom_data||{}), [cf.api_name]: val } })); };
+                        return (
+                          <div key={cf.api_name} className={cf.field_type==='multi_select'?'sm:col-span-2':''}>
+                            {cf.field_type !== 'checkbox' && (
+                              <label className="block text-xs font-bold uppercase tracking-wider text-gray-400 mb-1.5">
+                                {cf.label}{cf.required && <span className="text-red-400 ml-1">*</span>}
+                              </label>
+                            )}
+                            {cf.field_type==='single_select'
+                              ? <select value={cdVal||''} onChange={e=>setCdVal(e.target.value)} className={sCls}>
+                                  <option value="">Select {cf.label}...</option>
+                                  {cf.options.map(o=><option key={o} value={o}>{o}</option>)}
+                                </select>
+                              : cf.field_type==='multi_select'
+                              ? <div className="space-y-1.5">{cf.options.map(o=>(
+                                  <label key={o} className="flex items-center gap-2 cursor-pointer">
+                                    <input type="checkbox" className="w-4 h-4 accent-blue-600 rounded"
+                                      checked={(cdVal||'').split('||').includes(o)}
+                                      onChange={e=>{const cur=(cdVal||'').split('||').filter(Boolean);const nxt=e.target.checked?[...cur,o]:cur.filter(x=>x!==o);setCdVal(nxt.join('||'));}}/>
+                                    <span className="text-sm text-[#0F172A]">{o}</span>
+                                  </label>
+                                ))}</div>
+                              : cf.field_type==='checkbox'
+                              ? <label className="flex items-center gap-2 cursor-pointer">
+                                  <input type="checkbox" className="w-4 h-4 accent-blue-600 rounded" checked={!!cdVal} onChange={e=>setCdVal(e.target.checked)}/>
+                                  <span className="text-sm font-semibold text-[#0F172A]">{cf.label}</span>
+                                </label>
+                              : <input
+                                  type={cf.field_type==='number'||cf.field_type==='currency'?'number':cf.field_type==='date'?'date':cf.field_type==='datetime'?'datetime-local':cf.field_type==='email'?'email':cf.field_type==='url'?'url':'text'}
+                                  value={cdVal||''} onChange={e=>setCdVal(e.target.value)} placeholder={cf.label}
+                                  className={iCls}/>
+                            }
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
                 )}
 
                 {/* System Information */}

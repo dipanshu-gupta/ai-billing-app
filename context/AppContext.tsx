@@ -984,20 +984,20 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       switch (page) {
         case 'customers': {
           const id = generateId('CUST');
-          const { error } = await supabase.from('customers').insert([{ ...sys, owner: data.owner||currentUser?.email||'', owner_id: data.owner_id||currentUser?.id||null, comments: data.comments||'', customer_number: id, name: data.name, company: data.company, industry: data.industry, email: data.email, phone: data.phone, website: data.website, billing_address: data.billingAddress, shipping_address: data.shippingAddress, city: data.city, state: data.state, postal_code: data.postalCode, country: data.country, gst_number: data.gstNumber, status: data.status || 'Active' }]);
+          const { error } = await supabase.from('customers').insert([{ ...sys, custom_data: data.custom_data||{}, owner: data.owner||currentUser?.email||'', owner_id: data.owner_id||currentUser?.id||null, comments: data.comments||'', customer_number: id, name: data.name, company: data.company, industry: data.industry, email: data.email, phone: data.phone, website: data.website, billing_address: data.billingAddress, shipping_address: data.shippingAddress, city: data.city, state: data.state, postal_code: data.postalCode, country: data.country, gst_number: data.gstNumber, status: data.status || 'Active' }]);
           if (error) throw error;
           await logAudit({ recordType: 'customer', recordId: id, recordName: data.name, action: 'created' });
           await fetchCustomers(); return { id, name: data.name };
         }
         case 'products': {
           const id = generateId('PROD');
-          const { error } = await supabase.from('products').insert([{ ...sys, owner: data.owner||currentUser?.email||'', owner_id: data.owner_id||currentUser?.id||null, comments: data.comments||'', name: data.name, category: data.category, price: Number(data.price || 0), status: data.status || 'Active' }]);
+          const { error } = await supabase.from('products').insert([{ ...sys, custom_data: data.custom_data||{}, owner: data.owner||currentUser?.email||'', owner_id: data.owner_id||currentUser?.id||null, comments: data.comments||'', name: data.name, category: data.category, price: Number(data.price || 0), status: data.status || 'Active' }]);
           if (error) throw error;
           await fetchProducts(); return { id, name: data.name };
         }
         case 'leads': {
           const id = generateId('LEAD');
-          const { error } = await supabase.from('leads').insert([{ ...sys, owner: data.owner||currentUser?.email||'', owner_id: data.owner_id||currentUser?.id||null, comments: data.comments||'', lead_number: id, name: data.name, customer: data.customer, customer_id: data.customerId, contact: data.contact, contact_id: data.contactId, email: data.email, phone: data.phone, source: data.source, amount: Number(data.amount || 0), status: data.status || 'New' }]);
+          const { error } = await supabase.from('leads').insert([{ ...sys, custom_data: data.custom_data||{}, owner: data.owner||currentUser?.email||'', owner_id: data.owner_id||currentUser?.id||null, comments: data.comments||'', lead_number: id, name: data.name, customer: data.customer, customer_id: data.customerId, contact: data.contact, contact_id: data.contactId, email: data.email, phone: data.phone, source: data.source, amount: Number(data.amount || 0), status: data.status || 'New' }]);
           if (error) throw error;
           if (lineItems.length) await supabase.from('lead_line_items').insert(lineItems.map(i => ({ lead_number: id, product_name: i.product, quantity: i.quantity, price: i.price })));
           await logAudit({ recordType: 'lead', recordId: id, recordName: data.name, action: 'created' });
@@ -1006,7 +1006,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         }
         case 'opportunities': {
           const id = generateId('OPP');
-          const { error } = await supabase.from('opportunities').insert([{ ...sys, owner: data.owner||currentUser?.email||'', owner_id: data.owner_id||currentUser?.id||null, comments: data.comments||'', opportunity_number: id, name: data.name, customer: data.customer, customer_id: data.customerId, contact: data.contact, contact_id: data.contactId, stage: data.stage || 'Qualification', amount: Number(data.amount || 0), close_date: data.closeDate || null, status: data.status || 'Open' }]);
+          const { error } = await supabase.from('opportunities').insert([{ ...sys, custom_data: data.custom_data||{}, owner: data.owner||currentUser?.email||'', owner_id: data.owner_id||currentUser?.id||null, comments: data.comments||'', opportunity_number: id, name: data.name, customer: data.customer, customer_id: data.customerId, contact: data.contact, contact_id: data.contactId, stage: data.stage || 'Qualification', amount: Number(data.amount || 0), close_date: data.closeDate || null, status: data.status || 'Open' }]);
           if (error) throw error;
           if (lineItems.length) await supabase.from('opportunity_line_items').insert(lineItems.map(i => ({ opportunity_number: id, product_name: i.product, quantity: i.quantity, price: i.price })));
           await logAudit({ recordType: 'opportunity', recordId: id, recordName: data.name, action: 'created' });
@@ -1014,7 +1014,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         }
         case 'orders': {
           const id = generateId('ORD');
-          const { error } = await supabase.from('orders').insert([{ ...sys, owner: data.owner||currentUser?.email||'', owner_id: data.owner_id||currentUser?.id||null, comments: data.comments||'', order_number: id, name: data.name, customer: data.customer, customer_id: data.customerId, contact: data.contact, contact_id: data.contactId, amount: calcAmount, shipping_address: data.shippingAddressOrder || '', delivery_date: data.deliveryDate || null, status: data.status || 'Processing' }]);
+          const { error } = await supabase.from('orders').insert([{ ...sys, custom_data: data.custom_data||{}, owner: data.owner||currentUser?.email||'', owner_id: data.owner_id||currentUser?.id||null, comments: data.comments||'', order_number: id, name: data.name, customer: data.customer, customer_id: data.customerId, contact: data.contact, contact_id: data.contactId, amount: calcAmount, shipping_address: data.shippingAddressOrder || '', delivery_date: data.deliveryDate || null, status: data.status || 'Processing' }]);
           if (error) throw error;
           if (lineItems.length) await supabase.from('order_line_items').insert(lineItems.map(i => ({ order_number: id, product_name: i.product, quantity: i.quantity, price: i.price })));
           await logAudit({ recordType: 'order', recordId: id, recordName: data.name, action: 'created' });
@@ -1022,7 +1022,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         }
         case 'invoices': {
           const id = generateId('INV');
-          const { error } = await supabase.from('invoices').insert([{ ...sys, owner: data.owner||currentUser?.email||'', owner_id: data.owner_id||currentUser?.id||null, comments: data.comments||'', invoice_number: id, name: data.name, customer: data.customer, customer_id: data.customerId, contact: data.contact, contact_id: data.contactId, amount: calcAmount, due_date: data.dueDate || null, payment_terms: data.paymentTerms || '', billing_address: data.billingAddressInvoice || data.billingAddress || '', status: data.status || 'Pending' }]);
+          const { error } = await supabase.from('invoices').insert([{ ...sys, custom_data: data.custom_data||{}, owner: data.owner||currentUser?.email||'', owner_id: data.owner_id||currentUser?.id||null, comments: data.comments||'', invoice_number: id, name: data.name, customer: data.customer, customer_id: data.customerId, contact: data.contact, contact_id: data.contactId, amount: calcAmount, due_date: data.dueDate || null, payment_terms: data.paymentTerms || '', billing_address: data.billingAddressInvoice || data.billingAddress || '', status: data.status || 'Pending' }]);
           if (error) throw error;
           if (lineItems.length) await supabase.from('invoice_line_items').insert(lineItems.map(i => ({ invoice_number: id, product_name: i.product, quantity: i.quantity, price: i.price })));
           await logAudit({ recordType: 'invoice', recordId: id, recordName: data.name, action: 'created' });
@@ -1030,7 +1030,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         }
         case 'contacts': {
           const id = generateId('CONT');
-          const { error } = await supabase.from('contacts').insert([{ ...sys, owner: data.owner||currentUser?.email||'', owner_id: data.owner_id||currentUser?.id||null, comments: data.comments||'', is_primary: data.isPrimary||false, contact_number: id, customer: data.customer, customer_id: data.customerId, name: data.name, email: data.email, phone: data.phone, designation: data.designation, department: data.department, status: data.status || 'Active' }]);
+          const { error } = await supabase.from('contacts').insert([{ ...sys, custom_data: data.custom_data||{}, owner: data.owner||currentUser?.email||'', owner_id: data.owner_id||currentUser?.id||null, comments: data.comments||'', is_primary: data.isPrimary||false, contact_number: id, customer: data.customer, customer_id: data.customerId, name: data.name, email: data.email, phone: data.phone, designation: data.designation, department: data.department, status: data.status || 'Active' }]);
           if (data.isPrimary && data.customerId) {
             await supabase.from('contacts').update({ is_primary: false }).eq('customer_id', data.customerId).neq('contact_number', id);
             await supabase.from('customers').update({ primary_contact_id: id }).eq('customer_number', data.customerId);
@@ -1040,7 +1040,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         }
         case 'activities': {
           const id = generateId('ACT');
-          const { error } = await supabase.from('activities').insert([{ ...sys, owner: data.owner||currentUser?.email||'', owner_id: data.owner_id||currentUser?.id||null, comments: data.comments||'', activity_number: id, name: data.name, customer: data.customer, customer_id: data.customerId, contact: data.contact, contact_id: data.contactId, subject: data.subject, activity_type: data.activityType, activity_date: data.activityDate, notes: data.notes, status: data.status || 'Open' }]);
+          const { error } = await supabase.from('activities').insert([{ ...sys, custom_data: data.custom_data||{}, owner: data.owner||currentUser?.email||'', owner_id: data.owner_id||currentUser?.id||null, comments: data.comments||'', activity_number: id, name: data.name, customer: data.customer, customer_id: data.customerId, contact: data.contact, contact_id: data.contactId, subject: data.subject, activity_type: data.activityType, activity_date: data.activityDate, notes: data.notes, status: data.status || 'Open' }]);
           if (error) throw error;
           await fetchActivities(); return { id, name: data.name };
         }
@@ -1067,12 +1067,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
     switch (page) {
       case 'customers': {
-        const { error: e_customers } = await supabase.from('customers').update({ ...sys, name: record.name, email: record.email, phone: record.phone, company: record.company, industry: record.industry, primary_contact_id: record.primaryContactId, billing_address: record.billingAddress, shipping_address: record.shippingAddress, city: record.city, state: record.state, postal_code: record.postalCode||record.postal_code||'', country: record.country||'', website: record.website||'', gst_number: record.gstNumber||record.gst_number||'', description: record.description||'', owner: record.owner||'', owner_id: record.owner_id||null, status: record.status, comments: record.comments||'' }).eq('customer_number', record.id);
+        const { error: e_customers } = await supabase.from('customers').update({ ...sys, custom_data: record.custom_data||{}, name: record.name, email: record.email, phone: record.phone, company: record.company, industry: record.industry, primary_contact_id: record.primaryContactId, billing_address: record.billingAddress, shipping_address: record.shippingAddress, city: record.city, state: record.state, postal_code: record.postalCode||record.postal_code||'', country: record.country||'', website: record.website||'', gst_number: record.gstNumber||record.gst_number||'', description: record.description||'', owner: record.owner||'', owner_id: record.owner_id||null, status: record.status, comments: record.comments||'' }).eq('customer_number', record.id);
         if (e_customers) { console.error('update customers:', e_customers.message); alert('Save failed: ' + e_customers.message); return; }
         await logAudit({ recordType: 'customer', recordId: record.id, recordName: record.name, action: 'updated' });
         await fetchCustomers(); break; }
       case 'contacts': {
-        const { error: e_contacts } = await supabase.from('contacts').update({ ...sys, customer: record.customer, customer_id: record.customerId||null, name: record.name, email: record.email||'', phone: record.phone||'', mobile: record.mobile||'', designation: record.designation||'', department: record.department||'', is_primary: record.isPrimary||false, linked_in: record.linkedIn||'', description: record.description||'', owner: record.owner||'', owner_id: record.owner_id||null, status: record.status, comments: record.comments||'' }).eq('contact_number', record.id);
+        const { error: e_contacts } = await supabase.from('contacts').update({ ...sys, custom_data: record.custom_data||{}, customer: record.customer, customer_id: record.customerId||null, name: record.name, email: record.email||'', phone: record.phone||'', mobile: record.mobile||'', designation: record.designation||'', department: record.department||'', is_primary: record.isPrimary||false, linked_in: record.linkedIn||'', description: record.description||'', owner: record.owner||'', owner_id: record.owner_id||null, status: record.status, comments: record.comments||'' }).eq('contact_number', record.id);
         if (e_contacts) { console.error('update contacts:', e_contacts.message); alert('Save failed: ' + e_contacts.message); return; }
         if (record.isPrimary && record.customerId) {
           await supabase.from('contacts').update({ is_primary: false }).eq('customer_id', record.customerId).neq('contact_number', record.id);
@@ -1080,17 +1080,17 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         }
         await fetchContacts(); await fetchCustomers(); break; }
       case 'products': {
-        const { error: e_products } = await supabase.from('products').update({ ...sys, name: record.name, product_family: record.productFamily||'', category: record.category||'', sku: record.sku||'', price: Number(record.price||0), cost: Number(record.cost||0), unit: record.unit||'', tax_rate: Number(record.taxRate||record.tax_rate||0), hsn_code: record.hsn_code||'', gst_rate: record.gst_rate!=null?Number(record.gst_rate):null, taxable: record.taxable||'', tax_category: record.tax_category||'', vat_rate: record.vat_rate!=null?Number(record.vat_rate):null, description: record.description||'', owner: record.owner||'', status: record.status, comments: record.comments||'' }).eq('id', record._uuid || record.id);
+        const { error: e_products } = await supabase.from('products').update({ ...sys, custom_data: record.custom_data||{}, name: record.name, product_family: record.productFamily||'', category: record.category||'', sku: record.sku||'', price: Number(record.price||0), cost: Number(record.cost||0), unit: record.unit||'', tax_rate: Number(record.taxRate||record.tax_rate||0), hsn_code: record.hsn_code||'', gst_rate: record.gst_rate!=null?Number(record.gst_rate):null, taxable: record.taxable||'', tax_category: record.tax_category||'', vat_rate: record.vat_rate!=null?Number(record.vat_rate):null, description: record.description||'', owner: record.owner||'', status: record.status, comments: record.comments||'' }).eq('id', record._uuid || record.id);
         if (e_products) { console.error('update products:', e_products.message); alert('Save failed: ' + e_products.message); return; }
         await fetchProducts(); return { id, name: data.name }; }
       case 'leads': {
-        const { error: e_leads } = await supabase.from('leads').update({ ...sys, name: record.name, customer: record.customer, customer_id: record.customerId||null, contact: record.contact, contact_id: record.contactId||null, email: record.email||'', phone: record.phone||'', source: record.source||'', amount: calcAmount||Number(record.amount||0), expected_close_date: record.expectedCloseDate||null, billing_address: record.billingAddress||record.billing_address||'', shipping_address: record.shippingAddress||record.shipping_address||'', description: record.description||'', owner: record.owner||'', owner_id: record.owner_id||null, status: record.status, comments: record.comments||'' }).eq('lead_number', record.id);
+        const { error: e_leads } = await supabase.from('leads').update({ ...sys, custom_data: record.custom_data||{}, name: record.name, customer: record.customer, customer_id: record.customerId||null, contact: record.contact, contact_id: record.contactId||null, email: record.email||'', phone: record.phone||'', source: record.source||'', amount: calcAmount||Number(record.amount||0), expected_close_date: record.expectedCloseDate||null, billing_address: record.billingAddress||record.billing_address||'', shipping_address: record.shippingAddress||record.shipping_address||'', description: record.description||'', owner: record.owner||'', owner_id: record.owner_id||null, status: record.status, comments: record.comments||'' }).eq('lead_number', record.id);
         if (e_leads) { console.error('update leads:', e_leads.message); alert('Save failed: ' + e_leads.message); return; }
         await upsertLineItems('lead_line_items', 'lead_number', record.id);
         await logAudit({ recordType: 'lead', recordId: record.id, recordName: record.name, action: 'updated' });
         await fetchLeads(); break; }
       case 'opportunities': {
-        const { error: e_opportunities } = await supabase.from('opportunities').update({ ...sys, name: record.name, customer: record.customer, customer_id: record.customerId||null, contact: record.contact, contact_id: record.contactId||null, stage: record.stage||'', amount: calcAmount||Number(record.amount||0), close_date: record.closeDate||null, probability: Number(record.probability||0), campaign: record.campaign||'', billing_address: record.billingAddress||record.billing_address||'', shipping_address: record.shippingAddress||record.shipping_address||'', description: record.description||'', owner: record.owner||'', owner_id: record.owner_id||null, status: record.status, comments: record.comments||'' }).eq('opportunity_number', record.id);
+        const { error: e_opportunities } = await supabase.from('opportunities').update({ ...sys, custom_data: record.custom_data||{}, name: record.name, customer: record.customer, customer_id: record.customerId||null, contact: record.contact, contact_id: record.contactId||null, stage: record.stage||'', amount: calcAmount||Number(record.amount||0), close_date: record.closeDate||null, probability: Number(record.probability||0), campaign: record.campaign||'', billing_address: record.billingAddress||record.billing_address||'', shipping_address: record.shippingAddress||record.shipping_address||'', description: record.description||'', owner: record.owner||'', owner_id: record.owner_id||null, status: record.status, comments: record.comments||'' }).eq('opportunity_number', record.id);
         if (e_opportunities) { console.error('update opportunities:', e_opportunities.message); alert('Save failed: ' + e_opportunities.message); return; }
         await upsertLineItems('opportunity_line_items', 'opportunity_number', record.id);
         await logAudit({ recordType: 'opportunity', recordId: record.id, recordName: record.name, action: 'updated' });
@@ -1133,7 +1133,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         await logAudit({ recordType: 'invoice', recordId: record.id, recordName: record.name, action: 'updated' });
         await fetchInvoices(); break; }
       case 'activities': {
-        const { error: e_activities } = await supabase.from('activities').update({ ...sys, name: record.name, customer: record.customer, customer_id: record.customerId||null, contact: record.contact, contact_id: record.contactId||null, activity_type: record.activityType||'', activity_date: record.activityDate||null, due_date: record.dueDate||null, priority: record.priority||'Medium', description: record.description||'', notes: record.notes||'', owner: record.owner||'', owner_id: record.owner_id||null, status: record.status, comments: record.comments||'' }).eq('activity_number', record.id);
+        const { error: e_activities } = await supabase.from('activities').update({ ...sys, custom_data: record.custom_data||{}, name: record.name, customer: record.customer, customer_id: record.customerId||null, contact: record.contact, contact_id: record.contactId||null, activity_type: record.activityType||'', activity_date: record.activityDate||null, due_date: record.dueDate||null, priority: record.priority||'Medium', description: record.description||'', notes: record.notes||'', owner: record.owner||'', owner_id: record.owner_id||null, status: record.status, comments: record.comments||'' }).eq('activity_number', record.id);
         if (e_activities) { console.error('update activities:', e_activities.message); alert('Save failed: ' + e_activities.message); return; }
         await fetchActivities(); break; }
     }
