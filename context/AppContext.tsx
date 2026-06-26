@@ -1654,7 +1654,7 @@ export function AppProvider({ children, supabase = null }: { children: React.Rea
     supabase.auth.getSession().then(({ data: { session } }) => { setSession(session); setAuthLoading(false); });
     const { data: listener } = supabase.auth.onAuthStateChange((_e, s) => setSession(s));
     return () => listener.subscription.unsubscribe();
-  }, []);
+  }, [supabase]);
 
   useEffect(() => {
     if (!session?.user?.id) return;
@@ -1675,7 +1675,7 @@ export function AppProvider({ children, supabase = null }: { children: React.Rea
       fetchRetailOrders(), fetchRetailInvoices(),
     ]).catch(() => {});
     fetchExchangeRates(appPreferences?.default_currency || 'INR');
-  }, [session?.user?.id]);
+  }, [session?.user?.id, supabase]);
 
   useEffect(() => {
     if (!session?.user?.email) return;

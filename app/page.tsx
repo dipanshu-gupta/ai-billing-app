@@ -140,7 +140,7 @@ const RETAIL_PAGES = ['retailCustomers', 'retailProducts', 'retailActivities', '
 
 function AppShell() {
   const { session, authLoading, appPreferences, setPendingReturnTo, setPendingRecord } = useApp();
-  const { tenant, loading: tenantLoading } = useTenant();
+  const { tenant } = useTenant();
   const [activePage,       setActivePage]       = useState('dashboard');
   // Listen for profile open event from Header
   React.useEffect(() => {
@@ -217,7 +217,21 @@ function AppShell() {
 // ─── Root ─────────────────────────────────────────────────────────────────────
 
 function AppWithTenant() {
-  const { supabase } = useTenant();
+  const { supabase, loading } = useTenant();
+
+  // Wait for tenant + supabase to be ready before mounting AppProvider
+  // This ensures AppContext always gets a real supabase client, never null
+  if (loading || !supabase) {
+    return (
+      <div className="min-h-screen bg-[#0F172A] flex items-center justify-center">
+        <div className="text-center">
+          <div className="w-12 h-12 border-4 border-white/20 border-t-white rounded-full animate-spin mx-auto mb-4"/>
+          <p className="text-white/60 text-sm font-medium">Loading workspace…</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <AppProvider supabase={supabase}>
       <AppShell />
