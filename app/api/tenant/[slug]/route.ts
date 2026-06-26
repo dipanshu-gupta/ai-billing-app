@@ -2,15 +2,16 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 
-const masterSupabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_KEY!,
-);
-
 export async function GET(
   req: NextRequest,
   context: { params: Promise<{ slug: string }> }
 ) {
+  // Create client inside the function — env vars not available at module eval time
+  const masterSupabase = createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_KEY!,
+  );
+
   const { slug } = await context.params;
   const s = slug?.toLowerCase().trim();
   if (!s || s.length < 2) return NextResponse.json({ error: 'Invalid slug' }, { status: 400 });
@@ -28,13 +29,13 @@ export async function GET(
   const COLS = 'id,slug,name,plan,status,db_url,db_anon_key,logo_url,brand_color,app_name,custom_domain,b2c_enabled,max_users,modules,trial_ends_at,created_at';
 
   let { data: tenant } = await masterSupabase
-    .from('tenants').select(COLS).eq('slug', s).eq('status','active').maybeSingle();
+    .from('tenants').select(COLS).eq('slug', s).eq('status', 'active').maybeSingle();
 
   if (!tenant) {
     const host = (req.headers.get('x-tenant-host') || '').split(':')[0];
     if (host) {
       const { data } = await masterSupabase
-        .from('tenants').select(COLS).eq('custom_domain', host).eq('status','active').maybeSingle();
+        .from('tenants').select(COLS).eq('custom_domain', host).eq('status', 'active').maybeSingle();
       tenant = data;
     }
   }
