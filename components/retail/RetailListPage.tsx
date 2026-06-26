@@ -723,15 +723,58 @@ function RetailCustomer360({ customer }) {
   );
 }
 
+// ─── Retail Quick Create Customer ────────────────────────────────────────────
+function RetailQuickCreateCustomer({ prefillName, onCreated, onClose }) {
+  const { createRetailRecord } = useApp();
+  const [form, setForm] = useState({ name: prefillName||'', phone:'', email:'' });
+  const [saving, setSaving] = useState(false);
+
+  async function save() {
+    if (!form.name.trim()) { alert('Name is required'); return; }
+    setSaving(true);
+    const rec = await createRetailRecord('retailCustomers', {
+      ...form, status:'Active', loyalty_points:0, loyalty_tier:'Standard',
+    }, []);
+    setSaving(false);
+    if (rec) onCreated(rec.id, rec.name);
+  }
+
+  const iCls = 'w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm text-[#0F172A] focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white';
+
+  return (
+    <div className="space-y-3">
+      <div>
+        <label className="block text-xs font-bold uppercase tracking-wider text-gray-400 mb-1.5">Full Name *</label>
+        <input value={form.name} onChange={e=>setForm(p=>({...p,name:e.target.value}))} className={iCls} placeholder="Customer name" autoFocus/>
+      </div>
+      <div>
+        <label className="block text-xs font-bold uppercase tracking-wider text-gray-400 mb-1.5">Phone</label>
+        <input value={form.phone} onChange={e=>setForm(p=>({...p,phone:e.target.value}))} className={iCls} placeholder="+91 98765 43210"/>
+      </div>
+      <div>
+        <label className="block text-xs font-bold uppercase tracking-wider text-gray-400 mb-1.5">Email</label>
+        <input value={form.email} onChange={e=>setForm(p=>({...p,email:e.target.value}))} className={iCls} placeholder="customer@example.com"/>
+      </div>
+      <div className="flex gap-3 pt-2">
+        <button onClick={onClose} className="flex-1 border border-gray-200 text-gray-600 py-2.5 rounded-xl text-sm font-semibold hover:bg-gray-50">Cancel</button>
+        <button onClick={save} disabled={saving} className="flex-2 bg-gradient-to-r from-[#0F172A] to-blue-800 text-white px-6 py-2.5 rounded-xl text-sm font-bold disabled:opacity-50 shadow hover:opacity-90">
+          {saving ? 'Creating…' : '+ Create Customer'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ─── Detail Panel ───────────────────────────────────────────────────────────
 function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo }) {
   const { updateRetailRecord, deleteRetailRecord, retailCustomers, retailProducts, enterpriseUsers, currentUser,
-          fetchRetailLineItems, appPreferences, setPendingReturnTo, createRetailInvoiceFromOrder } = useApp();
+          fetchRetailLineItems, fetchRetailCustomers, createRetailRecord, appPreferences, setPendingReturnTo, createRetailInvoiceFromOrder } = useApp();
   const cfg = RETAIL_CONFIG[page];
   const taxRegime = getTaxRegime(appPreferences?.default_currency);
 
   const [edited, setEdited] = useState({ ...record });
-  const [activeTab, setActiveTab] = useState('details'); // 'details' | '360'
+  const [activeTab, setActiveTab] = useState('details');
+  const [quickCreateCustomer, setQuickCreateCustomer] = useState(null); // {prefillName, onCreated} // 'details' | '360'
   // Retail invoice templates (for retailInvoices page)
   const [invoiceTemplates,    setInvoiceTemplates]    = useState([]);
   const [selectedTemplateId,  setSelectedTemplateId]  = useState('');
@@ -865,6 +908,7 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo }) 
       value={edited.customer_id||''}
       onChange={cid=>{ const c=retailCustomers.find(x=>x.id===cid); set('customer_id',c?.id||''); set('customer',c?.name||''); set('customer_phone',c?.phone||''); }}
       options={retailCustomers.map(c=>({value:c.id,label:c.name,sub:[c.phone,c.email].filter(Boolean).join(' · ')}))}
+      onCreateNew={name=>setQuickCreateCustomer({prefillName:name, onCreated:(id,cname)=>{ set('customer_id',id); set('customer',cname); }})}
       placeholder="Search customers..." emptyLabel="No customer"
     />;
     if (field.type === 'retailInvoiceTemplate') {
@@ -1097,6 +1141,20 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo }) 
       </div>
     </div>
 
+    {/* Quick Create Retail Customer */}
+    {quickCreateCustomer && (
+      <div className="fixed inset-0 bg-black/60 z-[200] flex items-center justify-center p-4" onClick={()=>setQuickCreateCustomer(null)}>
+        <div className="bg-white rounded-[24px] shadow-2xl p-6 w-full max-w-md" onClick={e=>e.stopPropagation()}>
+          <h3 className="font-bold text-[#0F172A] text-lg mb-4">👤 New Retail Customer</h3>
+          <RetailQuickCreateCustomer
+            prefillName={quickCreateCustomer.prefillName}
+            onCreated={async(id,name)=>{ quickCreateCustomer.onCreated(id,name); setQuickCreateCustomer(null); await fetchRetailCustomers(); }}
+            onClose={()=>setQuickCreateCustomer(null)}
+          />
+        </div>
+      </div>
+    )}
+
     {/* Print Preview Modal */}
     {showPrintPreview && page==='retailInvoices' && (
       <RetailInvoicePrintModal
@@ -1116,6 +1174,7 @@ function RetailCreateModal({ page, open, onClose, onCreated }) {
   const { createRetailRecord, retailCustomers, enterpriseUsers, currentUser, appPreferences } = useApp();
   const cfg = RETAIL_CONFIG[page];
   const taxRegime = getTaxRegime(appPreferences?.default_currency);
+  const [quickCreateCustomer, setQuickCreateCustomer] = useState(null);
 
   const defaultForm = () => ({
     status: cfg.statusOptions[0],
@@ -1207,7 +1266,8 @@ function RetailCreateModal({ page, open, onClose, onCreated }) {
       value={form.customer_id||''}
       onChange={cid=>{ const c=retailCustomers.find(x=>x.id===cid); s('customer_id',c?.id||''); s('customer',c?.name||''); s('customer_phone',c?.phone||''); }}
       options={retailCustomers.map(c=>({value:c.id,label:c.name,sub:[c.phone,c.email].filter(Boolean).join(' · ')}))}
-      placeholder="Search customers..." emptyLabel="No customer"
+      onCreateNew={name=>setQuickCreateCustomer({prefillName:name, onCreated:(id,cname,cphone)=>{ s('customer_id',id); s('customer',cname); s('customer_phone',cphone||''); setQuickCreateCustomer(null); }})}
+      placeholder="Search customers..." emptyLabel="No customers — type to create new"
     />;
     if (field.type === 'retailInvoiceTemplate') {
       // Only available in detail panel context (not create modal)
@@ -1249,6 +1309,7 @@ function RetailCreateModal({ page, open, onClose, onCreated }) {
   };
 
   return (
+    <>
     <div className="fixed inset-0 z-[500] flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose}/>
       <div className="relative bg-white rounded-[28px] shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden">
@@ -1309,6 +1370,14 @@ function RetailCreateModal({ page, open, onClose, onCreated }) {
         </div>
       </div>
     </div>
+    {quickCreateCustomer && (
+      <RetailQuickCreateCustomer
+        prefillName={quickCreateCustomer.prefillName}
+        onCreated={quickCreateCustomer.onCreated}
+        onClose={()=>setQuickCreateCustomer(null)}
+      />
+    )}
+    </>
   );
 }
 
