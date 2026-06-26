@@ -216,12 +216,19 @@ function AppShell() {
 
 // ─── Root ─────────────────────────────────────────────────────────────────────
 
+function AppWithTenant() {
+  const { supabase } = useTenant();
+  return (
+    <AppProvider supabase={supabase}>
+      <AppShell />
+    </AppProvider>
+  );
+}
+
 export default function RootPage() {
   return (
     <TenantProvider>
-      <AppProvider>
-        <AppShell />
-      </AppProvider>
+      <AppWithTenant />
     </TenantProvider>
   );
 }

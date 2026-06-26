@@ -1,7 +1,7 @@
 // @ts-nocheck
 
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
-import { supabase } from '@/lib/supabase';
+// supabase client injected via AppProvider props (from TenantContext)
 import type {
   EnterpriseUser, Organization, BusinessUnit, Role, Permission,
   RolePermission, UserGroup, UserGroupMember, Customer, Contact,
@@ -153,7 +153,7 @@ export const useApp = (): AppContextValue => {
 
 // \u2500\u2500\u2500 Provider \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 
-export function AppProvider({ children }: { children: React.ReactNode }) {
+export function AppProvider({ children, supabase = null }: { children: React.ReactNode }) {
   // Auth
   const [session, setSession] = useState<any>(null);
   const [authLoading, setAuthLoading] = useState(true);

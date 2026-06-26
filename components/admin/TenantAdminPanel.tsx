@@ -124,10 +124,14 @@ export default function TenantAdminPanel() {
     try {
       let err = null;
       if (selected?.id) {
-        const { error } = await supabase.from('tenants').update({ ...payload, updated_at: new Date().toISOString() }).eq('id', selected.id);
+        const { error } = await supabase.from('tenants')
+          .update({ ...payload, updated_at: new Date().toISOString() })
+          .eq('id', selected.id);
         err = error;
       } else {
-        const { error } = await supabase.from('tenants').insert({ ...payload, created_at: new Date().toISOString() });
+        // Use upsert on slug to handle cases where tenant was partially created
+        const { error } = await supabase.from('tenants')
+          .upsert({ ...payload, created_at: new Date().toISOString() }, { onConflict: 'slug' });
         err = error;
       }
       if (err) { showToast('Save failed: ' + err.message, true); setSaving(false); return; }
