@@ -67,9 +67,20 @@ function ProfileModal({ open, onClose }) {
   const { currentUser, saveMyProfile, resetMyPassword } = useApp();
   const [form, setForm] = useState({
     first_name: currentUser?.first_name || '',
-    last_name: currentUser?.last_name || '',
-    phone: currentUser?.phone || '',
+    last_name:  currentUser?.last_name  || '',
+    phone:      currentUser?.phone      || '',
   });
+
+  // Re-sync form when currentUser loads (e.g. after provisioning)
+  useEffect(() => {
+    if (currentUser) {
+      setForm({
+        first_name: currentUser.first_name || '',
+        last_name:  currentUser.last_name  || '',
+        phone:      currentUser.phone      || '',
+      });
+    }
+  }, [currentUser?.id]);
   const [newPassword, setNewPassword] = useState('');
 
   return (

@@ -72,7 +72,11 @@ export async function POST(req: NextRequest) {
   const { data: roleData } = await adminClient
     .from('roles').select('id').eq('role_code', 'SYSADMIN').maybeSingle();
 
-  // ── Step 4: Upsert enterprise_user ───────────────────────────────
+  // ── Step 4: Upsert enterprise_user with role ─────────────────────
+  if (!roleData?.id) {
+    console.warn('[Provision] SYSADMIN role not found — run schema_complete_client.sql first');
+  }
+
   const euPayload: any = {
     auth_user_id: authUserId,
     first_name:   firstName,
@@ -84,21 +88,21 @@ export async function POST(req: NextRequest) {
     role_id:      roleData?.id || null,
   };
 
-  // Try with temporary_password first
+  // Try with temporary_password
   const { error: euErr1 } = await adminClient
     .from('enterprise_users')
     .upsert({ ...euPayload, temporary_password: tempPassword }, { onConflict: 'email' });
 
   if (euErr1) {
-    // Column might not exist — try without it
-    console.warn('[Provision] temporary_password column missing, inserting without it');
-    const { error: euErr2 } = await adminClient
-      .from('enterprise_users')
-      .upsert(euPayload, { onConflict: 'email' });
-    if (euErr2) {
-      console.warn('[Provision] enterprise_user upsert failed:', euErr2.message);
-    }
+    console.warn('[Provision] Trying without temporary_password:', euErr1.message);
+    await adminClient.from('enterprise_users').upsert(euPayload, { onConflict: 'email' });
   }
+
+  // Also force-update role + is_admin in case upsert didn't apply them
+  await adminClient
+    .from('enterprise_users')
+    .update({ role_id: roleData?.id || null, is_admin: true })
+    .eq('email', admin_email);
 
   return NextResponse.json({
     success:      true,

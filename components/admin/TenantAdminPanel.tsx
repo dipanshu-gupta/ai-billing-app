@@ -619,7 +619,7 @@ export default function TenantAdminPanel() {
                     value={provisionForm.db_service_key}
                     onChange={e=>setProvisionForm(p=>({...p,db_service_key:e.target.value}))}
                     placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
-                    className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-purple-400"/>
+                    className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm font-mono text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-purple-400"/>
                   <p className="text-[10px] text-gray-400 mt-1">Found in client's Supabase → Project Settings → API → service_role key</p>
                 </div>
                 <div>
@@ -628,7 +628,7 @@ export default function TenantAdminPanel() {
                     value={provisionForm.admin_email}
                     onChange={e=>setProvisionForm(p=>({...p,admin_email:e.target.value}))}
                     placeholder="admin@clientdomain.com"
-                    className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-purple-400"/>
+                    className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-purple-400"/>
                 </div>
                 <div>
                   <label className="block text-xs font-bold uppercase tracking-wider text-gray-500 mb-1.5">Admin Name</label>
@@ -636,7 +636,7 @@ export default function TenantAdminPanel() {
                     value={provisionForm.admin_name}
                     onChange={e=>setProvisionForm(p=>({...p,admin_name:e.target.value}))}
                     placeholder="John Smith"
-                    className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-purple-400"/>
+                    className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-purple-400"/>
                 </div>
                 <div className="flex gap-3 pt-2">
                   <button onClick={()=>setProvisioning(null)}
