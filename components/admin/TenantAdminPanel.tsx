@@ -47,6 +47,10 @@ export default function TenantAdminPanel() {
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ''
   ), []);
   const [tenants,  setTenants]  = useState<Tenant[]>([]);
+  const [provisioning,        setProvisioning]        = useState(null);
+  const [provisionForm,       setProvisionForm]       = useState({ db_service_key:'', admin_email:'', admin_name:'' });
+  const [provisionResult,     setProvisionResult]     = useState(null);
+  const [provisioning_loading,setProvisioningLoading] = useState(false);
   const [loading,  setLoading]  = useState(true);
   const [selected, setSelected] = useState<Tenant|null>(null);
   const [form,     setForm]     = useState(emptyTenant());
@@ -91,6 +95,40 @@ export default function TenantAdminPanel() {
       trial_ends_at: t.trial_ends_at?.slice(0,10) || '',
     });
     setTab('edit');
+  }
+
+  async function provisionTenant(tenant) {
+    setProvisioning(tenant);
+    setProvisionForm({
+      db_service_key: '',
+      admin_email: tenant.admin_email || '',
+      admin_name:  tenant.admin_name  || '',
+    });
+    setProvisionResult(null);
+  }
+
+  async function runProvisioning() {
+    if (!provisionForm.db_service_key) { showToast('Service key required', true); return; }
+    if (!provisionForm.admin_email)    { showToast('Admin email required', true); return; }
+    if (!provisioning?.db_url)         { showToast('Tenant has no database URL configured', true); return; }
+    setProvisioningLoading(true);
+    try {
+      const res = await fetch('/api/tenant/provision', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          db_url:         provisioning.db_url,
+          db_service_key: provisionForm.db_service_key,
+          admin_email:    provisionForm.admin_email,
+          admin_name:     provisionForm.admin_name,
+          tenant_name:    provisioning.name,
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok) { showToast('Provisioning failed: ' + json.error, true); }
+      else { setProvisionResult(json); }
+    } catch(e) { showToast('Error: ' + e.message, true); }
+    setProvisioningLoading(false);
   }
 
   async function save() {
@@ -174,6 +212,7 @@ export default function TenantAdminPanel() {
   };
 
   return (
+    <>
     <div className="space-y-5">
       {/* Toast */}
       {toast && (
@@ -275,7 +314,13 @@ export default function TenantAdminPanel() {
                       className={`px-3 py-1.5 text-xs font-semibold rounded-xl transition-all ${t.status==='suspended'?'bg-green-50 border border-green-200 text-green-700 hover:bg-green-100':'bg-red-50 border border-red-200 text-red-600 hover:bg-red-100'}`}>
                       {t.status==='suspended'?'Reactivate':'Suspend'}
                     </button>
-                    <a href={`https://${t.slug}.erp.businesspro.com`} target="_blank" rel="noreferrer"
+                    {(t.plan === 'dedicated' || t.plan === 'enterprise') && t.db_url && (
+                      <button onClick={()=>provisionTenant(t)}
+                        className="px-3 py-1.5 text-xs font-semibold bg-purple-600 hover:bg-purple-700 text-white rounded-xl transition-all">
+                        🚀 Provision
+                      </button>
+                    )}
+                    <a href={`${typeof window!=='undefined'?window.location.origin:''}/`+`?tenant=${t.slug}`} target="_blank" rel="noreferrer"
                       className="px-3 py-1.5 text-xs font-semibold bg-[#0F172A] text-white rounded-xl hover:bg-slate-700 transition-all">
                       Open ↗
                     </a>
@@ -519,5 +564,96 @@ export default function TenantAdminPanel() {
         </div>
       )}
     </div>
+
+    {/* Provisioning Modal */}
+    {provisioning && (
+      <div className="fixed inset-0 z-[600] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+        <div className="bg-white rounded-[28px] shadow-2xl w-full max-w-lg">
+          {/* Header */}
+          <div className="bg-gradient-to-r from-purple-900 to-purple-700 px-6 py-5 rounded-t-[28px] text-white">
+            <h3 className="text-xl font-bold">🚀 Provision Client Database</h3>
+            <p className="text-purple-200 text-sm mt-1">{provisioning.name} — {provisioning.db_url}</p>
+          </div>
+
+          <div className="p-6 space-y-4">
+            {provisionResult ? (
+              /* Success screen */
+              <div className="space-y-4">
+                <div className="bg-green-50 border border-green-200 rounded-2xl p-5 text-center">
+                  <div className="text-4xl mb-3">✅</div>
+                  <h4 className="font-bold text-green-800 text-lg">Provisioning Complete!</h4>
+                  <p className="text-green-700 text-sm mt-1">Share these credentials securely with your client.</p>
+                </div>
+                <div className="bg-[#0F172A] rounded-2xl p-5 text-white space-y-3 font-mono text-sm">
+                  <div className="flex justify-between items-center">
+                    <span className="text-white/50">Login URL</span>
+                    <span className="text-blue-300">{typeof window!=='undefined'?window.location.origin:''}/?tenant={provisioning.slug}</span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-white/50">Email</span>
+                    <span className="text-green-300">{provisionResult.email}</span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-white/50">Temp Password</span>
+                    <span className="text-amber-300 font-bold">{provisionResult.password}</span>
+                  </div>
+                </div>
+                <p className="text-xs text-gray-400 text-center">⚠️ Ask the client to change their password after first login.</p>
+                <button onClick={()=>{ setProvisioning(null); setProvisionResult(null); }}
+                  className="w-full bg-[#0F172A] text-white py-3 rounded-xl font-bold">
+                  Done
+                </button>
+              </div>
+            ) : (
+              /* Provisioning form */
+              <div className="space-y-4">
+                <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-800">
+                  ⚠️ This will create an admin user in <strong>{provisioning.name}</strong>'s Supabase database. Make sure you have run <code className="bg-amber-100 px-1 rounded">schema_complete_client.sql</code> on their database first.
+                </div>
+                <div>
+                  <label className="block text-xs font-bold uppercase tracking-wider text-gray-500 mb-1.5">
+                    Client's Supabase Service Role Key *
+                  </label>
+                  <input
+                    type="password"
+                    value={provisionForm.db_service_key}
+                    onChange={e=>setProvisionForm(p=>({...p,db_service_key:e.target.value}))}
+                    placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+                    className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-purple-400"/>
+                  <p className="text-[10px] text-gray-400 mt-1">Found in client's Supabase → Project Settings → API → service_role key</p>
+                </div>
+                <div>
+                  <label className="block text-xs font-bold uppercase tracking-wider text-gray-500 mb-1.5">Admin Email *</label>
+                  <input
+                    value={provisionForm.admin_email}
+                    onChange={e=>setProvisionForm(p=>({...p,admin_email:e.target.value}))}
+                    placeholder="admin@clientdomain.com"
+                    className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-purple-400"/>
+                </div>
+                <div>
+                  <label className="block text-xs font-bold uppercase tracking-wider text-gray-500 mb-1.5">Admin Name</label>
+                  <input
+                    value={provisionForm.admin_name}
+                    onChange={e=>setProvisionForm(p=>({...p,admin_name:e.target.value}))}
+                    placeholder="John Smith"
+                    className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-purple-400"/>
+                </div>
+                <div className="flex gap-3 pt-2">
+                  <button onClick={()=>setProvisioning(null)}
+                    className="flex-1 border border-gray-200 py-2.5 rounded-xl text-sm font-semibold text-gray-600 hover:bg-gray-50">
+                    Cancel
+                  </button>
+                  <button onClick={runProvisioning} disabled={provisioning_loading}
+                    className="flex-1 bg-purple-600 hover:bg-purple-700 text-white py-2.5 rounded-xl text-sm font-bold disabled:opacity-50">
+                    {provisioning_loading ? '⏳ Provisioning…' : '🚀 Create Admin User'}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    )}
+    </>
   );
 }

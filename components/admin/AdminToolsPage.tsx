@@ -4,6 +4,7 @@
 import { useState, useEffect } from 'react';
 import AppearancePanel from '@/components/admin/AppearancePanel';
 import AppComposer from '@/components/admin/AppComposer';
+import SecurityConsole from '@/components/admin/SecurityConsole';
 import B2BAppComposer from '@/components/admin/B2BAppComposer';
 import TenantAdminPanel from '@/components/admin/TenantAdminPanel';
 import RetailInvoiceDesigner from '@/components/admin/RetailInvoiceDesigner';
@@ -1497,7 +1498,7 @@ export default function AdminToolsPage() {
       case 'businessUnits': return <BusinessUnitsPanel/>;
       case 'users':         return <UsersPanel/>;
       case 'groups':        return <UserGroupsPanel/>;
-      case 'security':      return <SecurityConsolePanel/>;
+      case 'security':      return <SecurityConsole/>;
       case 'workflow':      return <WorkflowBuilderPanel/>;
       case 'assignment':    return <AssignmentRulesPanel/>;
       case 'sla':           return <SLAPoliciesPanel/>;

@@ -210,19 +210,38 @@ export function AppProvider({ children, supabase = null }: { children: React.Rea
 
   const applyDataSecurity = useCallback((records: any[]) => {
     if (!currentUser) return records;
-    // Layer 1: Org/BU isolation — only see records in same org & business unit
-    const orgBuFiltered = records.filter((r: any) => {
-      const orgMatch = !r.organization_id || r.organization_id === currentUser.organization_id;
-      const buMatch  = !r.business_unit_id || r.business_unit_id === currentUser.business_unit_id;
-      return orgMatch && buMatch;
-    });
-    // Layer 2: Owner-scope — admins see all, managers see team, users see own
-    const isAdminUser = currentUserPermissions.includes('__admin__') ||
-                        (currentUser as any)?.is_admin === true;
-    const isManager   = currentUserPermissions.includes('view_team_records');
-    if (isAdminUser || isManager) return orgBuFiltered;
-    // Regular user: only their own records (or records with no owner set)
-    return orgBuFiltered.filter((r: any) =>
+    const isAdmin    = currentUserPermissions.includes('__admin__') || (currentUser as any)?.is_admin === true;
+    const dataScope  = (currentUser as any)?.data_scope || (isAdmin ? 'all' : 'own');
+    const viewAll    = currentUserPermissions.includes('view_all_records');
+    const viewTeam   = currentUserPermissions.includes('view_team_records');
+
+    // data_scope: 'all' → no filtering, 'org' → org filter, 'bu' → org+BU filter, 'own' → owner filter
+    if (isAdmin || dataScope === 'all' || viewAll) return records;
+
+    if (dataScope === 'org') {
+      return records.filter((r: any) =>
+        !r.organization_id || r.organization_id === (currentUser as any).organization_id
+      );
+    }
+
+    if (dataScope === 'bu') {
+      return records.filter((r: any) => {
+        const orgMatch = !r.organization_id || r.organization_id === (currentUser as any).organization_id;
+        const buMatch  = !r.business_unit_id || r.business_unit_id === (currentUser as any).business_unit_id;
+        return orgMatch && buMatch;
+      });
+    }
+
+    // 'own' scope or view_team_records
+    if (viewTeam) {
+      // Managers see their org's data
+      return records.filter((r: any) =>
+        !r.organization_id || r.organization_id === (currentUser as any).organization_id
+      );
+    }
+
+    // Default: own records only
+    return records.filter((r: any) =>
       !r.owner_id || r.owner_id === currentUser.id || r.owner === currentUser.email
     );
   }, [currentUser, currentUserPermissions]);
@@ -272,13 +291,30 @@ export function AppProvider({ children, supabase = null }: { children: React.Rea
     if (!supabase || !session?.user?.email) return;
     setPermissionsLoaded(false);
     const { data: userData } = await supabase
-      .from('enterprise_users').select('*, roles(id, role_name)')
+      .from('enterprise_users').select('*, roles(id, role_name, role_code, data_scope)')
       .eq('email', session.user.email).single();
-    if (!userData?.role_id) { setCurrentUserPermissions([]); setPermissionsLoaded(true); return; }
+    if (!userData?.role_id) {
+      setCurrentUserPermissions([]);
+      setPermissionsLoaded(true);
+      return;
+    }
+    // Store data_scope on currentUser for applyDataSecurity
+    if (userData.roles?.data_scope) {
+      setCurrentUser((u: any) => u ? { ...u, data_scope: userData.roles.data_scope } : u);
+    }
     const { data: rpData } = await supabase
       .from('role_permissions').select('permission_id').eq('role_id', userData.role_id);
     const ids = (rpData || []).map((x: any) => x.permission_id);
-    if (!ids.length) { setCurrentUserPermissions([]); setPermissionsLoaded(true); return; }
+    if (!ids.length) {
+      // If user is_admin, grant __admin__ even with no role permissions
+      if (userData.is_admin) {
+        setCurrentUserPermissions(['__admin__']);
+      } else {
+        setCurrentUserPermissions([]);
+      }
+      setPermissionsLoaded(true);
+      return;
+    }
     const { data: permsData } = await supabase
       .from('permissions').select('permission_code').in('id', ids);
     setCurrentUserPermissions((permsData || []).map((x: any) => x.permission_code));
