@@ -1,7 +1,7 @@
 // @ts-nocheck
 'use client';
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { AppProvider, useApp } from '@/context/AppContext';
 import { TenantProvider, useTenant } from '@/context/TenantContext';
 import Sidebar from '@/components/layout/Sidebar';
