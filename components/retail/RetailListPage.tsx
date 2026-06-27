@@ -920,24 +920,22 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo }) 
       placeholder="Search customers..." emptyLabel="No customer"
     />;
     if (field.type === 'retailInvoiceTemplate') {
-      // Only available in detail panel context (not create modal)
-      if (typeof selectedTemplateId === 'undefined') return null;
+      // Only available in detail panel context where these vars are defined
+      if (typeof selectedTemplateId === 'undefined' || typeof invoiceTemplates === 'undefined') return null;
       return (
         <select
-          value={selectedTemplateId}
+          value={selectedTemplateId||''}
           onChange={e => {
             setSelectedTemplateId(e.target.value);
             set('invoice_template_id', e.target.value);
           }}
           className={sCls}>
-          {invoiceTemplates.length === 0
-            ? <option value="">No templates — create one in Admin Tools → B2C Retail → Invoice Template</option>
-            : invoiceTemplates.map(t => (
-                <option key={t.id} value={t.id}>
-                  {t.name}{t.is_default ? ' ★ Default' : ''}
-                </option>
-              ))
-          }
+          <option value="">Select template...</option>
+          {(invoiceTemplates||[]).map(t => (
+            <option key={t.id} value={t.id}>
+              {t.name}{t.is_default ? ' ★ Default' : ''}
+            </option>
+          ))}
         </select>
       );
     }
@@ -1319,24 +1317,22 @@ function RetailCreateModal({ page, open, onClose, onCreated }) {
       placeholder="Search customers..." emptyLabel="No customers — type to create new"
     />;
     if (field.type === 'retailInvoiceTemplate') {
-      // Only available in detail panel context (not create modal)
-      if (typeof selectedTemplateId === 'undefined') return null;
+      // Only available in detail panel context where these vars are defined
+      if (typeof selectedTemplateId === 'undefined' || typeof invoiceTemplates === 'undefined') return null;
       return (
         <select
-          value={selectedTemplateId}
+          value={selectedTemplateId||''}
           onChange={e => {
             setSelectedTemplateId(e.target.value);
             set('invoice_template_id', e.target.value);
           }}
           className={sCls}>
-          {invoiceTemplates.length === 0
-            ? <option value="">No templates — create one in Admin Tools → B2C Retail → Invoice Template</option>
-            : invoiceTemplates.map(t => (
-                <option key={t.id} value={t.id}>
-                  {t.name}{t.is_default ? ' ★ Default' : ''}
-                </option>
-              ))
-          }
+          <option value="">Select template...</option>
+          {(invoiceTemplates||[]).map(t => (
+            <option key={t.id} value={t.id}>
+              {t.name}{t.is_default ? ' ★ Default' : ''}
+            </option>
+          ))}
         </select>
       );
     }
@@ -1379,30 +1375,6 @@ function RetailCreateModal({ page, open, onClose, onCreated }) {
                 {errors[f.key] && <p className="text-xs text-red-500 mt-1">{errors[f.key]}</p>}
               </div>
             ))}
-          </div>
-
-          {/* System Information */}
-          <div className="bg-white rounded-[20px] border border-gray-100 shadow-sm">
-            <div className="px-5 py-3 bg-gradient-to-r from-gray-50 to-slate-50 border-b border-gray-100 rounded-t-[20px]">
-              <h3 className="font-bold text-gray-500 text-sm flex items-center gap-2">⚙️ System Information</h3>
-            </div>
-            <div className="p-5 grid grid-cols-2 sm:grid-cols-4 gap-4 text-sm">
-              {[
-                { l:'Record ID',    v: edited.id?.slice(0,16)+'...' },
-                { l:'Display #',    v: edited.display_number ? (PAGE_DISPLAY_PREFIX[page]||'REC')+'-'+String(edited.display_number).padStart(5,'0') : '-' },
-                { l:'Created At',   v: edited.created_at ? new Date(edited.created_at).toLocaleString('en-IN',{day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}) : '-' },
-                { l:'Updated At',   v: edited.updated_at ? new Date(edited.updated_at).toLocaleString('en-IN',{day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}) : '-' },
-                { l:'Owner',        v: edited.owner || '-' },
-                { l:'Status',       v: edited.status || '-' },
-                { l:'Currency',     v: edited.currency || '-' },
-                { l:'Created By',   v: edited.created_by || edited.owner || '-' },
-              ].map(f => (
-                <div key={f.l}>
-                  <div className="text-xs font-bold uppercase tracking-wider text-gray-400 mb-1">{f.l}</div>
-                  <div className="text-[#0F172A] font-medium text-xs break-all">{f.v}</div>
-                </div>
-              ))}
-            </div>
           </div>
 
           {/* Additional Information — custom fields shown on create */}
