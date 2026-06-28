@@ -936,12 +936,44 @@ export function AppProvider({ children, supabase = null }: { children: React.Rea
     await fetchBusinessUnits();
   };
 
-  const saveEnterpriseUser = async (data: any, editingId?: string) => {
+  const saveEnterpriseUser = async (data: any, editingId?: string, password?: string) => {
     if (!supabase) return;
     if (editingId) {
+      // Update existing enterprise user
       await supabase.from('enterprise_users').update(data).eq('id', editingId);
     } else {
-      await supabase.from('enterprise_users').insert([data]);
+      // Create new user — call provision API to create auth user + enterprise_user
+      if (password && data.email) {
+        try {
+          const res = await fetch('/api/tenant/provision', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              db_url:         process.env.NEXT_PUBLIC_SUPABASE_URL,
+              db_service_key: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY, // will use service key server-side
+              admin_email:    data.email,
+              admin_name:     `${data.first_name||''} ${data.last_name||''}`.trim(),
+              tenant_name:    'User',
+              use_custom_password: password,
+            }),
+          });
+          const json = await res.json();
+          if (json.auth_user_id) {
+            // Insert enterprise_user with auth_user_id from provision
+            await supabase.from('enterprise_users').insert([{
+              ...data,
+              auth_user_id: json.auth_user_id,
+              temporary_password: password,
+            }]);
+          } else {
+            await supabase.from('enterprise_users').insert([data]);
+          }
+        } catch(e) {
+          await supabase.from('enterprise_users').insert([data]);
+        }
+      } else {
+        await supabase.from('enterprise_users').insert([data]);
+      }
     }
     await fetchEnterpriseUsers();
   };

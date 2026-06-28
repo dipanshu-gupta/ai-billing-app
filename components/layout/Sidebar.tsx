@@ -51,15 +51,25 @@ export default function Sidebar({ activePage, setActivePage, collapsed, setColla
     return () => document.removeEventListener('mousedown', handler);
   }, [collapsed, setCollapsed]);
 
+  const isAdmin = currentUserPermissions.includes('__admin__') || currentUser?.is_admin === true;
+  const b2cMode = appPreferences?.b2c_mode === true;
+
   const canSee = (item) => {
-    // requiresCRM items hide entirely when CRM/B2B mode is off (B2C mode active)
-    if (item.requiresCRM && appPreferences?.b2c_mode === true) return false;
-    // requiresB2C items only show when CRM/B2B mode is off (B2C mode active)
-    if (item.requiresB2C && appPreferences?.b2c_mode !== true) return false;
+    // Admins always see everything
+    if (isAdmin) {
+      // B2C mode: hide CRM items, show retail
+      if (item.requiresCRM && b2cMode) return false;
+      if (item.requiresB2C && !b2cMode) return false;
+      return true;
+    }
+    // Non-admin: check mode
+    if (item.requiresCRM && b2cMode) return false;
+    if (item.requiresB2C && !b2cMode) return false;
     if (item.requiresCPQ && appPreferences?.cpq_enabled === false) return false;
+    // No permission required
     if (!item.permission) return true;
-    if (!permissionsLoaded) return true;
-    if (currentUserPermissions.includes('__admin__')) return true;
+    // Wait for permissions to load
+    if (!permissionsLoaded) return false;
     return currentUserPermissions.includes(item.permission);
   };
 

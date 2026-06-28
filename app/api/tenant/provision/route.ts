@@ -79,11 +79,21 @@ export async function POST(req: NextRequest) {
 
   const firstName    = admin_name?.split(' ')[0] || 'System';
   const lastName     = admin_name?.split(' ').slice(1).join(' ') || 'Administrator';
+  // Use custom password if provided, otherwise generate one
   const chars        = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   const rand         = Array.from({length:8}, ()=>chars[Math.floor(Math.random()*chars.length)]).join('');
-  const tempPassword = `Bpro@${rand}!`;
+  const tempPassword = body.use_custom_password || `Bpro@${rand}!`;
 
-  const client = createClient(db_url, db_service_key, {
+  // If no service key provided, use the server-side one
+  const effectiveServiceKey = db_service_key
+    || process.env.SUPABASE_SERVICE_KEY
+    || process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+  if (!effectiveServiceKey) {
+    return NextResponse.json({ error: 'No service key available' }, { status: 500 });
+  }
+
+  const client = createClient(db_url || process.env.NEXT_PUBLIC_SUPABASE_URL!, effectiveServiceKey, {
     auth: { autoRefreshToken: false, persistSession: false }
   });
 
