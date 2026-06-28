@@ -32,7 +32,7 @@ const BOTTOM_ITEMS = [
   { key:'invoices',   label:'invoices',    icon:'🧾', permission:'invoices_view', requiresCRM:true },
   { key:'reports',    label:'reports',     icon:'⚡', permission:null },
   { key:'approvals',  label:'approvals',   icon:'✅', permission:null, requiresCRM:true },
-  { key:'adminTools', label:'adminTools',  icon:'⚙️', permission:'admin_tools_view' },
+  { key:'adminTools', label:'adminTools',  icon:'⚙️', permission:'__admin__' },
 ];
 
 export default function Sidebar({ activePage, setActivePage, collapsed, setCollapsed }) {
