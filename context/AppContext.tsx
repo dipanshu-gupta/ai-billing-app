@@ -317,7 +317,12 @@ export function AppProvider({ children, supabase = null }: { children: React.Rea
     }
     const { data: permsData } = await supabase
       .from('permissions').select('permission_code').in('id', ids);
-    setCurrentUserPermissions((permsData || []).map((x: any) => x.permission_code));
+    const codes = (permsData || []).map((x: any) => x.permission_code);
+    // Always inject __admin__ if user has is_admin flag, regardless of DB permissions
+    if (userData.is_admin && !codes.includes('__admin__')) {
+      codes.push('__admin__');
+    }
+    setCurrentUserPermissions(codes);
     setPermissionsLoaded(true);
   };
 

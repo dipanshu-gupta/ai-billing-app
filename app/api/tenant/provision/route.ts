@@ -58,9 +58,10 @@ async function ensureSysadminRole(client) {
     const { data: allPerms } = await client.from('permissions').select('id');
     if (allPerms?.length) {
       const rps = allPerms.map(p => ({ role_id: role.id, permission_id: p.id }));
-      // Insert in batches of 50
+      // Delete first to avoid any constraint issues, then insert in batches
+      await client.from('role_permissions').delete().eq('role_id', role.id);
       for (let i = 0; i < rps.length; i += 50) {
-        await client.from('role_permissions').upsert(rps.slice(i, i+50), { onConflict: 'role_id,permission_id' }).select();
+        await client.from('role_permissions').insert(rps.slice(i, i+50));
       }
     }
   }
