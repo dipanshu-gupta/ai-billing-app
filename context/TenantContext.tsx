@@ -79,8 +79,15 @@ export function TenantProvider({ children }: { children: React.ReactNode }) {
         const client = getTenantSupabaseClient(resolved);
         setTenant(resolved);
         setSupabase(client);
-        // Expose client globally for useCustomFields hook
-        if (typeof window !== 'undefined') (window as any).__bp_supabase = client;
+        // Expose client + tenant info globally
+        if (typeof window !== 'undefined') {
+          (window as any).__bp_supabase = client;
+          (window as any).__bp_tenant = {
+            slug:           resolved.slug,
+            db_url:         resolved.db_url  || null,
+            // Never expose service key to window — server API uses env vars
+          };
+        }
       } catch (e) {
         console.error('[TenantProvider] Resolution failed, using demo:', e);
         const client = getTenantSupabaseClient(DEMO_TENANT);

@@ -940,38 +940,45 @@ export function AppProvider({ children, supabase = null }: { children: React.Rea
     if (!supabase) return;
     if (editingId) {
       // Update existing enterprise user
-      await supabase.from('enterprise_users').update(data).eq('id', editingId);
+      const { error } = await supabase.from('enterprise_users').update(data).eq('id', editingId);
+      if (error) { alert('Update failed: ' + error.message); return; }
     } else {
-      // Create new user — call provision API to create auth user + enterprise_user
-      if (password && data.email) {
-        try {
-          const res = await fetch('/api/tenant/provision', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              db_url:         process.env.NEXT_PUBLIC_SUPABASE_URL,
-              db_service_key: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY, // will use service key server-side
-              admin_email:    data.email,
-              admin_name:     `${data.first_name||''} ${data.last_name||''}`.trim(),
-              tenant_name:    'User',
-              use_custom_password: password,
-            }),
-          });
-          const json = await res.json();
-          if (json.auth_user_id) {
-            // Insert enterprise_user with auth_user_id from provision
-            await supabase.from('enterprise_users').insert([{
-              ...data,
-              auth_user_id: json.auth_user_id,
-              temporary_password: password,
-            }]);
-          } else {
-            await supabase.from('enterprise_users').insert([data]);
-          }
-        } catch(e) {
-          await supabase.from('enterprise_users').insert([data]);
+      // Create new user — must create Supabase Auth user first via server API
+      if (!password || !data.email) {
+        alert('Email and password are required to create a user.');
+        return;
+      }
+      try {
+        const tenantInfo = (window as any).__bp_tenant;
+        const res = await fetch('/api/users/create', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            email:            data.email,
+            password,
+            first_name:       data.first_name || '',
+            last_name:        data.last_name  || '',
+            role_id:          data.role_id    || null,
+            designation:      data.designation|| '',
+            organization_id:  data.organization_id || null,
+            business_unit_id: data.business_unit_id || null,
+            status:           data.status     || 'Active',
+            is_admin:         data.is_admin   || false,
+            db_url:           tenantInfo?.db_url || null,
+          }),
+        });
+        const json = await res.json();
+        if (res.ok && json.success) {
+          // Auth user created successfully — enterprise_user already created by API
+          await fetchEnterpriseUsers();
+          return;
         }
-      } else {
+        // API failed (e.g. no service key) — fall back to inserting enterprise_user only
+        console.warn('[saveEnterpriseUser] API failed, falling back:', json.error);
+        await supabase.from('enterprise_users').insert([data]);
+      } catch(e: any) {
+        // Network error — fall back to direct insert
+        console.warn('[saveEnterpriseUser] fetch failed, falling back:', e.message);
         await supabase.from('enterprise_users').insert([data]);
       }
     }
