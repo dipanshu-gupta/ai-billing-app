@@ -77,6 +77,14 @@ const ACTION_TYPES = [
   {v:'send_email',l:'Send Email'},
 ];
 
+const TRIGGER_EVENTS = [
+  {v:'on_create',       l:'When record is Created'},
+  {v:'on_update',       l:'When record is Updated'},
+  {v:'on_delete',       l:'When record is Deleted'},
+  {v:'on_status_change',l:'When Status changes'},
+  {v:'on_field_change', l:'When Field changes'},
+];
+
 // ─── Label helper ─────────────────────────────────────────────────────────────
 const L = ({t}) => <label className="text-xs font-bold uppercase tracking-wider text-gray-400 block mb-1.5">{t}</label>;
 
@@ -286,7 +294,44 @@ function UsersPanel() {
       if (password.length < 6) { alert('Password must be at least 6 characters.'); return; }
     }
     setSaving(true);
-    await saveEnterpriseUser(form, editing?.id, password);
+    if (editing) {
+      if (editing.auth_user_id && password && password.length >= 6) {
+        // Has auth — reset password only
+        await adminResetPassword(editing.auth_user_id, password);
+      } else if (!editing.auth_user_id && password && password.length >= 6) {
+        // No auth — call /api/users/create directly to create auth + link
+        const tenant = (window as any).__bp_tenant || {};
+        try {
+          const res = await fetch('/api/users/create', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              email:      form.email,
+              password,
+              first_name: form.first_name || '',
+              last_name:  form.last_name  || '',
+              role_id:    form.role_id    || null,
+              is_admin:   form.is_admin   || false,
+              status:     form.status     || 'Active',
+              db_url:     tenant.db_url   || null,
+            }),
+          });
+          const json = await res.json();
+          if (json.success && json.auth_user_id) {
+            // Update enterprise_user with auth_user_id
+            await saveEnterpriseUser({ ...form, auth_user_id: json.auth_user_id }, editing.id, undefined);
+            setSaving(false); setOpen(false); setPassword(''); setConfirmPassword('');
+            return;
+          } else {
+            alert('Failed to create auth: ' + (json.error || 'Unknown'));
+          }
+        } catch(e: any) { alert('Error: ' + e.message); }
+      }
+      // Normal update
+      await saveEnterpriseUser(form, editing.id, undefined);
+    } else {
+      await saveEnterpriseUser(form, undefined, password);
+    }
     setSaving(false);
     setOpen(false);
     setPassword('');
@@ -403,8 +448,35 @@ function UsersPanel() {
           {editing && (
             <div className={`rounded-2xl p-4 ${editing.auth_user_id?'bg-green-50 border border-green-200':'bg-yellow-50 border border-yellow-200'}`}>
               {editing.auth_user_id
-                ? <p className="text-sm text-green-700">✅ This user has a linked Supabase Auth account (<span className="font-mono text-xs">{editing.auth_user_id}</span>). Use the <strong>Reset PW</strong> button in the table to change their password.</p>
-                : <p className="text-sm text-yellow-700">⚠️ This user has no linked auth account. Use the password field below and click Save to create their login.</p>
+                ? <div className="space-y-2">
+                    <p className="text-sm text-green-700">✅ Linked auth account: <span className="font-mono text-xs">{editing.auth_user_id?.slice(0,16)}...</span></p>
+                    <div>
+                      <label className="block text-xs font-bold uppercase tracking-wider text-gray-500 mb-1">Reset Password (optional)</label>
+                      <div className="flex gap-2">
+                        <input type="password" value={password} onChange={e=>setPassword(e.target.value)}
+                          placeholder="New password (leave blank to keep current)"
+                          className="flex-1 border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-blue-400"/>
+                        <button onClick={async()=>{
+                          if(!password){alert('Enter a new password');return;}
+                          if(password.length<6){alert('Min 6 characters');return;}
+                          await adminResetPassword(editing.auth_user_id, password);
+                          setPassword('');
+                          alert('✓ Password reset successfully');
+                        }} className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-sm font-bold whitespace-nowrap">
+                          Reset PW
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                : <div className="space-y-2">
+                    <p className="text-sm text-yellow-700">⚠️ No auth account — set a password to create login access.</p>
+                    <div>
+                      <label className="block text-xs font-bold uppercase tracking-wider text-gray-500 mb-1">Set Password *</label>
+                      <input type="password" value={password} onChange={e=>setPassword(e.target.value)}
+                        placeholder="Set login password"
+                        className="w-full border border-yellow-300 rounded-xl px-3 py-2 text-sm text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-yellow-400"/>
+                    </div>
+                  </div>
               }
             </div>
           )}
@@ -579,832 +651,128 @@ function SecurityConsolePanel() {
 }
 
 // ═══════════════════════════ WORKFLOW BUILDER ══════════════════════════════════
-function WorkflowBuilderPanel({ objectList = ALL_OBJECTS, conditionFields = CONDITION_FIELDS, objectLabels = null }) {
-  const { workflowRules, enterpriseUsers, saveWorkflowRule, deleteWorkflowRule } = useApp();
-  const [open, setOpen] = useState(false);
-  const [editing, setEditing] = useState(null);
-  const [form, setForm] = useState({ object_type:'leads', trigger_event:'on_create', is_active:true });
-  const [actions, setActions] = useState([{ action_type:'send_notification', action_config:{} }]);
-  const s = (k,v)=>setForm(f=>({...f,[k]:v}));
+// ── Shared condition builder ─────────────────────────────────────────────────
 
-  const openNew = ()=>{
-    setEditing(null);
-    setForm({object_type:'leads',trigger_event:'on_create',is_active:true});
-    setActions([{action_type:'send_notification',action_config:{}}]);
-    setOpen(true);
-  };
-
-  const updateAction = (idx,updated)=>setActions(prev=>prev.map((a,i)=>i===idx?updated:a));
-  const removeAction = idx=>setActions(prev=>prev.filter((_,i)=>i!==idx));
-  const addAction = ()=>setActions(prev=>[...prev,{action_type:'send_notification',action_config:{}}]);
-
-  const handleSave = async()=>{
-    if(!form.name?.trim()){alert('Rule name is required.');return;}
-    if(!actions.some(a=>a.action_type)){alert('At least one action is required.');return;}
-    try{
-      await saveWorkflowRule(form,actions,editing?.id);
-      setOpen(false);
-    }catch(e){alert('Save failed: '+(e?.message||'Unknown error'));}
-  };
-
-  const condFields = conditionFields[form.object_type]||[];
-  const triggerFieldOpts = getFieldOptions(form.object_type, form.trigger_field);
-
+function ConditionRow({ fields, condition, onChange, onRemove, users }) {
+  const opts = getFieldOptions(null, condition.field);
+  const noValue = ['is_empty','is_not_empty'].includes(condition.operator);
   return (
-    <div className="space-y-5">
-      <div className="flex items-center justify-between">
-        <div><h2 className="text-2xl font-bold text-[#0F172A]">Workflow Rules</h2><p className="text-gray-500 text-sm">{workflowRules.length} rule(s) — auto-trigger actions on record events</p></div>
-        <button onClick={openNew} className="bg-gradient-to-r from-[#0F172A] to-blue-800 text-white px-5 py-2.5 rounded-2xl font-semibold text-sm shadow-lg hover:opacity-90">+ New Rule</button>
-      </div>
-
-      {workflowRules.length===0
-        ? <div className="py-16 text-center bg-white rounded-[24px] border border-blue-100 shadow"><div className="text-5xl mb-3">⚙️</div><div className="font-bold text-[#0F172A] text-lg mb-2">No workflow rules yet</div><p className="text-gray-400 mb-5">Create rules to automate notifications, field updates, and status changes.</p><button onClick={openNew} className="bg-gradient-to-r from-[#0F172A] to-blue-800 text-white px-6 py-3 rounded-2xl font-semibold text-sm">+ Create First Rule</button></div>
-        : <div className="space-y-3">
-            {workflowRules.map(rule=>(
-              <div key={rule.id} className="bg-white border border-blue-100 rounded-2xl p-5 shadow-sm">
-                <div className="flex items-start justify-between">
-                  <div>
-                    <div className="flex items-center gap-3 mb-1">
-                      <h3 className="font-bold text-[#0F172A] text-lg">{rule.name}</h3>
-                      <span className={`px-2.5 py-0.5 rounded-full text-xs font-semibold ${rule.is_active?'bg-green-100 text-green-700':'bg-gray-100 text-gray-500'}`}>{rule.is_active?'Active':'Inactive'}</span>
-                    </div>
-                    <div className="text-sm text-gray-500">
-                      Object: <span className="font-medium text-[#0F172A]">{rule.object_type}</span> · Trigger: <span className="font-medium text-[#0F172A]">{rule.trigger_event}</span>
-                      {rule.trigger_field&&<span> · When <span className="font-medium text-[#0F172A]">{rule.trigger_field}</span> = <span className="font-medium text-[#0F172A]">{rule.trigger_value}</span></span>}
-                    </div>
-                    {rule.description&&<div className="text-xs text-gray-400 mt-1">{rule.description}</div>}
-                  </div>
-                  <div className="flex gap-2 flex-shrink-0">
-                    <button onClick={async()=>{
-                      setEditing(rule);setForm({...rule});
-                      // Load saved actions from DB
-                      const {supabase:sb}=await import('@/lib/supabase');
-                      if(sb){
-                        const{data:acts}=await sb.from('workflow_actions').select('*').eq('workflow_rule_id',rule.id).order('execution_order');
-                        setActions(acts?.length?acts.map(a=>({action_type:a.action_type,action_config:a.action_config||{}})):[{action_type:'send_notification',action_config:{}}]);
-                      }
-                      setOpen(true);
-                    }} className="bg-blue-100 hover:bg-blue-200 text-blue-700 px-4 py-2 rounded-xl text-sm font-semibold">Edit</button>
-                    <button onClick={()=>deleteWorkflowRule(rule.id)} className="bg-red-100 hover:bg-red-200 text-red-600 px-4 py-2 rounded-xl text-sm font-semibold">Delete</button>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-      }
-
-      <Modal open={open} onClose={()=>setOpen(false)} title={editing?'Edit Workflow Rule':'New Workflow Rule'} size="xl"
-        footer={<><button onClick={()=>setOpen(false)} className="px-5 py-2.5 rounded-2xl border border-blue-200 text-sm font-semibold">Cancel</button><button onClick={handleSave} className="px-5 py-2.5 bg-gradient-to-r from-[#0F172A] to-blue-800 text-white rounded-2xl text-sm font-semibold">Save Rule</button></>}>
-        <div className="space-y-6">
-          {/* Rule basics */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="col-span-2"><L t="Rule Name *"/><input value={form.name||''} onChange={e=>s('name',e.target.value)} placeholder="e.g. Notify manager on new lead" className={iCls}/></div>
-            <div className="col-span-2"><L t="Description"/><input value={form.description||''} onChange={e=>s('description',e.target.value)} placeholder="Optional description" className={iCls}/></div>
-
-            <div>
-              <L t="Object Type"/>
-              <select value={form.object_type||'leads'} onChange={e=>s('object_type',e.target.value)} className={sCls}>
-                {objectList.map(o=><option key={o} value={o}>{objectLabels?.[o]||o}</option>)}
-              </select>
-            </div>
-            <div>
-              <L t="Trigger Event"/>
-              <select value={form.trigger_event||'on_create'} onChange={e=>s('trigger_event',e.target.value)} className={sCls}>
-                <option value="on_create">On Create</option>
-                <option value="on_update">On Update</option>
-                <option value="on_status_change">On Status Change</option>
-                <option value="on_delete">On Delete</option>
-              </select>
-            </div>
-
-            {/* Trigger condition (optional) */}
-            {(form.trigger_event==='on_update'||form.trigger_event==='on_status_change')&&(
-              <>
-                <div>
-                  <L t="Trigger Field (optional)"/>
-                  <select value={form.trigger_field||''} onChange={e=>s('trigger_field',e.target.value)} className={sCls}>
-                    <option value="">Any field</option>
-                    {condFields.map(f=><option key={f.v} value={f.v}>{f.l}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <L t="Trigger Value (optional)"/>
-                  {triggerFieldOpts
-                    ? <select value={form.trigger_value||''} onChange={e=>s('trigger_value',e.target.value)} className={sCls}><option value="">Any value</option>{triggerFieldOpts.map(o=><option key={o}>{o}</option>)}</select>
-                    : <input value={form.trigger_value||''} onChange={e=>s('trigger_value',e.target.value)} placeholder="Value that triggers rule" className={iCls}/>
-                  }
-                </div>
-              </>
-            )}
-
-            <div>
-              <L t="Active"/>
-              <select value={form.is_active?'Yes':'No'} onChange={e=>s('is_active',e.target.value==='Yes')} className={sCls}>
-                <option>Yes</option><option>No</option>
-              </select>
-            </div>
-          </div>
-
-          {/* Actions */}
-          <div>
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="font-bold text-[#0F172A] text-lg">Actions <span className="text-gray-400 font-normal text-sm ml-1">({actions.length})</span></h3>
-              <button onClick={addAction} className="bg-blue-100 hover:bg-blue-200 text-blue-700 px-4 py-2 rounded-xl text-sm font-semibold">+ Add Action</button>
-            </div>
-            <div className="space-y-4">
-              {actions.map((action,idx)=>(
-                <ActionConfig key={idx} action={action} idx={idx} objType={form.object_type||'leads'} onUpdate={updateAction} onRemove={removeAction} users={enterpriseUsers} conditionFields={conditionFields}/>
-              ))}
-            </div>
-          </div>
-        </div>
-      </Modal>
+    <div className="flex items-center gap-2 flex-wrap">
+      <select value={condition.field||''} onChange={e=>onChange({...condition,field:e.target.value,value:''})}
+        className="border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-900 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400 min-w-[140px]">
+        <option value="">Select field...</option>
+        {fields.map(f=><option key={f.v} value={f.v}>{f.l}</option>)}
+      </select>
+      <select value={condition.operator||'equals'} onChange={e=>onChange({...condition,operator:e.target.value})}
+        className="border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-900 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400">
+        {OPERATORS.map(o=><option key={o.v} value={o.v}>{o.l}</option>)}
+      </select>
+      {!noValue && (
+        opts
+          ? <select value={condition.value||''} onChange={e=>onChange({...condition,value:e.target.value})}
+              className="border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-900 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400 min-w-[140px]">
+              <option value="">Select value...</option>
+              {opts.map(o=><option key={o} value={o}>{o}</option>)}
+            </select>
+          : <input value={condition.value||''} onChange={e=>onChange({...condition,value:e.target.value})}
+              placeholder="Value..." className="border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-900 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400 min-w-[140px]"/>
+      )}
+      <button onClick={onRemove} className="w-7 h-7 flex items-center justify-center text-red-400 hover:text-red-600 hover:bg-red-50 rounded-lg text-lg">×</button>
     </div>
   );
 }
 
-// ═══════════════════════════ ASSIGNMENT RULES ══════════════════════════════════
-function AssignmentRulesPanel({ objectList = ALL_OBJECTS, conditionFields = CONDITION_FIELDS, objectLabels = null }) {
-  const { assignmentRules, enterpriseUsers, userGroups, saveAssignmentRule, deleteAssignmentRule } = useApp();
-  const [open, setOpen] = useState(false);
-  const [editing, setEditing] = useState(null);
-  const [form, setForm] = useState({ object_type:'leads', condition_operator:'equals', priority:1, is_active:true });
-  const s = (k,v)=>setForm(f=>({...f,[k]:v}));
-
-  const condFields = conditionFields[form.object_type]||[];
-  const valueOpts = getFieldOptions(form.object_type, form.condition_field);
-
-  const handleSave = async()=>{
-    if(!form.name?.trim()){alert('Rule name is required.');return;}
-    if(!form.condition_field){alert('Condition field is required.');return;}
-    if(!form.assign_to_user_id&&!form.assign_to_group_id){alert('Select a user or group to assign to.');return;}
-    try{
-      await saveAssignmentRule(form,editing?.id);
-      setOpen(false);
-    }catch(e){alert('Save failed: '+(e?.message||'Unknown error'));}
-  };
-
-  return (
-    <div className="space-y-5">
-      <div className="flex items-center justify-between">
-        <div><h2 className="text-2xl font-bold text-[#0F172A]">Assignment Rules</h2><p className="text-gray-500 text-sm">{assignmentRules.length} rule(s) — auto-assign records to users or groups</p></div>
-        <button onClick={()=>{setEditing(null);setForm({object_type:'leads',condition_operator:'equals',priority:1,is_active:true});setOpen(true);}} className="bg-gradient-to-r from-[#0F172A] to-blue-800 text-white px-5 py-2.5 rounded-2xl font-semibold text-sm shadow-lg hover:opacity-90">+ New Rule</button>
-      </div>
-
-      {assignmentRules.length===0
-        ? <div className="py-16 text-center bg-white rounded-[24px] border border-blue-100 shadow"><div className="text-5xl mb-3">📋</div><div className="font-bold text-[#0F172A] text-lg mb-2">No assignment rules yet</div><p className="text-gray-400 mb-5">Auto-assign records to users or groups based on field conditions.</p><button onClick={()=>{setEditing(null);setForm({object_type:'leads',condition_operator:'equals',priority:1,is_active:true});setOpen(true);}} className="bg-gradient-to-r from-[#0F172A] to-blue-800 text-white px-6 py-3 rounded-2xl font-semibold text-sm">+ Create First Rule</button></div>
-        : <div className="space-y-3">
-            {[...assignmentRules].sort((a,b)=>a.priority-b.priority).map(rule=>{
-              const assignee=enterpriseUsers.find(u=>u.id===rule.assign_to_user_id);
-              const grp=userGroups.find(g=>g.id===rule.assign_to_group_id);
-              return (
-                <div key={rule.id} className="bg-white border border-blue-100 rounded-2xl p-5 shadow-sm flex items-center justify-between">
-                  <div>
-                    <div className="flex items-center gap-3 mb-1">
-                      <div className="w-8 h-8 rounded-xl bg-blue-100 text-blue-700 flex items-center justify-center font-bold text-sm">P{rule.priority}</div>
-                      <h3 className="font-bold text-[#0F172A] text-lg">{rule.name}</h3>
-                      <span className={`px-2.5 py-0.5 rounded-full text-xs font-semibold ${rule.is_active?'bg-green-100 text-green-700':'bg-gray-100 text-gray-500'}`}>{rule.is_active?'Active':'Inactive'}</span>
-                    </div>
-                    <div className="text-sm text-gray-500">
-                      <span className="font-medium text-[#0F172A]">{rule.object_type}</span>: If <span className="font-medium text-[#0F172A]">{rule.condition_field}</span> {rule.condition_operator} <span className="font-medium text-[#0F172A]">"{rule.condition_value}"</span>
-                      {' → '}Assign to <span className="font-medium text-[#0F172A]">{assignee?`${assignee.first_name} ${assignee.last_name}`:grp?.group_name||'—'}</span>
-                    </div>
-                  </div>
-                  <div className="flex gap-2">
-                    <button onClick={async()=>{
-                      setEditing(rule);setForm({...rule});
-                      // Load saved actions from DB
-                      const {supabase:sb}=await import('@/lib/supabase');
-                      if(sb){
-                        const{data:acts}=await sb.from('workflow_actions').select('*').eq('workflow_rule_id',rule.id).order('execution_order');
-                        setActions(acts?.length?acts.map(a=>({action_type:a.action_type,action_config:a.action_config||{}})):[{action_type:'send_notification',action_config:{}}]);
-                      }
-                      setOpen(true);
-                    }} className="bg-blue-100 hover:bg-blue-200 text-blue-700 px-4 py-2 rounded-xl text-sm font-semibold">Edit</button>
-                    <button onClick={()=>deleteAssignmentRule(rule.id)} className="bg-red-100 hover:bg-red-200 text-red-600 px-4 py-2 rounded-xl text-sm font-semibold">Delete</button>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-      }
-
-      <Modal open={open} onClose={()=>setOpen(false)} title={editing?'Edit Assignment Rule':'New Assignment Rule'} size="lg"
-        footer={<><button onClick={()=>setOpen(false)} className="px-5 py-2.5 rounded-2xl border border-blue-200 text-sm font-semibold">Cancel</button><button onClick={handleSave} className="px-5 py-2.5 bg-gradient-to-r from-[#0F172A] to-blue-800 text-white rounded-2xl text-sm font-semibold">Save Rule</button></>}>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div className="col-span-2"><L t="Rule Name *"/><input value={form.name||''} onChange={e=>s('name',e.target.value)} placeholder="e.g. Assign website leads to sales team" className={iCls}/></div>
-
-          <div>
-            <L t="Object Type"/>
-            <select value={form.object_type||'leads'} onChange={e=>{s('object_type',e.target.value);s('condition_field','');s('condition_value','');}} className={sCls}>
-              {objectList.map(o=><option key={o} value={o}>{objectLabels?.[o]||o}</option>)}
-            </select>
-          </div>
-          <div><L t="Priority (1 = highest)"/><input type="number" min={1} value={form.priority||1} onChange={e=>s('priority',Number(e.target.value))} className={iCls}/></div>
-
-          <div className="col-span-2 bg-blue-50 rounded-2xl p-4 space-y-3">
-            <h4 className="font-bold text-[#0F172A] text-sm">Condition — When this is true, apply the rule</h4>
-            <div className="grid grid-cols-3 gap-3">
-              <div>
-                <L t="Field"/>
-                <select value={form.condition_field||''} onChange={e=>{s('condition_field',e.target.value);s('condition_value','');}} className={sCls}>
-                  <option value="">Select field</option>
-                  {condFields.map(f=><option key={f.v} value={f.v}>{f.l}</option>)}
-                </select>
-              </div>
-              <div>
-                <L t="Operator"/>
-                <select value={form.condition_operator||'equals'} onChange={e=>s('condition_operator',e.target.value)} className={sCls}>
-                  {OPERATORS.map(o=><option key={o.v} value={o.v}>{o.l}</option>)}
-                </select>
-              </div>
-              <div>
-                <L t="Value"/>
-                <ConditionValue objType={form.object_type} field={form.condition_field} value={form.condition_value||''} onChange={v=>s('condition_value',v)}/>
-              </div>
-            </div>
-          </div>
-
-          <div className="col-span-2 bg-green-50 rounded-2xl p-4 space-y-3">
-            <h4 className="font-bold text-[#0F172A] text-sm">Assignment — Assign the record to</h4>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <L t="User (Owner)"/>
-                <select value={form.assign_to_user_id||''} onChange={e=>s('assign_to_user_id',e.target.value)} className={sCls}>
-                  <option value="">Select user</option>
-                  {enterpriseUsers.map(u=><option key={u.id} value={u.id}>{u.first_name} {u.last_name} — {u.email}</option>)}
-                </select>
-              </div>
-              <div>
-                <L t="Group"/>
-                <select value={form.assign_to_group_id||''} onChange={e=>s('assign_to_group_id',e.target.value)} className={sCls}>
-                  <option value="">Select group</option>
-                  {userGroups.map(g=><option key={g.id} value={g.id}>{g.group_name}</option>)}
-                </select>
-              </div>
-            </div>
-          </div>
-
-          <div><L t="Active"/><select value={form.is_active?'Yes':'No'} onChange={e=>s('is_active',e.target.value==='Yes')} className={sCls}><option>Yes</option><option>No</option></select></div>
-        </div>
-      </Modal>
-    </div>
-  );
-}
-
-// ═══════════════════════════ SLA POLICIES ════════════════════════════════════
-function SLAPoliciesPanel({ objectList = ALL_OBJECTS, conditionFields = CONDITION_FIELDS, objectLabels = null }) {
-  const { slaPolicies, enterpriseUsers, userGroups, saveSLAPolicy, deleteSLAPolicy } = useApp();
-  const [open, setOpen] = useState(false);
-  const [editing, setEditing] = useState(null);
-  const [form, setForm] = useState({ object_type:'leads', response_time_hours:2, resolution_time_hours:24, warning_threshold_pct:80, is_active:true });
-  const s = (k,v)=>setForm(f=>({...f,[k]:v}));
-
-  const condFields = conditionFields[form.object_type]||[];
-  const valueOpts = getFieldOptions(form.object_type, form.condition_field);
-
-  const handleSave = async()=>{
-    if(!form.name?.trim()){alert('Policy name is required.');return;}
-    try{
-      await saveSLAPolicy(form,editing?.id);
-      setOpen(false);
-    }catch(e){alert('Save failed: '+(e?.message||'Unknown error'));}
-  };
-
-  return (
-    <div className="space-y-5">
-      <div className="flex items-center justify-between">
-        <div><h2 className="text-2xl font-bold text-[#0F172A]">SLA Policies</h2><p className="text-gray-500 text-sm">{slaPolicies.length} polic(ies) — define response & resolution time targets</p></div>
-        <button onClick={()=>{setEditing(null);setForm({object_type:'leads',response_time_hours:2,resolution_time_hours:24,warning_threshold_pct:80,is_active:true});setOpen(true);}} className="bg-gradient-to-r from-[#0F172A] to-blue-800 text-white px-5 py-2.5 rounded-2xl font-semibold text-sm shadow-lg hover:opacity-90">+ New Policy</button>
-      </div>
-
-      {slaPolicies.length===0
-        ? <div className="py-16 text-center bg-white rounded-[24px] border border-blue-100 shadow"><div className="text-5xl mb-3">⏱️</div><div className="font-bold text-[#0F172A] text-lg mb-2">No SLA policies yet</div><p className="text-gray-400 mb-5">Set response and resolution time targets per object and condition.</p><button onClick={()=>setOpen(true)} className="bg-gradient-to-r from-[#0F172A] to-blue-800 text-white px-6 py-3 rounded-2xl font-semibold text-sm">+ Create First Policy</button></div>
-        : <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
-            {slaPolicies.map(p=>(
-              <div key={p.id} className="bg-white border border-blue-100 rounded-[24px] shadow-lg p-5">
-                <div className="flex items-start justify-between mb-4">
-                  <div><h3 className="font-bold text-[#0F172A] text-lg">{p.name}</h3><div className="text-xs text-gray-400 mt-0.5">{p.policy_number} · {p.object_type}</div></div>
-                  <span className={`px-3 py-1 rounded-full text-xs font-semibold ${p.is_active?'bg-green-100 text-green-700':'bg-gray-100 text-gray-500'}`}>{p.is_active?'Active':'Inactive'}</span>
-                </div>
-                {p.condition_field&&<div className="text-xs text-gray-500 mb-3">When {p.condition_field} = <span className="font-semibold text-[#0F172A]">{p.condition_value}</span></div>}
-                <div className="space-y-2 text-sm">
-                  <div className="flex justify-between bg-blue-50 rounded-xl px-3 py-2"><span className="text-gray-500">Response Time</span><span className="font-bold text-[#0F172A]">{p.response_time_hours}h</span></div>
-                  <div className="flex justify-between bg-orange-50 rounded-xl px-3 py-2"><span className="text-gray-500">Resolution Time</span><span className="font-bold text-[#0F172A]">{p.resolution_time_hours}h</span></div>
-                  <div className="flex justify-between bg-yellow-50 rounded-xl px-3 py-2"><span className="text-gray-500">Warning At</span><span className="font-bold text-[#0F172A]">{p.warning_threshold_pct}% elapsed</span></div>
-                </div>
-                <div className="flex gap-2 mt-4">
-                  <button onClick={()=>{setEditing(p);setForm({...p});setOpen(true);}} className="flex-1 bg-blue-100 hover:bg-blue-200 text-blue-700 py-2 rounded-xl text-sm font-semibold">Edit</button>
-                  <button onClick={()=>deleteSLAPolicy(p.id)} className="bg-red-100 hover:bg-red-200 text-red-600 px-3 py-2 rounded-xl text-sm font-semibold">Delete</button>
-                </div>
-              </div>
-            ))}
-          </div>
-      }
-
-      <Modal open={open} onClose={()=>setOpen(false)} title={editing?'Edit SLA Policy':'New SLA Policy'} size="lg"
-        footer={<><button onClick={()=>setOpen(false)} className="px-5 py-2.5 rounded-2xl border border-blue-200 text-sm font-semibold">Cancel</button><button onClick={handleSave} className="px-5 py-2.5 bg-gradient-to-r from-[#0F172A] to-blue-800 text-white rounded-2xl text-sm font-semibold">Save Policy</button></>}>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div className="col-span-2"><L t="Policy Name *"/><input value={form.name||''} onChange={e=>s('name',e.target.value)} placeholder="e.g. High Priority Lead SLA" className={iCls}/></div>
-
-          <div>
-            <L t="Object Type"/>
-            <select value={form.object_type||'leads'} onChange={e=>{s('object_type',e.target.value);s('condition_field','');s('condition_value','');}} className={sCls}>
-              {objectList.map(o=><option key={o} value={o}>{objectLabels?.[o]||o}</option>)}
-            </select>
-          </div>
-          <div><L t="Active"/><select value={form.is_active?'Yes':'No'} onChange={e=>s('is_active',e.target.value==='Yes')} className={sCls}><option>Yes</option><option>No</option></select></div>
-
-          <div className="col-span-2 bg-blue-50 rounded-2xl p-4 space-y-3">
-            <h4 className="font-bold text-[#0F172A] text-sm">Apply When (optional condition)</h4>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <L t="Condition Field"/>
-                <select value={form.condition_field||''} onChange={e=>{s('condition_field',e.target.value);s('condition_value','');}} className={sCls}>
-                  <option value="">All records (no condition)</option>
-                  {condFields.map(f=><option key={f.v} value={f.v}>{f.l}</option>)}
-                </select>
-              </div>
-              <div>
-                <L t="Condition Value"/>
-                <ConditionValue objType={form.object_type} field={form.condition_field} value={form.condition_value||''} onChange={v=>s('condition_value',v)}/>
-              </div>
-            </div>
-          </div>
-
-          <div className="col-span-2 bg-orange-50 rounded-2xl p-4 space-y-3">
-            <h4 className="font-bold text-[#0F172A] text-sm">Time Targets</h4>
-            <div className="grid grid-cols-3 gap-3">
-              <div><L t="Response Time (hours)"/><input type="number" min={1} value={form.response_time_hours||2} onChange={e=>s('response_time_hours',Number(e.target.value))} className={iCls}/></div>
-              <div><L t="Resolution Time (hours)"/><input type="number" min={1} value={form.resolution_time_hours||24} onChange={e=>s('resolution_time_hours',Number(e.target.value))} className={iCls}/></div>
-              <div><L t="Warning At (%)"/><input type="number" min={1} max={99} value={form.warning_threshold_pct||80} onChange={e=>s('warning_threshold_pct',Number(e.target.value))} className={iCls}/></div>
-            </div>
-          </div>
-
-          <div>
-            <L t="Escalate To User"/>
-            <select value={form.escalate_to_user_id||''} onChange={e=>s('escalate_to_user_id',e.target.value)} className={sCls}>
-              <option value="">Select user</option>
-              {enterpriseUsers.map(u=><option key={u.id} value={u.id}>{u.first_name} {u.last_name}</option>)}
-            </select>
-          </div>
-          <div>
-            <L t="Escalate To Group"/>
-            <select value={form.escalate_to_group_id||''} onChange={e=>s('escalate_to_group_id',e.target.value)} className={sCls}>
-              <option value="">Select group</option>
-              {userGroups.map(g=><option key={g.id} value={g.id}>{g.group_name}</option>)}
-            </select>
-          </div>
-        </div>
-      </Modal>
-    </div>
-  );
-}
-
-// ═══════════════════════════ APPROVAL PROCESSES ═══════════════════════════════
-function ConditionBuilder({ conditions, setConditions, objectType, conditionFields = CONDITION_FIELDS }) {
-  const conds = conditions?.conditions || [];
-  const logic  = conditions?.logic || 'AND';
-
-  const add    = () => setConditions(c => ({ ...c, conditions: [...(c.conditions||[]), { field:'', operator:'equals', value:'' }] }));
-  const remove = idx => setConditions(c => ({ ...c, conditions: (c.conditions||[]).filter((_,i) => i !== idx) }));
-  const upd    = (idx, k, v) => setConditions(c => ({ ...c, conditions: (c.conditions||[]).map((x,i) => i===idx ? {...x,[k]:v} : x) }));
-
+function ConditionBuilder({ fields, conditions, logic, onChange }) {
+  const addCond = () => onChange({ logic, conditions: [...conditions, {field:'',operator:'equals',value:''}] });
+  const updCond = (i,c) => onChange({ logic, conditions: conditions.map((x,j)=>j===i?c:x) });
+  const remCond = (i) => onChange({ logic, conditions: conditions.filter((_,j)=>j!==i) });
   return (
     <div className="space-y-3">
-      <div className="flex items-center gap-3 flex-wrap">
-        <span className="text-sm font-bold text-[#0F172A]">Match</span>
-        <select value={logic} onChange={e=>setConditions(c=>({...c,logic:e.target.value}))} className={`${sCls} w-auto`}>
-          <option value="AND">ALL conditions (AND)</option>
-          <option value="OR">ANY condition (OR)</option>
+      <div className="flex items-center gap-3">
+        <span className="text-sm font-semibold text-gray-600">Match</span>
+        {['AND','OR'].map(l=>(
+          <button key={l} onClick={()=>onChange({logic:l,conditions})}
+            className={`px-3 py-1 rounded-xl text-xs font-bold border transition-all ${logic===l?'bg-[#0F172A] text-white border-transparent':'bg-white text-gray-600 border-gray-200 hover:border-blue-400'}`}>
+            {l}
+          </button>
+        ))}
+        <span className="text-sm text-gray-400">of these conditions</span>
+      </div>
+      {conditions.map((c,i)=>(
+        <ConditionRow key={i} fields={fields} condition={c}
+          onChange={nc=>updCond(i,nc)} onRemove={()=>remCond(i)} />
+      ))}
+      <button onClick={addCond} className="text-sm text-blue-600 hover:text-blue-800 font-semibold flex items-center gap-1">
+        + Add Condition
+      </button>
+    </div>
+  );
+}
+
+function ActionBuilder({ action, idx, users, fields, onChange, onRemove }) {
+  const cfg = action.action_config || {};
+  const setcfg = (k,v) => onChange({ ...action, action_config: { ...cfg, [k]: v } });
+  return (
+    <div className="bg-gray-50 rounded-[16px] p-4 space-y-3 border border-gray-200">
+      <div className="flex items-center gap-3">
+        <span className="text-xs font-bold text-gray-400 w-6">#{idx+1}</span>
+        <select value={action.action_type||'send_notification'} onChange={e=>onChange({...action,action_type:e.target.value,action_config:{}})}
+          className="flex-1 border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-900 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400">
+          {ACTION_TYPES.map(a=><option key={a.v} value={a.v}>{a.l}</option>)}
         </select>
-        <button onClick={add} className="bg-blue-100 hover:bg-blue-200 text-blue-700 px-4 py-2 rounded-xl text-sm font-semibold">+ Add Condition</button>
-      </div>
-      {conds.length === 0
-        ? <div className="text-gray-400 text-sm bg-white rounded-xl px-4 py-3 border border-blue-100">No conditions — applies to ALL records. Add conditions to restrict.</div>
-        : conds.map((cond, idx) => {
-            const opts = getFieldOptions(objectType, cond.field);
-            return (
-              <div key={idx} className="grid grid-cols-3 gap-2 items-start">
-                <div>
-                  {idx === 0 && <L t="Field"/>}
-                  <select value={cond.field||''} onChange={e=>upd(idx,'field',e.target.value)} className={sCls}>
-                    <option value="">Select field</option>
-                    {(conditionFields[objectType]||[]).map(f=><option key={f.v} value={f.v}>{f.l}</option>)}
-                  </select>
-                </div>
-                <div>
-                  {idx === 0 && <L t="Operator"/>}
-                  <select value={cond.operator||'equals'} onChange={e=>upd(idx,'operator',e.target.value)} className={sCls}>
-                    {OPERATORS.map(o=><option key={o.v} value={o.v}>{o.l}</option>)}
-                  </select>
-                </div>
-                <div className="flex gap-2">
-                  <div className="flex-1">
-                    {idx === 0 && <L t="Value"/>}
-                    {opts
-                      ? <select value={cond.value||''} onChange={e=>upd(idx,'value',e.target.value)} className={sCls}><option value="">Select</option>{opts.map(o=><option key={o}>{o}</option>)}</select>
-                      : <input value={cond.value||''} onChange={e=>upd(idx,'value',e.target.value)} placeholder="Value" className={iCls}/>
-                    }
-                  </div>
-                  <button onClick={()=>remove(idx)} className={`text-red-500 hover:text-red-700 font-bold text-lg ${idx===0?'mt-7':''}`}>✕</button>
-                </div>
-              </div>
-            );
-          })
-      }
-    </div>
-  );
-}
-
-function ApprovalProcessesPanel({ objectList = ALL_OBJECTS, conditionFields = CONDITION_FIELDS, objectLabels = null }) {
-  const { approvalProcesses, enterpriseUsers, userGroups, saveApprovalProcess, deleteApprovalProcess } = useApp();
-  const [open,     setOpen]     = useState(false);
-  const [editing,  setEditing]  = useState(null);
-  const [form,     setForm]     = useState({ object_type:'opportunities', is_active:true });
-  const [conditions, setConditions] = useState({ logic:'AND', conditions:[] });
-  const [steps,    setSteps]    = useState([{ step_name:'Manager Approval', approver_user_id:'', approval_type:'any', on_approve_action:'Approved', on_reject_action:'Rejected' }]);
-  const [loading,  setLoading]  = useState(false);
-  const s = (k,v)=>setForm(f=>({...f,[k]:v}));
-
-  const addStep    = () => setSteps(p=>[...p,{step_name:'',approver_user_id:'',approval_type:'any',on_approve_action:'Approved',on_reject_action:'Rejected'}]);
-  const removeStep = idx => setSteps(p=>p.filter((_,i)=>i!==idx));
-  const setStep    = (idx,k,v) => setSteps(p=>p.map((st,i)=>i===idx?{...st,[k]:v}:st));
-
-  const openNew = () => {
-    setEditing(null);
-    setForm({object_type:'opportunities',is_active:true});
-    setConditions({logic:'AND',conditions:[]});
-    setSteps([{step_name:'Manager Approval',approver_user_id:'',approval_type:'any',on_approve_action:'Approved',on_reject_action:'Rejected'}]);
-    setOpen(true);
-  };
-
-  const openEdit = async (proc) => {
-    setLoading(true);
-    setEditing(proc);
-    setForm({...proc});
-    // Restore conditions from DB
-    const savedConds = proc.conditions || { logic:'AND', conditions:[] };
-    setConditions(typeof savedConds === 'string' ? JSON.parse(savedConds) : savedConds);
-    // Load steps from Supabase
-    const { createClient } = await import('@supabase/supabase-js').catch(()=>({}));
-    // Use supabase from lib
-    const { supabase: sb } = await import('@/lib/supabase');
-    if (sb) {
-      const { data: stepRows } = await sb.from('approval_steps').select('*').eq('approval_process_id', proc.id).order('step_number');
-      if (stepRows?.length) {
-        setSteps(stepRows.map(r=>({
-          step_name:         r.step_name         || '',
-          approver_user_id:  r.approver_user_id  || '',
-          approver_group_id: r.approver_group_id || '',
-          approval_type:     r.approval_type     || 'any',
-          on_approve_action: r.on_approve_action || 'Approved',
-          on_reject_action:  r.on_reject_action  || 'Rejected',
-        })));
-      } else {
-        setSteps([{step_name:'Manager Approval',approver_user_id:'',approval_type:'any',on_approve_action:'Approved',on_reject_action:'Rejected'}]);
-      }
-    }
-    setLoading(false);
-    setOpen(true);
-  };
-
-  const handleSave = async () => {
-    if(!form.name?.trim()){alert('Process name is required.');return;}
-    if(!steps.length){alert('Add at least one approval step.');return;}
-    if(steps.some(st=>!st.approver_user_id)){alert('All steps must have an approver selected.');return;}
-    try {
-      await saveApprovalProcess({...form, conditions}, steps, editing?.id);
-      setOpen(false);
-    } catch(e){alert('Save failed: '+(e?.message||'Unknown error'));}
-  };
-
-  return (
-    <div className="space-y-5">
-      <div className="flex items-center justify-between">
-        <div><h2 className="text-2xl font-bold text-[#0F172A]">Approval Processes</h2><p className="text-gray-500 text-sm">{approvalProcesses.length} process(es) — configure multi-step approval workflows</p></div>
-        <button onClick={openNew} className="bg-gradient-to-r from-[#0F172A] to-blue-800 text-white px-5 py-2.5 rounded-2xl font-semibold text-sm shadow-lg hover:opacity-90">+ New Process</button>
+        <button onClick={onRemove} className="w-7 h-7 flex items-center justify-center text-red-400 hover:text-red-600 hover:bg-red-50 rounded-lg text-lg">×</button>
       </div>
 
-      {approvalProcesses.length===0
-        ? <div className="py-16 text-center bg-white rounded-[24px] border border-blue-100 shadow"><div className="text-5xl mb-3">✅</div><div className="font-bold text-[#0F172A] text-lg mb-2">No approval processes yet</div><p className="text-gray-400 mb-5">Create multi-step approval workflows. Records meeting conditions will show a Submit for Approval button.</p><button onClick={openNew} className="bg-gradient-to-r from-[#0F172A] to-blue-800 text-white px-6 py-3 rounded-2xl font-semibold text-sm">+ Create First Process</button></div>
-        : <div className="space-y-3">
-            {approvalProcesses.map(proc=>(
-              <div key={proc.id} className="bg-white border border-blue-100 rounded-2xl p-5 shadow-sm flex items-start justify-between">
-                <div>
-                  <div className="flex items-center gap-3 mb-1">
-                    <h3 className="font-bold text-[#0F172A] text-lg">{proc.name}</h3>
-                    <span className={`px-2.5 py-0.5 rounded-full text-xs font-semibold ${proc.is_active?'bg-green-100 text-green-700':'bg-gray-100 text-gray-500'}`}>{proc.is_active?'Active':'Inactive'}</span>
-                  </div>
-                  <div className="text-sm text-gray-500">
-                    Object: <span className="font-medium text-[#0F172A]">{proc.object_type}</span>
-                    {(() => {
-                      const conds = proc.conditions?.conditions || [];
-                      if (!conds.length) return <span> · Applies to all records</span>;
-                      return <span> · {conds.length} condition{conds.length>1?'s':''} ({proc.conditions?.logic||'AND'})</span>;
-                    })()}
-                  </div>
-                </div>
-                <div className="flex gap-2">
-                  <button onClick={()=>openEdit(proc)} disabled={loading} className="bg-blue-100 hover:bg-blue-200 text-blue-700 px-4 py-2 rounded-xl text-sm font-semibold disabled:opacity-50">Edit</button>
-                  <button onClick={()=>deleteApprovalProcess(proc.id)} className="bg-red-100 hover:bg-red-200 text-red-600 px-4 py-2 rounded-xl text-sm font-semibold">Delete</button>
-                </div>
-              </div>
-            ))}
-          </div>
-      }
-
-      <Modal open={open} onClose={()=>setOpen(false)} title={editing?'Edit Approval Process':'New Approval Process'} size="xl"
-        footer={<><button onClick={()=>setOpen(false)} className="px-5 py-2.5 rounded-2xl border border-blue-200 text-sm font-semibold">Cancel</button><button onClick={handleSave} className="px-5 py-2.5 bg-gradient-to-r from-[#0F172A] to-blue-800 text-white rounded-2xl text-sm font-semibold">Save Process</button></>}>
-        <div className="space-y-6">
-          {/* Basics */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="col-span-2"><L t="Process Name *"/><input value={form.name||''} onChange={e=>s('name',e.target.value)} placeholder="e.g. High Value Deal Approval" className={iCls}/></div>
-            <div>
-              <L t="Object Type"/>
-              <select value={form.object_type||'opportunities'} onChange={e=>{s('object_type',e.target.value);setConditions({logic:'AND',conditions:[]});}} className={sCls}>
-                {objectList.map(o=><option key={o} value={o}>{objectLabels?.[o]||o}</option>)}
-              </select>
-            </div>
-            <div><L t="Active"/><select value={form.is_active?'Yes':'No'} onChange={e=>s('is_active',e.target.value==='Yes')} className={sCls}><option>Yes</option><option>No</option></select></div>
-          </div>
-
-          {/* Conditions */}
-          <div className="bg-blue-50 rounded-2xl p-5 space-y-4">
-            <div><h4 className="font-bold text-[#0F172A]">Approval Conditions</h4><p className="text-xs text-gray-500 mt-1">The "Submit for Approval" button appears on records that meet these conditions.</p></div>
-            <ConditionBuilder conditions={conditions} setConditions={setConditions} objectType={form.object_type||'opportunities'} conditionFields={conditionFields}/>
-          </div>
-
-          {/* Steps */}
+      {action.action_type === 'send_notification' && (
+        <div className="space-y-2 ml-9">
+          <input value={cfg.subject||''} onChange={e=>setcfg('subject',e.target.value)}
+            placeholder="Notification subject" className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-900 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400"/>
+          <textarea value={cfg.message||''} onChange={e=>setcfg('message',e.target.value)}
+            placeholder="Notification message..." rows={2}
+            className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-900 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400 resize-none"/>
           <div>
-            <div className="flex items-center justify-between mb-4">
-              <div><h3 className="font-bold text-[#0F172A] text-lg">Approval Steps</h3><p className="text-xs text-gray-500 mt-0.5">Steps are executed in order.</p></div>
-              <button onClick={addStep} className="bg-blue-100 hover:bg-blue-200 text-blue-700 px-4 py-2 rounded-xl text-sm font-semibold">+ Add Step</button>
-            </div>
-            <div className="space-y-4">
-              {steps.map((step,idx)=>(
-                <div key={idx} className="bg-blue-50 rounded-2xl p-4 space-y-3">
-                  <div className="flex items-center justify-between">
-                    <span className="font-bold text-[#0F172A] text-sm flex items-center gap-2">
-                      <span className="w-7 h-7 bg-[#0F172A] text-white rounded-full flex items-center justify-center text-xs">{idx+1}</span>
-                      Step {idx+1}
-                    </span>
-                    {steps.length>1&&<button onClick={()=>removeStep(idx)} className="text-red-500 text-xs font-semibold hover:underline">Remove Step</button>}
-                  </div>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    <div><L t="Step Name"/><input value={step.step_name||''} onChange={e=>setStep(idx,'step_name',e.target.value)} placeholder="e.g. Manager Approval" className={iCls}/></div>
-                    <div>
-                      <L t="Approver *"/>
-                      <select value={step.approver_user_id||''} onChange={e=>setStep(idx,'approver_user_id',e.target.value)} className={`${sCls} ${!step.approver_user_id?'border-red-200':''}`}>
-                        <option value="">Select approver user</option>
-                        {enterpriseUsers.map(u=><option key={u.id} value={u.id}>{u.first_name} {u.last_name} ({u.email})</option>)}
-                      </select>
-                      {!step.approver_user_id&&<p className="text-red-500 text-xs mt-1">Required</p>}
-                    </div>
-                    <div><L t="Approval Type"/><select value={step.approval_type||'any'} onChange={e=>setStep(idx,'approval_type',e.target.value)} className={sCls}><option value="any">Any Approver</option><option value="all">All Approvers</option></select></div>
-                    <div>
-                      <L t="Group Approver (optional)"/>
-                      <select value={step.approver_group_id||''} onChange={e=>setStep(idx,'approver_group_id',e.target.value)} className={sCls}>
-                        <option value="">No group</option>
-                        {userGroups.map(g=><option key={g.id} value={g.id}>{g.group_name}</option>)}
-                      </select>
-                    </div>
-                    <div><L t="On Approve → Status"/><input value={step.on_approve_action||'Approved'} onChange={e=>setStep(idx,'on_approve_action',e.target.value)} placeholder="e.g. Approved" className={iCls}/></div>
-                    <div><L t="On Reject → Status"/><input value={step.on_reject_action||'Rejected'} onChange={e=>setStep(idx,'on_reject_action',e.target.value)} placeholder="e.g. Rejected" className={iCls}/></div>
-                  </div>
-                </div>
-              ))}
-            </div>
+            <label className="block text-xs font-bold text-gray-400 mb-1">Additional Recipients (emails, comma-separated)</label>
+            <input value={(cfg.recipients||[]).join(',')} onChange={e=>setcfg('recipients',e.target.value.split(',').map(x=>x.trim()).filter(Boolean))}
+              placeholder="email1@co.com, email2@co.com"
+              className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-900 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400"/>
           </div>
         </div>
-      </Modal>
-    </div>
-  );
-}
+      )}
 
-// ═══════════════════════════ QUOTE TEMPLATES ═══════════════════════════════════
-function TemplateDesignerPanel() {
-  return <DocumentTemplateDesigner docType="quote" />;
-}
-
-
-// ═══════════════════════════ APP PREFERENCES ══════════════════════════════════
-const CURRENCIES = ['INR','USD','EUR','GBP','AED','SGD','AUD','CAD','JPY','CNY'];
-const DATE_FORMATS = ['DD/MM/YYYY','MM/DD/YYYY','YYYY-MM-DD'];
-const FISCAL_YEARS = ['January','April','July','October'];
-
-const PREFERENCES_PASSKEY = '193728bB@';
-
-function AppPreferencesPanel() {
-  const { appPreferences, saveAppPreferences, fetchExchangeRates } = useApp();
-  const [form,    setForm]    = useState({ ...appPreferences });
-  const [saving,  setSaving]  = useState(false);
-  const [testRate,setTestRate]= useState(null);
-  const [passkeyOpen, setPasskeyOpen] = useState(false);
-  const [passkeyInput, setPasskeyInput] = useState('');
-  const [passkeyError, setPasskeyError] = useState('');
-  const sf = (k,v) => setForm(p => ({...p,[k]:v}));
-
-  useEffect(() => { setForm(p => ({ ...p, ...appPreferences })); }, [JSON.stringify(appPreferences)]);
-
-  const handleSave = async () => {
-    setPasskeyInput('');
-    setPasskeyError('');
-    setPasskeyOpen(true);
-  };
-
-  const confirmSaveWithPasskey = async () => {
-    if (passkeyInput !== PREFERENCES_PASSKEY) {
-      setPasskeyError('Incorrect passkey. Please contact your Business Pro admin to get the passkey.');
-      return;
-    }
-    setPasskeyOpen(false);
-    setSaving(true);
-    await saveAppPreferences(form);
-    setSaving(false);
-    alert('App preferences saved successfully!');
-  };
-
-  const testExchangeRate = async () => {
-    try {
-      const res  = await fetch(`https://open.er-api.com/v6/latest/${form.default_currency||'INR'}`);
-      const data = await res.json();
-      if (data?.rates) {
-        const preview = Object.entries(data.rates).filter(([k])=>CURRENCIES.includes(k)).slice(0,6);
-        setTestRate({ base: form.default_currency, rates: preview });
-        await fetchExchangeRates(form.default_currency);
-      } else { alert('Could not fetch exchange rates. Check your internet connection.'); }
-    } catch(e) { alert('Exchange rate API error: '+e.message); }
-  };
-
-  return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div><h2 className="text-2xl font-bold text-[#0F172A]">App Preferences</h2><p className="text-gray-500 text-sm">Configure application-wide settings. Changes take effect immediately.</p></div>
-        <button onClick={handleSave} disabled={saving} className="bg-gradient-to-r from-[#0F172A] to-blue-800 text-white px-5 py-2.5 rounded-2xl font-semibold text-sm shadow-lg hover:opacity-90 disabled:opacity-50">{saving?'Saving...':'💾 Save Preferences'}</button>
-      </div>
-
-      {/* ── B2C / Retail Mode Toggle ───────────────────────────────────────── */}
-      <div className={`rounded-[24px] border-2 shadow-lg overflow-hidden transition-all mb-6 ${form.b2c_mode ? 'border-purple-400' : 'border-blue-100'}`}>
-        <div className={`px-6 py-4 ${form.b2c_mode ? 'bg-gradient-to-r from-purple-900 to-purple-600' : 'bg-gradient-to-r from-[#0F172A] to-blue-900'}`}>
-          <h3 className="text-white font-bold">🛍️ B2C / Retail Mode</h3>
-          <p className="text-purple-200 text-xs mt-0.5">Switch the entire application to Retail (B2C) mode with dedicated retail objects and dashboard</p>
+      {action.action_type === 'update_field' && (
+        <div className="flex gap-2 ml-9 flex-wrap">
+          <select value={cfg.field||''} onChange={e=>setcfg('field',e.target.value)}
+            className="flex-1 border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-900 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400">
+            <option value="">Select field to update...</option>
+            {fields.map(f=><option key={f.v} value={f.v}>{f.l}</option>)}
+          </select>
+          <input value={cfg.value||''} onChange={e=>setcfg('value',e.target.value)}
+            placeholder="New value"
+            className="flex-1 border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-900 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400"/>
         </div>
-        <div className={`p-6 ${form.b2c_mode ? 'bg-gradient-to-br from-purple-50 to-white' : 'bg-white'}`}>
-          <div className="flex items-center justify-between gap-6">
-            <div className="flex-1">
-              <div className="flex items-center gap-3 mb-2">
-                <span className="text-3xl">{form.b2c_mode ? '🛍️' : '🏢'}</span>
-                <div>
-                  <div className="font-bold text-[#0F172A] flex items-center gap-2">
-                    {form.b2c_mode ? 'Retail (B2C) Mode' : 'Enterprise (B2B) Mode'}
-                    {form.b2c_mode && <span className="bg-purple-600 text-white text-xs font-bold px-2 py-0.5 rounded-full">ACTIVE</span>}
-                  </div>
-                  <p className="text-gray-500 text-xs mt-0.5">
-                    {form.b2c_mode
-                      ? 'Navigator shows Retail objects only. B2B objects are hidden.'
-                      : 'Navigator shows all B2B objects. Retail objects are hidden.'}
-                  </p>
-                </div>
-              </div>
-              {form.b2c_mode && (
-                <div className="flex flex-wrap gap-1.5 mt-3">
-                  {['🧑‍🤝‍🧑 Retail Customers','📅 Activities','🏷️ Products','🛍️ Orders','🧾 Invoices','📊 Retail Dashboard'].map(tag=>(
-                    <span key={tag} className="bg-purple-100 text-purple-700 text-xs px-2.5 py-1 rounded-full font-medium">{tag}</span>
-                  ))}
-                </div>
-              )}
-            </div>
-            <button
-              type="button"
-              onClick={() => sf('b2c_mode', !form.b2c_mode)}
-              className={`relative inline-flex h-8 w-14 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-300 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2 ${form.b2c_mode ? 'bg-purple-600' : 'bg-gray-300'}`}
-            >
-              <span className={`inline-block h-7 w-7 transform rounded-full bg-white shadow-lg ring-0 transition duration-300 ease-in-out ${form.b2c_mode ? 'translate-x-6' : 'translate-x-0'}`}/>
-            </button>
-          </div>
-        </div>
-      </div>
+      )}
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        {/* Module Toggles */}
-        <div className="bg-white rounded-[24px] border border-blue-100 shadow-lg overflow-hidden">
-          <div className="bg-gradient-to-r from-[#0F172A] to-blue-900 px-6 py-4"><h3 className="text-white font-bold">Module Configuration</h3><p className="text-blue-300 text-xs mt-0.5">Enable or disable application modules</p></div>
-          <div className="p-6 space-y-5">
-            {[
-              { key:'crm_enabled',  label:'CRM Module', desc:'Enable customer, lead, opportunity, contact and activity management', icon:'👥' },
-              { key:'cpq_enabled',  label:'CPQ Module (Quotations)', desc:'Enable quotation management. When ON: Opportunity → Quote → Order → Invoice. When OFF: Opportunity → Order → Invoice', icon:'📄' },
-              { key:'global_search_enabled', label:'Global Search', desc:'Show a search bar in the header to search across all records and objects in real time. Default: Off', icon:'🔍' },
-            ].map(item=>(
-              <div key={item.key} className={`flex items-start gap-4 p-4 rounded-2xl border-2 transition-all ${form[item.key]?'border-blue-200 bg-blue-50':'border-gray-100 bg-gray-50'}`}>
-                <div className="text-3xl">{item.icon}</div>
-                <div className="flex-1">
-                  <div className="font-bold text-[#0F172A] flex items-center gap-3">
-                    {item.label}
-                    <span className={`text-xs px-2.5 py-0.5 rounded-full font-semibold ${form[item.key]?'bg-green-100 text-green-700':'bg-gray-200 text-gray-500'}`}>{form[item.key]?'Enabled':'Disabled'}</span>
-                  </div>
-                  <div className="text-sm text-gray-500 mt-1">{item.desc}</div>
-                </div>
-                <button onClick={()=>sf(item.key, !form[item.key])}
-                  className={`w-14 h-7 rounded-full transition-all flex-shrink-0 mt-1 relative ${form[item.key]?'bg-blue-600':'bg-gray-300'}`}>
-                  <div className={`absolute top-0.5 w-6 h-6 bg-white rounded-full shadow transition-all ${form[item.key]?'left-7':'left-0.5'}`}/>
-                </button>
-              </div>
-            ))}
-          </div>
+      {action.action_type === 'assign_owner' && (
+        <div className="ml-9">
+          <select value={cfg.user_id||''} onChange={e=>setcfg('user_id',e.target.value)}
+            className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-900 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400">
+            <option value="">Select user to assign...</option>
+            {users.map(u=><option key={u.id} value={u.id}>{`${u.first_name||''} ${u.last_name||''}`.trim()||u.email}</option>)}
+          </select>
         </div>
+      )}
 
-        {/* Regional Settings */}
-        <div className="bg-white rounded-[24px] border border-blue-100 shadow-lg overflow-hidden">
-          <div className="bg-gradient-to-r from-[#0F172A] to-blue-900 px-6 py-4"><h3 className="text-white font-bold">Regional & Currency Settings</h3><p className="text-blue-300 text-xs mt-0.5">Default currency and localization</p></div>
-          <div className="p-6 space-y-4">
-            <div>
-              <L t="Default Currency"/>
-              <select value={form.default_currency||'INR'} onChange={e=>sf('default_currency',e.target.value)} className={sCls}>
-                {CURRENCIES.map(c=><option key={c}>{c}</option>)}
-              </select>
-            </div>
-            <div>
-              <L t="Date Format"/>
-              <select value={form.date_format||'DD/MM/YYYY'} onChange={e=>sf('date_format',e.target.value)} className={sCls}>
-                {DATE_FORMATS.map(f=><option key={f}>{f}</option>)}
-              </select>
-            </div>
-            <div>
-              <L t="Fiscal Year Start"/>
-              <select value={form.fiscal_year_start||'April'} onChange={e=>sf('fiscal_year_start',e.target.value)} className={sCls}>
-                {FISCAL_YEARS.map(m=><option key={m}>{m}</option>)}
-              </select>
-            </div>
-            <div className="pt-2 border-t border-blue-50">
-              <button onClick={testExchangeRate} className="w-full bg-blue-100 hover:bg-blue-200 text-blue-700 py-3 rounded-2xl text-sm font-semibold flex items-center justify-center gap-2">
-                💱 Test Exchange Rates for {form.default_currency||'INR'}
-              </button>
-              {testRate && (
-                <div className="mt-3 bg-green-50 border border-green-100 rounded-2xl p-4">
-                  <div className="text-xs font-bold text-green-700 mb-2">Live Rates (base: {testRate.base})</div>
-                  <div className="grid grid-cols-3 gap-2">
-                    {testRate.rates.map(([cur,rate])=>(
-                      <div key={cur} className="text-center bg-white rounded-xl py-2 px-3">
-                        <div className="font-bold text-[#0F172A] text-sm">{cur}</div>
-                        <div className="text-xs text-gray-500">{Number(rate).toFixed(4)}</div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Flow preview */}
-      <div className="bg-white rounded-[24px] border border-blue-100 shadow-lg p-6">
-        <h3 className="font-bold text-[#0F172A] mb-4">Current Business Flow</h3>
-        <div className="flex items-center gap-3 flex-wrap">
-          {(form.crm_enabled ? ['Lead','Opportunity'] : []).concat(form.cpq_enabled ? ['Quotation','Order','Invoice'] : ['Order','Invoice']).map((step,i,arr)=>(
-            <div key={step} className="flex items-center gap-3">
-              <div className={`px-5 py-2.5 rounded-2xl font-bold text-sm shadow ${step==='Quotation'?'bg-gradient-to-r from-purple-500 to-purple-700 text-white':step==='Order'||step==='Invoice'?'bg-gradient-to-r from-green-500 to-emerald-600 text-white':'bg-gradient-to-r from-[#0F172A] to-blue-800 text-white'}`}>{step}</div>
-              {i < arr.length-1 && <span className="text-gray-300 text-xl font-light">→</span>}
-            </div>
-          ))}
-        </div>
-        <p className="text-xs text-gray-400 mt-4">{form.cpq_enabled ? 'CPQ mode: Full quotation workflow enabled. Order and invoice layouts use CPQ-style fields with line items, discounts and tax.' : 'Non-CPQ mode: Orders created directly from opportunities with simple layout.'}</p>
-      </div>
-
-      {/* Passkey confirmation dialog */}
-      {passkeyOpen && (
-        <div className="fixed inset-0 z-[500] flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={()=>setPasskeyOpen(false)}/>
-          <div className="relative bg-white rounded-[24px] shadow-2xl max-w-sm w-full p-6">
-            <div className="text-4xl mb-3 text-center">🔒</div>
-            <h3 className="text-lg font-bold text-[#0F172A] mb-1 text-center">Confirm Passkey</h3>
-            <p className="text-sm text-gray-500 text-center mb-4">Enter the admin passkey to save App Preferences.</p>
-            <input
-              type="password"
-              autoFocus
-              autoComplete="new-password"
-              name="bp-admin-passkey"
-              value={passkeyInput}
-              onChange={e=>{setPasskeyInput(e.target.value); setPasskeyError('');}}
-              onKeyDown={e=>{ if(e.key==='Enter') confirmSaveWithPasskey(); }}
-              placeholder="Enter passkey"
-              className="w-full border border-blue-200 rounded-xl px-3 py-2.5 text-sm text-[#0F172A] bg-white focus:outline-none focus:ring-2 focus:ring-blue-400 text-center"
-            />
-            {passkeyError && (
-              <p className="text-xs text-red-500 mt-2 text-center">{passkeyError}</p>
-            )}
-            <p className="text-xs text-gray-400 mt-3 text-center">Please contact Business Pro admin to get the passkey.</p>
-            <div className="flex gap-3 mt-5">
-              <button onClick={()=>setPasskeyOpen(false)}
-                className="flex-1 px-4 py-2.5 rounded-xl border border-gray-200 text-gray-600 text-sm font-semibold hover:bg-gray-100">
-                Cancel
-              </button>
-              <button onClick={confirmSaveWithPasskey}
-                className="flex-1 px-4 py-2.5 rounded-xl bg-gradient-to-r from-[#0F172A] to-blue-800 text-white text-sm font-bold hover:opacity-90 shadow-md">
-                Confirm
-              </button>
-            </div>
+      {action.action_type === 'create_task' && (
+        <div className="space-y-2 ml-9">
+          <input value={cfg.task_name||''} onChange={e=>setcfg('task_name',e.target.value)}
+            placeholder="Task name" className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-900 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400"/>
+          <div className="flex gap-2">
+            <select value={cfg.priority||'Medium'} onChange={e=>setcfg('priority',e.target.value)}
+              className="flex-1 border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-900 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400">
+              {['Low','Medium','High'].map(p=><option key={p} value={p}>{p}</option>)}
+            </select>
+            <input type="date" value={cfg.due_date||''} onChange={e=>setcfg('due_date',e.target.value)}
+              className="flex-1 border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-900 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400"/>
           </div>
         </div>
       )}
@@ -1412,73 +780,755 @@ function AppPreferencesPanel() {
   );
 }
 
-// ═══════════════════════════ ADMIN HOME ════════════════════════════════════════
-// B2B Enterprise Admin sections
-const B2B_SECTIONS = [
-  {key:'organizations', label:'Organizations',     icon:'🏢', desc:'Companies & tenants'},
-  {key:'businessUnits', label:'Business Units',    icon:'🏗️', desc:'Divisions & departments'},
-  {key:'users',         label:'Users',             icon:'👤', desc:'Enterprise accounts'},
-  {key:'groups',        label:'User Groups',       icon:'👥', desc:'Group access & assignment'},
-  {key:'security',      label:'Security Console',  icon:'🔐', desc:'Roles & permissions'},
-  {key:'workflow',      label:'Workflow Builder',  icon:'⚙️', desc:'Auto-trigger on events'},
-  {key:'assignment',    label:'Assignment Rules',  icon:'📋', desc:'Auto-assign records'},
-  {key:'sla',           label:'SLA Policies',      icon:'⏱️', desc:'Response time targets'},
-  {key:'approvals',     label:'Approval Processes',icon:'✅', desc:'Multi-step approvals'},
-  {key:'templates',     label:'Quote Templates',   icon:'📄', desc:'Branded quote layouts'},
-  {key:'invoiceTemplates',label:'Invoice Templates',icon:'🧾',desc:'Branded invoice layouts'},
-  {key:'warehouses',    label:'Warehouses & SCM',  icon:'🏭', desc:'Warehouses, subinventories & storage'},
-  {key:'appPrefs',      label:'App Preferences',   icon:'⚙️', desc:'CPQ, CRM & currency settings'},
-  {key:'appearance',    label:'Appearance',        icon:'🎨', desc:'Logo, themes & language'},
-  {key:'tenants', label:'Tenant Admin', icon:'🌐', desc:'Manage client workspaces & subscriptions'},
-  {key:'b2b_composer', label:'App Composer', icon:'🧩', desc:'Add custom fields to CRM objects'},
-];
+// ── Workflow Builder Panel ────────────────────────────────────────────────────
+function WorkflowBuilderPanel({ objectList = ALL_OBJECTS, conditionFields = CONDITION_FIELDS, objectLabels = null }) {
+  const { workflowRules, enterpriseUsers, saveWorkflowRule, deleteWorkflowRule } = useApp();
+  const [open, setOpen]         = useState(false);
+  const [editing, setEditing]   = useState(null);
+  const [form, setForm]         = useState({ name:'', object_type:'leads', trigger_event:'on_create', trigger_field:'', trigger_value:'', is_active:true });
+  const [conditions, setCond]   = useState({ logic:'AND', conditions:[] });
+  const [actions, setActions]   = useState([{ action_type:'send_notification', action_config:{} }]);
+  const [saving, setSaving]     = useState(false);
+  const s = (k,v)=>setForm(f=>({...f,[k]:v}));
 
-// B2C Retail Admin sections — enabled only in B2C mode
-const B2C_SECTIONS = [
-  {key:'r_organizations', label:'Organizations',     icon:'🏢', desc:'Retail org structure'},
-  {key:'r_businessUnits', label:'Business Units',    icon:'🏗️', desc:'Retail divisions'},
-  {key:'r_users',         label:'Users',             icon:'👤', desc:'Retail user accounts'},
-  {key:'r_groups',        label:'User Groups',       icon:'👥', desc:'Group access & roles'},
-  {key:'r_security',      label:'Security Console',  icon:'🔐', desc:'Retail roles & permissions'},
-  {key:'r_invoiceTemplates',label:'Invoice Template',icon:'🧾', desc:'Retail invoice layouts'},
-  {key:'r_approvals',     label:'Approval Processes',icon:'✅', desc:'Retail approval chains'},
-  {key:'r_workflow',      label:'Workflow Builder',  icon:'⚙️', desc:'Retail event automation'},
-  {key:'r_assignment',    label:'Assignment Rules',  icon:'📋', desc:'Retail record assignment'},
-  {key:'r_sla',           label:'SLA Policies',      icon:'⏱️', desc:'Retail response targets'},
-  {key:'r_composer',      label:'App Composer',      icon:'🎛️', desc:'Custom fields & layouts'},
-  {key:'appPrefs',        label:'App Preferences',   icon:'⚙️', desc:'Global settings'},
-  {key:'appearance',      label:'Appearance',        icon:'🎨', desc:'Themes & branding'},
-];
+  const fields = conditionFields[form.object_type] || [];
+  const triggerFieldOpts = getFieldOptions(form.object_type, form.trigger_field);
 
-// Legacy alias for renderSection compatibility
-const ADMIN_SECTIONS = B2B_SECTIONS;
+  const openNew = () => {
+    setEditing(null);
+    setForm({name:'',object_type:'leads',trigger_event:'on_create',trigger_field:'',trigger_value:'',is_active:true});
+    setCond({logic:'AND',conditions:[]});
+    setActions([{action_type:'send_notification',action_config:{}}]);
+    setOpen(true);
+  };
 
-// ─── Retail Admin Context Wrapper ─────────────────────────────────────────────
-// Shown above any B2B panel when accessed from B2C Admin — provides retail context
-function RetailAdminWrapper({ title, icon, desc, objects, children }) {
-    const scope = objects || Object.values(RETAIL_OBJECT_LABELS);
+  const openEdit = async (rule) => {
+    setEditing(rule);
+    setForm({ name:rule.name, object_type:rule.object_type, trigger_event:rule.trigger_event,
+      trigger_field:rule.trigger_field||'', trigger_value:rule.trigger_value||'', is_active:rule.is_active });
+    setCond(rule.conditions || {logic:'AND',conditions:[]});
+    const { data: acts } = await (window as any).__bp_supabase
+      ?.from('workflow_actions').select('*').eq('workflow_rule_id', rule.id).order('execution_order') || {data:[]};
+    setActions(acts?.length ? acts : [{action_type:'send_notification',action_config:{}}]);
+    setOpen(true);
+  };
+
+  const handleSave = async () => {
+    if (!form.name?.trim()) { alert('Rule name is required.'); return; }
+    if (!actions.length)    { alert('At least one action is required.'); return; }
+    setSaving(true);
+    try {
+      await saveWorkflowRule({ ...form, conditions }, actions, editing?.id);
+      setOpen(false);
+    } catch(e: any) { alert('Save failed: ' + e.message); }
+    setSaving(false);
+  };
+
+  const OBJ_LABELS = objectLabels || {};
+
   return (
     <div className="space-y-5">
-      {/* Retail context banner */}
-      <div className="bg-gradient-to-r from-purple-900 to-purple-700 rounded-[20px] p-5 text-white">
-        <div className="flex items-start gap-4">
-          <div className="text-3xl">{icon}</div>
-          <div className="flex-1">
-            <h2 className="text-xl font-bold">{title} <span className="text-purple-300 text-sm font-normal">— Retail (B2C)</span></h2>
-            <p className="text-purple-200 text-sm mt-1">{desc}</p>
-            <div className="flex flex-wrap gap-2 mt-3">
-              {scope.map(obj=>(
-                <span key={obj} className="bg-white/15 text-white text-xs px-2.5 py-1 rounded-full font-semibold">{obj}</span>
+      <div className="bg-gradient-to-r from-[#0F172A] to-blue-900 rounded-[24px] p-6 text-white flex items-start justify-between">
+        <div>
+          <h2 className="text-2xl font-bold">⚙️ Workflow Rules</h2>
+          <p className="text-white/60 text-sm mt-1">{workflowRules.length} rule(s) — auto-trigger actions on record events</p>
+        </div>
+        <button onClick={openNew} className="bg-white text-[#0F172A] px-5 py-2.5 rounded-2xl font-bold text-sm shadow hover:opacity-90">+ New Rule</button>
+      </div>
+
+      {workflowRules.length === 0 ? (
+        <div className="py-16 text-center bg-white rounded-[24px] border border-gray-200 shadow-sm">
+          <div className="text-5xl mb-3">⚙️</div>
+          <div className="font-bold text-[#0F172A] text-lg mb-2">No workflow rules yet</div>
+          <p className="text-gray-400 mb-5 text-sm">Auto-trigger notifications, field updates, and tasks based on record events.</p>
+          <button onClick={openNew} className="bg-[#0F172A] text-white px-6 py-3 rounded-2xl font-semibold text-sm">+ Create First Rule</button>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {workflowRules.map(rule => (
+            <div key={rule.id} className="bg-white border border-gray-200 rounded-2xl p-5 shadow-sm">
+              <div className="flex items-start justify-between">
+                <div className="flex-1">
+                  <div className="flex items-center gap-3 flex-wrap mb-1">
+                    <h3 className="font-bold text-[#0F172A] text-lg">{rule.name}</h3>
+                    <span className={`text-xs px-2.5 py-0.5 rounded-full font-bold border ${rule.is_active?'bg-green-100 text-green-700 border-green-200':'bg-gray-100 text-gray-500 border-gray-200'}`}>
+                      {rule.is_active ? '● Active' : '○ Inactive'}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2 flex-wrap text-xs text-gray-500">
+                    <span className="bg-blue-50 text-blue-700 px-2 py-0.5 rounded-lg font-semibold capitalize">{rule.object_type}</span>
+                    <span>→</span>
+                    <span className="bg-purple-50 text-purple-700 px-2 py-0.5 rounded-lg font-semibold">{TRIGGER_EVENTS.find(t=>t.v===rule.trigger_event)?.l || rule.trigger_event}</span>
+                    {rule.trigger_field && <><span>when</span><span className="bg-amber-50 text-amber-700 px-2 py-0.5 rounded-lg font-semibold">{rule.trigger_field} = {rule.trigger_value}</span></>}
+                  </div>
+                </div>
+                <div className="flex gap-2 ml-4">
+                  <button onClick={()=>openEdit(rule)} className="px-3 py-1.5 bg-blue-50 text-blue-700 hover:bg-blue-100 rounded-xl text-xs font-semibold border border-blue-200">Edit</button>
+                  <button onClick={()=>deleteWorkflowRule(rule.id)} className="px-3 py-1.5 bg-red-50 text-red-600 hover:bg-red-100 rounded-xl text-xs font-semibold border border-red-200">Delete</button>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <Modal open={open} onClose={()=>setOpen(false)} title={editing?'Edit Workflow Rule':'New Workflow Rule'} size="lg"
+        footer={<>
+          <button onClick={()=>setOpen(false)} className="px-5 py-2.5 rounded-2xl border border-gray-200 text-gray-600 hover:bg-gray-50 text-sm font-semibold">Cancel</button>
+          <button onClick={handleSave} disabled={saving} className="px-5 py-2.5 rounded-2xl bg-gradient-to-r from-[#0F172A] to-blue-800 text-white text-sm font-bold shadow disabled:opacity-50">
+            {saving ? 'Saving…' : (editing ? 'Update Rule' : 'Create Rule')}
+          </button>
+        </>}>
+        <div className="space-y-5">
+          {/* Basic info */}
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-bold uppercase tracking-wider text-gray-500 mb-1.5">Rule Name *</label>
+              <input value={form.name} onChange={e=>s('name',e.target.value)} placeholder="e.g. Notify on High Value Lead"
+                className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-blue-400"/>
+            </div>
+            <div className="flex items-center gap-3 pt-6">
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" checked={form.is_active} onChange={e=>s('is_active',e.target.checked)}
+                  className="w-4 h-4 accent-blue-600 rounded"/>
+                <span className="text-sm font-semibold text-gray-700">Active</span>
+              </label>
+            </div>
+          </div>
+
+          {/* Trigger */}
+          <div className="bg-blue-50 rounded-[16px] p-4 space-y-3">
+            <h4 className="text-sm font-bold text-[#0F172A]">🔔 Trigger</h4>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-bold text-gray-500 mb-1">Object</label>
+                <select value={form.object_type} onChange={e=>s('object_type',e.target.value)}
+                  className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-900 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400">
+                  {objectList.map(o=><option key={o} value={o}>{OBJ_LABELS[o]||o}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-gray-500 mb-1">When</label>
+                <select value={form.trigger_event} onChange={e=>s('trigger_event',e.target.value)}
+                  className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-900 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400">
+                  {TRIGGER_EVENTS.map(t=><option key={t.v} value={t.v}>{t.l}</option>)}
+                </select>
+              </div>
+            </div>
+            {(form.trigger_event==='on_field_change'||form.trigger_event==='on_status_change') && (
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-gray-500 mb-1">Field</label>
+                  <select value={form.trigger_field} onChange={e=>s('trigger_field',e.target.value)}
+                    className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-900 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400">
+                    <option value="">Select field...</option>
+                    {fields.map(f=><option key={f.v} value={f.v}>{f.l}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-gray-500 mb-1">New Value</label>
+                  {triggerFieldOpts
+                    ? <select value={form.trigger_value} onChange={e=>s('trigger_value',e.target.value)}
+                        className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-900 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400">
+                        <option value="">Any value</option>
+                        {triggerFieldOpts.map(o=><option key={o} value={o}>{o}</option>)}
+                      </select>
+                    : <input value={form.trigger_value} onChange={e=>s('trigger_value',e.target.value)}
+                        placeholder="Value to match"
+                        className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-900 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400"/>
+                  }
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Conditions */}
+          <div className="bg-gray-50 rounded-[16px] p-4">
+            <h4 className="text-sm font-bold text-[#0F172A] mb-3">🔍 Additional Conditions (optional)</h4>
+            <ConditionBuilder fields={fields} conditions={conditions.conditions||[]} logic={conditions.logic||'AND'} onChange={setCond}/>
+          </div>
+
+          {/* Actions */}
+          <div>
+            <div className="flex items-center justify-between mb-3">
+              <h4 className="text-sm font-bold text-[#0F172A]">⚡ Actions</h4>
+              <button onClick={()=>setActions(p=>[...p,{action_type:'send_notification',action_config:{},execution_order:p.length}])}
+                className="text-sm text-blue-600 hover:text-blue-800 font-semibold">+ Add Action</button>
+            </div>
+            <div className="space-y-3">
+              {actions.map((a,i)=>(
+                <ActionBuilder key={i} action={a} idx={i} users={enterpriseUsers} fields={fields}
+                  onChange={na=>setActions(p=>p.map((x,j)=>j===i?na:x))}
+                  onRemove={()=>setActions(p=>p.filter((_,j)=>j!==i))}/>
               ))}
             </div>
           </div>
         </div>
-      </div>
-      {/* The actual panel */}
-      {children}
+      </Modal>
     </div>
   );
 }
+
+// ── Assignment Rules Panel ─────────────────────────────────────────────────
+function AssignmentRulesPanel({ objectList = ALL_OBJECTS, conditionFields = CONDITION_FIELDS, objectLabels = null }) {
+  const { assignmentRules, enterpriseUsers, userGroups, saveAssignmentRule, deleteAssignmentRule } = useApp();
+  const [open, setOpen]       = useState(false);
+  const [editing, setEditing] = useState(null);
+  const [form, setForm]       = useState({ name:'', object_type:'leads', condition_field:'', condition_operator:'equals', condition_value:'', assign_to_user_id:'', assign_to_group_id:'', priority:1, is_active:true });
+  const [saving, setSaving]   = useState(false);
+  const s = (k,v)=>setForm(f=>({...f,[k]:v}));
+
+  const fields    = conditionFields[form.object_type] || [];
+  const valueOpts = getFieldOptions(form.object_type, form.condition_field);
+  const OBJ_LABELS = objectLabels || {};
+
+  const openNew = () => {
+    setEditing(null);
+    setForm({name:'',object_type:'leads',condition_field:'',condition_operator:'equals',condition_value:'',assign_to_user_id:'',assign_to_group_id:'',priority:1,is_active:true});
+    setOpen(true);
+  };
+
+  const handleSave = async () => {
+    if (!form.name?.trim())        { alert('Rule name is required.'); return; }
+    if (!form.condition_field)     { alert('Condition field is required.'); return; }
+    if (!form.assign_to_user_id && !form.assign_to_group_id) { alert('Select a user or group to assign to.'); return; }
+    setSaving(true);
+    try { await saveAssignmentRule(form, editing?.id); setOpen(false); }
+    catch(e: any) { alert('Save failed: ' + e.message); }
+    setSaving(false);
+  };
+
+  return (
+    <div className="space-y-5">
+      <div className="bg-gradient-to-r from-[#0F172A] to-indigo-900 rounded-[24px] p-6 text-white flex items-start justify-between">
+        <div>
+          <h2 className="text-2xl font-bold">📋 Assignment Rules</h2>
+          <p className="text-white/60 text-sm mt-1">{assignmentRules.length} rule(s) — auto-assign records to users or groups</p>
+        </div>
+        <button onClick={openNew} className="bg-white text-[#0F172A] px-5 py-2.5 rounded-2xl font-bold text-sm shadow hover:opacity-90">+ New Rule</button>
+      </div>
+
+      {assignmentRules.length === 0 ? (
+        <div className="py-16 text-center bg-white rounded-[24px] border border-gray-200 shadow-sm">
+          <div className="text-5xl mb-3">📋</div>
+          <div className="font-bold text-[#0F172A] text-lg mb-2">No assignment rules yet</div>
+          <p className="text-gray-400 mb-5 text-sm">Auto-assign records to users or groups based on field conditions.</p>
+          <button onClick={openNew} className="bg-[#0F172A] text-white px-6 py-3 rounded-2xl font-semibold text-sm">+ Create First Rule</button>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {[...assignmentRules].sort((a,b)=>a.priority-b.priority).map(rule => {
+            const assignee = enterpriseUsers.find(u=>u.id===rule.assign_to_user_id);
+            const grp      = userGroups?.find(g=>g.id===rule.assign_to_group_id);
+            return (
+              <div key={rule.id} className="bg-white border border-gray-200 rounded-2xl p-5 shadow-sm flex items-center justify-between gap-4">
+                <div className="flex items-center gap-3">
+                  <div className="w-8 h-8 rounded-xl bg-indigo-100 text-indigo-700 flex items-center justify-center font-bold text-sm">{rule.priority}</div>
+                  <div>
+                    <div className="flex items-center gap-2 mb-0.5">
+                      <h3 className="font-bold text-[#0F172A]">{rule.name}</h3>
+                      <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold border ${rule.is_active?'bg-green-100 text-green-700 border-green-200':'bg-gray-100 text-gray-500 border-gray-200'}`}>
+                        {rule.is_active ? 'Active' : 'Inactive'}
+                      </span>
+                    </div>
+                    <div className="text-xs text-gray-500 flex items-center gap-1.5 flex-wrap">
+                      <span className="bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded-lg font-semibold capitalize">{rule.object_type}</span>
+                      <span>·</span>
+                      <span>{rule.condition_field} {rule.condition_operator} "{rule.condition_value}"</span>
+                      <span>→</span>
+                      <span className="font-semibold text-[#0F172A]">
+                        {assignee ? `${assignee.first_name||''} ${assignee.last_name||''}`.trim()||assignee.email : grp?.group_name || '?'}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+                <div className="flex gap-2 flex-shrink-0">
+                  <button onClick={()=>{setEditing(rule);setForm({...rule});setOpen(true);}} className="px-3 py-1.5 bg-blue-50 text-blue-700 hover:bg-blue-100 rounded-xl text-xs font-semibold border border-blue-200">Edit</button>
+                  <button onClick={()=>deleteAssignmentRule(rule.id)} className="px-3 py-1.5 bg-red-50 text-red-600 hover:bg-red-100 rounded-xl text-xs font-semibold border border-red-200">Delete</button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      <Modal open={open} onClose={()=>setOpen(false)} title={editing?'Edit Assignment Rule':'New Assignment Rule'} size="lg"
+        footer={<>
+          <button onClick={()=>setOpen(false)} className="px-5 py-2.5 rounded-2xl border border-gray-200 text-gray-600 hover:bg-gray-50 text-sm font-semibold">Cancel</button>
+          <button onClick={handleSave} disabled={saving} className="px-5 py-2.5 rounded-2xl bg-gradient-to-r from-[#0F172A] to-blue-800 text-white text-sm font-bold shadow disabled:opacity-50">
+            {saving ? 'Saving…' : (editing ? 'Update Rule' : 'Create Rule')}
+          </button>
+        </>}>
+        <div className="space-y-4">
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-bold uppercase tracking-wider text-gray-500 mb-1.5">Rule Name *</label>
+              <input value={form.name} onChange={e=>s('name',e.target.value)} placeholder="e.g. Assign Enterprise Leads to Sales Team"
+                className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-blue-400"/>
+            </div>
+            <div>
+              <label className="block text-xs font-bold uppercase tracking-wider text-gray-500 mb-1.5">Object</label>
+              <select value={form.object_type} onChange={e=>s('object_type',e.target.value)}
+                className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-blue-400">
+                {objectList.map(o=><option key={o} value={o}>{OBJ_LABELS[o]||o}</option>)}
+              </select>
+            </div>
+          </div>
+
+          <div className="bg-blue-50 rounded-[16px] p-4 space-y-3">
+            <h4 className="text-sm font-bold text-[#0F172A]">🔍 Condition</h4>
+            <div className="grid grid-cols-3 gap-3">
+              <div>
+                <label className="block text-xs font-bold text-gray-500 mb-1">Field *</label>
+                <select value={form.condition_field} onChange={e=>s('condition_field',e.target.value)}
+                  className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-900 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400">
+                  <option value="">Select field...</option>
+                  {fields.map(f=><option key={f.v} value={f.v}>{f.l}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-gray-500 mb-1">Operator</label>
+                <select value={form.condition_operator} onChange={e=>s('condition_operator',e.target.value)}
+                  className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-900 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400">
+                  {OPERATORS.map(o=><option key={o.v} value={o.v}>{o.l}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-gray-500 mb-1">Value</label>
+                {valueOpts
+                  ? <select value={form.condition_value} onChange={e=>s('condition_value',e.target.value)}
+                      className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-900 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400">
+                      <option value="">Any</option>
+                      {valueOpts.map(o=><option key={o} value={o}>{o}</option>)}
+                    </select>
+                  : <input value={form.condition_value} onChange={e=>s('condition_value',e.target.value)}
+                      placeholder="Value..."
+                      className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-900 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400"/>
+                }
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-gray-50 rounded-[16px] p-4 space-y-3">
+            <h4 className="text-sm font-bold text-[#0F172A]">👤 Assign To</h4>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-bold text-gray-500 mb-1">User</label>
+                <select value={form.assign_to_user_id||''} onChange={e=>s('assign_to_user_id',e.target.value)}
+                  className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-900 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400">
+                  <option value="">Select user...</option>
+                  {enterpriseUsers.map(u=><option key={u.id} value={u.id}>{`${u.first_name||''} ${u.last_name||''}`.trim()||u.email}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-gray-500 mb-1">Or Group</label>
+                <select value={form.assign_to_group_id||''} onChange={e=>s('assign_to_group_id',e.target.value)}
+                  className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-900 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400">
+                  <option value="">Select group...</option>
+                  {(userGroups||[]).map(g=><option key={g.id} value={g.id}>{g.group_name}</option>)}
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-bold uppercase tracking-wider text-gray-500 mb-1.5">Priority (lower = higher priority)</label>
+              <input type="number" min="1" max="999" value={form.priority} onChange={e=>s('priority',Number(e.target.value))}
+                className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-blue-400"/>
+            </div>
+            <div className="flex items-end pb-1">
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" checked={form.is_active} onChange={e=>s('is_active',e.target.checked)} className="w-4 h-4 accent-blue-600 rounded"/>
+                <span className="text-sm font-semibold text-gray-700">Active</span>
+              </label>
+            </div>
+          </div>
+        </div>
+      </Modal>
+    </div>
+  );
+}
+
+// ── SLA Panel ──────────────────────────────────────────────────────────────
+function SLAPanel({ objectList = ALL_OBJECTS, conditionFields = CONDITION_FIELDS, objectLabels = null }) {
+  const { slaPolicies, enterpriseUsers, userGroups, saveSLAPolicy, deleteSLAPolicy } = useApp();
+  const [open, setOpen]       = useState(false);
+  const [editing, setEditing] = useState(null);
+  const [form, setForm]       = useState({ name:'', object_type:'leads', condition_field:'status', condition_value:'', response_time_hours:24, resolution_time_hours:72, warning_threshold_pct:80, escalate_to_user_id:'', is_active:true });
+  const [saving, setSaving]   = useState(false);
+  const s = (k,v)=>setForm(f=>({...f,[k]:v}));
+
+  const fields    = conditionFields[form.object_type] || [];
+  const valueOpts = getFieldOptions(form.object_type, form.condition_field);
+  const OBJ_LABELS = objectLabels || {};
+
+  const openNew = () => {
+    setEditing(null);
+    setForm({name:'',object_type:'leads',condition_field:'status',condition_value:'',response_time_hours:24,resolution_time_hours:72,warning_threshold_pct:80,escalate_to_user_id:'',is_active:true});
+    setOpen(true);
+  };
+
+  return (
+    <div className="space-y-5">
+      <div className="bg-gradient-to-r from-[#0F172A] to-teal-900 rounded-[24px] p-6 text-white flex items-start justify-between">
+        <div>
+          <h2 className="text-2xl font-bold">⏱️ SLA Policies</h2>
+          <p className="text-white/60 text-sm mt-1">{slaPolicies?.length||0} polic(ies) — track response and resolution times</p>
+        </div>
+        <button onClick={openNew} className="bg-white text-[#0F172A] px-5 py-2.5 rounded-2xl font-bold text-sm shadow hover:opacity-90">+ New Policy</button>
+      </div>
+
+      {(!slaPolicies||slaPolicies.length===0) ? (
+        <div className="py-16 text-center bg-white rounded-[24px] border border-gray-200 shadow-sm">
+          <div className="text-5xl mb-3">⏱️</div>
+          <div className="font-bold text-[#0F172A] text-lg mb-2">No SLA policies yet</div>
+          <p className="text-gray-400 mb-5 text-sm">Define response and resolution time targets for different record types.</p>
+          <button onClick={openNew} className="bg-[#0F172A] text-white px-6 py-3 rounded-2xl font-semibold text-sm">+ Create First Policy</button>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {slaPolicies.map(policy => {
+            const escalateTo = enterpriseUsers.find(u=>u.id===policy.escalate_to_user_id);
+            return (
+              <div key={policy.id} className="bg-white border border-gray-200 rounded-2xl p-5 shadow-sm flex items-center justify-between gap-4">
+                <div className="flex-1">
+                  <div className="flex items-center gap-2 mb-1">
+                    <h3 className="font-bold text-[#0F172A]">{policy.name}</h3>
+                    <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold border ${policy.is_active?'bg-green-100 text-green-700 border-green-200':'bg-gray-100 text-gray-500 border-gray-200'}`}>
+                      {policy.is_active?'Active':'Inactive'}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-3 flex-wrap text-xs text-gray-500">
+                    <span className="bg-teal-50 text-teal-700 px-2 py-0.5 rounded-lg font-semibold capitalize">{policy.object_type}</span>
+                    {policy.condition_field && <span>· {policy.condition_field}: "{policy.condition_value}"</span>}
+                    <span>· Response: <strong>{policy.response_time_hours}h</strong></span>
+                    <span>· Resolution: <strong>{policy.resolution_time_hours}h</strong></span>
+                    {escalateTo && <span>· Escalate to: <strong>{`${escalateTo.first_name||''} ${escalateTo.last_name||''}`.trim()||escalateTo.email}</strong></span>}
+                  </div>
+                </div>
+                <div className="flex gap-2 flex-shrink-0">
+                  <button onClick={()=>{setEditing(policy);setForm({...policy});setOpen(true);}} className="px-3 py-1.5 bg-blue-50 text-blue-700 hover:bg-blue-100 rounded-xl text-xs font-semibold border border-blue-200">Edit</button>
+                  <button onClick={()=>deleteSLAPolicy(policy.id)} className="px-3 py-1.5 bg-red-50 text-red-600 hover:bg-red-100 rounded-xl text-xs font-semibold border border-red-200">Delete</button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      <Modal open={open} onClose={()=>setOpen(false)} title={editing?'Edit SLA Policy':'New SLA Policy'} size="lg"
+        footer={<>
+          <button onClick={()=>setOpen(false)} className="px-5 py-2.5 rounded-2xl border border-gray-200 text-gray-600 hover:bg-gray-50 text-sm font-semibold">Cancel</button>
+          <button onClick={async()=>{
+            if(!form.name?.trim()){alert('Name required');return;}
+            setSaving(true);
+            try{await saveSLAPolicy(form,editing?.id);setOpen(false);}catch(e:any){alert(e.message);}
+            setSaving(false);
+          }} disabled={saving} className="px-5 py-2.5 rounded-2xl bg-gradient-to-r from-[#0F172A] to-blue-800 text-white text-sm font-bold shadow disabled:opacity-50">
+            {saving?'Saving…':(editing?'Update Policy':'Create Policy')}
+          </button>
+        </>}>
+        <div className="space-y-4">
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-bold uppercase tracking-wider text-gray-500 mb-1.5">Policy Name *</label>
+              <input value={form.name} onChange={e=>s('name',e.target.value)} placeholder="e.g. Enterprise Lead SLA"
+                className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-blue-400"/>
+            </div>
+            <div>
+              <label className="block text-xs font-bold uppercase tracking-wider text-gray-500 mb-1.5">Object</label>
+              <select value={form.object_type} onChange={e=>s('object_type',e.target.value)}
+                className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-blue-400">
+                {objectList.map(o=><option key={o} value={o}>{OBJ_LABELS[o]||o}</option>)}
+              </select>
+            </div>
+          </div>
+
+          <div className="bg-teal-50 rounded-[16px] p-4 space-y-3">
+            <h4 className="text-sm font-bold text-[#0F172A]">🔍 Apply When (optional condition)</h4>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-bold text-gray-500 mb-1">Field</label>
+                <select value={form.condition_field||''} onChange={e=>s('condition_field',e.target.value)}
+                  className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-900 bg-white focus:outline-none focus:ring-1 focus:ring-teal-400">
+                  <option value="">All records</option>
+                  {fields.map(f=><option key={f.v} value={f.v}>{f.l}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-gray-500 mb-1">Value</label>
+                {valueOpts
+                  ? <select value={form.condition_value||''} onChange={e=>s('condition_value',e.target.value)}
+                      className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-900 bg-white focus:outline-none focus:ring-1 focus:ring-teal-400">
+                      <option value="">Any</option>
+                      {valueOpts.map(o=><option key={o} value={o}>{o}</option>)}
+                    </select>
+                  : <input value={form.condition_value||''} onChange={e=>s('condition_value',e.target.value)}
+                      placeholder="Value..."
+                      className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-900 bg-white focus:outline-none focus:ring-1 focus:ring-teal-400"/>
+                }
+              </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-3 gap-4">
+            <div>
+              <label className="block text-xs font-bold uppercase tracking-wider text-gray-500 mb-1.5">Response Time (hours)</label>
+              <input type="number" min="1" value={form.response_time_hours} onChange={e=>s('response_time_hours',Number(e.target.value))}
+                className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-blue-400"/>
+            </div>
+            <div>
+              <label className="block text-xs font-bold uppercase tracking-wider text-gray-500 mb-1.5">Resolution Time (hours)</label>
+              <input type="number" min="1" value={form.resolution_time_hours} onChange={e=>s('resolution_time_hours',Number(e.target.value))}
+                className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-blue-400"/>
+            </div>
+            <div>
+              <label className="block text-xs font-bold uppercase tracking-wider text-gray-500 mb-1.5">Warning at (%)</label>
+              <input type="number" min="1" max="100" value={form.warning_threshold_pct} onChange={e=>s('warning_threshold_pct',Number(e.target.value))}
+                className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-blue-400"/>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-bold uppercase tracking-wider text-gray-500 mb-1.5">Escalate To (user)</label>
+              <select value={form.escalate_to_user_id||''} onChange={e=>s('escalate_to_user_id',e.target.value)}
+                className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-blue-400">
+                <option value="">No escalation</option>
+                {enterpriseUsers.map(u=><option key={u.id} value={u.id}>{`${u.first_name||''} ${u.last_name||''}`.trim()||u.email}</option>)}
+              </select>
+            </div>
+            <div className="flex items-end pb-1">
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" checked={form.is_active} onChange={e=>s('is_active',e.target.checked)} className="w-4 h-4 accent-blue-600 rounded"/>
+                <span className="text-sm font-semibold text-gray-700">Active</span>
+              </label>
+            </div>
+          </div>
+        </div>
+      </Modal>
+    </div>
+  );
+}
+
+// ── Approval Process Panel ─────────────────────────────────────────────────
+function ApprovalProcessPanel({ objectList = ALL_OBJECTS, conditionFields = CONDITION_FIELDS, objectLabels = null }) {
+  const { approvalProcesses, approvalRequests, enterpriseUsers, userGroups, saveApprovalProcess, deleteApprovalProcess, fetchApprovalProcesses } = useApp();
+  const [open, setOpen]         = useState(false);
+  const [editing, setEditing]   = useState(null);
+  const [form, setForm]         = useState({ name:'', object_type:'orders', is_active:true });
+  const [conditions, setCond]   = useState({ logic:'AND', conditions:[] });
+  const [steps, setSteps]       = useState([{ step_number:1, step_name:'Manager Approval', approver_user_id:'', approver_group_id:'', approval_type:'any', on_approve_action:'proceed', on_reject_action:'reject' }]);
+  const [saving, setSaving]     = useState(false);
+  const s = (k,v)=>setForm(f=>({...f,[k]:v}));
+  const fields    = conditionFields[form.object_type] || [];
+  const OBJ_LABELS = objectLabels || {};
+
+  const addStep = () => setSteps(p=>[...p,{step_number:p.length+1,step_name:'',approver_user_id:'',approver_group_id:'',approval_type:'any',on_approve_action:'proceed',on_reject_action:'reject'}]);
+
+  const handleSave = async () => {
+    if (!form.name?.trim()) { alert('Process name is required.'); return; }
+    if (!steps.every(s=>s.approver_user_id||s.approver_group_id)) { alert('Each step needs an approver.'); return; }
+    setSaving(true);
+    try {
+      await saveApprovalProcess({ ...form, conditions }, steps.map((s,i)=>({...s,step_number:i+1})), editing?.id);
+      setOpen(false);
+    } catch(e: any) { alert('Save failed: ' + e.message); }
+    setSaving(false);
+  };
+
+  const openNew = () => {
+    setEditing(null);
+    setForm({name:'',object_type:'orders',is_active:true});
+    setCond({logic:'AND',conditions:[]});
+    setSteps([{step_number:1,step_name:'Manager Approval',approver_user_id:'',approver_group_id:'',approval_type:'any',on_approve_action:'proceed',on_reject_action:'reject'}]);
+    setOpen(true);
+  };
+
+  const openEdit = (proc) => {
+    setEditing(proc);
+    setForm({name:proc.name,object_type:proc.object_type,is_active:proc.is_active});
+    setCond(proc.conditions||{logic:'AND',conditions:[]});
+    setSteps(proc._steps||[{step_number:1,step_name:'',approver_user_id:'',approver_group_id:'',approval_type:'any',on_approve_action:'proceed',on_reject_action:'reject'}]);
+    setOpen(true);
+  };
+
+  // Pending requests grouped by process
+  const pendingRequests = approvalRequests?.filter(r=>r.status==='Pending') || [];
+
+  return (
+    <div className="space-y-5">
+      <div className="bg-gradient-to-r from-[#0F172A] to-purple-900 rounded-[24px] p-6 text-white flex items-start justify-between">
+        <div>
+          <h2 className="text-2xl font-bold">✅ Approval Processes</h2>
+          <p className="text-white/60 text-sm mt-1">{approvalProcesses?.length||0} process(es) · {pendingRequests.length} pending request(s)</p>
+        </div>
+        <button onClick={openNew} className="bg-white text-[#0F172A] px-5 py-2.5 rounded-2xl font-bold text-sm shadow hover:opacity-90">+ New Process</button>
+      </div>
+
+      {pendingRequests.length > 0 && (
+        <div className="bg-amber-50 border border-amber-200 rounded-[20px] p-4">
+          <h3 className="font-bold text-amber-800 text-sm mb-3">⏳ Pending Approval Requests</h3>
+          <div className="space-y-2">
+            {pendingRequests.map(req=>(
+              <div key={req.id} className="bg-white rounded-xl px-4 py-3 border border-amber-200 flex items-center justify-between text-sm">
+                <div>
+                  <span className="font-semibold text-[#0F172A]">{req.record_name}</span>
+                  <span className="text-gray-400 ml-2">· {req.record_type} · Submitted by {req.submitted_by}</span>
+                </div>
+                <span className="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full font-bold">
+                  Step {req.current_step_number}/{req.total_steps}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {(!approvalProcesses||approvalProcesses.length===0) ? (
+        <div className="py-16 text-center bg-white rounded-[24px] border border-gray-200 shadow-sm">
+          <div className="text-5xl mb-3">✅</div>
+          <div className="font-bold text-[#0F172A] text-lg mb-2">No approval processes yet</div>
+          <p className="text-gray-400 mb-5 text-sm">Set up multi-step approvals for orders, quotes, and other records.</p>
+          <button onClick={openNew} className="bg-[#0F172A] text-white px-6 py-3 rounded-2xl font-semibold text-sm">+ Create First Process</button>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {approvalProcesses.map(proc=>(
+            <div key={proc.id} className="bg-white border border-gray-200 rounded-2xl p-5 shadow-sm">
+              <div className="flex items-start justify-between">
+                <div>
+                  <div className="flex items-center gap-2 mb-1">
+                    <h3 className="font-bold text-[#0F172A]">{proc.name}</h3>
+                    <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold border ${proc.is_active?'bg-green-100 text-green-700 border-green-200':'bg-gray-100 text-gray-500 border-gray-200'}`}>
+                      {proc.is_active?'Active':'Inactive'}
+                    </span>
+                  </div>
+                  <div className="text-xs text-gray-500 flex items-center gap-2 flex-wrap">
+                    <span className="bg-purple-50 text-purple-700 px-2 py-0.5 rounded-lg font-semibold capitalize">{proc.object_type}</span>
+                    {proc.condition_field && <span>· {proc.condition_field} {proc.condition_operator} "{proc.condition_value}"</span>}
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  <button onClick={()=>openEdit(proc)} className="px-3 py-1.5 bg-blue-50 text-blue-700 hover:bg-blue-100 rounded-xl text-xs font-semibold border border-blue-200">Edit</button>
+                  <button onClick={()=>deleteApprovalProcess(proc.id)} className="px-3 py-1.5 bg-red-50 text-red-600 hover:bg-red-100 rounded-xl text-xs font-semibold border border-red-200">Delete</button>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <Modal open={open} onClose={()=>setOpen(false)} title={editing?'Edit Approval Process':'New Approval Process'} size="lg"
+        footer={<>
+          <button onClick={()=>setOpen(false)} className="px-5 py-2.5 rounded-2xl border border-gray-200 text-gray-600 hover:bg-gray-50 text-sm font-semibold">Cancel</button>
+          <button onClick={handleSave} disabled={saving} className="px-5 py-2.5 rounded-2xl bg-gradient-to-r from-[#0F172A] to-blue-800 text-white text-sm font-bold shadow disabled:opacity-50">
+            {saving?'Saving…':(editing?'Update Process':'Create Process')}
+          </button>
+        </>}>
+        <div className="space-y-5">
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-bold uppercase tracking-wider text-gray-500 mb-1.5">Process Name *</label>
+              <input value={form.name} onChange={e=>s('name',e.target.value)} placeholder="e.g. High Value Order Approval"
+                className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-blue-400"/>
+            </div>
+            <div>
+              <label className="block text-xs font-bold uppercase tracking-wider text-gray-500 mb-1.5">Object</label>
+              <select value={form.object_type} onChange={e=>s('object_type',e.target.value)}
+                className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-blue-400">
+                {objectList.map(o=><option key={o} value={o}>{OBJ_LABELS[o]||o}</option>)}
+              </select>
+            </div>
+          </div>
+
+          <div className="bg-purple-50 rounded-[16px] p-4">
+            <h4 className="text-sm font-bold text-[#0F172A] mb-3">🔍 Entry Conditions (when to trigger)</h4>
+            <ConditionBuilder fields={fields} conditions={conditions.conditions||[]} logic={conditions.logic||'AND'} onChange={setCond}/>
+          </div>
+
+          <div>
+            <div className="flex items-center justify-between mb-3">
+              <h4 className="text-sm font-bold text-[#0F172A]">📋 Approval Steps</h4>
+              <button onClick={addStep} className="text-sm text-blue-600 hover:text-blue-800 font-semibold">+ Add Step</button>
+            </div>
+            <div className="space-y-3">
+              {steps.map((step,i)=>(
+                <div key={i} className="bg-gray-50 rounded-[16px] p-4 border border-gray-200 space-y-3">
+                  <div className="flex items-center gap-2">
+                    <span className="w-7 h-7 rounded-xl bg-[#0F172A] text-white flex items-center justify-center text-xs font-bold flex-shrink-0">{i+1}</span>
+                    <input value={step.step_name} onChange={e=>setSteps(p=>p.map((x,j)=>j===i?{...x,step_name:e.target.value}:x))}
+                      placeholder="Step name (e.g. Manager Approval)"
+                      className="flex-1 border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-900 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400"/>
+                    {steps.length > 1 && (
+                      <button onClick={()=>setSteps(p=>p.filter((_,j)=>j!==i))} className="w-7 h-7 flex items-center justify-center text-red-400 hover:text-red-600 hover:bg-red-50 rounded-lg text-lg">×</button>
+                    )}
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-bold text-gray-500 mb-1">Approver (User)</label>
+                      <select value={step.approver_user_id||''} onChange={e=>setSteps(p=>p.map((x,j)=>j===i?{...x,approver_user_id:e.target.value}:x))}
+                        className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-900 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400">
+                        <option value="">Select approver...</option>
+                        {enterpriseUsers.map(u=><option key={u.id} value={u.id}>{`${u.first_name||''} ${u.last_name||''}`.trim()||u.email}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-gray-500 mb-1">Or Group</label>
+                      <select value={step.approver_group_id||''} onChange={e=>setSteps(p=>p.map((x,j)=>j===i?{...x,approver_group_id:e.target.value}:x))}
+                        className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-900 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400">
+                        <option value="">Select group...</option>
+                        {(userGroups||[]).map(g=><option key={g.id} value={g.id}>{g.group_name}</option>)}
+                      </select>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-3 gap-3">
+                    <div>
+                      <label className="block text-xs font-bold text-gray-500 mb-1">Approval Type</label>
+                      <select value={step.approval_type||'any'} onChange={e=>setSteps(p=>p.map((x,j)=>j===i?{...x,approval_type:e.target.value}:x))}
+                        className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-900 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400">
+                        <option value="any">Any approver</option>
+                        <option value="all">All approvers</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-gray-500 mb-1">On Approve</label>
+                      <select value={step.on_approve_action||'proceed'} onChange={e=>setSteps(p=>p.map((x,j)=>j===i?{...x,on_approve_action:e.target.value}:x))}
+                        className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-900 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400">
+                        <option value="proceed">Proceed to next step</option>
+                        <option value="approve">Mark as Approved</option>
+                        <option value="activate">Activate record</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-gray-500 mb-1">On Reject</label>
+                      <select value={step.on_reject_action||'reject'} onChange={e=>setSteps(p=>p.map((x,j)=>j===i?{...x,on_reject_action:e.target.value}:x))}
+                        className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-900 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400">
+                        <option value="reject">Reject record</option>
+                        <option value="return">Return to submitter</option>
+                        <option value="skip">Skip to next step</option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="flex items-center">
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input type="checkbox" checked={form.is_active} onChange={e=>s('is_active',e.target.checked)} className="w-4 h-4 accent-blue-600 rounded"/>
+              <span className="text-sm font-semibold text-gray-700">Active — trigger on matching records</span>
+            </label>
+          </div>
+        </div>
+      </Modal>
+    </div>
+  );
+}
+
+
 
 export default function AdminToolsPage() {
   const [active, setActive] = useState(null);
@@ -1491,6 +1541,41 @@ export default function AdminToolsPage() {
     (currentUserPermissions || []).includes('__admin__') ||
     (currentUserPermissions || []).includes('admin_tools_view') ||
     (currentUser as any)?.is_admin === true;
+
+  const B2B_SECTIONS = [
+    { key:'organizations',  label:'Organizations',    icon:'🏢', desc:'Manage companies and org structure' },
+    { key:'businessUnits',  label:'Business Units',   icon:'🏗️', desc:'Manage divisions and departments' },
+    { key:'users',          label:'Enterprise Users', icon:'👤', desc:'Manage user accounts and roles' },
+    { key:'groups',         label:'User Groups',      icon:'👥', desc:'Organize users into teams' },
+    { key:'security',       label:'Security Console', icon:'🔐', desc:'Roles, permissions and data access' },
+    { key:'workflow',       label:'Workflow Rules',   icon:'⚙️', desc:'Auto-trigger actions on record events' },
+    { key:'assignment',     label:'Assignment Rules', icon:'📋', desc:'Auto-assign records to users' },
+    { key:'sla',            label:'SLA Policies',     icon:'⏱️', desc:'Track response and resolution times' },
+    { key:'approvals',      label:'Approval Processes',icon:'✅', desc:'Multi-step record approvals' },
+    { key:'templates',      label:'Quote Templates',  icon:'📄', desc:'Design quote and proposal templates' },
+    { key:'invoiceTemplates',label:'Invoice Templates',icon:'🧾', desc:'Design B2B invoice templates' },
+    { key:'warehouses',     label:'Warehouses',       icon:'🏭', desc:'Manage warehouse locations' },
+    { key:'appPrefs',       label:'App Preferences',  icon:'⚙️', desc:'Currency, date format, modules' },
+    { key:'appearance',     label:'Appearance',       icon:'🎨', desc:'Theme, logo and branding' },
+    { key:'tenants',        label:'Tenant Admin',     icon:'🌐', desc:'Manage client workspaces' },
+    { key:'b2b_composer',   label:'App Composer',     icon:'🧩', desc:'Add custom fields to CRM objects' },
+  ];
+
+  const B2C_SECTIONS = [
+    { key:'r_organizations', label:'Organizations',   icon:'🏢', desc:'Retail org structure' },
+    { key:'r_businessUnits', label:'Business Units',  icon:'🏗️', desc:'Retail divisions' },
+    { key:'r_users',         label:'Users',           icon:'👤', desc:'Retail user accounts' },
+    { key:'r_groups',        label:'User Groups',     icon:'👥', desc:'Retail user teams' },
+    { key:'r_security',      label:'Security',        icon:'🔐', desc:'Retail roles and permissions' },
+    { key:'r_workflow',      label:'Workflow Rules',  icon:'⚙️', desc:'Retail automation rules' },
+    { key:'r_assignment',    label:'Assignment Rules',icon:'📋', desc:'Retail record assignment' },
+    { key:'r_sla',           label:'SLA Policies',    icon:'⏱️', desc:'Retail SLA tracking' },
+    { key:'r_approvals',     label:'Approvals',       icon:'✅', desc:'Retail approval flows' },
+    { key:'r_invoiceDesigner',label:'Invoice Designer',icon:'🖨️', desc:'Design retail invoice templates' },
+    { key:'r_appPrefs',      label:'App Preferences', icon:'⚙️', desc:'Retail app settings' },
+    { key:'r_appearance',    label:'Appearance',      icon:'🎨', desc:'Retail branding' },
+    { key:'r_composer',      label:'App Composer',    icon:'🧩', desc:'Custom fields for retail objects' },
+  ];
 
   const renderSection = ()=>{
     switch(active){

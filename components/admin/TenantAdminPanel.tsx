@@ -23,7 +23,7 @@ const emptyTenant = () => ({
   b2c_enabled:false, max_users:5,
   modules:[...DEFAULT_MODULES],
   db_url:'', db_anon_key:'',
-  custom_domain:'', logo_url:'',
+  custom_domain:'', logo_url:'', db_service_key:'',
   trial_ends_at: new Date(Date.now()+14*86400000).toISOString().slice(0,10),
   mrr_usd:0,
 });
@@ -92,6 +92,7 @@ export default function TenantAdminPanel() {
       custom_domain: t.custom_domain || '',
       db_url: t.db_url || '',
       db_anon_key: t.db_anon_key || '',
+      db_service_key: t.db_service_key || '',
       trial_ends_at: t.trial_ends_at?.slice(0,10) || '',
     });
     setTab('edit');
@@ -153,6 +154,7 @@ export default function TenantAdminPanel() {
       modules:        form.modules||['crm','invoicing'],
       db_url:         form.db_url||null,
       db_anon_key:    form.db_anon_key||null,
+      db_service_key: form.db_service_key||null,
       custom_domain:  form.custom_domain||null,
       logo_url:       form.logo_url||null,
       trial_ends_at:  form.trial_ends_at ? new Date(form.trial_ends_at).toISOString() : null,

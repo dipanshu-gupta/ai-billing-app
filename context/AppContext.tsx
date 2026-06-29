@@ -966,33 +966,53 @@ export function AppProvider({ children, supabase = null }: { children: React.Rea
       await fetchEnterpriseUsers();
       return;
     }
-    // New user — try to create auth account via API
+    // New user — create auth account via API
     if (password && data.email) {
       const tenant = (window as any).__bp_tenant || {};
-      const res = await fetch('/api/users/create', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          email:            data.email,
-          password,
-          first_name:       data.first_name       || '',
-          last_name:        data.last_name         || '',
-          role_id:          data.role_id           || null,
-          designation:      data.designation       || '',
-          organization_id:  data.organization_id   || null,
-          business_unit_id: data.business_unit_id  || null,
-          status:           data.status            || 'Active',
-          is_admin:         data.is_admin          || false,
-          db_url:           tenant.db_url          || null,
-        }),
-      }).catch(() => null);
+      let res: Response | null = null;
+      try {
+        res = await fetch('/api/users/create', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            email:            data.email,
+            password,
+            first_name:       data.first_name       || '',
+            last_name:        data.last_name         || '',
+            role_id:          data.role_id           || null,
+            designation:      data.designation       || '',
+            organization_id:  data.organization_id   || null,
+            business_unit_id: data.business_unit_id  || null,
+            status:           data.status            || 'Active',
+            is_admin:         data.is_admin          || false,
+            employee_code:    data.employee_code     || null,
+            username:         data.username          || null,
+            phone:            data.phone             || null,
+            db_url:           tenant.db_url          || null,
+          }),
+        });
+      } catch(e) {
+        console.warn('[saveEnterpriseUser] fetch error:', e);
+      }
 
-      if (res?.ok) {
-        const json = await res.json().catch(()=>({}));
-        if (json.success) { await fetchEnterpriseUsers(); return; }
+      if (res) {
+        const text = await res.text();
+        console.log('[saveEnterpriseUser] status:', res.status, 'body:', text.slice(0,500));
+        let json: any = {};
+        try { json = JSON.parse(text); } catch(e) {
+          alert('API error (status ' + res.status + '): ' + text.slice(0,200));
+          await supabase.from('enterprise_users').insert([data]);
+          await fetchEnterpriseUsers();
+          return;
+        }
+        if (res.ok && json.success) {
+          await fetchEnterpriseUsers();
+          return;
+        }
+        alert('Could not create auth account: ' + (json?.error || json?.hint || text.slice(0,200)));
       }
     }
-    // Fallback: insert enterprise_user only (no auth account)
+    // Fallback: insert enterprise_user only (no auth)
     await supabase.from('enterprise_users').insert([data]);
     await fetchEnterpriseUsers();
   };
@@ -1079,6 +1099,7 @@ export function AppProvider({ children, supabase = null }: { children: React.Rea
           const { error } = await supabase.from('customers').insert([{ ...sys, custom_data: data.custom_data||{}, owner: data.owner||currentUser?.email||'', owner_id: data.owner_id||currentUser?.id||null, comments: data.comments||'', customer_number: id, name: data.name, company: data.company, industry: data.industry, email: data.email, phone: data.phone, website: data.website, billing_address: data.billingAddress, shipping_address: data.shippingAddress, city: data.city, state: data.state, postal_code: data.postalCode, country: data.country, gst_number: data.gstNumber, status: data.status || 'Active' }]);
           if (error) throw error;
           await logAudit({ recordType: 'customer', recordId: id, recordName: data.name, action: 'created' });
+          await runAutomations('customers', id, data, 'on_create');
           await fetchCustomers(); return { id, name: data.name };
         }
         case 'products': {
@@ -1093,7 +1114,7 @@ export function AppProvider({ children, supabase = null }: { children: React.Rea
           if (error) throw error;
           if (lineItems.length) await supabase.from('lead_line_items').insert(lineItems.map(i => ({ lead_number: id, product_name: i.product, quantity: i.quantity, price: i.price })));
           await logAudit({ recordType: 'lead', recordId: id, recordName: data.name, action: 'created' });
-          await runAssignmentRules('lead', id, data);
+          await runAutomations('leads', id, data, 'on_create');
           await fetchLeads(); await autoSetCustomerStatus(data.customerId, 'Prospect'); return { id, name: data.name };
         }
         case 'opportunities': {
@@ -1102,6 +1123,7 @@ export function AppProvider({ children, supabase = null }: { children: React.Rea
           if (error) throw error;
           if (lineItems.length) await supabase.from('opportunity_line_items').insert(lineItems.map(i => ({ opportunity_number: id, product_name: i.product, quantity: i.quantity, price: i.price })));
           await logAudit({ recordType: 'opportunity', recordId: id, recordName: data.name, action: 'created' });
+          await runAutomations('opportunities', id, data, 'on_create');
           await fetchOpportunities(); await autoSetCustomerStatus(data.customerId, 'Prospect'); return { id, name: data.name };
         }
         case 'orders': {
@@ -1110,6 +1132,7 @@ export function AppProvider({ children, supabase = null }: { children: React.Rea
           if (error) throw error;
           if (lineItems.length) await supabase.from('order_line_items').insert(lineItems.map(i => ({ order_number: id, product_name: i.product, quantity: i.quantity, price: i.price })));
           await logAudit({ recordType: 'order', recordId: id, recordName: data.name, action: 'created' });
+          await runAutomations('orders', id, data, 'on_create');
           await fetchOrders(); await autoSetCustomerStatus(data.customerId, 'Active'); return { id, name: data.name };
         }
         case 'invoices': {
@@ -1118,6 +1141,7 @@ export function AppProvider({ children, supabase = null }: { children: React.Rea
           if (error) throw error;
           if (lineItems.length) await supabase.from('invoice_line_items').insert(lineItems.map(i => ({ invoice_number: id, product_name: i.product, quantity: i.quantity, price: i.price })));
           await logAudit({ recordType: 'invoice', recordId: id, recordName: data.name, action: 'created' });
+          await runAutomations('invoices', id, data, 'on_create');
           await fetchInvoices(); await autoSetCustomerStatus(data.customerId, 'Active'); return { id, name: data.name };
         }
         case 'contacts': {
@@ -1128,12 +1152,14 @@ export function AppProvider({ children, supabase = null }: { children: React.Rea
             await supabase.from('customers').update({ primary_contact_id: id }).eq('customer_number', data.customerId);
           }
           if (error) throw error;
+          await runAutomations('contacts', id, data, 'on_create');
           await fetchContacts(); return { id, name: data.name };
         }
         case 'activities': {
           const id = generateId('ACT');
           const { error } = await supabase.from('activities').insert([{ ...sys, custom_data: data.custom_data||{}, owner: data.owner||currentUser?.email||'', owner_id: data.owner_id||currentUser?.id||null, comments: data.comments||'', activity_number: id, name: data.name, customer: data.customer, customer_id: data.customerId, contact: data.contact, contact_id: data.contactId, subject: data.subject, activity_type: data.activityType, activity_date: data.activityDate, notes: data.notes, status: data.status || 'Open' }]);
           if (error) throw error;
+          await runAutomations('activities', id, data, 'on_create');
           await fetchActivities(); return { id, name: data.name };
         }
       }
@@ -1162,6 +1188,7 @@ export function AppProvider({ children, supabase = null }: { children: React.Rea
         const { error: e_customers } = await supabase.from('customers').update({ ...sys, custom_data: record.custom_data||{}, name: record.name, email: record.email, phone: record.phone, company: record.company, industry: record.industry, primary_contact_id: record.primaryContactId, billing_address: record.billingAddress, shipping_address: record.shippingAddress, city: record.city, state: record.state, postal_code: record.postalCode||record.postal_code||'', country: record.country||'', website: record.website||'', gst_number: record.gstNumber||record.gst_number||'', description: record.description||'', owner: record.owner||'', owner_id: record.owner_id||null, status: record.status, comments: record.comments||'' }).eq('customer_number', record.id);
         if (e_customers) { console.error('update customers:', e_customers.message); alert('Save failed: ' + e_customers.message); return; }
         await logAudit({ recordType: 'customer', recordId: record.id, recordName: record.name, action: 'updated' });
+        await runAutomations('customers', record.id, record, 'on_update');
         await fetchCustomers(); break; }
       case 'contacts': {
         const { error: e_contacts } = await supabase.from('contacts').update({ ...sys, custom_data: record.custom_data||{}, customer: record.customer, customer_id: record.customerId||null, name: record.name, email: record.email||'', phone: record.phone||'', mobile: record.mobile||'', designation: record.designation||'', department: record.department||'', is_primary: record.isPrimary||false, linked_in: record.linkedIn||'', description: record.description||'', owner: record.owner||'', owner_id: record.owner_id||null, status: record.status, comments: record.comments||'' }).eq('contact_number', record.id);
@@ -1180,12 +1207,14 @@ export function AppProvider({ children, supabase = null }: { children: React.Rea
         if (e_leads) { console.error('update leads:', e_leads.message); alert('Save failed: ' + e_leads.message); return; }
         await upsertLineItems('lead_line_items', 'lead_number', record.id);
         await logAudit({ recordType: 'lead', recordId: record.id, recordName: record.name, action: 'updated' });
+        await runAutomations('leads', record.id, record, 'on_update');
         await fetchLeads(); break; }
       case 'opportunities': {
         const { error: e_opportunities } = await supabase.from('opportunities').update({ ...sys, custom_data: record.custom_data||{}, name: record.name, customer: record.customer, customer_id: record.customerId||null, contact: record.contact, contact_id: record.contactId||null, stage: record.stage||'', amount: calcAmount||Number(record.amount||0), close_date: record.closeDate||null, probability: Number(record.probability||0), campaign: record.campaign||'', billing_address: record.billingAddress||record.billing_address||'', shipping_address: record.shippingAddress||record.shipping_address||'', description: record.description||'', owner: record.owner||'', owner_id: record.owner_id||null, status: record.status, comments: record.comments||'' }).eq('opportunity_number', record.id);
         if (e_opportunities) { console.error('update opportunities:', e_opportunities.message); alert('Save failed: ' + e_opportunities.message); return; }
         await upsertLineItems('opportunity_line_items', 'opportunity_number', record.id);
         await logAudit({ recordType: 'opportunity', recordId: record.id, recordName: record.name, action: 'updated' });
+        await runAutomations('opportunities', record.id, record, 'on_update');
         await fetchOpportunities(); break; }
       case 'orders': {
         const { error: e_orders } = await supabase.from('orders').update({
@@ -1205,6 +1234,7 @@ export function AppProvider({ children, supabase = null }: { children: React.Rea
         if (e_orders) { console.error('update orders:', e_orders.message); alert('Save failed: ' + e_orders.message); return; }
         // NOTE: line items for orders are saved by CPQRecordDetail directly — do NOT upsert here (avoids overwrite race)
         await logAudit({ recordType: 'order', recordId: record.id, recordName: record.name, action: 'updated' });
+        await runAutomations('orders', record.id, record, 'on_update');
         await fetchOrders(); break; }
       case 'invoices': {
         const { error: e_invoices } = await supabase.from('invoices').update({
@@ -1223,6 +1253,7 @@ export function AppProvider({ children, supabase = null }: { children: React.Rea
         if (e_invoices) { console.error('update invoices:', e_invoices.message); alert('Save failed: ' + e_invoices.message); return; }
         // NOTE: line items for invoices are saved by CPQRecordDetail directly — do NOT upsert here (avoids overwrite race)
         await logAudit({ recordType: 'invoice', recordId: record.id, recordName: record.name, action: 'updated' });
+        await runAutomations('invoices', record.id, record, 'on_update');
         await fetchInvoices(); break; }
       case 'activities': {
         const { error: e_activities } = await supabase.from('activities').update({ ...sys, custom_data: record.custom_data||{}, name: record.name, customer: record.customer, customer_id: record.customerId||null, contact: record.contact, contact_id: record.contactId||null, activity_type: record.activityType||'', activity_date: record.activityDate||null, due_date: record.dueDate||null, priority: record.priority||'Medium', description: record.description||'', notes: record.notes||'', owner: record.owner||'', owner_id: record.owner_id||null, status: record.status, comments: record.comments||'' }).eq('activity_number', record.id);
@@ -1551,36 +1582,7 @@ export function AppProvider({ children, supabase = null }: { children: React.Rea
     await fetchApprovalProcesses();
   };
 
-  const checkMatchingApprovalProcess = async (recordType: string, record: any) => {
-    const procs = approvalProcesses.filter(p => p.object_type === recordType && p.is_active);
-    for (const proc of procs) {
-      // conditions is stored as { logic:'AND'|'OR', conditions:[{field,operator,value}] }
-      const condBlock = proc.conditions || { logic: 'AND', conditions: [] };
-      const condList: any[] = condBlock.conditions || condBlock || [];
-      const logic = condBlock.logic || 'AND';
-
-      // No conditions = applies to all records
-      if (!condList.length) return proc;
-
-      const results = condList.map((c: any) => {
-        const val = record[c.field];
-        const cval = c.value;
-        switch (c.operator) {
-          case 'equals':       return String(val ?? '') === String(cval ?? '');
-          case 'not_equals':   return String(val ?? '') !== String(cval ?? '');
-          case 'greater_than': return Number(val) > Number(cval);
-          case 'less_than':    return Number(val) < Number(cval);
-          case 'contains':     return String(val ?? '').toLowerCase().includes(String(cval ?? '').toLowerCase());
-          case 'not_contains': return !String(val ?? '').toLowerCase().includes(String(cval ?? '').toLowerCase());
-          default:             return true;
-        }
-      });
-
-      const matched = logic === 'OR' ? results.some(Boolean) : results.every(Boolean);
-      if (matched) return proc;
-    }
-    return null;
-  };
+  
 
   const submitForApproval = async (recordType: string, recordId: string, recordName: string, matchedProcess?: any) => {
     if (!supabase || !currentUser) return;
@@ -1721,21 +1723,282 @@ export function AppProvider({ children, supabase = null }: { children: React.Rea
 
   // \u2500\u2500\u2500 Assignment Rules Engine \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 
+  // ─── Automation Engine ────────────────────────────────────────────────────
+
+  const evaluateCondition = (value: any, operator: string, condValue: string): boolean => {
+    const v = String(value || '').toLowerCase();
+    const c = String(condValue || '').toLowerCase();
+    switch(operator) {
+      case 'equals':         return v === c;
+      case 'not_equals':     return v !== c;
+      case 'contains':       return v.includes(c);
+      case 'not_contains':   return !v.includes(c);
+      case 'starts_with':    return v.startsWith(c);
+      case 'ends_with':      return v.endsWith(c);
+      case 'greater_than':   return parseFloat(v) > parseFloat(c);
+      case 'less_than':      return parseFloat(v) < parseFloat(c);
+      case 'is_empty':       return !value || v === '';
+      case 'is_not_empty':   return !!value && v !== '';
+      default:               return false;
+    }
+  };
+
+  const getObjectTable = (objectType: string): string => {
+    const map: Record<string,string> = {
+      leads:'leads', opportunities:'opportunities', customers:'customers',
+      contacts:'contacts', activities:'activities', orders:'orders',
+      invoices:'invoices', quotations:'quotations', products:'products',
+    };
+    return map[objectType] || objectType;
+  };
+
+  const getObjectIdField = (objectType: string): string => {
+    const map: Record<string,string> = {
+      leads:'lead_number', opportunities:'opportunity_number',
+      customers:'customer_number', contacts:'contact_number',
+      activities:'activity_number', orders:'order_number',
+      invoices:'invoice_number', quotations:'quote_number',
+      products:'product_number',
+    };
+    return map[objectType] || 'id';
+  };
+
+  // ── Assignment Rules ──────────────────────────────────────────────
   const runAssignmentRules = async (objectType: string, recordId: string, recordData: any) => {
-    const rules = assignmentRules.filter(r => r.object_type === objectType && r.is_active).sort((a, b) => a.priority - b.priority);
+    if (!supabase) return;
+    const rules = assignmentRules
+      .filter(r => r.object_type === objectType && r.is_active)
+      .sort((a,b) => a.priority - b.priority);
+
     for (const rule of rules) {
       const value = recordData[rule.condition_field];
-      let matches = false;
-      if (rule.condition_operator === 'equals') matches = String(value) === rule.condition_value;
-      else if (rule.condition_operator === 'contains') matches = String(value).includes(rule.condition_value);
-      else if (rule.condition_operator === 'not_equals') matches = String(value) !== rule.condition_value;
-      if (matches) {
-        const assignee = enterpriseUsers.find(u => u.id === rule.assign_to_user_id);
-        if (assignee) {
-          await createNotification({ recipientEmail: assignee.email, type: 'assignment', title: 'New Record Assigned', body: `A new ${objectType} has been assigned to you.`, recordType: objectType, recordId });
-        }
-        break;
+      if (!evaluateCondition(value, rule.condition_operator, rule.condition_value)) continue;
+
+      const assignee = rule.assign_to_user_id
+        ? enterpriseUsers.find(u => u.id === rule.assign_to_user_id)
+        : null;
+      const group = rule.assign_to_group_id
+        ? userGroups?.find(g => g.id === rule.assign_to_group_id)
+        : null;
+
+      if (assignee) {
+        // Actually update owner on the record
+        const table   = getObjectTable(objectType);
+        const idField = getObjectIdField(objectType);
+        await supabase.from(table)
+          .update({ owner: assignee.email, owner_id: assignee.id })
+          .eq(idField, recordId);
+
+        await createNotification({
+          recipientEmail: assignee.email,
+          type: 'assignment',
+          title: `New ${objectType} Assigned to You`,
+          body: `Record "${recordData.name || recordId}" has been auto-assigned to you.`,
+          recordType: objectType, recordId,
+        });
       }
+      if (group) {
+        // Notify all group members
+        await createNotification({
+          recipientEmail: currentUser?.email || '',
+          type: 'assignment',
+          title: `New ${objectType} Assigned to Group: ${group.group_name}`,
+          body: `Record "${recordData.name || recordId}" has been assigned to ${group.group_name}.`,
+          recordType: objectType, recordId,
+        });
+      }
+      break; // Only first matching rule fires
+    }
+  };
+
+  // ── Workflow Rules ────────────────────────────────────────────────
+  const runWorkflowRules = async (objectType: string, recordId: string, recordData: any, triggerEvent: string) => {
+    if (!supabase) return;
+    const rules = workflowRules.filter(r =>
+      r.object_type === objectType &&
+      r.trigger_event === triggerEvent &&
+      r.is_active
+    );
+
+    for (const rule of rules) {
+      // Evaluate conditions if any
+      let conditionMet = true;
+      if (rule.trigger_field && rule.trigger_value) {
+        const value = recordData[rule.trigger_field];
+        conditionMet = evaluateCondition(value, 'equals', rule.trigger_value);
+      }
+      if (!conditionMet) continue;
+
+      // Execute actions
+      const { data: actionsData } = await supabase
+        .from('workflow_actions')
+        .select('*')
+        .eq('workflow_rule_id', rule.id)
+        .order('execution_order');
+
+      for (const action of (actionsData || [])) {
+        const cfg = action.action_config || {};
+        switch(action.action_type) {
+          case 'send_notification': {
+            const recipients = cfg.recipients || [];
+            for (const email of recipients) {
+              await createNotification({
+                recipientEmail: email,
+                type: 'workflow',
+                title: cfg.subject || `Workflow: ${rule.name}`,
+                body: cfg.message || `Rule "${rule.name}" triggered on ${objectType} record.`,
+                recordType: objectType, recordId,
+              });
+            }
+            // Also notify owner
+            if (recordData.owner && !recipients.includes(recordData.owner)) {
+              await createNotification({
+                recipientEmail: recordData.owner,
+                type: 'workflow',
+                title: cfg.subject || `Workflow: ${rule.name}`,
+                body: cfg.message || `Rule "${rule.name}" triggered on your ${objectType} record.`,
+                recordType: objectType, recordId,
+              });
+            }
+            break;
+          }
+          case 'update_field': {
+            if (cfg.field && cfg.value !== undefined) {
+              const table   = getObjectTable(objectType);
+              const idField = getObjectIdField(objectType);
+              await supabase.from(table)
+                .update({ [cfg.field]: cfg.value })
+                .eq(idField, recordId);
+            }
+            break;
+          }
+          case 'assign_owner': {
+            const newOwner = cfg.user_id
+              ? enterpriseUsers.find(u => u.id === cfg.user_id)
+              : null;
+            if (newOwner) {
+              const table   = getObjectTable(objectType);
+              const idField = getObjectIdField(objectType);
+              await supabase.from(table)
+                .update({ owner: newOwner.email, owner_id: newOwner.id })
+                .eq(idField, recordId);
+              await createNotification({
+                recipientEmail: newOwner.email,
+                type: 'workflow',
+                title: `Record Assigned: ${rule.name}`,
+                body: `${objectType} "${recordData.name}" assigned to you by workflow.`,
+                recordType: objectType, recordId,
+              });
+            }
+            break;
+          }
+          case 'create_task': {
+            await supabase.from('activities').insert([{
+              activity_number: generateId('ACT'),
+              name: cfg.task_name || 'Follow up',
+              subject: cfg.task_name || 'Follow up',
+              activity_type: 'Task',
+              status: 'Open',
+              priority: cfg.priority || 'Medium',
+              due_date: cfg.due_date || null,
+              customer: recordData.customer || '',
+              customer_id: recordData.customer_id || null,
+              owner: recordData.owner || currentUser?.email || '',
+              owner_id: recordData.owner_id || currentUser?.id || null,
+              notes: `Auto-created by workflow: ${rule.name}`,
+              created_by: currentUser?.email || '',
+              updated_by: currentUser?.email || '',
+            }]);
+            break;
+          }
+        }
+      }
+    }
+  };
+
+  // ── SLA Policies ──────────────────────────────────────────────────
+  const runSLAPolicies = async (objectType: string, recordId: string, recordData: any) => {
+    if (!supabase) return;
+    const policies = slaPolicies?.filter(p => p.object_type === objectType && p.is_active) || [];
+
+    for (const policy of policies) {
+      const value = recordData[policy.condition_field];
+      if (policy.condition_value && !evaluateCondition(value, 'equals', policy.condition_value)) continue;
+
+      const now = new Date();
+      const responseDate  = new Date(now.getTime() + (policy.response_time_hours   || 24) * 3600000);
+      const resolutionDate = new Date(now.getTime() + (policy.resolution_time_hours || 72) * 3600000);
+
+      await supabase.from('sla_records').insert([{
+        sla_policy_id:      policy.id,
+        record_type:        objectType,
+        record_id:          recordId,
+        started_at:         now.toISOString(),
+        response_due_at:    responseDate.toISOString(),
+        resolution_due_at:  resolutionDate.toISOString(),
+        status:             'Active',
+      }]);
+
+      // Notify escalation contact if configured
+      if (policy.escalate_to_user_id) {
+        const escalateTo = enterpriseUsers.find(u => u.id === policy.escalate_to_user_id);
+        if (escalateTo) {
+          await createNotification({
+            recipientEmail: escalateTo.email,
+            type: 'sla',
+            title: `SLA Started: ${policy.name}`,
+            body: `SLA policy "${policy.name}" has started for ${objectType} record. Response due by ${responseDate.toLocaleString()}.`,
+            recordType: objectType, recordId,
+          });
+        }
+      }
+    }
+  };
+
+  // ── Check Approval Processes ──────────────────────────────────────
+  const checkMatchingApprovalProcess = async (objectType: string, recordData: any) => {
+    if (!supabase) return null;
+    const processes = approvalProcesses?.filter(p => p.object_type === objectType && p.is_active) || [];
+
+    for (const process of processes) {
+      // Support both single condition and multi-condition (conditions JSONB)
+      let matches = false;
+      if (process.conditions?.conditions?.length > 0) {
+        const logic = process.conditions.logic || 'AND';
+        const results = process.conditions.conditions.map((c: any) =>
+          evaluateCondition(recordData[c.field], c.operator, c.value)
+        );
+        matches = logic === 'AND' ? results.every(Boolean) : results.some(Boolean);
+      } else if (process.condition_field) {
+        matches = evaluateCondition(
+          recordData[process.condition_field],
+          process.condition_operator || 'equals',
+          process.condition_value || ''
+        );
+      } else {
+        matches = true; // No condition = always matches
+      }
+
+      if (matches) return process;
+    }
+    return null;
+  };
+
+  // ── Central automation runner (called after create/update) ────────
+  const runAutomations = async (
+    objectType: string,
+    recordId: string,
+    recordData: any,
+    event: 'on_create' | 'on_update' | 'on_delete'
+  ) => {
+    try {
+      await Promise.all([
+        runWorkflowRules(objectType, recordId, recordData, event),
+        event === 'on_create' ? runAssignmentRules(objectType, recordId, recordData) : Promise.resolve(),
+        event === 'on_create' ? runSLAPolicies(objectType, recordId, recordData) : Promise.resolve(),
+      ]);
+    } catch(e: any) {
+      console.warn('[Automation] Error:', e.message);
     }
   };
 
