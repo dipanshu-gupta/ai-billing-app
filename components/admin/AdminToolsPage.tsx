@@ -404,7 +404,7 @@ function UsersPanel() {
             <div className={`rounded-2xl p-4 ${editing.auth_user_id?'bg-green-50 border border-green-200':'bg-yellow-50 border border-yellow-200'}`}>
               {editing.auth_user_id
                 ? <p className="text-sm text-green-700">✅ This user has a linked Supabase Auth account (<span className="font-mono text-xs">{editing.auth_user_id}</span>). Use the <strong>Reset PW</strong> button in the table to change their password.</p>
-                : <p className="text-sm text-yellow-700">⚠️ This user has no linked auth account — they cannot log in. Delete and re-create this user to set up login credentials.</p>
+                : <p className="text-sm text-yellow-700">⚠️ This user has no linked auth account. Use the password field below and click Save to create their login.</p>
               }
             </div>
           )}

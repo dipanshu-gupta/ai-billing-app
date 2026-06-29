@@ -18,10 +18,18 @@ export async function POST(req: NextRequest) {
   const supabaseUrl     = db_url || process.env.NEXT_PUBLIC_SUPABASE_URL!;
   const supabaseService = db_service_key
     || process.env.SUPABASE_SERVICE_KEY
-    || process.env.SUPABASE_SERVICE_ROLE_KEY!;
+    || process.env.SUPABASE_SERVICE_ROLE_KEY
+    || process.env.NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY;
 
   if (!supabaseService) {
-    return NextResponse.json({ error: 'Server misconfigured — missing SUPABASE_SERVICE_KEY' }, { status: 500 });
+    console.error('[users/create] No service key found in env vars');
+    return NextResponse.json({
+      error: 'Server misconfigured — add SUPABASE_SERVICE_KEY to .env.local',
+      hint: 'Copy the service_role key from Supabase → Project Settings → API'
+    }, { status: 500 });
+  }
+  if (!supabaseUrl) {
+    return NextResponse.json({ error: 'No Supabase URL configured' }, { status: 500 });
   }
 
   const adminClient = createClient(supabaseUrl, supabaseService, {

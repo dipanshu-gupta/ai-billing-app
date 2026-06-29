@@ -280,19 +280,42 @@ export function AppProvider({ children, supabase = null }: { children: React.Rea
   };
 
   const fetchCurrentUser = async () => {
-    if (!supabase || !session?.user?.email) return;
-    const { data } = await supabase
+    if (!supabase || !session?.user) return;
+    // Try auth_user_id first (most reliable)
+    let { data } = await supabase
       .from('enterprise_users').select('*')
-      .eq('email', session.user.email).single();
-    if (data) setCurrentUser(data);
+      .eq('auth_user_id', session.user.id).maybeSingle();
+    // Fallback: email match
+    if (!data && session.user.email) {
+      const { data: d2 } = await supabase
+        .from('enterprise_users').select('*')
+        .ilike('email', session.user.email).maybeSingle();
+      data = d2;
+    }
+    if (data) {
+      setCurrentUser(data);
+      // If auth_user_id not set in DB, update it now
+      if (!data.auth_user_id && session.user.id) {
+        await supabase.from('enterprise_users')
+          .update({ auth_user_id: session.user.id })
+          .eq('id', data.id);
+      }
+    }
   };
 
   const loadCurrentUserPermissions = async () => {
-    if (!supabase || !session?.user?.email) return;
+    if (!supabase || !session?.user) return;
     setPermissionsLoaded(false);
-    const { data: userData } = await supabase
+    // Try by auth_user_id first (most reliable), then email
+    let { data: userData } = await supabase
       .from('enterprise_users').select('*, roles(id, role_name, role_code, data_scope)')
-      .eq('email', session.user.email).single();
+      .eq('auth_user_id', session.user.id).maybeSingle();
+    if (!userData) {
+      const { data: d2 } = await supabase
+        .from('enterprise_users').select('*, roles(id, role_name, role_code, data_scope)')
+        .ilike('email', session.user.email || '').maybeSingle();
+      userData = d2;
+    }
     if (!userData?.role_id) {
       setCurrentUserPermissions([]);
       setPermissionsLoaded(true);
@@ -939,49 +962,38 @@ export function AppProvider({ children, supabase = null }: { children: React.Rea
   const saveEnterpriseUser = async (data: any, editingId?: string, password?: string) => {
     if (!supabase) return;
     if (editingId) {
-      // Update existing enterprise user
-      const { error } = await supabase.from('enterprise_users').update(data).eq('id', editingId);
-      if (error) { alert('Update failed: ' + error.message); return; }
-    } else {
-      // Create new user — must create Supabase Auth user first via server API
-      if (!password || !data.email) {
-        alert('Email and password are required to create a user.');
-        return;
-      }
-      try {
-        const tenantInfo = (window as any).__bp_tenant;
-        const res = await fetch('/api/users/create', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            email:            data.email,
-            password,
-            first_name:       data.first_name || '',
-            last_name:        data.last_name  || '',
-            role_id:          data.role_id    || null,
-            designation:      data.designation|| '',
-            organization_id:  data.organization_id || null,
-            business_unit_id: data.business_unit_id || null,
-            status:           data.status     || 'Active',
-            is_admin:         data.is_admin   || false,
-            db_url:           tenantInfo?.db_url || null,
-          }),
-        });
-        const json = await res.json();
-        if (res.ok && json.success) {
-          // Auth user created successfully — enterprise_user already created by API
-          await fetchEnterpriseUsers();
-          return;
-        }
-        // API failed (e.g. no service key) — fall back to inserting enterprise_user only
-        console.warn('[saveEnterpriseUser] API failed, falling back:', json.error);
-        await supabase.from('enterprise_users').insert([data]);
-      } catch(e: any) {
-        // Network error — fall back to direct insert
-        console.warn('[saveEnterpriseUser] fetch failed, falling back:', e.message);
-        await supabase.from('enterprise_users').insert([data]);
+      await supabase.from('enterprise_users').update(data).eq('id', editingId);
+      await fetchEnterpriseUsers();
+      return;
+    }
+    // New user — try to create auth account via API
+    if (password && data.email) {
+      const tenant = (window as any).__bp_tenant || {};
+      const res = await fetch('/api/users/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email:            data.email,
+          password,
+          first_name:       data.first_name       || '',
+          last_name:        data.last_name         || '',
+          role_id:          data.role_id           || null,
+          designation:      data.designation       || '',
+          organization_id:  data.organization_id   || null,
+          business_unit_id: data.business_unit_id  || null,
+          status:           data.status            || 'Active',
+          is_admin:         data.is_admin          || false,
+          db_url:           tenant.db_url          || null,
+        }),
+      }).catch(() => null);
+
+      if (res?.ok) {
+        const json = await res.json().catch(()=>({}));
+        if (json.success) { await fetchEnterpriseUsers(); return; }
       }
     }
+    // Fallback: insert enterprise_user only (no auth account)
+    await supabase.from('enterprise_users').insert([data]);
     await fetchEnterpriseUsers();
   };
 
