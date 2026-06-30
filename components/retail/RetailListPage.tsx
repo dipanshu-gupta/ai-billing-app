@@ -773,7 +773,8 @@ function RetailQuickCreateCustomer({ prefillName, onCreated, onClose }) {
 // ─── Detail Panel ───────────────────────────────────────────────────────────
 function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo }) {
   const { updateRetailRecord, deleteRetailRecord, retailCustomers, retailProducts, enterpriseUsers, currentUser,
-          fetchRetailLineItems, fetchRetailCustomers, createRetailRecord, appPreferences, setPendingReturnTo, createRetailInvoiceFromOrder } = useApp();
+          fetchRetailLineItems, fetchRetailCustomers, createRetailRecord, appPreferences, setPendingReturnTo, createRetailInvoiceFromOrder,
+          checkMatchingApprovalProcess, submitForApproval, currentUserPermissions, permissionsLoaded } = useApp();
   const cfg = RETAIL_CONFIG[page];
   const taxRegime = getTaxRegime(appPreferences?.default_currency);
 
@@ -833,6 +834,9 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo }) 
   const [saving, setSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [creatingInvoice, setCreatingInvoice] = useState(false);
+  const [matchingProcess, setMatchingProcess] = useState(null);
+  const [checkingApproval, setCheckingApproval] = useState(false);
+  const [submittingApproval, setSubmittingApproval] = useState(false);
 
   useEffect(() => {
     setEdited({ ...record });
@@ -846,7 +850,35 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo }) 
     });
   }, [record.id]);
 
-  const set = (k,v) => setEdited(p => ({ ...p, [k]: v }));
+  // Check if an active approval process matches this record's object type + conditions
+  useEffect(() => {
+    let cancelled = false;
+    const check = async () => {
+      setCheckingApproval(true);
+      const proc = await checkMatchingApprovalProcess(page, { ...record });
+      if (!cancelled) { setMatchingProcess(proc); setCheckingApproval(false); }
+    };
+    check();
+    return () => { cancelled = true; };
+  }, [page, record.id, record.status]);
+
+  // Statuses that lock the record from further editing
+  const RETAIL_READONLY_STATUSES = ['Pending Approval', 'Completed', 'Cancelled', 'Refunded', 'Paid', 'Discontinued', 'Blocked'];
+  const isStatusLocked = RETAIL_READONLY_STATUSES.includes(edited?.status);
+
+  const set = (k,v) => { if (isStatusLocked) return; setEdited(p => ({ ...p, [k]: v })); };
+
+  const canSubmitForApproval = matchingProcess != null
+    && edited.status !== 'Pending Approval'
+    && !checkingApproval;
+
+  const handleSubmitForApproval = async () => {
+    setSubmittingApproval(true);
+    await submitForApproval(page, record.id, record.name || record.customer || record.subject || record.id, matchingProcess || undefined);
+    setSubmittingApproval(false);
+    setEdited(p => ({ ...p, status: 'Pending Approval' }));
+    setMatchingProcess(null);
+  };
 
   const handleSave = async (andClose=false) => {
     setSaving(true);
@@ -1013,11 +1045,19 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo }) 
                 </button>
               </>
             )}
-            <button onClick={()=>handleSave(false)} disabled={saving}
+            {checkingApproval && <span className="text-xs text-white/50">Checking approval rules…</span>}
+            {canSubmitForApproval && (
+              <button onClick={handleSubmitForApproval} disabled={submittingApproval}
+                className="flex items-center gap-2 px-4 py-2 text-sm rounded-xl font-semibold bg-purple-500/20 hover:bg-purple-500/30 text-purple-200 border border-purple-400/30 disabled:opacity-50"
+                title={`Process: ${matchingProcess?.name}`}>
+                📋 {submittingApproval ? 'Submitting…' : 'Submit for Approval'}
+              </button>
+            )}
+            <button onClick={()=>handleSave(false)} disabled={saving || isStatusLocked}
               className="bg-white/10 text-white px-4 py-2 rounded-xl text-sm font-bold hover:bg-white/20 disabled:opacity-50">
               {saving?'Saving...':'Save Changes'}
             </button>
-            <button onClick={()=>handleSave(true)} disabled={saving}
+            <button onClick={()=>handleSave(true)} disabled={saving || isStatusLocked}
               className="bg-white text-[#0F172A] px-4 py-2 rounded-xl text-sm font-bold hover:bg-blue-50 disabled:opacity-50">
               Save & Close
             </button>
@@ -1046,6 +1086,16 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo }) 
 
         {/* Body — single scrollable container switching between tabs */}
         <div className="flex-1 overflow-y-auto p-6 space-y-6">
+
+          {isStatusLocked && (
+            <div className="bg-amber-50 border border-amber-200 rounded-2xl px-5 py-3 flex items-center gap-3">
+              <span className="text-xl">🔒</span>
+              <div>
+                <p className="text-sm font-bold text-amber-800">This record is read-only</p>
+                <p className="text-xs text-amber-600">Status is "{edited.status}" — fields cannot be edited in this state.</p>
+              </div>
+            </div>
+          )}
 
           {page === 'retailCustomers' && activeTab === '360' ? (
             <RetailCustomer360 customer={record}/>

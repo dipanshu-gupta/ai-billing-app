@@ -105,6 +105,16 @@ export const getStatusOptions = (page: string, hasApproval = false): string[] =>
       return hasApproval
         ? ['Draft','Submitted','Pending Approval','Approved','Sent to Customer','Accepted','Ordered','Rejected','Expired','Cancelled']
         : ['Draft','Submitted','Approved','Sent to Customer','Accepted','Ordered','Rejected','Expired','Cancelled'];
+    case 'retailCustomers':
+      return ['Active','Inactive','VIP','Blocked'];
+    case 'retailProducts':
+      return ['Active','Inactive','Discontinued'];
+    case 'retailActivities':
+      return ['Open','In Progress','Completed','Cancelled'];
+    case 'retailOrders':
+      return ['Draft','Completed','Cancelled','Refunded'];
+    case 'retailInvoices':
+      return ['Draft','Sent','Paid','Overdue','Refunded','Cancelled'];
     default:
       return ['Active','Inactive'];
   }

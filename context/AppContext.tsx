@@ -696,6 +696,7 @@ export function AppProvider({ children, supabase = null }: { children: React.Rea
     if (page === 'retailOrders' || page === 'retailInvoices') {
       await autoSetRetailCustomerStatus(data.customer_id, 'Active');
     }
+    await runAutomations(page, newId, { ...data, id: newId }, 'on_create');
     await cfg.fetch();
     return { ...inserted, id: inserted[cfg.idField], _uuid: inserted.id };
   };
@@ -723,6 +724,7 @@ export function AppProvider({ children, supabase = null }: { children: React.Rea
     if (page === 'retailOrders' || page === 'retailInvoices') {
       await autoSetRetailCustomerStatus(record.customer_id, 'Active');
     }
+    await runAutomations(page, record.id, record, 'on_update');
     await cfg.fetch();
   };
 
@@ -1104,8 +1106,9 @@ export function AppProvider({ children, supabase = null }: { children: React.Rea
         }
         case 'products': {
           const id = generateId('PROD');
-          const { error } = await supabase.from('products').insert([{ ...sys, custom_data: data.custom_data||{}, owner: data.owner||currentUser?.email||'', owner_id: data.owner_id||currentUser?.id||null, comments: data.comments||'', name: data.name, category: data.category, price: Number(data.price || 0), status: data.status || 'Active' }]);
+          const { data: insertedProd, error } = await supabase.from('products').insert([{ ...sys, custom_data: data.custom_data||{}, product_number: id, owner: data.owner||currentUser?.email||'', owner_id: data.owner_id||currentUser?.id||null, comments: data.comments||'', name: data.name, category: data.category, price: Number(data.price || 0), status: data.status || 'Active' }]).select().single();
           if (error) throw error;
+          await runAutomations('products', insertedProd?.id ?? id, { ...data, id: insertedProd?.id, product_number: id }, 'on_create');
           await fetchProducts(); return { id, name: data.name };
         }
         case 'leads': {
@@ -1197,10 +1200,12 @@ export function AppProvider({ children, supabase = null }: { children: React.Rea
           await supabase.from('contacts').update({ is_primary: false }).eq('customer_id', record.customerId).neq('contact_number', record.id);
           await supabase.from('customers').update({ primary_contact_id: record.id }).eq('customer_number', record.customerId);
         }
+        await runAutomations('contacts', record.id, record, 'on_update');
         await fetchContacts(); await fetchCustomers(); break; }
       case 'products': {
         const { error: e_products } = await supabase.from('products').update({ ...sys, custom_data: record.custom_data||{}, name: record.name, product_family: record.productFamily||'', category: record.category||'', sku: record.sku||'', price: Number(record.price||0), cost: Number(record.cost||0), unit: record.unit||'', tax_rate: Number(record.taxRate||record.tax_rate||0), hsn_code: record.hsn_code||'', gst_rate: record.gst_rate!=null?Number(record.gst_rate):null, taxable: record.taxable||'', tax_category: record.tax_category||'', vat_rate: record.vat_rate!=null?Number(record.vat_rate):null, description: record.description||'', owner: record.owner||'', status: record.status, comments: record.comments||'' }).eq('id', record._uuid || record.id);
         if (e_products) { console.error('update products:', e_products.message); alert('Save failed: ' + e_products.message); return; }
+        await runAutomations('products', record._uuid || record.id, record, 'on_update');
         await fetchProducts(); return { id, name: data.name }; }
       case 'leads': {
         const { error: e_leads } = await supabase.from('leads').update({ ...sys, custom_data: record.custom_data||{}, name: record.name, customer: record.customer, customer_id: record.customerId||null, contact: record.contact, contact_id: record.contactId||null, email: record.email||'', phone: record.phone||'', source: record.source||'', amount: calcAmount||Number(record.amount||0), expected_close_date: record.expectedCloseDate||null, billing_address: record.billingAddress||record.billing_address||'', shipping_address: record.shippingAddress||record.shipping_address||'', description: record.description||'', owner: record.owner||'', owner_id: record.owner_id||null, status: record.status, comments: record.comments||'' }).eq('lead_number', record.id);
@@ -1258,6 +1263,7 @@ export function AppProvider({ children, supabase = null }: { children: React.Rea
       case 'activities': {
         const { error: e_activities } = await supabase.from('activities').update({ ...sys, custom_data: record.custom_data||{}, name: record.name, customer: record.customer, customer_id: record.customerId||null, contact: record.contact, contact_id: record.contactId||null, activity_type: record.activityType||'', activity_date: record.activityDate||null, due_date: record.dueDate||null, priority: record.priority||'Medium', description: record.description||'', notes: record.notes||'', owner: record.owner||'', owner_id: record.owner_id||null, status: record.status, comments: record.comments||'' }).eq('activity_number', record.id);
         if (e_activities) { console.error('update activities:', e_activities.message); alert('Save failed: ' + e_activities.message); return; }
+        await runAutomations('activities', record.id, record, 'on_update');
         await fetchActivities(); break; }
     }
   };
@@ -1512,6 +1518,9 @@ export function AppProvider({ children, supabase = null }: { children: React.Rea
   const saveAssignmentRule = async (data: any, editingId?: string) => {
     if (!supabase || !currentUser) return;
     const { id: _id, _uuid, customerId, ...cleanData } = data as any;
+    // Convert empty UUID strings to null
+    cleanData.assign_to_user_id  = cleanData.assign_to_user_id  || null;
+    cleanData.assign_to_group_id = cleanData.assign_to_group_id || null;
     if (editingId) {
       const { error } = await supabase.from('assignment_rules').update({ ...cleanData, ...buildSystemFields(true) }).eq('id', editingId);
       if (error) { alert('Save failed: ' + error.message); return; }
@@ -1531,6 +1540,9 @@ export function AppProvider({ children, supabase = null }: { children: React.Rea
   const saveSLAPolicy = async (data: any, editingId?: string) => {
     if (!supabase || !currentUser) return;
     const { id: _id, _uuid, customerId, ...cleanData } = data as any;
+    // Convert empty UUID strings to null
+    cleanData.escalate_to_user_id  = cleanData.escalate_to_user_id  || null;
+    cleanData.escalate_to_group_id = cleanData.escalate_to_group_id || null;
     if (editingId) {
       const { error } = await supabase.from('sla_policies').update({ ...cleanData, ...buildSystemFields(true) }).eq('id', editingId);
       if (error) { alert('Save failed: ' + error.message); return; }
@@ -1568,7 +1580,14 @@ export function AppProvider({ children, supabase = null }: { children: React.Rea
     if (steps.length) {
       const stepRows = steps.map((s, i) => {
         const { id: _sid, _uuid: _su, ...cleanStep } = s;
-        return { ...cleanStep, approval_process_id: processId, step_number: i + 1 };
+        return {
+          ...cleanStep,
+          approval_process_id: processId,
+          step_number: i + 1,
+          // Convert empty strings to null for UUID columns
+          approver_user_id:  cleanStep.approver_user_id  || null,
+          approver_group_id: cleanStep.approver_group_id || null,
+        };
       });
       const { error: stepErr } = await supabase.from('approval_steps').insert(stepRows);
       if (stepErr) { alert('Error saving steps: ' + stepErr.message); return; }
@@ -1614,6 +1633,31 @@ export function AppProvider({ children, supabase = null }: { children: React.Rea
       business_unit_id: currentUser.business_unit_id,
     }]);
     if (error) { alert('Submission failed: ' + error.message); return; }
+
+    // Persist 'Pending Approval' status onto the underlying record so it survives refresh
+    const STATUS_TABLE_MAP: Record<string, { table: string; idField: string }> = {
+      customers: { table:'customers', idField:'customer_number' },
+      leads: { table:'leads', idField:'lead_number' },
+      opportunities: { table:'opportunities', idField:'opportunity_number' },
+      orders: { table:'orders', idField:'order_number' },
+      invoices: { table:'invoices', idField:'invoice_number' },
+      quotations: { table:'quotations', idField:'quote_number' },
+      contacts: { table:'contacts', idField:'contact_number' },
+      activities: { table:'activities', idField:'activity_number' },
+      products: { table:'products', idField:'product_number' },
+      retailCustomers: { table:'retail_customers', idField:'customer_number' },
+      retailProducts: { table:'retail_products', idField:'product_number' },
+      retailActivities: { table:'retail_activities', idField:'activity_number' },
+      retailOrders: { table:'retail_orders', idField:'order_number' },
+      retailInvoices: { table:'retail_invoices', idField:'invoice_number' },
+    };
+    const statusCfg = STATUS_TABLE_MAP[recordType];
+    if (statusCfg) {
+      await supabase.from(statusCfg.table)
+        .update({ status: 'Pending Approval', updated_at: new Date().toISOString() })
+        .eq(statusCfg.idField, recordId);
+    }
+
     // Notify the first step approver
     const approverUser = enterpriseUsers.find(u => u.id === firstStep.approver_user_id);
     if (approverUser) {
@@ -1625,6 +1669,19 @@ export function AppProvider({ children, supabase = null }: { children: React.Rea
       });
     }
     await logAudit({ recordType, recordId, recordName, action: 'submitted_for_approval' });
+
+    // Refresh the underlying object list so the status change is visible everywhere
+    const SUBMIT_REFETCH_MAP: Record<string, () => Promise<void>> = {
+      customers: fetchCustomers, leads: fetchLeads, opportunities: fetchOpportunities,
+      orders: fetchOrders, invoices: fetchInvoices, quotations: fetchQuotations,
+      contacts: fetchContacts, activities: fetchActivities, products: fetchProducts,
+      retailCustomers: fetchRetailCustomers, retailProducts: fetchRetailProducts,
+      retailActivities: fetchRetailActivities, retailOrders: fetchRetailOrders,
+      retailInvoices: fetchRetailInvoices,
+    };
+    const submitRefetchFn = SUBMIT_REFETCH_MAP[recordType];
+    if (submitRefetchFn) await submitRefetchFn();
+
     await fetchApprovalRequests();
     alert('Submitted for approval successfully.');
   };
@@ -1645,6 +1702,11 @@ export function AppProvider({ children, supabase = null }: { children: React.Rea
       contacts:      { table:'contacts',      idField:'contact_number',      approvedStatus:'Active',         rejectedStatus:'Draft',           pendingStatus:'Pending Approval' },
       activities:    { table:'activities',    idField:'activity_number',     approvedStatus:'Approved',       rejectedStatus:'Rejected',        pendingStatus:'Pending Approval' },
       products:      { table:'products',      idField:'product_number',      approvedStatus:'Active',         rejectedStatus:'Draft',           pendingStatus:'Pending Approval' },
+      retailCustomers: { table:'retail_customers', idField:'customer_number', approvedStatus:'Active',   rejectedStatus:'Inactive', pendingStatus:'Pending Approval' },
+      retailProducts:  { table:'retail_products',  idField:'product_number',  approvedStatus:'Active',   rejectedStatus:'Inactive', pendingStatus:'Pending Approval' },
+      retailActivities:{ table:'retail_activities',idField:'activity_number', approvedStatus:'Completed',rejectedStatus:'Cancelled',pendingStatus:'Pending Approval' },
+      retailOrders:    { table:'retail_orders',    idField:'order_number',    approvedStatus:'Completed',rejectedStatus:'Cancelled',pendingStatus:'Pending Approval' },
+      retailInvoices:  { table:'retail_invoices',  idField:'invoice_number',  approvedStatus:'Paid',     rejectedStatus:'Cancelled',pendingStatus:'Pending Approval' },
     };
 
     const updateRecordStatus = async (status: string) => {
@@ -1748,6 +1810,9 @@ export function AppProvider({ children, supabase = null }: { children: React.Rea
       leads:'leads', opportunities:'opportunities', customers:'customers',
       contacts:'contacts', activities:'activities', orders:'orders',
       invoices:'invoices', quotations:'quotations', products:'products',
+      retailCustomers:'retail_customers', retailProducts:'retail_products',
+      retailActivities:'retail_activities', retailOrders:'retail_orders',
+      retailInvoices:'retail_invoices',
     };
     return map[objectType] || objectType;
   };
@@ -1759,6 +1824,9 @@ export function AppProvider({ children, supabase = null }: { children: React.Rea
       activities:'activity_number', orders:'order_number',
       invoices:'invoice_number', quotations:'quote_number',
       products:'product_number',
+      retailCustomers:'customer_number', retailProducts:'product_number',
+      retailActivities:'activity_number', retailOrders:'order_number',
+      retailInvoices:'invoice_number',
     };
     return map[objectType] || 'id';
   };
@@ -1814,6 +1882,7 @@ export function AppProvider({ children, supabase = null }: { children: React.Rea
   // ── Workflow Rules ────────────────────────────────────────────────
   const runWorkflowRules = async (objectType: string, recordId: string, recordData: any, triggerEvent: string) => {
     if (!supabase) return;
+    let fieldsWereMutated = false;
     const rules = workflowRules.filter(r =>
       r.object_type === objectType &&
       r.trigger_event === triggerEvent &&
@@ -1840,35 +1909,54 @@ export function AppProvider({ children, supabase = null }: { children: React.Rea
         const cfg = action.action_config || {};
         switch(action.action_type) {
           case 'send_notification': {
-            const recipients = cfg.recipients || [];
-            for (const email of recipients) {
+            // Merge field placeholders like {{name}}, {{status}}, {{amount}} into subject/message
+            const interpolate = (text: string) => (text || '').replace(/\{\{(\w+)\}\}/g, (_, key) => {
+              const val = recordData[key];
+              return val !== undefined && val !== null ? String(val) : '';
+            });
+            const subject = interpolate(cfg.subject) || `Workflow: ${rule.name}`;
+            const message = interpolate(cfg.message) || `Rule "${rule.name}" triggered on ${objectType} record "${recordData.name || recordId}".`;
+
+            const emailSet = new Set<string>();
+
+            // Specific email addresses
+            (cfg.recipients || []).forEach((e: string) => emailSet.add(e));
+
+            // Specific selected users
+            (cfg.user_ids || []).forEach((uid: string) => {
+              const u = enterpriseUsers.find(x => x.id === uid);
+              if (u?.email) emailSet.add(u.email);
+            });
+
+            // Record owner (default true unless explicitly disabled)
+            if (cfg.notify_owner !== false && recordData.owner) emailSet.add(recordData.owner);
+
+            // Record creator/submitter
+            if (cfg.notify_submitter && recordData.created_by) emailSet.add(recordData.created_by);
+
+            for (const email of emailSet) {
               await createNotification({
                 recipientEmail: email,
                 type: 'workflow',
-                title: cfg.subject || `Workflow: ${rule.name}`,
-                body: cfg.message || `Rule "${rule.name}" triggered on ${objectType} record.`,
-                recordType: objectType, recordId,
-              });
-            }
-            // Also notify owner
-            if (recordData.owner && !recipients.includes(recordData.owner)) {
-              await createNotification({
-                recipientEmail: recordData.owner,
-                type: 'workflow',
-                title: cfg.subject || `Workflow: ${rule.name}`,
-                body: cfg.message || `Rule "${rule.name}" triggered on your ${objectType} record.`,
+                title: subject,
+                body: message,
                 recordType: objectType, recordId,
               });
             }
             break;
           }
           case 'update_field': {
-            if (cfg.field && cfg.value !== undefined) {
+            // Safety: never allow this action to touch owner/owner_id — use assign_owner instead
+            if (cfg.field && cfg.field !== 'owner' && cfg.field !== 'owner_id' && cfg.value !== undefined && cfg.value !== '') {
+              const NUMERIC_FIELDS = ['amount','probability','price','grand_total','cost','quantity'];
+              const coercedValue = NUMERIC_FIELDS.includes(cfg.field) ? Number(cfg.value) : cfg.value;
               const table   = getObjectTable(objectType);
               const idField = getObjectIdField(objectType);
-              await supabase.from(table)
-                .update({ [cfg.field]: cfg.value })
+              const { error: ufErr } = await supabase.from(table)
+                .update({ [cfg.field]: coercedValue })
                 .eq(idField, recordId);
+              if (ufErr) console.warn('[Workflow update_field] failed:', ufErr.message);
+              else fieldsWereMutated = true;
             }
             break;
           }
@@ -1879,40 +1967,92 @@ export function AppProvider({ children, supabase = null }: { children: React.Rea
             if (newOwner) {
               const table   = getObjectTable(objectType);
               const idField = getObjectIdField(objectType);
-              await supabase.from(table)
+              const { error: aoErr } = await supabase.from(table)
                 .update({ owner: newOwner.email, owner_id: newOwner.id })
                 .eq(idField, recordId);
-              await createNotification({
-                recipientEmail: newOwner.email,
-                type: 'workflow',
-                title: `Record Assigned: ${rule.name}`,
-                body: `${objectType} "${recordData.name}" assigned to you by workflow.`,
-                recordType: objectType, recordId,
-              });
+              if (!aoErr) {
+                fieldsWereMutated = true;
+                await createNotification({
+                  recipientEmail: newOwner.email,
+                  type: 'workflow',
+                  title: `Record Assigned: ${rule.name}`,
+                  body: `${objectType} "${recordData.name}" assigned to you by workflow.`,
+                  recordType: objectType, recordId,
+                });
+              } else {
+                console.warn('[Workflow assign_owner] failed:', aoErr.message);
+              }
             }
             break;
           }
           case 'create_task': {
-            await supabase.from('activities').insert([{
+            // Resolve due date: either fixed date or N days from now
+            let dueDate = cfg.due_date || null;
+            if (cfg.due_in_days) {
+              const d = new Date();
+              d.setDate(d.getDate() + parseInt(cfg.due_in_days, 10));
+              dueDate = d.toISOString().slice(0, 10);
+            }
+            // Resolve assignee: specific user or falls back to record owner
+            const assignee = cfg.assignee_user_id
+              ? enterpriseUsers.find(u => u.id === cfg.assignee_user_id)
+              : null;
+            const taskOwner   = assignee?.email || recordData.owner || currentUser?.email || '';
+            const taskOwnerId = assignee?.id    || recordData.owner_id || currentUser?.id || null;
+
+            const { error: taskErr } = await supabase.from('activities').insert([{
               activity_number: generateId('ACT'),
               name: cfg.task_name || 'Follow up',
               subject: cfg.task_name || 'Follow up',
               activity_type: 'Task',
               status: 'Open',
               priority: cfg.priority || 'Medium',
-              due_date: cfg.due_date || null,
+              due_date: dueDate,
               customer: recordData.customer || '',
               customer_id: recordData.customer_id || null,
-              owner: recordData.owner || currentUser?.email || '',
-              owner_id: recordData.owner_id || currentUser?.id || null,
-              notes: `Auto-created by workflow: ${rule.name}`,
+              owner: taskOwner,
+              owner_id: taskOwnerId,
+              notes: cfg.notes ? `${cfg.notes}\n\n(Auto-created by workflow: ${rule.name})` : `Auto-created by workflow: ${rule.name}`,
               created_by: currentUser?.email || '',
               updated_by: currentUser?.email || '',
             }]);
+            if (taskErr) {
+              console.warn('[Workflow create_task] failed:', taskErr.message);
+            } else {
+              fieldsWereMutated = true; // ensures fetchActivities() runs at the end
+            }
+
+            // Notify the assignee if different from current user
+            if (assignee && assignee.email !== currentUser?.email) {
+              await createNotification({
+                recipientEmail: assignee.email,
+                type: 'workflow',
+                title: `New Task: ${cfg.task_name || 'Follow up'}`,
+                body: `Workflow "${rule.name}" created a task for you on ${objectType} record "${recordData.name || recordId}".`,
+                recordType: objectType, recordId,
+              });
+              fieldsWereMutated = true;
+            }
             break;
           }
         }
       }
+    }
+
+    // Refresh the underlying list + activities (for create_task) if any action mutated data,
+    // so the UI reflects field updates / owner reassignment / new tasks immediately
+    if (fieldsWereMutated) {
+      const REFETCH_MAP: Record<string, () => Promise<void>> = {
+        customers: fetchCustomers, leads: fetchLeads, opportunities: fetchOpportunities,
+        orders: fetchOrders, invoices: fetchInvoices, quotations: fetchQuotations,
+        contacts: fetchContacts, activities: fetchActivities, products: fetchProducts,
+        retailCustomers: fetchRetailCustomers, retailProducts: fetchRetailProducts,
+        retailActivities: fetchRetailActivities, retailOrders: fetchRetailOrders,
+        retailInvoices: fetchRetailInvoices,
+      };
+      const refetchFn = REFETCH_MAP[objectType];
+      if (refetchFn) await refetchFn();
+      await fetchActivities(); // create_task always inserts into activities
     }
   };
 
@@ -2201,8 +2341,8 @@ export function AppProvider({ children, supabase = null }: { children: React.Rea
     if (error) console.error('fetchQuotations:', error);
     if (data) setQuotations(applyDataSecurity(data).map(q => ({ ...q, customerId: q.customer_id, displayNumber: q.display_number })));
   };
-  const createQuotation = async (data,items=[]) => { if(!supabase||!currentUser)return null; const qNum=generateId('QUO'); const{data:inserted,error}=await supabase.from('quotations').insert([{...buildSystemFields(),quote_number:qNum,...data,status:data.status||'Draft',version:1,owner:data.owner||currentUser.email,owner_id:data.owner_id||currentUser.id}]).select().single(); if(error){alert('Failed: '+error.message);return null;} if(items.length)await upsertLineItemsGeneric('quotation_line_items','quote_number',qNum,items); await autoSetCustomerStatus(data.customer_id, 'Prospect'); await fetchQuotations(); return {...inserted, customerId: inserted.customer_id}; };
-  const updateQuotation = async (data,items=[]) => { if(!supabase)return; const{quote_number,_uuid,id,customerId,...rest}=data; const{error}=await supabase.from('quotations').update({...rest,...buildSystemFields(true)}).eq('quote_number',quote_number); if(error){console.error('updateQuotation:',error.message);alert('Save failed: '+error.message);return;} if(items)await upsertLineItemsGeneric('quotation_line_items','quote_number',quote_number,items); await fetchQuotations(); };
+  const createQuotation = async (data,items=[]) => { if(!supabase||!currentUser)return null; const qNum=generateId('QUO'); const{data:inserted,error}=await supabase.from('quotations').insert([{...buildSystemFields(),quote_number:qNum,...data,status:data.status||'Draft',version:1,owner:data.owner||currentUser.email,owner_id:data.owner_id||currentUser.id}]).select().single(); if(error){alert('Failed: '+error.message);return null;} if(items.length)await upsertLineItemsGeneric('quotation_line_items','quote_number',qNum,items); await autoSetCustomerStatus(data.customer_id, 'Prospect'); await runAutomations('quotations', qNum, inserted, 'on_create'); await fetchQuotations(); return {...inserted, customerId: inserted.customer_id}; };
+  const updateQuotation = async (data,items=[]) => { if(!supabase)return; const{quote_number,_uuid,id,customerId,...rest}=data; const{error}=await supabase.from('quotations').update({...rest,...buildSystemFields(true)}).eq('quote_number',quote_number); if(error){console.error('updateQuotation:',error.message);alert('Save failed: '+error.message);return;} if(items)await upsertLineItemsGeneric('quotation_line_items','quote_number',quote_number,items); await runAutomations('quotations', quote_number, data, 'on_update'); await fetchQuotations(); };
   const deleteQuotation = async (qNum) => { if(!supabase||!window.confirm('Delete?'))return; await supabase.from('quotation_line_items').delete().eq('quote_number',qNum); await supabase.from('quotations').delete().eq('quote_number',qNum); await fetchQuotations(); };
   const generateNewVersion = async (q) => { if(!supabase||!currentUser)return null; const qNum=generateId('QUO'); const v=(q.version||1)+1; const items=await fetchLineItems('quotation_line_items','quote_number',q.quote_number); await supabase.from('quotations').insert([{...buildSystemFields(),...q,quote_number:qNum,version:v,status:'Draft',id:undefined,created_at:new Date().toISOString()}]); if(items.length)await upsertLineItemsGeneric('quotation_line_items','quote_number',qNum,items.map(i=>({...i,id:undefined}))); await fetchQuotations(); return{quote_number:qNum}; };
   const createQuotationFromOpportunity = async (opp) => {

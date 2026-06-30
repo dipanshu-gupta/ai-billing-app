@@ -302,13 +302,24 @@ export default function RecordDetailPanel({ page, record, onClose, prefillCustom
   } = useApp();
 
   // Local permission helper (mirrors CRMListPage canDo)
+  const [edited,          setEdited]          = useState({ ...record });
+
+  // Re-sync edited state whenever the record prop changes (e.g. reopening panel
+  // after an approval decision updated the record's status in the database)
+  useEffect(() => {
+    setEdited({ ...record });
+  }, [record.id, record.status, record.updated_at]);
+
+  // Statuses that lock the record from further editing (terminal or pending-approval states)
+  const READONLY_STATUSES = ['Pending Approval', 'Approved', 'Lost', 'Closed', 'Cancelled', 'Rejected'];
+  const isStatusLocked = READONLY_STATUSES.includes(edited?.status);
+
   const canEdit = () => {
+    if (isStatusLocked) return false;
     if (!permissionsLoaded || currentUserPermissions.length === 0) return true;
     if (currentUserPermissions.includes('__admin__')) return true;
     return currentUserPermissions.includes(`${page}_edit`);
   };
-
-  const [edited,          setEdited]          = useState({ ...record });
   const [isDirty,         setIsDirty]         = useState(false);
   const [lineItems,       setLineItems]       = useState([]);
   const [loadingLI,       setLoadingLI]       = useState(false);
@@ -350,7 +361,7 @@ export default function RecordDetailPanel({ page, record, onClose, prefillCustom
     });
   }, [record.id, page]);
 
-  const set = (k,v) => { setIsDirty(true); setEdited(p=>({...p,[k]:v})); };
+  const set = (k,v) => { if (isStatusLocked) return; setIsDirty(true); setEdited(p=>({...p,[k]:v})); };
 
   // Inline field validation
   const [fieldErrors, setFieldErrors] = useState({});
@@ -378,7 +389,8 @@ export default function RecordDetailPanel({ page, record, onClose, prefillCustom
 
   const handleSubmitForApproval = async () => {
     setSubmitting(true);
-    await submitForApproval(page, record.id, record.name, { ...record });
+    // matchingProcess (if set via checkMatchingApprovalProcess) is the actual approval process object
+    await submitForApproval(page, record.id, record.name, matchingProcess || undefined);
     setSubmitting(false);
     setEdited(p=>({...p, status:'Pending Approval'}));
     setMatchingProcess(null);
@@ -499,9 +511,8 @@ export default function RecordDetailPanel({ page, record, onClose, prefillCustom
 
   const isPendingApproval = edited.status === 'Pending Approval';
   // Hide Submit button when record is in these statuses
-  const noSubmitStatuses  = ['Pending Approval', 'Approved'];
   const canSubmitForApproval = matchingProcess != null
-    && !noSubmitStatuses.includes(edited.status)
+    && !isStatusLocked
     && !checkingApproval;
 
   const ownerUser = enterpriseUsers.find(u => u.id === edited.owner_id || u.email === edited.owner);
@@ -581,6 +592,17 @@ export default function RecordDetailPanel({ page, record, onClose, prefillCustom
           {/* Body */}
           <div className="flex-1 overflow-y-auto bg-gradient-to-br from-white to-blue-50 p-8 space-y-6">
 
+            {/* Read-only lock banner */}
+            {isStatusLocked && (
+              <div className="bg-amber-50 border border-amber-200 rounded-2xl px-5 py-3 flex items-center gap-3">
+                <span className="text-xl">🔒</span>
+                <div>
+                  <p className="text-sm font-bold text-amber-800">This record is read-only</p>
+                  <p className="text-xs text-amber-600">Status is "{edited.status}" — fields cannot be edited in this state.</p>
+                </div>
+              </div>
+            )}
+
             {/* Approval banner — only on details tab */}
             {tab==='details' && (
               <ApprovalBanner recordId={record.id} recordType={page} onDecision={async()=>{
@@ -658,7 +680,10 @@ export default function RecordDetailPanel({ page, record, onClose, prefillCustom
                 {/* Line Items */}
                 {HAS_LI.includes(page) && (loadingLI
                   ? <div className="bg-white rounded-[24px] border border-blue-100 p-8 text-center text-gray-400">Loading line items…</div>
-                  : <LineItemsTable items={lineItems} setItems={setLineItems} products={products}/>
+                  : <LineItemsTable items={lineItems} setItems={(updater)=>{
+                      setIsDirty(true);
+                      setLineItems(updater);
+                    }} products={products}/>
                 )}
 
                 {/* Additional Information — B2B App Composer custom fields */}

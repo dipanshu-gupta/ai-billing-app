@@ -10,7 +10,9 @@ import TenantAdminPanel from '@/components/admin/TenantAdminPanel';
 import RetailInvoiceDesigner from '@/components/admin/RetailInvoiceDesigner';
 import DocumentTemplateDesigner from '@/components/admin/DocumentTemplateDesigner';
 import WarehousesPanel from '@/components/admin/WarehousesPanel';
+import AppPreferencesPanel from '@/components/admin/AppPreferencesPanel';
 import { useApp } from '@/context/AppContext';
+import { useTenant } from '@/context/TenantContext';
 import { formatDate, getStatusOptions } from '@/lib/utils';
 import Modal from '@/components/shared/Modal';
 
@@ -25,6 +27,19 @@ const RETAIL_OBJECT_LABELS: Record<string,string> = {
   retailCustomers: 'Retail Customers', retailProducts: 'Retail Products',
   retailActivities: 'Retail Activities', retailOrders: 'Retail Orders', retailInvoices: 'Retail Invoices',
 };
+
+// ─── Retail Admin Wrapper — provides consistent header for B2C admin panels ──
+function RetailAdminWrapper({ title, icon, desc, children }) {
+  return (
+    <div className="space-y-5">
+      <div className="bg-gradient-to-r from-purple-900 to-purple-700 rounded-[24px] p-6 text-white">
+        <h2 className="text-2xl font-bold flex items-center gap-2">{icon} {title}</h2>
+        <p className="text-purple-200 text-sm mt-1">{desc}</p>
+      </div>
+      {children}
+    </div>
+  );
+}
 const RETAIL_CONDITION_FIELDS: Record<string,{v:string,l:string}[]> = {
   retailCustomers:  [{v:'status',l:'Status'},{v:'loyalty_tier',l:'Loyalty Tier'},{v:'gender',l:'Gender'},{v:'city',l:'City'},{v:'owner',l:'Owner'}],
   retailProducts:   [{v:'status',l:'Status'},{v:'category',l:'Category'},{v:'brand',l:'Brand'},{v:'price',l:'Price'},{v:'stock_quantity',l:'Stock Qty'}],
@@ -70,12 +85,13 @@ const OPERATORS = [
 ];
 
 const ACTION_TYPES = [
-  {v:'send_notification',l:'Send Notification'},
-  {v:'change_status',l:'Change Status'},
-  {v:'update_field',l:'Update Field'},
-  {v:'assign_record',l:'Assign Record'},
-  {v:'send_email',l:'Send Email'},
+  {v:'send_notification',l:'📧 Send Notification'},
+  {v:'update_field',l:'✏️ Update Field'},
+  {v:'assign_owner',l:'👤 Assign Owner'},
+  {v:'create_task',l:'📋 Create Task'},
 ];
+
+const NUMERIC_FIELDS = ['amount','probability','price','grand_total','cost','quantity'];
 
 const TRIGGER_EVENTS = [
   {v:'on_create',       l:'When record is Created'},
@@ -87,94 +103,6 @@ const TRIGGER_EVENTS = [
 
 // ─── Label helper ─────────────────────────────────────────────────────────────
 const L = ({t}) => <label className="text-xs font-bold uppercase tracking-wider text-gray-400 block mb-1.5">{t}</label>;
-
-// ─── Condition value field: dropdown or text ──────────────────────────────────
-function ConditionValue({ objType, field, value, onChange }) {
-  const opts = getFieldOptions(objType, field);
-  if (!field) return <input value={value||''} onChange={e=>onChange(e.target.value)} placeholder="Value" className={iCls}/>;
-  if (opts) return (
-    <select value={value||''} onChange={e=>onChange(e.target.value)} className={sCls}>
-      <option value="">Select value</option>
-      {opts.map(o => <option key={o}>{o}</option>)}
-    </select>
-  );
-  return <input value={value||''} onChange={e=>onChange(e.target.value)} placeholder="Enter value" className={iCls}/>;
-}
-
-// ─── Workflow Action Config row ───────────────────────────────────────────────
-function ActionConfig({ action, idx, objType, onUpdate, onRemove, users, conditionFields = CONDITION_FIELDS }) {
-  const cfg = action.action_config || {};
-  const setCfg = (k,v) => onUpdate(idx, {...action, action_config:{...cfg, [k]:v}});
-  const setType = (v) => onUpdate(idx, {...action, action_type:v, action_config:{}});
-
-  const condFields = conditionFields[objType] || [];
-  const statusOpts = getStatusOptions(objType);
-  const selectedField = cfg.field_name;
-  const fieldValueOpts = getFieldOptions(objType, selectedField);
-
-  return (
-    <div className="bg-blue-50 rounded-2xl p-4 space-y-3">
-      <div className="flex items-center justify-between">
-        <span className="font-bold text-[#0F172A] text-sm">Action {idx+1}</span>
-        {idx > 0 && <button onClick={()=>onRemove(idx)} className="text-red-500 text-xs font-semibold hover:underline">Remove</button>}
-      </div>
-      <div>
-        <L t="Action Type"/>
-        <select value={action.action_type||''} onChange={e=>setType(e.target.value)} className={sCls}>
-          <option value="">Select action</option>
-          {ACTION_TYPES.map(a=><option key={a.v} value={a.v}>{a.l}</option>)}
-        </select>
-      </div>
-
-      {/* Send Notification */}
-      {action.action_type==='send_notification' && (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          <div><L t="Notify User"/><select value={cfg.recipient||''} onChange={e=>setCfg('recipient',e.target.value)} className={sCls}><option value="">Select user</option>{users.map(u=><option key={u.email} value={u.email}>{u.first_name} {u.last_name}</option>)}</select></div>
-          <div className="md:col-span-2"><L t="Message"/><textarea rows={2} value={cfg.message||''} onChange={e=>setCfg('message',e.target.value)} placeholder="Notification message..." className={tCls}/></div>
-        </div>
-      )}
-
-      {/* Change Status */}
-      {action.action_type==='change_status' && (
-        <div><L t="New Status"/><select value={cfg.new_status||''} onChange={e=>setCfg('new_status',e.target.value)} className={sCls}><option value="">Select status</option>{statusOpts.map(s=><option key={s}>{s}</option>)}</select></div>
-      )}
-
-      {/* Update Field */}
-      {action.action_type==='update_field' && (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          <div>
-            <L t="Field to Update"/>
-            <select value={cfg.field_name||''} onChange={e=>setCfg('field_name',e.target.value)} className={sCls}>
-              <option value="">Select field</option>
-              {condFields.map(f=><option key={f.v} value={f.v}>{f.l}</option>)}
-            </select>
-          </div>
-          <div>
-            <L t="New Value"/>
-            {fieldValueOpts
-              ? <select value={cfg.field_value||''} onChange={e=>setCfg('field_value',e.target.value)} className={sCls}><option value="">Select</option>{fieldValueOpts.map(o=><option key={o}>{o}</option>)}</select>
-              : <input value={cfg.field_value||''} onChange={e=>setCfg('field_value',e.target.value)} placeholder="New value" className={iCls}/>
-            }
-          </div>
-        </div>
-      )}
-
-      {/* Assign Record */}
-      {action.action_type==='assign_record' && (
-        <div><L t="Assign To User"/><select value={cfg.assign_to||''} onChange={e=>setCfg('assign_to',e.target.value)} className={sCls}><option value="">Select user</option>{users.map(u=><option key={u.id} value={u.id}>{u.first_name} {u.last_name} ({u.email})</option>)}</select></div>
-      )}
-
-      {/* Send Email */}
-      {action.action_type==='send_email' && (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          <div><L t="To Email"/><input value={cfg.to_email||''} onChange={e=>setCfg('to_email',e.target.value)} placeholder="recipient@email.com" className={iCls}/></div>
-          <div><L t="Subject"/><input value={cfg.subject||''} onChange={e=>setCfg('subject',e.target.value)} placeholder="Email subject" className={iCls}/></div>
-          <div className="md:col-span-2"><L t="Body"/><textarea rows={3} value={cfg.body||''} onChange={e=>setCfg('body',e.target.value)} placeholder="Email body..." className={tCls}/></div>
-        </div>
-      )}
-    </div>
-  );
-}
 
 // ═══════════════════════════ ORGANIZATIONS ════════════════════════════════════
 function OrganizationsPanel() {
@@ -709,9 +637,11 @@ function ConditionBuilder({ fields, conditions, logic, onChange }) {
   );
 }
 
-function ActionBuilder({ action, idx, users, fields, onChange, onRemove }) {
+function ActionBuilder({ action, idx, users, fields, objectType, onChange, onRemove }) {
   const cfg = action.action_config || {};
   const setcfg = (k,v) => onChange({ ...action, action_config: { ...cfg, [k]: v } });
+  const updateFieldOpts = cfg.field ? getFieldOptions(objectType, cfg.field) : null;
+
   return (
     <div className="bg-gray-50 rounded-[16px] p-4 space-y-3 border border-gray-200">
       <div className="flex items-center gap-3">
@@ -726,29 +656,60 @@ function ActionBuilder({ action, idx, users, fields, onChange, onRemove }) {
       {action.action_type === 'send_notification' && (
         <div className="space-y-2 ml-9">
           <input value={cfg.subject||''} onChange={e=>setcfg('subject',e.target.value)}
-            placeholder="Notification subject" className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-900 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400"/>
+            placeholder="Notification subject *" className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-900 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400"/>
           <textarea value={cfg.message||''} onChange={e=>setcfg('message',e.target.value)}
-            placeholder="Notification message..." rows={2}
+            placeholder="Notification message... Use {{name}}, {{status}}, {{amount}} for record fields" rows={2}
             className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-900 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400 resize-none"/>
+          <div className="flex items-center gap-4 pt-1">
+            <label className="flex items-center gap-1.5 cursor-pointer">
+              <input type="checkbox" checked={cfg.notify_owner!==false} onChange={e=>setcfg('notify_owner',e.target.checked)} className="w-3.5 h-3.5 accent-blue-600 rounded"/>
+              <span className="text-xs font-semibold text-gray-600">Notify record owner</span>
+            </label>
+            <label className="flex items-center gap-1.5 cursor-pointer">
+              <input type="checkbox" checked={!!cfg.notify_submitter} onChange={e=>setcfg('notify_submitter',e.target.checked)} className="w-3.5 h-3.5 accent-blue-600 rounded"/>
+              <span className="text-xs font-semibold text-gray-600">Notify creator</span>
+            </label>
+          </div>
           <div>
-            <label className="block text-xs font-bold text-gray-400 mb-1">Additional Recipients (emails, comma-separated)</label>
-            <input value={(cfg.recipients||[]).join(',')} onChange={e=>setcfg('recipients',e.target.value.split(',').map(x=>x.trim()).filter(Boolean))}
-              placeholder="email1@co.com, email2@co.com"
+            <label className="block text-xs font-bold text-gray-400 mb-1">Specific Users</label>
+            <select multiple value={cfg.user_ids||[]} onChange={e=>setcfg('user_ids',Array.from(e.target.selectedOptions).map(o=>o.value))}
+              className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-900 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400 min-h-[72px]">
+              {users.map(u=><option key={u.id} value={u.id}>{`${u.first_name||''} ${u.last_name||''}`.trim()||u.email}</option>)}
+            </select>
+            <p className="text-[10px] text-gray-400 mt-1">Cmd/Ctrl+click to select multiple</p>
+          </div>
+          <div>
+            <label className="block text-xs font-bold text-gray-400 mb-1">Other Email Addresses (comma-separated)</label>
+            <input value={(cfg.recipients||[]).join(', ')} onChange={e=>setcfg('recipients',e.target.value.split(',').map(x=>x.trim()).filter(Boolean))}
+              placeholder="external@company.com"
               className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-900 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400"/>
           </div>
         </div>
       )}
 
       {action.action_type === 'update_field' && (
-        <div className="flex gap-2 ml-9 flex-wrap">
-          <select value={cfg.field||''} onChange={e=>setcfg('field',e.target.value)}
-            className="flex-1 border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-900 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400">
-            <option value="">Select field to update...</option>
-            {fields.map(f=><option key={f.v} value={f.v}>{f.l}</option>)}
+        <div className="space-y-2 ml-9">
+          <select value={cfg.field||''} onChange={e=>onChange({...action, action_config:{...cfg, field:e.target.value, value:''}})}
+            className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-900 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400">
+            <option value="">Select field to update... *</option>
+            {fields.filter(f=>f.v!=='owner').map(f=><option key={f.v} value={f.v}>{f.l}</option>)}
           </select>
-          <input value={cfg.value||''} onChange={e=>setcfg('value',e.target.value)}
-            placeholder="New value"
-            className="flex-1 border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-900 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400"/>
+          <p className="text-[10px] text-gray-400">To change the owner, use the "Assign Owner" action instead.</p>
+          {cfg.field && (
+            updateFieldOpts
+              ? <select value={cfg.value||''} onChange={e=>setcfg('value',e.target.value)}
+                  className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-900 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400">
+                  <option value="">Select new value... *</option>
+                  {updateFieldOpts.map(o=><option key={o} value={o}>{o}</option>)}
+                </select>
+              : NUMERIC_FIELDS.includes(cfg.field)
+              ? <input type="number" step="any" value={cfg.value||''} onChange={e=>setcfg('value',e.target.value)}
+                  placeholder="New numeric value *"
+                  className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-900 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400"/>
+              : <input value={cfg.value||''} onChange={e=>setcfg('value',e.target.value)}
+                  placeholder="New value *"
+                  className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-900 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400"/>
+          )}
         </div>
       )}
 
@@ -756,7 +717,7 @@ function ActionBuilder({ action, idx, users, fields, onChange, onRemove }) {
         <div className="ml-9">
           <select value={cfg.user_id||''} onChange={e=>setcfg('user_id',e.target.value)}
             className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-900 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400">
-            <option value="">Select user to assign...</option>
+            <option value="">Select user to assign... *</option>
             {users.map(u=><option key={u.id} value={u.id}>{`${u.first_name||''} ${u.last_name||''}`.trim()||u.email}</option>)}
           </select>
         </div>
@@ -765,14 +726,36 @@ function ActionBuilder({ action, idx, users, fields, onChange, onRemove }) {
       {action.action_type === 'create_task' && (
         <div className="space-y-2 ml-9">
           <input value={cfg.task_name||''} onChange={e=>setcfg('task_name',e.target.value)}
-            placeholder="Task name" className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-900 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400"/>
-          <div className="flex gap-2">
+            placeholder="Task name *" className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-900 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400"/>
+          <textarea value={cfg.notes||''} onChange={e=>setcfg('notes',e.target.value)}
+            placeholder="Task notes / description (optional)" rows={2}
+            className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-900 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400 resize-none"/>
+          <div className="grid grid-cols-3 gap-2">
             <select value={cfg.priority||'Medium'} onChange={e=>setcfg('priority',e.target.value)}
-              className="flex-1 border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-900 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400">
+              className="border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-900 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400">
               {['Low','Medium','High'].map(p=><option key={p} value={p}>{p}</option>)}
             </select>
-            <input type="date" value={cfg.due_date||''} onChange={e=>setcfg('due_date',e.target.value)}
-              className="flex-1 border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-900 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400"/>
+            <select value={cfg.due_in_days||''} onChange={e=>setcfg('due_in_days',e.target.value)}
+              className="border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-900 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400">
+              <option value="">Due date: Fixed</option>
+              <option value="1">Due in 1 day</option>
+              <option value="3">Due in 3 days</option>
+              <option value="7">Due in 7 days</option>
+              <option value="14">Due in 14 days</option>
+              <option value="30">Due in 30 days</option>
+            </select>
+            {!cfg.due_in_days && (
+              <input type="date" value={cfg.due_date||''} onChange={e=>setcfg('due_date',e.target.value)}
+                className="border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-900 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400"/>
+            )}
+          </div>
+          <div>
+            <label className="block text-xs font-bold text-gray-400 mb-1">Assign task to</label>
+            <select value={cfg.assignee_user_id||''} onChange={e=>setcfg('assignee_user_id',e.target.value)}
+              className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-900 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400">
+              <option value="">Same as record owner</option>
+              {users.map(u=><option key={u.id} value={u.id}>{`${u.first_name||''} ${u.last_name||''}`.trim()||u.email}</option>)}
+            </select>
           </div>
         </div>
       )}
@@ -813,9 +796,31 @@ function WorkflowBuilderPanel({ objectList = ALL_OBJECTS, conditionFields = COND
     setOpen(true);
   };
 
+  const validateActions = () => {
+    for (let i = 0; i < actions.length; i++) {
+      const a = actions[i];
+      const cfg = a.action_config || {};
+      if (a.action_type === 'send_notification' && !cfg.subject?.trim()) {
+        return `Action #${i+1}: Notification subject is required.`;
+      }
+      if (a.action_type === 'update_field' && (!cfg.field || !cfg.value)) {
+        return `Action #${i+1}: Select both a field and a value to update.`;
+      }
+      if (a.action_type === 'assign_owner' && !cfg.user_id) {
+        return `Action #${i+1}: Select a user to assign the record to.`;
+      }
+      if (a.action_type === 'create_task' && !cfg.task_name?.trim()) {
+        return `Action #${i+1}: Task name is required.`;
+      }
+    }
+    return null;
+  };
+
   const handleSave = async () => {
     if (!form.name?.trim()) { alert('Rule name is required.'); return; }
     if (!actions.length)    { alert('At least one action is required.'); return; }
+    const actionError = validateActions();
+    if (actionError) { alert(actionError); return; }
     setSaving(true);
     try {
       await saveWorkflowRule({ ...form, conditions }, actions, editing?.id);
@@ -957,7 +962,7 @@ function WorkflowBuilderPanel({ objectList = ALL_OBJECTS, conditionFields = COND
             </div>
             <div className="space-y-3">
               {actions.map((a,i)=>(
-                <ActionBuilder key={i} action={a} idx={i} users={enterpriseUsers} fields={fields}
+                <ActionBuilder key={i} action={a} idx={i} users={enterpriseUsers} fields={fields} objectType={form.object_type}
                   onChange={na=>setActions(p=>p.map((x,j)=>j===i?na:x))}
                   onRemove={()=>setActions(p=>p.filter((_,j)=>j!==i))}/>
               ))}
@@ -1346,12 +1351,30 @@ function ApprovalProcessPanel({ objectList = ALL_OBJECTS, conditionFields = COND
     setOpen(true);
   };
 
-  const openEdit = (proc) => {
+  const openEdit = async (proc) => {
     setEditing(proc);
     setForm({name:proc.name,object_type:proc.object_type,is_active:proc.is_active});
     setCond(proc.conditions||{logic:'AND',conditions:[]});
-    setSteps(proc._steps||[{step_number:1,step_name:'',approver_user_id:'',approver_group_id:'',approval_type:'any',on_approve_action:'proceed',on_reject_action:'reject'}]);
     setOpen(true);
+    // Fetch the actual saved steps from DB
+    const supabase = (window as any).__bp_supabase;
+    if (supabase) {
+      const { data: stepsData } = await supabase
+        .from('approval_steps').select('*').eq('approval_process_id', proc.id).order('step_number');
+      if (stepsData?.length) {
+        setSteps(stepsData.map(s => ({
+          step_number: s.step_number,
+          step_name: s.step_name || '',
+          approver_user_id: s.approver_user_id || '',
+          approver_group_id: s.approver_group_id || '',
+          approval_type: s.approval_type || 'any',
+          on_approve_action: s.on_approve_action || 'proceed',
+          on_reject_action: s.on_reject_action || 'reject',
+        })));
+        return;
+      }
+    }
+    setSteps([{step_number:1,step_name:'',approver_user_id:'',approver_group_id:'',approval_type:'any',on_approve_action:'proceed',on_reject_action:'reject'}]);
   };
 
   // Pending requests grouped by process
@@ -1532,9 +1555,13 @@ function ApprovalProcessPanel({ objectList = ALL_OBJECTS, conditionFields = COND
 
 export default function AdminToolsPage() {
   const [active, setActive] = useState(null);
-  const [adminMode, setAdminMode] = useState('b2b'); // 'b2b' | 'b2c'
+  const [adminMode, setAdminMode] = useState('b2b'); // 'b2b' | 'b2c' | 'tenant'
   const { hasPermission, currentUserPermissions, permissionsLoaded, currentUser, appPreferences } = useApp();
+  const { tenant } = useTenant();
   const isB2CMode = appPreferences?.b2c_mode === true;
+  const isB2BMode = appPreferences?.crm_enabled !== false && !isB2CMode;
+  // Tenant Admin tab only visible on the master/demo workspace — never on client tenants
+  const isMasterWorkspace = !tenant || tenant.slug === 'demo';
   // Admin tools page — data loaded via individual panel components
   // Gate: only admins (or users with admin_tools_view) can access this page
   const canAccessAdmin = !permissionsLoaded || // optimistic while loading
@@ -1557,7 +1584,6 @@ export default function AdminToolsPage() {
     { key:'warehouses',     label:'Warehouses',       icon:'🏭', desc:'Manage warehouse locations' },
     { key:'appPrefs',       label:'App Preferences',  icon:'⚙️', desc:'Currency, date format, modules' },
     { key:'appearance',     label:'Appearance',       icon:'🎨', desc:'Theme, logo and branding' },
-    { key:'tenants',        label:'Tenant Admin',     icon:'🌐', desc:'Manage client workspaces' },
     { key:'b2b_composer',   label:'App Composer',     icon:'🧩', desc:'Add custom fields to CRM objects' },
   ];
 
@@ -1571,7 +1597,7 @@ export default function AdminToolsPage() {
     { key:'r_assignment',    label:'Assignment Rules',icon:'📋', desc:'Retail record assignment' },
     { key:'r_sla',           label:'SLA Policies',    icon:'⏱️', desc:'Retail SLA tracking' },
     { key:'r_approvals',     label:'Approvals',       icon:'✅', desc:'Retail approval flows' },
-    { key:'r_invoiceDesigner',label:'Invoice Designer',icon:'🖨️', desc:'Design retail invoice templates' },
+    { key:'r_invoiceTemplates',label:'Invoice Designer',icon:'🖨️', desc:'Design retail invoice templates' },
     { key:'r_appPrefs',      label:'App Preferences', icon:'⚙️', desc:'Retail app settings' },
     { key:'r_appearance',    label:'Appearance',      icon:'🎨', desc:'Retail branding' },
     { key:'r_composer',      label:'App Composer',    icon:'🧩', desc:'Custom fields for retail objects' },
@@ -1586,9 +1612,9 @@ export default function AdminToolsPage() {
       case 'security':      return <SecurityConsole/>;
       case 'workflow':      return <WorkflowBuilderPanel/>;
       case 'assignment':    return <AssignmentRulesPanel/>;
-      case 'sla':           return <SLAPoliciesPanel/>;
-      case 'approvals':     return <ApprovalProcessesPanel/>;
-      case 'templates':        return <TemplateDesignerPanel/>;
+      case 'sla':           return <SLAPanel/>;
+      case 'approvals':     return <ApprovalProcessPanel/>;
+      case 'templates':        return <DocumentTemplateDesigner docType="quote"/>;
       case 'invoiceTemplates': return <DocumentTemplateDesigner docType="invoice"/>;
       case 'warehouses':       return <WarehousesPanel/>;
       case 'appPrefs':         return <AppPreferencesPanel/>;
@@ -1600,14 +1626,15 @@ export default function AdminToolsPage() {
       case 'r_businessUnits':    return <RetailAdminWrapper title="Business Units" icon="🏗️" desc="Manage retail divisions and departments"><BusinessUnitsPanel/></RetailAdminWrapper>;
       case 'r_users':            return <RetailAdminWrapper title="Users" icon="👤" desc="Retail platform user accounts and roles"><UsersPanel/></RetailAdminWrapper>;
       case 'r_groups':           return <RetailAdminWrapper title="User Groups" icon="👥" desc="Retail user group access and assignment"><UserGroupsPanel/></RetailAdminWrapper>;
-      case 'r_security':         return <RetailAdminWrapper title="Security Console" icon="🔐" desc="Retail roles, permissions and data access"><SecurityConsolePanel/></RetailAdminWrapper>;
+      case 'r_security':         return <RetailAdminWrapper title="Security Console" icon="🔐" desc="Retail roles, permissions and data access — shared with B2B Enterprise"><SecurityConsole/></RetailAdminWrapper>;
       case 'r_invoiceTemplates': return <RetailInvoiceDesigner/>;
-      case 'r_approvals':        return <RetailAdminWrapper title="Approval Processes" icon="✅" desc="Multi-step approvals for Retail Orders and Invoices" objects={Object.values(RETAIL_OBJECT_LABELS)}><ApprovalProcessesPanel objectList={RETAIL_OBJECTS_LIST} conditionFields={RETAIL_CONDITION_FIELDS} objectLabels={RETAIL_OBJECT_LABELS}/></RetailAdminWrapper>;
-      case 'r_workflow':         return <RetailAdminWrapper title="Workflow Builder" icon="⚙️" desc="Auto-trigger actions on Retail data object events" objects={Object.values(RETAIL_OBJECT_LABELS)}><WorkflowBuilderPanel objectList={RETAIL_OBJECTS_LIST} conditionFields={RETAIL_CONDITION_FIELDS} objectLabels={RETAIL_OBJECT_LABELS}/></RetailAdminWrapper>;
-      case 'r_assignment':       return <RetailAdminWrapper title="Assignment Rules" icon="📋" desc="Auto-assign Retail records to users" objects={Object.values(RETAIL_OBJECT_LABELS)}><AssignmentRulesPanel objectList={RETAIL_OBJECTS_LIST} conditionFields={RETAIL_CONDITION_FIELDS} objectLabels={RETAIL_OBJECT_LABELS}/></RetailAdminWrapper>;
-      case 'r_sla':              return <RetailAdminWrapper title="SLA Policies" icon="⏱️" desc="Response and resolution SLA for Retail objects" objects={Object.values(RETAIL_OBJECT_LABELS)}><SLAPoliciesPanel objectList={RETAIL_OBJECTS_LIST} conditionFields={RETAIL_CONDITION_FIELDS} objectLabels={RETAIL_OBJECT_LABELS}/></RetailAdminWrapper>;
+      case 'r_approvals':        return <RetailAdminWrapper title="Approval Processes" icon="✅" desc="Multi-step approvals for Retail Orders and Invoices"><ApprovalProcessPanel objectList={RETAIL_OBJECTS_LIST} conditionFields={RETAIL_CONDITION_FIELDS} objectLabels={RETAIL_OBJECT_LABELS}/></RetailAdminWrapper>;
+      case 'r_workflow':         return <RetailAdminWrapper title="Workflow Builder" icon="⚙️" desc="Auto-trigger actions on Retail data object events"><WorkflowBuilderPanel objectList={RETAIL_OBJECTS_LIST} conditionFields={RETAIL_CONDITION_FIELDS} objectLabels={RETAIL_OBJECT_LABELS}/></RetailAdminWrapper>;
+      case 'r_assignment':       return <RetailAdminWrapper title="Assignment Rules" icon="📋" desc="Auto-assign Retail records to users"><AssignmentRulesPanel objectList={RETAIL_OBJECTS_LIST} conditionFields={RETAIL_CONDITION_FIELDS} objectLabels={RETAIL_OBJECT_LABELS}/></RetailAdminWrapper>;
+      case 'r_sla':              return <RetailAdminWrapper title="SLA Policies" icon="⏱️" desc="Response and resolution SLA for Retail objects"><SLAPanel objectList={RETAIL_OBJECTS_LIST} conditionFields={RETAIL_CONDITION_FIELDS} objectLabels={RETAIL_OBJECT_LABELS}/></RetailAdminWrapper>;
+      case 'r_appPrefs':         return <RetailAdminWrapper title="App Preferences" icon="⚙️" desc="Currency, date format and module settings"><AppPreferencesPanel/></RetailAdminWrapper>;
+      case 'r_appearance':       return <RetailAdminWrapper title="Appearance" icon="🎨" desc="Theme, logo and branding — shared with B2B Enterprise"><AppearancePanel/></RetailAdminWrapper>;
       case 'r_composer':         return <AppComposer/>;
-      case 'tenants':            return <TenantAdminPanel/>;
       case 'b2b_composer':       return <B2BAppComposer/>;
       default:                   return null;
     }
@@ -1623,7 +1650,19 @@ export default function AdminToolsPage() {
     );
   }
 
-  const currentSections = adminMode==='b2c' ? B2C_SECTIONS : B2B_SECTIONS;
+  // Safety: force back to b2b if tenant mode selected but not on master workspace
+  useEffect(() => {
+    if (adminMode === 'tenant' && !isMasterWorkspace) setAdminMode('b2b');
+  }, [adminMode, isMasterWorkspace]);
+
+  useEffect(() => {
+    if (adminMode === 'b2b' && !isB2BMode) {
+      setAdminMode(isB2CMode ? 'b2c' : 'b2b');
+      setActive(null);
+    }
+  }, [adminMode, isB2BMode, isB2CMode]);
+
+  const currentSections = adminMode==='b2c' ? B2C_SECTIONS : adminMode==='tenant' ? [] : B2B_SECTIONS;
   const isB2CAdminTool = adminMode==='b2c';
 
   return (
@@ -1639,8 +1678,10 @@ export default function AdminToolsPage() {
             {/* B2B / B2C Mode Switcher */}
             <div className="flex bg-white/10 rounded-2xl p-1 gap-1">
               <button onClick={()=>{setAdminMode('b2b');setActive(null);}}
-                className={`px-4 py-2 rounded-xl text-sm font-bold transition-all ${adminMode==='b2b'?'bg-white text-[#0F172A] shadow':'text-white/70 hover:text-white'}`}>
-                🏢 B2B Enterprise
+                disabled={!isB2BMode}
+                title={!isB2BMode?'Enable CRM module in App Preferences first':''}
+                className={`px-4 py-2 rounded-xl text-sm font-bold transition-all disabled:opacity-40 disabled:cursor-not-allowed ${adminMode==='b2b'?'bg-white text-[#0F172A] shadow':'text-white/70 hover:text-white'}`}>
+                🏢 B2B Enterprise {!isB2BMode&&<span className="text-xs opacity-60">(disabled)</span>}
               </button>
               <button onClick={()=>{setAdminMode('b2c');setActive(null);}}
                 disabled={!isB2CMode}
@@ -1648,6 +1689,12 @@ export default function AdminToolsPage() {
                 className={`px-4 py-2 rounded-xl text-sm font-bold transition-all disabled:opacity-40 disabled:cursor-not-allowed ${adminMode==='b2c'?'bg-purple-500 text-white shadow':'text-white/70 hover:text-white'}`}>
                 🛍️ B2C Retail {!isB2CMode&&<span className="text-xs opacity-60">(disabled)</span>}
               </button>
+              {isMasterWorkspace && (
+                <button onClick={()=>{setAdminMode('tenant');setActive(null);}}
+                  className={`px-4 py-2 rounded-xl text-sm font-bold transition-all ${adminMode==='tenant'?'bg-amber-500 text-white shadow':'text-white/70 hover:text-white'}`}>
+                  🌐 Tenant Admin
+                </button>
+              )}
             </div>
           </div>
           {!isB2CMode && adminMode==='b2b' && (
@@ -1676,6 +1723,11 @@ export default function AdminToolsPage() {
             </button>
           ))}
         </div>
+      )}
+
+      {/* Tenant Admin — renders directly, no sub-tiles (master workspace only) */}
+      {!active && adminMode==='tenant' && isMasterWorkspace && (
+        <TenantAdminPanel/>
       )}
 
       {/* B2C sections grid */}
