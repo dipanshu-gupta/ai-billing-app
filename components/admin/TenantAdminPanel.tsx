@@ -523,6 +523,12 @@ export default function TenantAdminPanel() {
                     <input value={form.db_anon_key||''} onChange={e=>upd('db_anon_key',e.target.value)}
                       placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9…" className={`${iCls} font-mono text-xs`} type="password"/>
                   </div>
+                  <div>
+                    <label className={lCls}>Supabase Service Role Key</label>
+                    <input value={form.db_service_key||''} onChange={e=>upd('db_service_key',e.target.value)}
+                      placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9…" className={`${iCls} font-mono text-xs`} type="password"/>
+                    <p className="text-[10px] text-gray-400 mt-1">Required to create login accounts for this tenant's users. Found in their Supabase → Project Settings → API → service_role.</p>
+                  </div>
                   <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-800">
                     ⚠️ After saving, run <code className="font-mono bg-amber-100 px-1 rounded">schema_migration.sql</code> against the client's Supabase project to create all tables.
                   </div>
