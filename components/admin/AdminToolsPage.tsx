@@ -11,6 +11,7 @@ import RetailInvoiceDesigner from '@/components/admin/RetailInvoiceDesigner';
 import DocumentTemplateDesigner from '@/components/admin/DocumentTemplateDesigner';
 import WarehousesPanel from '@/components/admin/WarehousesPanel';
 import AppPreferencesPanel from '@/components/admin/AppPreferencesPanel';
+import ImportExportPanel from '@/components/admin/ImportExportPanel';
 import { useApp } from '@/context/AppContext';
 import { useTenant } from '@/context/TenantContext';
 import { formatDate, getStatusOptions } from '@/lib/utils';
@@ -1555,7 +1556,7 @@ function ApprovalProcessPanel({ objectList = ALL_OBJECTS, conditionFields = COND
 
 export default function AdminToolsPage() {
   const [active, setActive] = useState(null);
-  const [adminMode, setAdminMode] = useState('b2b'); // 'b2b' | 'b2c' | 'tenant'
+  const [adminMode, setAdminMode] = useState('b2b'); // 'b2b' | 'b2c' | 'tenant' | 'import'
   const { hasPermission, currentUserPermissions, permissionsLoaded, currentUser, appPreferences } = useApp();
   const { tenant } = useTenant();
   const isB2CMode = appPreferences?.b2c_mode === true;
@@ -1662,7 +1663,7 @@ export default function AdminToolsPage() {
     }
   }, [adminMode, isB2BMode, isB2CMode]);
 
-  const currentSections = adminMode==='b2c' ? B2C_SECTIONS : adminMode==='tenant' ? [] : B2B_SECTIONS;
+  const currentSections = adminMode==='b2c' ? B2C_SECTIONS : adminMode==='tenant' ? [] : adminMode==='import' ? [] : B2B_SECTIONS;
   const isB2CAdminTool = adminMode==='b2c';
 
   return (
@@ -1695,6 +1696,10 @@ export default function AdminToolsPage() {
                   🌐 Tenant Admin
                 </button>
               )}
+              <button onClick={()=>{setAdminMode('import');setActive(null);}}
+                className={`px-4 py-2 rounded-xl text-sm font-bold transition-all ${adminMode==='import'?'bg-emerald-600 text-white shadow':'text-white/70 hover:text-white'}`}>
+                📂 Import & Export
+              </button>
             </div>
           </div>
           {!isB2CMode && adminMode==='b2b' && (
@@ -1728,6 +1733,11 @@ export default function AdminToolsPage() {
       {/* Tenant Admin — renders directly, no sub-tiles (master workspace only) */}
       {!active && adminMode==='tenant' && isMasterWorkspace && (
         <TenantAdminPanel/>
+      )}
+
+      {/* Import & Export — renders directly, visible to all tenants */}
+      {!active && adminMode==='import' && (
+        <ImportExportPanel/>
       )}
 
       {/* B2C sections grid */}

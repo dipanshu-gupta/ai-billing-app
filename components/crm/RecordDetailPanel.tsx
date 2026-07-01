@@ -3,6 +3,7 @@
 
 import { useState, useEffect } from 'react';
 import { useCustomFields, invalidateCustomFieldCache } from '@/lib/useCustomFields';
+import { Lead360, Contact360, Opportunity360, Quotation360, Order360, Invoice360, Activity360 } from '@/components/crm/Record360';
 import { useApp } from '@/context/AppContext';
 import {
   getObjectFields, getStatusOptions, getPageLabel,
@@ -575,13 +576,27 @@ export default function RecordDetailPanel({ page, record, onClose, prefillCustom
             )}
           </div>
 
-          {/* Tabs — shown for customers (360 tab) and products (configuration tab) */}
-          {(page==='customers'||page==='products')&&(
+          {/* Tabs — shown for all pages that have a 360 or secondary tab */}
+          {(page==='customers'||page==='products'||page==='leads'||page==='contacts'||page==='opportunities'||page==='quotations'||page==='orders'||page==='invoices'||page==='activities')&&(
             <div className="flex gap-1 px-8 pt-4 bg-gray-50 border-b border-blue-100">
               {(page==='products'
               ? [{key:'details',label:'📋 Details'},{key:'configuration',label:'⚙️ Configuration'}]
               : page==='customers'
               ? [{key:'details',label:'📋 Details'},{key:'360',label:'🔄 Customer 360'}]
+              : page==='leads'
+              ? [{key:'details',label:'📋 Details'},{key:'360',label:'🔄 Lead 360'}]
+              : page==='contacts'
+              ? [{key:'details',label:'📋 Details'},{key:'360',label:'🔄 Contact 360'}]
+              : page==='opportunities'
+              ? [{key:'details',label:'📋 Details'},{key:'360',label:'🔄 Opportunity 360'}]
+              : page==='quotations'
+              ? [{key:'details',label:'📋 Details'},{key:'360',label:'🔄 Quotation 360'}]
+              : page==='orders'
+              ? [{key:'details',label:'📋 Details'},{key:'360',label:'🔄 Order 360'}]
+              : page==='invoices'
+              ? [{key:'details',label:'📋 Details'},{key:'360',label:'🔄 Invoice 360'}]
+              : page==='activities'
+              ? [{key:'details',label:'📋 Details'},{key:'360',label:'🔄 Activity 360'}]
               : [{key:'details',label:'📋 Details'}]
             ).map(t=>(
                 <button key={t.key} onClick={()=>setTab(t.key)} className={`px-5 py-2.5 rounded-t-xl text-sm font-semibold whitespace-nowrap transition-all ${tab===t.key?'bg-white text-[#0F172A] border border-b-white border-blue-200 -mb-px shadow-sm':'text-gray-500 hover:text-[#0F172A]'}`}>{t.label}</button>
@@ -625,6 +640,76 @@ export default function RecordDetailPanel({ page, record, onClose, prefillCustom
                 customer={edited}
                 onSubRecordOpen={(subPage,subRec)=>{
                   window.dispatchEvent(new CustomEvent('open-crm-record',{detail:{page:subPage,record:subRec,returnTo:{page:'customers',record:edited,tab:'360'}}}));
+                  onClose();
+                }}
+                onCreateFor={(subPage)=>setCreateForPage(subPage)}
+              />
+            )}
+
+            {page==='leads' && tab==='360' && (
+              <Lead360 record={edited}
+                onSubRecordOpen={(subPage,subRec)=>{
+                  window.dispatchEvent(new CustomEvent('open-crm-record',{detail:{page:subPage,record:subRec,returnTo:{page:'leads',record:edited,tab:'360'}}}));
+                  onClose();
+                }}
+                onCreateFor={(subPage)=>setCreateForPage(subPage)}
+              />
+            )}
+
+            {page==='contacts' && tab==='360' && (
+              <Contact360 record={edited}
+                onSubRecordOpen={(subPage,subRec)=>{
+                  window.dispatchEvent(new CustomEvent('open-crm-record',{detail:{page:subPage,record:subRec,returnTo:{page:'contacts',record:edited,tab:'360'}}}));
+                  onClose();
+                }}
+                onCreateFor={(subPage)=>setCreateForPage(subPage)}
+              />
+            )}
+
+            {page==='opportunities' && tab==='360' && (
+              <Opportunity360 record={edited}
+                onSubRecordOpen={(subPage,subRec)=>{
+                  window.dispatchEvent(new CustomEvent('open-crm-record',{detail:{page:subPage,record:subRec,returnTo:{page:'opportunities',record:edited,tab:'360'}}}));
+                  onClose();
+                }}
+                onCreateFor={(subPage)=>setCreateForPage(subPage)}
+              />
+            )}
+
+            {page==='quotations' && tab==='360' && (
+              <Quotation360 record={edited}
+                onSubRecordOpen={(subPage,subRec)=>{
+                  window.dispatchEvent(new CustomEvent('open-crm-record',{detail:{page:subPage,record:subRec,returnTo:{page:'quotations',record:edited,tab:'360'}}}));
+                  onClose();
+                }}
+                onCreateFor={(subPage)=>setCreateForPage(subPage)}
+              />
+            )}
+
+            {page==='orders' && tab==='360' && (
+              <Order360 record={edited}
+                onSubRecordOpen={(subPage,subRec)=>{
+                  window.dispatchEvent(new CustomEvent('open-crm-record',{detail:{page:subPage,record:subRec,returnTo:{page:'orders',record:edited,tab:'360'}}}));
+                  onClose();
+                }}
+                onCreateFor={(subPage)=>setCreateForPage(subPage)}
+              />
+            )}
+
+            {page==='invoices' && tab==='360' && (
+              <Invoice360 record={edited}
+                onSubRecordOpen={(subPage,subRec)=>{
+                  window.dispatchEvent(new CustomEvent('open-crm-record',{detail:{page:subPage,record:subRec,returnTo:{page:'invoices',record:edited,tab:'360'}}}));
+                  onClose();
+                }}
+                onCreateFor={(subPage)=>setCreateForPage(subPage)}
+              />
+            )}
+
+            {page==='activities' && tab==='360' && (
+              <Activity360 record={edited}
+                onSubRecordOpen={(subPage,subRec)=>{
+                  window.dispatchEvent(new CustomEvent('open-crm-record',{detail:{page:subPage,record:subRec,returnTo:{page:'activities',record:edited,tab:'360'}}}));
                   onClose();
                 }}
                 onCreateFor={(subPage)=>setCreateForPage(subPage)}
