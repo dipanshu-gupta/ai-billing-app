@@ -2341,8 +2341,24 @@ export function AppProvider({ children, supabase = null }: { children: React.Rea
     if (error) console.error('fetchQuotations:', error);
     if (data) setQuotations(applyDataSecurity(data).map(q => ({ ...q, customerId: q.customer_id, displayNumber: q.display_number })));
   };
-  const createQuotation = async (data,items=[]) => { if(!supabase||!currentUser)return null; const qNum=generateId('QUO'); const{data:inserted,error}=await supabase.from('quotations').insert([{...buildSystemFields(),quote_number:qNum,...data,status:data.status||'Draft',version:1,owner:data.owner||currentUser.email,owner_id:data.owner_id||currentUser.id}]).select().single(); if(error){alert('Failed: '+error.message);return null;} if(items.length)await upsertLineItemsGeneric('quotation_line_items','quote_number',qNum,items); await autoSetCustomerStatus(data.customer_id, 'Prospect'); await runAutomations('quotations', qNum, inserted, 'on_create'); await fetchQuotations(); return {...inserted, customerId: inserted.customer_id}; };
-  const updateQuotation = async (data,items=[]) => { if(!supabase)return; const{quote_number,_uuid,id,customerId,...rest}=data; const{error}=await supabase.from('quotations').update({...rest,...buildSystemFields(true)}).eq('quote_number',quote_number); if(error){console.error('updateQuotation:',error.message);alert('Save failed: '+error.message);return;} if(items)await upsertLineItemsGeneric('quotation_line_items','quote_number',quote_number,items); await runAutomations('quotations', quote_number, data, 'on_update'); await fetchQuotations(); };
+  const createQuotation = async (data,items=[]) => { if(!supabase||!currentUser)return null; const qNum=generateId('QUO'); const{_uuid,id,customerId,displayNumber,contactId,activityType,activityDate,dueDate,closeDate,isPrimary,linkedIn,ownerName,...cleanData}=data; const{data:inserted,error}=await supabase.from('quotations').insert([{...buildSystemFields(),quote_number:qNum,...cleanData,status:cleanData.status||'Draft',version:1,owner:cleanData.owner||currentUser.email,owner_id:cleanData.owner_id||currentUser.id}]).select().single(); if(error){alert('Failed: '+error.message);return null;} if(items.length)await upsertLineItemsGeneric('quotation_line_items','quote_number',qNum,items); await autoSetCustomerStatus(data.customer_id, 'Prospect'); await runAutomations('quotations', qNum, inserted, 'on_create'); await fetchQuotations(); return {...inserted, customerId: inserted.customer_id}; };
+  const updateQuotation = async (data,items=[]) => {
+    if(!supabase)return;
+    const {
+      quote_number, _uuid, id, customerId, displayNumber,
+      contactId, activityType, activityDate, dueDate, closeDate,
+      isPrimary, linkedIn, ownerName, display_number,
+      ...rest
+    } = data;
+    const { error } = await supabase
+      .from('quotations')
+      .update({ ...rest, ...buildSystemFields(true) })
+      .eq('quote_number', quote_number);
+    if(error){ console.error('updateQuotation:',error.message); alert('Save failed: '+error.message); return; }
+    if(items) await upsertLineItemsGeneric('quotation_line_items','quote_number',quote_number,items);
+    await runAutomations('quotations', quote_number, data, 'on_update');
+    await fetchQuotations();
+  };
   const deleteQuotation = async (qNum) => { if(!supabase||!window.confirm('Delete?'))return; await supabase.from('quotation_line_items').delete().eq('quote_number',qNum); await supabase.from('quotations').delete().eq('quote_number',qNum); await fetchQuotations(); };
   const generateNewVersion = async (q) => { if(!supabase||!currentUser)return null; const qNum=generateId('QUO'); const v=(q.version||1)+1; const items=await fetchLineItems('quotation_line_items','quote_number',q.quote_number); await supabase.from('quotations').insert([{...buildSystemFields(),...q,quote_number:qNum,version:v,status:'Draft',id:undefined,created_at:new Date().toISOString()}]); if(items.length)await upsertLineItemsGeneric('quotation_line_items','quote_number',qNum,items.map(i=>({...i,id:undefined}))); await fetchQuotations(); return{quote_number:qNum}; };
   const createQuotationFromOpportunity = async (opp) => {

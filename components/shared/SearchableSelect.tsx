@@ -36,6 +36,7 @@ export default function SearchableSelect({
   const [open,   setOpen]   = useState(false);
   const [query,  setQuery]  = useState('');
   const [focused,setFocused]= useState(-1);
+  const [dropPos, setDropPos] = useState<{top:number,left:number,width:number} | null>(null);
   const inputRef  = useRef<HTMLInputElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const listRef   = useRef<HTMLDivElement>(null);
@@ -77,6 +78,20 @@ export default function SearchableSelect({
 
   const openDropdown = () => {
     if (disabled) return;
+    // Calculate position for fixed dropdown — escapes any overflow:hidden parent
+    if (containerRef.current) {
+      const rect = containerRef.current.getBoundingClientRect();
+      const spaceBelow = window.innerHeight - rect.bottom;
+      const spaceAbove = rect.top;
+      const dropHeight = 240;
+      // Open upward if not enough space below
+      const openUp = spaceBelow < dropHeight && spaceAbove > spaceBelow;
+      setDropPos({
+        top: openUp ? rect.top - dropHeight - 4 : rect.bottom + 4,
+        left: rect.left,
+        width: rect.width,
+      });
+    }
     setOpen(true);
     setQuery('');
     setFocused(-1);
@@ -150,12 +165,20 @@ export default function SearchableSelect({
         />
       )}
 
-      {/* Dropdown */}
-      {open && (
+      {/* Dropdown — fixed position to escape overflow:hidden parents (tables etc) */}
+      {open && dropPos && (
         <div
           ref={listRef}
-          className="absolute z-[300] left-0 right-0 mt-1 bg-white rounded-2xl border border-blue-100 shadow-2xl overflow-hidden"
-          style={{ maxHeight: '240px', overflowY: 'auto' }}
+          className="bg-white rounded-2xl border border-blue-100 shadow-2xl overflow-hidden"
+          style={{
+            position: 'fixed',
+            top: dropPos.top,
+            left: dropPos.left,
+            width: dropPos.width,
+            maxHeight: '240px',
+            overflowY: 'auto',
+            zIndex: 9999,
+          }}
         >
           {showEmpty && (
             <div

@@ -168,7 +168,7 @@ function LineItemsTable({ items, setItems, products }) {
                             </div>
                           )}
                         </td>
-                        <td className="px-4 py-2"><input type="number" min={1} value={row.quantity} onChange={e=>upd(idx,'quantity',e.target.value)} className={`${iCls} text-center`}/></td>
+                        <td className="px-4 py-2"><input type="number" min={1} value={row.quantity} onChange={e=>{const v=Number(e.target.value);if(v<1)return;upd(idx,'quantity',v);}} className={`${iCls} text-center`}/></td>
                         <td className="px-4 py-2"><input type="number" min={0} value={row.price} onChange={e=>upd(idx,'price',e.target.value)} className={`${iCls} text-right`}/></td>
                         <td className="px-4 py-2"><input type="number" min={0} max={100} value={row.discount} onChange={e=>upd(idx,'discount',e.target.value)} className={`${iCls} text-center ${row.discount>0?'border-green-300 bg-green-50':''}`}/></td>
                         <td className="px-4 py-2 text-right font-bold text-[#0F172A]">{fmt(lt)}</td>

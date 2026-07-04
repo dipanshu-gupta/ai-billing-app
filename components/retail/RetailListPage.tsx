@@ -113,7 +113,7 @@ const RETAIL_CONFIG = {
       { icon:'📅', title:'Activity Details', fields:[
         { key:'subject', label:'Subject', type:'text', required:true },
         { key:'activity_type', label:'Type', type:'select', opts:['Visit','Call','WhatsApp','Complaint','Feedback','Service'] },
-        { key:'customer_id', label:'Customer', type:'retailCustomer' },
+        { key:'customer_id', label:'Customer', type:'retailCustomer', required:true },
         { key:'activity_date', label:'Activity Date', type:'date' },
         { key:'due_date', label:'Due Date', type:'date' },
         { key:'priority', label:'Priority', type:'select', opts:['Low','Medium','High','Critical'] },
@@ -147,7 +147,7 @@ const RETAIL_CONFIG = {
     searchFields: ['order_number','customer','customer_phone'],
     sections: [
       { icon:'🛍️', title:'Order Details', fields:[
-        { key:'customer_id', label:'Customer', type:'retailCustomer' },
+        { key:'customer_id', label:'Customer', type:'retailCustomer', required:true },
         { key:'customer_phone', label:'Customer Phone', type:'tel' },
         { key:'order_date', label:'Order Date', type:'date' },
         { key:'channel', label:'Channel', type:'select', opts:['In-Store','Online','Phone','WhatsApp'] },
@@ -186,7 +186,7 @@ const RETAIL_CONFIG = {
     searchFields: ['invoice_number','customer','order_number'],
     sections: [
       { icon:'🧾', title:'Invoice Details', fields:[
-        { key:'customer_id', label:'Customer', type:'retailCustomer' },
+        { key:'customer_id', label:'Customer', type:'retailCustomer', required:true },
         { key:'customer_phone', label:'Customer Phone', type:'tel' },
         { key:'invoice_date', label:'Invoice Date', type:'date' },
         { key:'due_date', label:'Due Date', type:'date' },
@@ -212,6 +212,11 @@ const RETAIL_CONFIG = {
 
 // ─── Line items table (Orders / Invoices) ──────────────────────────────────
 function RetailLineItems({ items, setItems, products, taxRegime }) {
+  const [stockWarning, setStockWarning] = useState(null);
+
+  // Filter out discontinued products from the product picker
+  const activeProducts = products.filter(p => p.status !== 'Discontinued');
+
   const add = () => setItems(p => [...p, {
     _id: Date.now(), product_name:'', description:'', quantity:1, unit_price:0, list_price:0, discount_pct:0,
     extended_price:0,
@@ -220,27 +225,47 @@ function RetailLineItems({ items, setItems, products, taxRegime }) {
     ...(taxRegime.regime==='uk_vat' ? { vat_rate:20 } : {}),
     ...(taxRegime.regime==='generic' ? { tax_pct:0 } : {}),
   }]);
-  const remove = (idx) => setItems(p => p.filter((_,i)=>i!==idx));
+  const remove = (idx) => { setStockWarning(null); setItems(p => p.filter((_,i)=>i!==idx)); };
 
-  const upd = (idx, field, val) => setItems(p => p.map((r,i) => {
-    if (i !== idx) return r;
-    const numFields = ['quantity','unit_price','list_price','discount_pct','gst_rate','sales_tax_rate','vat_rate','tax_pct'];
-    const u = { ...r, [field]: numFields.includes(field) ? Number(val) : val };
+  const upd = (idx, field, val) => {
+    // Compute stock warning OUTSIDE setItems to avoid setState-in-render error
     if (field === 'product_name') {
-      const pr = products.find(x => x.name === val);
+      const pr = activeProducts.find(x => x.name === val);
       if (pr) {
-        u.unit_price = pr.price; u.list_price = pr.price; u.product_code = pr.sku || '';
-        if (taxRegime.regime==='india_gst') { u.hsn_code = pr.hsn_code || ''; u.gst_rate = pr.gst_rate ?? 18; }
-        if (taxRegime.regime==='us_sales_tax') { u.taxable = pr.taxable || 'Yes'; }
-        if (taxRegime.regime==='uk_vat') { u.vat_rate = pr.vat_rate ?? 20; }
-        if (taxRegime.regime==='generic') { u.tax_pct = pr.tax_rate ?? 0; }
+        const stock   = Number(pr.stock_quantity ?? 0);
+        const reorder = Number(pr.reorder_level ?? 10);
+        if (stock === 0) {
+          setStockWarning({ product: pr.name, type: 'out', stock });
+        } else if (stock <= reorder) {
+          setStockWarning({ product: pr.name, type: 'low', stock, reorder });
+        } else {
+          setStockWarning(null);
+        }
+      } else {
+        setStockWarning(null);
       }
     }
-    const { totalTax } = taxRegime.computeLineTax(u);
-    const net = u.quantity * u.unit_price * (1 - u.discount_pct/100);
-    u.extended_price = net + totalTax;
-    return u;
-  }));
+
+    setItems(p => p.map((r, i) => {
+      if (i !== idx) return r;
+      const numFields = ['quantity','unit_price','list_price','discount_pct','gst_rate','sales_tax_rate','vat_rate','tax_pct'];
+      const u = { ...r, [field]: numFields.includes(field) ? Number(val) : val };
+      if (field === 'product_name') {
+        const pr = activeProducts.find(x => x.name === val);
+        if (pr) {
+          u.unit_price = pr.price; u.list_price = pr.price; u.product_code = pr.sku || '';
+          if (taxRegime.regime==='india_gst') { u.hsn_code = pr.hsn_code || ''; u.gst_rate = pr.gst_rate ?? 18; }
+          if (taxRegime.regime==='us_sales_tax') { u.taxable = pr.taxable || 'Yes'; }
+          if (taxRegime.regime==='uk_vat') { u.vat_rate = pr.vat_rate ?? 20; }
+          if (taxRegime.regime==='generic') { u.tax_pct = pr.tax_rate ?? 0; }
+        }
+      }
+      const { totalTax } = taxRegime.computeLineTax(u);
+      const net = u.quantity * u.unit_price * (1 - u.discount_pct/100);
+      u.extended_price = net + totalTax;
+      return u;
+    }));
+  };
 
   const subtotal  = items.reduce((s,i) => s + i.quantity*i.unit_price, 0);
   const totalDisc = items.reduce((s,i) => s + i.quantity*i.unit_price*i.discount_pct/100, 0);
@@ -251,58 +276,128 @@ function RetailLineItems({ items, setItems, products, taxRegime }) {
 
   return (
     <div className="bg-white rounded-[20px] border border-blue-100 shadow">
-      <div className="bg-gradient-to-r from-[#0F172A] to-blue-900 px-5 py-3.5 flex items-center justify-between">
-        <div><h3 className="text-white font-bold">Line Items</h3><p className="text-blue-300 text-xs mt-0.5">Products · Pricing · {taxRegime.shortLabel}</p></div>
-        <button type="button" onClick={add} className="bg-white text-[#0F172A] px-4 py-1.5 rounded-xl text-sm font-bold hover:bg-blue-50">+ Add Item</button>
+      {/* Header */}
+      <div className="bg-gradient-to-r from-[#0F172A] to-blue-900 px-5 py-3.5 flex items-center justify-between rounded-t-[20px]">
+        <div>
+          <h3 className="text-white font-bold text-sm">Line Items</h3>
+          <p className="text-blue-300 text-xs mt-0.5">Products · Pricing · {taxRegime.shortLabel}</p>
+        </div>
+        <button type="button" onClick={add}
+          className="bg-white text-[#0F172A] px-4 py-2 rounded-xl text-sm font-bold hover:bg-blue-50 transition-all">
+          + Add Item
+        </button>
       </div>
-      <div style={{overflowX:'auto', overflowY:'visible'}}>
-        <table className="w-full text-xs" style={{tableLayout:'fixed',overflowY:'visible'}}>
+
+      {/* Stock warning banner */}
+      {stockWarning && (
+        <div className={`px-5 py-3 flex items-center gap-3 text-sm border-b ${
+          stockWarning.type === 'out'
+            ? 'bg-red-50 border-red-200 text-red-700'
+            : 'bg-amber-50 border-amber-200 text-amber-700'
+        }`}>
+          <span className="text-lg">{stockWarning.type === 'out' ? '🚫' : '⚠️'}</span>
+          <span className="font-semibold">
+            {stockWarning.type === 'out'
+              ? `"${stockWarning.product}" is out of stock (0 units available)`
+              : `"${stockWarning.product}" is low on stock — only ${stockWarning.stock} units remaining (reorder level: ${stockWarning.reorder})`
+            }
+          </span>
+          <button onClick={() => setStockWarning(null)} className="ml-auto text-lg leading-none opacity-60 hover:opacity-100">×</button>
+        </div>
+      )}
+
+      {/* Grid */}
+      <div className="overflow-x-auto">
+        <table className="w-full" style={{ tableLayout:'fixed', minWidth:'700px' }}>
           <colgroup>
-            <col style={{width:'28%'}}/>
-            <col style={{width:'6%'}}/>
-            <col style={{width:'10%'}}/>
-            <col style={{width:'7%'}}/>
-            {taxCols.map(tc=><col key={tc.key} style={{width:tc.type==='select'?'10%':'8%'}}/>)}
-            <col style={{width:'11%'}}/>
-            <col style={{width:'4%'}}/>
+            <col style={{width:'26%'}}/>
+            <col style={{width:'8%'}}/>
+            <col style={{width:'12%'}}/>
+            <col style={{width:'8%'}}/>
+            {taxCols.map(tc=><col key={tc.key} style={{width:tc.type==='select'?'11%':'9%'}}/>)}
+            <col style={{width:'13%'}}/>
+            <col style={{width:'5%'}}/>
           </colgroup>
-          <thead><tr className="bg-blue-50 border-b border-blue-100">
-            <th className="px-3 py-2.5 text-left font-bold text-gray-500 uppercase text-xs">Product</th>
-            <th className="px-3 py-2.5 text-center font-bold text-gray-500 uppercase text-xs">Qty</th>
-            <th className="px-3 py-2.5 text-right font-bold text-gray-500 uppercase text-xs">Unit Price</th>
-            <th className="px-3 py-2.5 text-center font-bold text-gray-500 uppercase text-xs">Disc %</th>
-            {taxCols.map(tc=><th key={tc.key} className="px-3 py-2.5 text-center font-bold text-gray-500 uppercase text-xs whitespace-nowrap">{tc.label}</th>)}
-            <th className="px-3 py-2.5 text-right font-bold text-gray-500 uppercase text-xs">Extended</th>
-            <th></th>
-          </tr></thead>
-          <tbody>
-            {items.length===0
-              ? <tr><td colSpan={6+taxCols.length} className="px-5 py-8 text-center text-gray-400">No items. Click + Add Item.</td></tr>
-              : items.map((row,idx)=>(
-                <tr key={row._id??idx} className="border-t border-blue-50 hover:bg-blue-50/30">
-                  <td className="px-2 py-2" style={{position:'relative', zIndex: items.length - idx + 10, overflow:'visible'}}>
+          <thead>
+            <tr className="bg-blue-50 border-b border-blue-100">
+              <th className="px-4 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">Product</th>
+              <th className="px-4 py-3 text-center text-xs font-bold text-gray-500 uppercase tracking-wider">Qty</th>
+              <th className="px-4 py-3 text-right text-xs font-bold text-gray-500 uppercase tracking-wider">Unit Price</th>
+              <th className="px-4 py-3 text-center text-xs font-bold text-gray-500 uppercase tracking-wider">Disc %</th>
+              {taxCols.map(tc=><th key={tc.key} className="px-4 py-3 text-center text-xs font-bold text-gray-500 uppercase tracking-wider whitespace-nowrap">{tc.label}</th>)}
+              <th className="px-4 py-3 text-right text-xs font-bold text-gray-500 uppercase tracking-wider">Extended</th>
+              <th/>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-blue-50">
+            {items.length === 0
+              ? <tr><td colSpan={6 + taxCols.length} className="px-5 py-12 text-center text-gray-400 text-sm">
+                  No items yet — click <span className="font-semibold text-[#0F172A]">+ Add Item</span> to begin.
+                </td></tr>
+              : items.map((row, idx) => (
+                <tr key={row._id ?? idx} className="hover:bg-blue-50/40 transition-all">
+                  <td className="px-3 py-3">
                     <SearchableSelect
-                      value={row.product_name||''}
-                      onChange={v=>upd(idx,'product_name',v)}
-                      options={products.map(p=>({value:p.name,label:p.name,sub:[p.category,p.sku].filter(Boolean).join(' · ')}))}
-                      placeholder="Search products..." emptyLabel="No products found"
+                      value={row.product_name || ''}
+                      onChange={v => upd(idx, 'product_name', v)}
+                      options={activeProducts.map(p => ({
+                        value: p.name,
+                        label: p.name,
+                        sub: [
+                          p.category,
+                          p.sku ? `SKU: ${p.sku}` : null,
+                          p.stock_quantity !== undefined
+                            ? (Number(p.stock_quantity) === 0
+                                ? '🚫 Out of stock'
+                                : Number(p.stock_quantity) <= Number(p.reorder_level || 10)
+                                  ? `⚠️ Low stock: ${p.stock_quantity}`
+                                  : `Stock: ${p.stock_quantity}`)
+                            : null,
+                        ].filter(Boolean).join(' · '),
+                      }))}
+                      placeholder="Search products..."
+                      emptyLabel="No active products found"
                     />
                   </td>
-                  <td className="px-3 py-2 w-16"><input type="number" min={1} value={row.quantity} onChange={e=>upd(idx,'quantity',e.target.value)} className={`${iCls} text-center`}/></td>
-                  <td className="px-3 py-2 w-24"><input type="number" min={0} value={row.unit_price} onChange={e=>upd(idx,'unit_price',e.target.value)} className={`${iCls} text-right`}/></td>
-                  <td className="px-3 py-2 w-16"><input type="number" min={0} max={100} value={row.discount_pct} onChange={e=>upd(idx,'discount_pct',e.target.value)} className={`${iCls} text-center ${row.discount_pct>0?'border-green-300 bg-green-50':''}`}/></td>
+                  <td className="px-3 py-3">
+                    <input type="number" min={1} value={row.quantity}
+                      onChange={e => { const v = Number(e.target.value); if (v < 1) return; upd(idx, 'quantity', v); }}
+                      className={`${iCls} text-center`}/>
+                  </td>
+                  <td className="px-3 py-3">
+                    <input type="number" min={0} value={row.unit_price}
+                      onChange={e => upd(idx, 'unit_price', Math.max(0, Number(e.target.value)))}
+                      className={`${iCls} text-right`}/>
+                  </td>
+                  <td className="px-3 py-3">
+                    <input type="number" min={0} max={100} value={row.discount_pct}
+                      onChange={e => upd(idx, 'discount_pct', Math.min(100, Math.max(0, Number(e.target.value))))}
+                      className={`${iCls} text-center ${row.discount_pct > 0 ? 'border-green-300 bg-green-50 text-green-800' : ''}`}/>
+                  </td>
                   {taxCols.map(tc => (
-                    <td key={tc.key} className="px-3 py-2 w-24">
-                      {tc.type==='select'
-                        ? <select value={row[tc.key] ?? tc.defaultValue ?? ''} onChange={e=>upd(idx,tc.key,e.target.value)} className={`${sCls} text-center`}>
-                            {tc.opts.map(o=><option key={o} value={o}>{o}</option>)}
+                    <td key={tc.key} className="px-3 py-3">
+                      {tc.type === 'select'
+                        ? <select value={row[tc.key] ?? tc.defaultValue ?? ''}
+                            onChange={e => upd(idx, tc.key, e.target.value)}
+                            className={`${sCls} text-center`}>
+                            {tc.opts.map(o => <option key={o} value={o}>{o}</option>)}
                           </select>
-                        : <input type={tc.type==='number'?'number':'text'} value={row[tc.key] ?? tc.defaultValue ?? ''} onChange={e=>upd(idx,tc.key,e.target.value)} className={`${iCls} text-center`}/>
+                        : <input type={tc.type === 'number' ? 'number' : 'text'}
+                            value={row[tc.key] ?? tc.defaultValue ?? ''}
+                            onChange={e => upd(idx, tc.key, e.target.value)}
+                            className={`${iCls} text-center`}/>
                       }
                     </td>
                   ))}
-                  <td className="px-3 py-2 w-28 text-right font-bold text-[#0F172A]">{formatCurrency(row.extended_price||0)}</td>
-                  <td className="px-3 py-2 w-10"><button type="button" onClick={()=>remove(idx)} className="text-red-400 hover:text-red-600 font-bold">✕</button></td>
+                  <td className="px-3 py-3 text-right font-bold text-[#0F172A] text-sm">
+                    {formatCurrency(row.extended_price || 0)}
+                  </td>
+                  <td className="px-3 py-3 text-center">
+                    <button type="button" onClick={() => remove(idx)}
+                      className="w-7 h-7 flex items-center justify-center rounded-lg text-red-400 hover:text-red-600 hover:bg-red-50 transition-all font-bold text-lg mx-auto">
+                      ×
+                    </button>
+                  </td>
                 </tr>
               ))
             }
@@ -881,6 +976,18 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo }) 
   };
 
   const handleSave = async (andClose=false) => {
+    // Validate required fields before saving
+    const requiredFields = cfg.sections
+      .flatMap(s => Array.isArray(s.fields) ? s.fields : [])
+      .filter(f => f.required);
+    for (const f of requiredFields) {
+      const v = edited[f.key];
+      const empty = v === undefined || v === null || v === '' || (typeof v === 'string' && !v.trim());
+      if (empty) {
+        alert(`"${f.label.replace(' *','')}" is required and cannot be blank.`);
+        return;
+      }
+    }
     setSaving(true);
     // Strip client-side computed fields that don't exist as DB columns
     // Strip client-side computed fields — keep custom_data as it's a real DB column
@@ -930,9 +1037,13 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo }) 
   const renderField = (field) => {
     const v = edited[field.key];
     if (field.type === 'status') return (
-      <select value={v||cfg.statusOptions[0]} onChange={e=>set(field.key,e.target.value)} className={sCls}>
-        {cfg.statusOptions.map(o=><option key={o}>{o}</option>)}
-      </select>
+      isStatusLocked
+        ? <div className={`${sCls} bg-gray-50 cursor-not-allowed`}>
+            <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold border ${getStatusColor(v)}`}>{v}</span>
+          </div>
+        : <select value={v||cfg.statusOptions[0]} onChange={e=>set(field.key,e.target.value)} className={sCls}>
+            {cfg.statusOptions.map(o=><option key={o}>{o}</option>)}
+          </select>
     );
     if (field.type === 'owner') {
       const allUsers = enterpriseUsers.length>0 ? enterpriseUsers : (currentUser?[currentUser]:[]);
@@ -1329,10 +1440,24 @@ function RetailCreateModal({ page, open, onClose, onCreated }) {
   if (!open) return null;
 
   const validate = () => {
-    const errs = {};
-    createFields.filter(f=>f.required).forEach(f => { if (!form[f.key]) errs[f.key] = `${f.label} is required`; });
+    const errs: Record<string,string> = {};
+    createFields.filter(f => f.required).forEach(f => {
+      const v = form[f.key];
+      const empty = v === undefined || v === null || v === '' || v === 0;
+      // For retailCustomer type, require customer_id AND customer name
+      if (f.type === 'retailCustomer') {
+        if (!form.customer_id) errs[f.key] = 'Customer is required';
+      } else if (empty) {
+        errs[f.key] = `${f.label.replace(' *','')} is required`;
+      }
+    });
     setErrors(errs);
-    return Object.keys(errs).length===0;
+    if (Object.keys(errs).length > 0) {
+      const firstErrKey = Object.keys(errs)[0];
+      const firstField = createFields.find(f => f.key === firstErrKey);
+      if (firstField) alert(`Required: ${firstField.label.replace(' *','')}`);
+    }
+    return Object.keys(errs).length === 0;
   };
 
   const handleCreate = async () => {
@@ -1399,7 +1524,13 @@ function RetailCreateModal({ page, open, onClose, onCreated }) {
       </label>
     );
     if (field.type === 'date') return <input type="date" value={v||''} onChange={e=>s(field.key,e.target.value)} className={iCls}/>;
-    if (field.type === 'number') return <input type="number" value={v??0} onChange={e=>s(field.key,Number(e.target.value)||0)} className={iCls}/>;
+    if (field.type === 'number') {
+      const isNonNegField = ['stock_quantity','reorder_level','loyalty_points','price','mrp','cost','gst_rate','vat_rate','quantity'].includes(field.key);
+      return <input type="number" value={v??0}
+        min={isNonNegField ? 0 : undefined}
+        onChange={e=>{const n=Number(e.target.value)||0; s(field.key, isNonNegField ? Math.max(0,n) : n);}}
+        className={iCls}/>;
+    }
     return <input type={field.type==='email'?'email':field.type==='tel'?'tel':'text'} value={v||''} onChange={e=>s(field.key,e.target.value)} className={iCls} placeholder={field.label}/>;
   };
 
