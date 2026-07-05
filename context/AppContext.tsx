@@ -756,8 +756,10 @@ export function AppProvider({ children, supabase = null }: { children: React.Rea
       total_tax: Number(order.total_tax || 0),
       shipping_cost: Number(order.shipping_cost || 0),
       amount: Number(order.amount || 0),
-      payment_method: order.payment_method || 'Cash',
-      payment_status: order.payment_status || 'Paid',
+      payment_method: order.payment_method || '',
+      // Map order payment_status to invoice payment_status and invoice status
+      // Paid order → Paid invoice; Unpaid/Pending → Sent invoice (awaiting payment)
+      payment_status: order.payment_status || 'Unpaid',
       place_of_supply: order.place_of_supply || '',
       gstin: order.gstin || '',
       tax_state: order.tax_state || '',
@@ -765,7 +767,9 @@ export function AppProvider({ children, supabase = null }: { children: React.Rea
       vat_registration_number: order.vat_registration_number || '',
       tax_registration_number: order.tax_registration_number || '',
       due_date: dueDate.toISOString().split('T')[0],
-      status: 'Paid',
+      // Invoice status when converted from order: always Draft so it's editable
+      // Staff can review and mark Paid once confirmed
+      status: 'Draft',
       owner: order.owner || currentUser.email,
       owner_id: order.owner_id || currentUser.id,
     };

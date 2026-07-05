@@ -16,6 +16,76 @@ const tCls = 'w-full border border-blue-200 rounded-xl px-3 py-2.5 text-[#0F172A
 const COUNTRIES = ['India','United States','United Kingdom','United Arab Emirates','Singapore','Australia','Canada','Germany','France','Other'];
 
 // ─── Per-object configuration ──────────────────────────────────────────────
+
+// ─── Field Validators ────────────────────────────────────────────────────────
+const VALIDATORS = {
+  tel: (v) => {
+    if (!v) return null;
+    const digits = v.replace(/[\s\-\+\(\)]/g,'');
+    if (!/^\d+$/.test(digits)) return 'Phone must contain digits only';
+    if (digits.length < 7) return 'Phone number too short (min 7 digits)';
+    if (digits.length > 15) return 'Phone number too long (max 15 digits)';
+    return null;
+  },
+  email: (v) => {
+    if (!v) return null;
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(v)) return 'Invalid email format';
+    return null;
+  },
+  postal_code: (v) => {
+    if (!v) return null;
+    if (!/^[A-Z0-9\s\-]{3,10}$/i.test(v)) return 'Invalid postal code (3-10 alphanumeric chars)';
+    return null;
+  },
+  hsn_code: (v) => {
+    if (!v) return null;
+    if (!/^\d{4,8}$/.test(v)) return 'HSN/SAC code must be 4-8 digits';
+    return null;
+  },
+  barcode: (v) => {
+    if (!v) return null;
+    if (!/^[\d\-A-Z]{4,20}$/i.test(v)) return 'Barcode must be 4-20 alphanumeric characters';
+    return null;
+  },
+  gstin: (v) => {
+    if (!v) return null;
+    if (!/^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/.test(v))
+      return 'Invalid GSTIN format (e.g. 27AAPFU0939F1ZV)';
+    return null;
+  },
+  date_past: (v) => {
+    if (!v) return null;
+    if (new Date(v) > new Date()) return 'Date cannot be in the future';
+    return null;
+  },
+  percent: (v) => {
+    if (v === '' || v === null || v === undefined) return null;
+    const n = Number(v);
+    if (isNaN(n) || n < 0 || n > 100) return 'Value must be between 0 and 100';
+    return null;
+  },
+};
+
+// Map field keys to their validator
+const FIELD_VALIDATORS: Record<string, (v:any)=>string|null> = {
+  phone:            VALIDATORS.tel,
+  customer_phone:   VALIDATORS.tel,
+  mobile:           VALIDATORS.tel,
+  whatsapp:         VALIDATORS.tel,
+  email:            VALIDATORS.email,
+  postal_code:      VALIDATORS.postal_code,
+  zip_code:         VALIDATORS.postal_code,
+  hsn_code:         VALIDATORS.hsn_code,
+  barcode:          VALIDATORS.barcode,
+  customer_gstin:   VALIDATORS.gstin,
+  gstin:            VALIDATORS.gstin,
+  gst_rate:         VALIDATORS.percent,
+  vat_rate:         VALIDATORS.percent,
+  tax_rate:         VALIDATORS.percent,
+  discount_pct:     VALIDATORS.percent,
+  date_of_birth:    VALIDATORS.date_past,
+};
+
 const RETAIL_CONFIG = {
   retailCustomers: {
     title: 'Retail Customers', icon: '🧑‍🤝‍🧑', singular: 'Customer',
@@ -932,6 +1002,7 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo }) 
   const [matchingProcess, setMatchingProcess] = useState(null);
   const [checkingApproval, setCheckingApproval] = useState(false);
   const [submittingApproval, setSubmittingApproval] = useState(false);
+  const [fieldErrors, setFieldErrors] = useState<Record<string,string>>({});
 
   useEffect(() => {
     setEdited({ ...record });
@@ -958,10 +1029,25 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo }) 
   }, [page, record.id, record.status]);
 
   // Statuses that lock the record from further editing
-  const RETAIL_READONLY_STATUSES = ['Pending Approval', 'Completed', 'Cancelled', 'Refunded', 'Paid', 'Discontinued', 'Blocked'];
-  const isStatusLocked = RETAIL_READONLY_STATUSES.includes(edited?.status);
+  // Statuses that permanently lock the record (based on saved record, not draft)
+  const RETAIL_READONLY_STATUSES = [
+    'Pending Approval','Cancelled','Refunded','Discontinued','Blocked','Completed','Paid'
+  ];
+  // Lock fields based on SAVED record status — allows user to select Completed and still click Save
+  const isStatusLocked = RETAIL_READONLY_STATUSES.includes(record?.status);
+  // Status dropdown also locks when edited status is terminal (prevents flipping back to Draft)
+  const isStatusDropdownLocked = RETAIL_READONLY_STATUSES.includes(edited?.status);
 
-  const set = (k,v) => { if (isStatusLocked) return; setEdited(p => ({ ...p, [k]: v })); };
+  const set = (k,v) => {
+    if (isStatusLocked) return;
+    setEdited(p => ({ ...p, [k]: v }));
+    // Run inline validator and update field error
+    const validator = FIELD_VALIDATORS[k];
+    if (validator) {
+      const err = validator(v);
+      setFieldErrors(p => err ? { ...p, [k]: err } : (({ [k]: _, ...rest }) => rest)(p));
+    }
+  };
 
   const canSubmitForApproval = matchingProcess != null
     && edited.status !== 'Pending Approval'
@@ -976,17 +1062,32 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo }) 
   };
 
   const handleSave = async (andClose=false) => {
-    // Validate required fields before saving
-    const requiredFields = cfg.sections
-      .flatMap(s => Array.isArray(s.fields) ? s.fields : [])
-      .filter(f => f.required);
-    for (const f of requiredFields) {
+    // Validate required fields
+    const allFields = cfg.sections.flatMap(s => Array.isArray(s.fields) ? s.fields : []);
+    for (const f of allFields) {
       const v = edited[f.key];
-      const empty = v === undefined || v === null || v === '' || (typeof v === 'string' && !v.trim());
-      if (empty) {
-        alert(`"${f.label.replace(' *','')}" is required and cannot be blank.`);
-        return;
+      // Required check
+      if (f.required) {
+        const empty = v === undefined || v === null || v === '' || (typeof v === 'string' && !v.trim());
+        if (f.type === 'retailCustomer') {
+          if (!edited.customer_id) { alert(`"Customer" is required.`); return; }
+        } else if (empty) {
+          alert(`"${f.label.replace(' *','')}" is required and cannot be blank.`);
+          return;
+        }
       }
+      // Format validation
+      const validator = FIELD_VALIDATORS[f.key];
+      if (validator && v) {
+        const err = validator(v);
+        if (err) { alert(`${f.label.replace(' *','')}: ${err}`); return; }
+      }
+    }
+    // Check any inline field errors
+    const activeErrors = Object.entries(fieldErrors);
+    if (activeErrors.length > 0) {
+      alert(`Please fix the following: ${activeErrors.map(([,e])=>e).join(', ')}`);
+      return;
     }
     setSaving(true);
     // Strip client-side computed fields that don't exist as DB columns
@@ -1037,8 +1138,8 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo }) 
   const renderField = (field) => {
     const v = edited[field.key];
     if (field.type === 'status') return (
-      isStatusLocked
-        ? <div className={`${sCls} bg-gray-50 cursor-not-allowed`}>
+      isStatusDropdownLocked
+        ? <div className={`${sCls} bg-gray-50 cursor-not-allowed flex items-center`}>
             <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold border ${getStatusColor(v)}`}>{v}</span>
           </div>
         : <select value={v||cfg.statusOptions[0]} onChange={e=>set(field.key,e.target.value)} className={sCls}>
@@ -1098,7 +1199,22 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo }) 
     if (field.type === 'date') return <input type="date" value={v||''} onChange={e=>set(field.key,e.target.value)} className={iCls}/>;
     if (field.type === 'number') return <input type="number" value={v??0} onChange={e=>set(field.key,Number(e.target.value)||0)} className={iCls}/>;
     if (field.readOnly) return <input type="text" value={v||''} readOnly className={`${iCls} bg-gray-50 text-gray-500`}/>;
-    return <input type={field.type==='email'?'email':field.type==='tel'?'tel':'text'} value={v||''} onChange={e=>set(field.key,e.target.value)} className={iCls} placeholder={field.label}/>;
+    // text / email / tel — with inline validation error
+    const ferr = fieldErrors[field.key];
+    return (
+      <div>
+        <input
+          type={field.type==='email'?'email':field.type==='tel'?'tel':'text'}
+          value={v||''}
+          onChange={e=>set(field.key,e.target.value)}
+          onBlur={e=>{ const validator=FIELD_VALIDATORS[field.key]; if(validator){ const err=validator(e.target.value); setFieldErrors(p=>err?{...p,[field.key]:err}:(({[field.key]:_,...rest})=>rest)(p)); }}}
+          className={`${iCls} ${ferr?'border-red-400 focus:ring-red-400':''}`}
+          placeholder={field.label}
+          maxLength={field.key==='phone'||field.key==='customer_phone'||field.key==='mobile'?20:field.key==='postal_code'?10:field.key==='gstin'||field.key==='customer_gstin'?15:field.key==='hsn_code'?8:undefined}
+        />
+        {ferr && <p className="text-xs text-red-500 mt-1 flex items-center gap-1"><span>⚠</span>{ferr}</p>}
+      </div>
+    );
   };
 
   // ── Print engine ──────────────────────────────────────────────────────────
@@ -1310,7 +1426,7 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo }) 
                 { l:'Updated At',   v: edited.updated_at ? new Date(edited.updated_at).toLocaleString('en-IN',{day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}) : '-' },
                 { l:'Owner',        v: edited.owner || '-' },
                 { l:'Status',       v: edited.status || '-' },
-                { l:'Currency',     v: edited.currency || '-' },
+                { l:'Currency',     v: edited.currency || appPreferences?.default_currency || 'INR' },
                 { l:'Created By',   v: edited.created_by || edited.owner || '-' },
               ].map(f => (
                 <div key={f.l}>
@@ -1393,7 +1509,7 @@ function RetailCreateModal({ page, open, onClose, onCreated }) {
     activity_date: new Date().toISOString().split('T')[0],
     loyalty_points: 0, loyalty_tier: 'Standard', preferred_contact: 'Phone',
     country: 'India', unit: 'pc', price: 0, mrp: 0, cost: 0, stock_quantity: 0, reorder_level: 10,
-    quantity: 1, payment_method: 'Cash', payment_status: 'Paid', channel: 'In-Store', delivery_method: 'Pickup',
+    quantity: 1, payment_method: 'Cash', payment_status: 'Pending', channel: 'In-Store', delivery_method: 'Pickup',
     ...(taxRegime.regime==='india_gst' ? { gst_rate: 18 } : {}),
     ...(taxRegime.regime==='us_sales_tax' ? { taxable: 'Yes' } : {}),
     ...(taxRegime.regime==='uk_vat' ? { vat_rate: 20 } : {}),
@@ -1441,21 +1557,29 @@ function RetailCreateModal({ page, open, onClose, onCreated }) {
 
   const validate = () => {
     const errs: Record<string,string> = {};
-    createFields.filter(f => f.required).forEach(f => {
+    for (const f of createFields) {
       const v = form[f.key];
-      const empty = v === undefined || v === null || v === '' || v === 0;
-      // For retailCustomer type, require customer_id AND customer name
-      if (f.type === 'retailCustomer') {
-        if (!form.customer_id) errs[f.key] = 'Customer is required';
-      } else if (empty) {
-        errs[f.key] = `${f.label.replace(' *','')} is required`;
+      // Required check
+      if (f.required) {
+        const empty = v === undefined || v === null || v === '' || v === 0;
+        if (f.type === 'retailCustomer') {
+          if (!form.customer_id) errs[f.key] = 'Customer is required';
+        } else if (empty) {
+          errs[f.key] = `${f.label.replace(' *','')} is required`;
+        }
       }
-    });
+      // Format validation
+      const validator = FIELD_VALIDATORS[f.key];
+      if (validator && v) {
+        const err = validator(v);
+        if (err && !errs[f.key]) errs[f.key] = err;
+      }
+    }
     setErrors(errs);
     if (Object.keys(errs).length > 0) {
       const firstErrKey = Object.keys(errs)[0];
       const firstField = createFields.find(f => f.key === firstErrKey);
-      if (firstField) alert(`Required: ${firstField.label.replace(' *','')}`);
+      if (firstField) alert(`${firstField.label.replace(' *','')}: ${errs[firstErrKey]}`);
     }
     return Object.keys(errs).length === 0;
   };
@@ -1531,7 +1655,19 @@ function RetailCreateModal({ page, open, onClose, onCreated }) {
         onChange={e=>{const n=Number(e.target.value)||0; s(field.key, isNonNegField ? Math.max(0,n) : n);}}
         className={iCls}/>;
     }
-    return <input type={field.type==='email'?'email':field.type==='tel'?'tel':'text'} value={v||''} onChange={e=>s(field.key,e.target.value)} className={iCls} placeholder={field.label}/>;
+    return (
+      <div>
+        <input
+          type={field.type==='email'?'email':field.type==='tel'?'tel':'text'}
+          value={v||''}
+          onChange={e=>{ s(field.key,e.target.value); const validator=FIELD_VALIDATORS[field.key]; if(validator){const err=validator(e.target.value); setErrors(p=>err?{...p,[field.key]:err}:(({[field.key]:_,...rest})=>rest)(p));} }}
+          className={`${iCls} ${errors[field.key]?'border-red-400':''}`}
+          placeholder={field.label}
+          maxLength={field.key==='phone'||field.key==='customer_phone'||field.key==='mobile'?20:field.key==='postal_code'?10:field.key==='gstin'||field.key==='customer_gstin'?15:field.key==='hsn_code'?8:undefined}
+        />
+        {errors[field.key] && <p className="text-xs text-red-500 mt-1">{errors[field.key]}</p>}
+      </div>
+    );
   };
 
   return (
@@ -1553,7 +1689,6 @@ function RetailCreateModal({ page, open, onClose, onCreated }) {
                   </label>
                 )}
                 {renderField(f)}
-                {errors[f.key] && <p className="text-xs text-red-500 mt-1">{errors[f.key]}</p>}
               </div>
             ))}
           </div>
