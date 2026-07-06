@@ -1520,6 +1520,7 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo }) 
 // ─── Create Modal ───────────────────────────────────────────────────────────
 function RetailCreateModal({ page, open, onClose, onCreated }) {
   const { createRetailRecord, retailCustomers, enterpriseUsers, currentUser, appPreferences } = useApp();
+  const { supabase } = useTenant();
   const cfg = RETAIL_CONFIG[page];
   const taxRegime = getTaxRegime(appPreferences?.default_currency);
   const [quickCreateCustomer, setQuickCreateCustomer] = useState(null);
