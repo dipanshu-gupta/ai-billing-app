@@ -5,7 +5,7 @@ import { useState, useMemo, useEffect } from 'react';
 import { useApp } from '@/context/AppContext';
 import { getStatusColor, formatCurrency, formatDisplayNumber, PAGE_DISPLAY_PREFIX } from '@/lib/utils';
 // useCustomFields hook used inline below
-import { supabase } from '@/lib/supabase';
+import { useTenant } from '@/context/TenantContext';
 import { getTaxRegime } from '@/lib/taxConfig';
 import SearchableSelect from '@/components/shared/SearchableSelect';
 
@@ -752,6 +752,7 @@ function RC360Table({ cols, rows, emptyMsg }) {
 }
 
 function RetailCustomer360({ customer }) {
+  const { supabase } = useTenant();
   const [tab, setTab]         = useState('orders');
   const [data, setData]       = useState({ orders: [], invoices: [], activities: [] });
   const [loading, setLoading] = useState(true);
@@ -940,6 +941,7 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo }) 
   const { updateRetailRecord, deleteRetailRecord, retailCustomers, retailProducts, enterpriseUsers, currentUser,
           fetchRetailLineItems, fetchRetailCustomers, createRetailRecord, appPreferences, setPendingReturnTo, createRetailInvoiceFromOrder,
           checkMatchingApprovalProcess, submitForApproval, currentUserPermissions, permissionsLoaded } = useApp();
+  const { supabase } = useTenant();
   const cfg = RETAIL_CONFIG[page];
   const taxRegime = getTaxRegime(appPreferences?.default_currency);
 
