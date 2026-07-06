@@ -1197,7 +1197,34 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo }) 
     );
     if (field.type === 'textarea') return <textarea rows={3} value={v||''} onChange={e=>set(field.key,e.target.value)} className={tCls} placeholder={field.label}/>;
     if (field.type === 'date') return <input type="date" value={v||''} onChange={e=>set(field.key,e.target.value)} className={iCls}/>;
-    if (field.type === 'number') return <input type="number" value={v??0} onChange={e=>set(field.key,Number(e.target.value)||0)} className={iCls}/>;
+    if (field.type === 'number') {
+      const isNonNeg = ['stock_quantity','reorder_level','loyalty_points','price','mrp','cost',
+        'gst_rate','vat_rate','tax_rate','tax_pct','quantity','shipping_cost',
+        'total_discount','total_tax','subtotal','amount'].includes(field.key);
+      const isPercent = ['gst_rate','vat_rate','tax_rate','discount_pct'].includes(field.key);
+      const clamp = (raw) => {
+        let n = raw === '' ? 0 : Number(raw) || 0;
+        if (isNonNeg && n < 0) n = 0;
+        if (isPercent && n > 100) n = 100;
+        return n;
+      };
+      return (
+        <div>
+          <input type="number"
+            value={v ?? 0}
+            min={isNonNeg ? 0 : undefined}
+            max={isPercent ? 100 : undefined}
+            step={isPercent ? 0.5 : 1}
+            onKeyDown={e => { if (isNonNeg && e.key === '-') e.preventDefault(); }}
+            onChange={e => set(field.key, clamp(e.target.value))}
+            onBlur={e => { const c = clamp(e.target.value); if (c !== v) set(field.key, c); }}
+            className={iCls}/>
+          {isNonNeg && typeof v === 'number' && v < 0 && (
+            <p className="text-xs text-red-500 mt-1">⚠ Value cannot be negative</p>
+          )}
+        </div>
+      );
+    }
     if (field.readOnly) return <input type="text" value={v||''} readOnly className={`${iCls} bg-gray-50 text-gray-500`}/>;
     // text / email / tel — with inline validation error
     const ferr = fieldErrors[field.key];
