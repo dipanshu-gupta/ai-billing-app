@@ -25,6 +25,7 @@ const IMPORT_OBJECTS = {
       { key:'postal_code',      label:'Postal Code',         example:'400001' },
       { key:'country',          label:'Country',             example:'India' },
       { key:'gst_number',       label:'GST Number',          example:'27AAPFU0939F1ZV' },
+      { key:'type',             label:'Customer Type',       example:'Customer' },
       { key:'status',           label:'Status',              example:'Active' },
       { key:'owner',            label:'Owner Email',         example:'rep@company.com' },
       { key:'description',      label:'Description',         example:'Enterprise client' },
@@ -39,6 +40,7 @@ const IMPORT_OBJECTS = {
       { key:'customer',           label:'Company',           example:'ABC Corp' },
       { key:'email',              label:'Email',             example:'john@abc.com' },
       { key:'phone',              label:'Phone',             example:'+91 9876543210' },
+      { key:'contact',            label:'Contact Person',    example:'John Smith' },
       { key:'source',             label:'Source',            example:'Website' },
       { key:'amount',             label:'Amount',            example:'50000' },
       { key:'status',             label:'Status',            example:'New' },
@@ -238,7 +240,7 @@ const IMPORT_OBJECTS = {
   retailActivities: {
     label: 'Retail Activities', icon: '📅', group: 'B2C Retail',
     table: 'retail_activities', idField: 'activity_number', idPrefix: 'RACT',
-    requiredCols: ['subject', 'activity_type'],
+    requiredCols: ['subject','activity_type','status'],
     columns: [
       { key:'subject',       label:'Subject *',      example:'Walk-in visit' },
       { key:'activity_type', label:'Type *',          example:'Visit' },
@@ -255,7 +257,7 @@ const IMPORT_OBJECTS = {
   retailOrders: {
     label: 'Retail Orders', icon: '🧾', group: 'B2C Retail',
     table: 'retail_orders', idField: 'order_number', idPrefix: 'RORD',
-    requiredCols: ['customer'],
+    requiredCols: ['customer','order_date'],
     columns: [
       { key:'customer',        label:'Customer Name *', example:'Alice Johnson' },
       { key:'customer_phone',  label:'Customer Phone',  example:'+91 9876543210' },
@@ -277,7 +279,7 @@ const IMPORT_OBJECTS = {
   retailInvoices: {
     label: 'Retail Invoices', icon: '🧾', group: 'B2C Retail',
     table: 'retail_invoices', idField: 'invoice_number', idPrefix: 'RINV',
-    requiredCols: ['customer'],
+    requiredCols: ['customer','invoice_date'],
     columns: [
       { key:'customer',         label:'Customer Name *', example:'Alice Johnson' },
       { key:'customer_phone',   label:'Customer Phone',  example:'+91 9876543210' },
@@ -306,7 +308,16 @@ const generateDisplayId = (prefix: string, seq: number) =>
 // ─── CSV helpers ──────────────────────────────────────────────────────────────
 const objToCsvRow = (obj: Record<string,any>, cols: string[]): string =>
   cols.map(c => {
-    const v = obj[c] ?? '';
+    let v: any;
+    if (c.startsWith('custom_data.')) {
+      // Extract from custom_data JSONB
+      const key = c.replace('custom_data.', '');
+      v = obj.custom_data?.[key] ?? obj[c] ?? '';
+    } else {
+      v = obj[c] ?? '';
+    }
+    if (v === null || v === undefined) v = '';
+    if (typeof v === 'object') v = JSON.stringify(v);
     const s = String(v);
     return s.includes(',') || s.includes('"') || s.includes('\n')
       ? `"${s.replace(/"/g,'""')}"`
@@ -380,6 +391,20 @@ export default function ImportExportPanel() {
   const [importResult, setImportResult] = useState<{ created:number, updated:number, skipped:number, errors:string[] }|null>(null);
   const [importMode,   setImportMode]   = useState<'create'|'upsert'>('upsert');
   const [importDupeKey,setImportDupeKey]= useState<string>('name');
+  // Smart default dupe key per object — reset when object changes
+  useEffect(() => {
+    const SMART_DUPE_KEY: Record<string,string> = {
+      retailOrders: cfg?.idField || 'order_number',
+      retailInvoices: cfg?.idField || 'invoice_number',
+      retailCustomers: 'name',
+      retailProducts: 'sku',
+      retailActivities: 'subject',
+      customers: 'name', leads: 'name', contacts: 'name',
+      opportunities: 'name', orders: 'name', invoices: 'name',
+      quotations: 'name', products: 'sku', activities: 'name',
+    };
+    setImportDupeKey(SMART_DUPE_KEY[selObj] || cfg?.idField || 'name');
+  }, [selObj]);
 
   // History (local session only)
   const [history,      setHistory]      = useState<{ ts:string, obj:string, action:string, count:number, status:'ok'|'error' }[]>([]);
@@ -410,6 +435,7 @@ export default function ImportExportPanel() {
           label: `[Custom] ${f.label}`,
         }));
         setCustomFields(cf);
+        // Include: display id field + all standard columns + uuid + custom fields
         setExportFields([cfg.idField, ...cfg.columns.map(c => c.key), ...cf.map(f => f.key)]);
       } catch(e) {
         console.warn('[ImportExport] custom fields fetch failed:', e);
@@ -489,16 +515,19 @@ export default function ImportExportPanel() {
 
   // Download template
   const downloadTemplate = () => {
+    // Row 1: human-readable labels (comment row — starts with #)
+    // Row 2: actual field keys — THIS is the header row the importer reads
+    // Row 3: example data
     const allCols = [
-      { key: cfg.idField, label: 'Record Number', example: '(auto-generated, leave blank)' },
+      { key: cfg.idField,   label: 'Record Number (auto-generated, leave blank)', example: '' },
       ...cfg.columns,
       ...customFields.map(f => ({ key: f.key.replace('custom_data.',''), label: f.label.replace('[Custom] ',''), example: '' })),
     ];
-    const header  = allCols.map(c => c.key).join(',');
-    const example = allCols.map(c => c.example || '').join(',');
-    // Add a comment row explaining the template
-    const comment = allCols.map(c => c.label).join(',');
-    downloadCsv(`${selObj}_import_template.csv`, comment + '\n' + header + '\n' + example);
+    // Only two rows: keys as header + example values
+    // This ensures auto-mapping works since keys match exactly
+    const headerRow  = allCols.map(c => c.key).join(',');
+    const exampleRow = allCols.map(c => c.example || '').join(',');
+    downloadCsv(`${selObj}_import_template.csv`, headerRow + '\n' + exampleRow);
   };
 
   // ── Import: file upload ────────────────────────────────────────────────────
@@ -506,24 +535,127 @@ export default function ImportExportPanel() {
     setImportFile(file);
     const reader = new FileReader();
     reader.onload = (e) => {
-      const text = e.target?.result as string;
-      const parsed = csvToRows(text);
+      let text = (e.target?.result as string) || '';
+      // Strip BOM if present
+      if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
+      let parsed = csvToRows(text);
+
+      // Smart detection: if the first row looks like human labels (has spaces/special chars)
+      // and the second row looks like field keys (snake_case), use row 1 as headers
+      // This handles old-format templates with 3 rows
+      if (parsed.rows.length >= 1) {
+        const firstRowVals = Object.values(parsed.rows[0]);
+        const firstRowHasSpaces = firstRowVals.some((v: any) => String(v).includes(' ') || String(v).includes('*'));
+        if (firstRowHasSpaces && parsed.headers.some(h => h.includes(' ') || h.includes('*'))) {
+          // Row 0 = labels, Row 1 = keys — re-parse using row 1 as headers
+          const lines = text.replace(/\r\n/g,'\n').replace(/\r/g,'\n').split('\n').filter(l=>l.trim());
+          if (lines.length >= 2) {
+            const keyRow = lines[1];
+            const dataLines = lines.slice(2);
+            const reparsed = csvToRows([keyRow, ...dataLines].join('\n'));
+            if (reparsed.headers.length > 0) parsed = reparsed;
+          }
+        }
+      }
+
       setImportParsed(parsed);
-      // Auto-map columns: exact match first, then case-insensitive
+      // Auto-map: exact match on key, then case-insensitive, then label match
       const autoMap: Record<string,string> = {};
-      cfg.columns.forEach(col => {
-        const exact  = parsed.headers.find(h => h === col.key);
-        const icase  = parsed.headers.find(h => h.toLowerCase() === col.key.toLowerCase());
-        const label  = parsed.headers.find(h => h.toLowerCase() === col.label.toLowerCase().replace(' *',''));
+      const allCfgCols = [
+        { key: cfg.idField, label: 'Record Number' },
+        ...cfg.columns,
+        ...customFields.map(f => ({ key: f.key.replace('custom_data.',''), label: f.label.replace('[Custom] ','') })),
+      ];
+      allCfgCols.forEach(col => {
+        const exact = parsed.headers.find(h => h === col.key);
+        const icase = parsed.headers.find(h => h.toLowerCase() === col.key.toLowerCase());
+        const label = parsed.headers.find(h => h.toLowerCase() === col.label.toLowerCase().replace(' *','').trim());
         autoMap[col.key] = exact || icase || label || '';
       });
-      setColMap(autoMap);
+      // Only set colMap for cfg.columns (not idField — we skip it on import)
+      const filteredMap: Record<string,string> = {};
+      cfg.columns.forEach(col => { filteredMap[col.key] = autoMap[col.key] || ''; });
+      setColMap(filteredMap);
       setImportStep('map');
     };
     reader.readAsText(file);
   };
 
   // ── Import: validate ───────────────────────────────────────────────────────
+  // Status/enum allowed values per field key
+  const ENUM_VALUES: Record<string, string[]> = {
+    // Status values — combined across all objects
+    status: [
+      // Retail customers
+      'Active','Inactive','VIP','Blocked',
+      // Retail orders
+      'Draft','Completed','Cancelled','Refunded',
+      // Retail invoices
+      'Sent','Paid','Overdue',
+      // Retail products
+      'Discontinued',
+      // Retail activities
+      'Open','In Progress',
+      // B2B Leads
+      'New','Contacted','Qualified','Converted','Lost','Unqualified',
+      // B2B Customers
+      'Prospect','Customer','Churned','At Risk',
+      // B2B Opportunities
+      'Proposal Sent','Negotiation','Closed Won','Closed Lost',
+      // B2B Orders
+      'Pending','Approved','Shipped','Delivered','Returned',
+      // B2B Invoices
+      'Submitted','Pending Payment','Partially Paid',
+      // B2B Quotations
+      'Sent to Customer','Accepted','Ordered','Rejected','Expired',
+      // General
+      'Pending Approval',
+    ],
+    // Source for leads
+    source: ['Website','Referral','Cold Call','Email Campaign','Social Media',
+             'Trade Show','Advertisement','Partner','Existing Customer','Other'],
+    // Stage for opportunities
+    stage: ['Discovery','Qualification','Needs Analysis','Proposal Sent',
+            'Negotiation','Closed Won','Closed Lost'],
+    // Activity types
+    activity_type: ['Call','Email','Meeting','Visit','Task','Follow-up','Demo',
+                    'Presentation','Site Visit','Video Call'],
+    loyalty_tier:    ['Standard','Silver','Gold','Platinum'],
+    payment_status:  ['Paid','Pending','Unpaid','Partially Paid','Refunded'],
+    payment_method:  ['Cash','Card','UPI','Net Banking','Cheque','COD','Online',
+                      'Bank Transfer','Credit Card','Debit Card'],
+    channel:         ['In-Store','Online','Phone','WhatsApp','App','Partner','Email'],
+    delivery_method: ['Pickup','Delivery','Courier','Hand Delivery','Shipping'],
+    priority:        ['Low','Medium','High','Critical','Urgent'],
+    gender:          ['Male','Female','Other','Prefer not to say'],
+    taxable:         ['Yes','No'],
+    industry:        ['Technology','Finance','Healthcare','Retail','Manufacturing',
+                      'Education','Real Estate','Media','Hospitality','Automotive',
+                      'Logistics','Energy','Agriculture','Consulting','Other'],
+    currency:        ['INR','USD','EUR','GBP','AED','SGD','AUD','CAD'],
+    unit:            ['pc','kg','g','l','ml','m','cm','box','pack','set','pair','dozen','Other'],
+  };
+
+  const NUM_FIELDS = new Set([
+    'amount','price','mrp','cost','probability','tax_rate','gst_rate','gst_rate_pct',
+    'vat_rate','stock','stock_quantity','reorder_level','quantity','subtotal',
+    'total_discount','total_tax','shipping_cost','grand_total','loyalty_points',
+    'discount_pct','sales_tax_rate','tax_pct','extended_price','overall_discount',
+  ]);
+
+  const DATE_FIELDS = new Set([
+    'close_date','due_date','activity_date','expected_close_date',
+    'order_date','invoice_date','delivery_date','validity_date','date_of_birth',
+    'created_at','updated_at',
+  ]);
+
+  const TEXT_ONLY_FIELDS = new Set([
+    'name','customer','contact','brand','category','description','notes','subject',
+    'designation','department','company','billing_address','shipping_address',
+    'address','city','state','country','website','payment_terms','shipping_terms',
+    'place_of_supply','owner','owner_email',
+  ]);
+
   const handleValidate = () => {
     if (!importParsed) return;
     const errors: { row:number, col:string, msg:string }[] = [];
@@ -538,20 +670,58 @@ export default function ImportExportPanel() {
         const rawVal    = csvHeader ? (row[csvHeader] ?? '').trim() : '';
         rec[col.key]    = rawVal;
 
+        const addErr = (msg: string) => {
+          errors.push({ row: i+2, col: col.key, msg });
+          rowHasError = true;
+        };
+
         // Required check
         if (cfg.requiredCols.includes(col.key) && !rawVal) {
-          errors.push({ row: i+2, col: col.key, msg: `"${col.label.replace(' *','')}" is required` });
-          rowHasError = true;
+          addErr(`"${col.label.replace(' *','')}" is required`);
+          return;
         }
-        // Numeric check
-        if (['amount','price','cost','probability','tax_rate','gst_rate','vat_rate','stock'].includes(col.key) && rawVal && isNaN(Number(rawVal))) {
-          errors.push({ row: i+2, col: col.key, msg: `"${col.key}" must be a number, got "${rawVal}"` });
-          rowHasError = true;
+        if (!rawVal) return; // optional + empty = skip remaining checks
+
+        // Numeric fields — must be a valid number
+        if (NUM_FIELDS.has(col.key)) {
+          if (isNaN(Number(rawVal))) addErr(`"${col.label.replace(' *','')}" must be a number, got "${rawVal}"`);
+          else if (Number(rawVal) < 0) addErr(`"${col.label.replace(' *','')}" cannot be negative`);
+          return;
         }
-        // Date check
-        if (['close_date','due_date','activity_date','expected_close_date'].includes(col.key) && rawVal && isNaN(Date.parse(rawVal))) {
-          errors.push({ row: i+2, col: col.key, msg: `"${col.key}" must be a valid date (YYYY-MM-DD), got "${rawVal}"` });
-          rowHasError = true;
+
+        // Date fields
+        if (DATE_FIELDS.has(col.key)) {
+          if (isNaN(Date.parse(rawVal))) addErr(`"${col.label.replace(' *','')}" must be a valid date (YYYY-MM-DD), got "${rawVal}"`);
+          return;
+        }
+
+        // Text-only fields — reject pure numbers
+        if (TEXT_ONLY_FIELDS.has(col.key)) {
+          if (/^\d+$/.test(rawVal)) addErr(`"${col.label.replace(' *','')}" cannot be a pure number — expected text like "${col.example}"`);
+          return;
+        }
+
+        // Enum/status fields — must match allowed values (case-insensitive)
+        if (ENUM_VALUES[col.key]) {
+          const allowed = ENUM_VALUES[col.key];
+          const match = allowed.find(v => v.toLowerCase() === rawVal.toLowerCase());
+          if (!match) addErr(`"${col.label.replace(' *','')}" must be one of: ${allowed.join(', ')} — got "${rawVal}"`);
+          else rec[col.key] = match; // normalise to correct case
+          return;
+        }
+
+        // Email format
+        if (col.key === 'email' && !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(rawVal)) {
+          addErr(`"Email" is not a valid email address: "${rawVal}"`);
+          return;
+        }
+
+        // Phone — digits only, 7-15 chars
+        if ((col.key === 'phone' || col.key === 'customer_phone' || col.key === 'mobile') && rawVal) {
+          const digits = rawVal.replace(/[\s\-\+\(\)]/g,'');
+          if (!/^\d+$/.test(digits)) addErr(`"Phone" must contain digits only, got "${rawVal}"`);
+          else if (digits.length < 7 || digits.length > 15) addErr(`"Phone" must be 7-15 digits, got ${digits.length}`);
+          return;
         }
       });
 
@@ -592,7 +762,10 @@ export default function ImportExportPanel() {
           const cfData: any = {};
           const stdData: any = {};
           Object.entries(rec).filter(([,v]) => v !== '').forEach(([k,v]) => {
-            const numFields = ['amount','price','cost','mrp','probability','tax_rate','gst_rate','vat_rate','stock','stock_quantity','reorder_level','subtotal','total_discount','total_tax','shipping_cost'];
+            const numFields = ['amount','price','mrp','cost','probability','tax_rate','gst_rate',
+              'vat_rate','stock','stock_quantity','reorder_level','quantity','subtotal',
+              'total_discount','total_tax','shipping_cost','grand_total','loyalty_points',
+              'discount_pct','sales_tax_rate','tax_pct','extended_price','overall_discount'];
             if (k.startsWith('custom_data.')) {
               cfData[k.replace('custom_data.','')] = v;
             } else {
@@ -612,15 +785,24 @@ export default function ImportExportPanel() {
       } else {
         // Upsert: check if record exists by dupe key
         for (const rec of batch) {
-          const dupeVal = rec[importDupeKey];
-          if (!dupeVal) { result.skipped++; continue; }
+          const dupeVal = rec[importDupeKey] || rec[cfg.idField];
+          if (!dupeVal || String(dupeVal).trim() === '') {
+            result.errors.push(`Row skipped: no value found for match field "${importDupeKey}"`);
+            result.skipped++;
+            continue;
+          }
 
+          // Try matching by dupe key — if dupe key is the idField, match on idField
+          const matchField = importDupeKey === cfg.idField ? cfg.idField : importDupeKey;
           const { data: existing } = await supabase
-            .from(cfg.table).select('id').eq(importDupeKey, dupeVal).maybeSingle();
+            .from(cfg.table).select('id').eq(matchField, String(dupeVal).trim()).maybeSingle();
 
           const cfData: any = {};
           const cleaned: any = {};
-          const numFields = ['amount','price','cost','mrp','probability','tax_rate','gst_rate','vat_rate','stock','stock_quantity','reorder_level','subtotal','total_discount','total_tax','shipping_cost'];
+          const numFields = ['amount','price','mrp','cost','probability','tax_rate','gst_rate',
+            'vat_rate','stock','stock_quantity','reorder_level','quantity','subtotal',
+            'total_discount','total_tax','shipping_cost','grand_total','loyalty_points',
+            'discount_pct','sales_tax_rate','tax_pct','extended_price','overall_discount'];
           Object.entries(rec).filter(([,v]) => v !== '').forEach(([k,v]: [string,any]) => {
             if (k.startsWith('custom_data.')) { cfData[k.replace('custom_data.','')] = v; }
             else { cleaned[k] = numFields.includes(k) ? Number(v) : v; }
@@ -653,8 +835,14 @@ export default function ImportExportPanel() {
   };
 
   const resetImport = () => {
-    setImportStep('upload'); setImportFile(null); setImportParsed(null);
-    setColMap({}); setValidation({ valid:[], errors:[] }); setImportResult(null);
+    setImportStep('upload');
+    setImportFile(null);
+    setImportParsed(null);
+    setColMap({});
+    setValidation({ valid:[], errors:[] });
+    setImportResult(null);
+    setImportMode('upsert');
+    if (fileRef.current) fileRef.current.value = '';
   };
 
   // ── UI helpers ─────────────────────────────────────────────────────────────
@@ -727,11 +915,12 @@ export default function ImportExportPanel() {
             </div>
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
               {/* Record Number — always first, always shown */}
+              {/* Record ID (display number) */}
               <label className={`flex items-center gap-2 px-3 py-2 rounded-xl cursor-pointer border text-sm transition-all ${exportFields.includes(cfg.idField) ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : 'border-gray-100 text-gray-500 hover:border-gray-300'}`}>
                 <input type="checkbox" checked={exportFields.includes(cfg.idField)}
                   onChange={e => setExportFields(p => e.target.checked ? [cfg.idField, ...p] : p.filter(k => k !== cfg.idField))}
                   className="w-3.5 h-3.5 accent-emerald-600"/>
-                <span className="truncate font-semibold">Record Number</span>
+                <span className="truncate font-semibold">Record Number ({cfg.idField})</span>
               </label>
               {/* Standard fields */}
               {cfg.columns.map(col => (
@@ -902,24 +1091,39 @@ export default function ImportExportPanel() {
                   <div>System Field</div>
                   <div>CSV Column</div>
                 </div>
-                {cfg.columns.map(col => (
+                {cfg.columns.map(col => {
+                  const isReq = cfg.requiredCols.includes(col.key);
+                  const isMapped = !!colMap[col.key];
+                  const isMissing = isReq && !isMapped;
+                  return (
                   <div key={col.key} className="grid grid-cols-2 gap-3 items-center">
-                    <div className={`flex items-center gap-2 text-sm ${cfg.requiredCols.includes(col.key)?'font-bold text-[#0F172A]':'text-gray-600'}`}>
-                      {cfg.requiredCols.includes(col.key) && <span className="text-red-500 text-xs">*</span>}
-                      {col.label.replace(' *','')}
+                    <div className={`flex items-center gap-2 text-sm ${isReq?'font-bold text-[#0F172A]':'text-gray-600'}`}>
+                      {isReq && <span className="text-red-500 text-xs font-bold">*</span>}
+                      <span>{col.label.replace(' *','')}</span>
+                      {isMissing && <span className="text-[10px] text-red-500 font-semibold">(required)</span>}
                     </div>
                     <select value={colMap[col.key]||''} onChange={e=>setColMap(p=>({...p,[col.key]:e.target.value}))}
-                      className={`border rounded-xl px-3 py-2 text-sm text-gray-900 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400 ${colMap[col.key] ? 'border-green-300 bg-green-50' : 'border-gray-200'}`}>
+                      className={`border rounded-xl px-3 py-2 text-sm text-gray-900 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400 ${
+                        isMissing ? 'border-red-300 bg-red-50' :
+                        isMapped  ? 'border-green-300 bg-green-50' :
+                        'border-gray-200'
+                      }`}>
                       <option value="">— skip this field —</option>
                       {importParsed.headers.map(h => <option key={h} value={h}>{h}</option>)}
                     </select>
                   </div>
-                ))}
+                  );
+                })}
               </div>
 
+              {cfg.requiredCols.some(k => !colMap[k]) && (
+                <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-2.5 text-xs text-red-700 font-semibold">
+                  ⚠ Please map all required fields (*) before validating
+                </div>
+              )}
               <button onClick={handleValidate}
                 disabled={cfg.requiredCols.some(k => !colMap[k])}
-                className="w-full py-3 rounded-2xl bg-gradient-to-r from-[#0F172A] to-blue-800 text-white font-bold text-sm disabled:opacity-50">
+                className="w-full py-3 rounded-2xl bg-gradient-to-r from-[#0F172A] to-blue-800 text-white font-bold text-sm disabled:opacity-50 disabled:cursor-not-allowed">
                 Validate Data →
               </button>
             </div>
@@ -1004,9 +1208,9 @@ export default function ImportExportPanel() {
                   <div className="text-2xl font-bold text-blue-700">{importResult.updated}</div>
                   <div className="text-xs text-blue-600 font-semibold mt-1">Updated</div>
                 </div>
-                <div className="bg-gray-50 rounded-2xl p-4 border border-gray-200">
-                  <div className="text-2xl font-bold text-gray-600">{importResult.skipped}</div>
-                  <div className="text-xs text-gray-500 font-semibold mt-1">Skipped</div>
+                <div className={`rounded-2xl p-4 border ${importResult.skipped > 0 ? 'bg-amber-50 border-amber-200' : 'bg-gray-50 border-gray-200'}`}>
+                  <div className={`text-2xl font-bold ${importResult.skipped > 0 ? 'text-amber-600' : 'text-gray-400'}`}>{importResult.skipped}</div>
+                  <div className={`text-xs font-semibold mt-1 ${importResult.skipped > 0 ? 'text-amber-600' : 'text-gray-400'}`}>Skipped</div>
                 </div>
               </div>
               {importResult.errors.length > 0 && (
