@@ -9,9 +9,9 @@ export async function GET(req: NextRequest, context: { params: Promise<{ slug: s
 
   if (s === 'demo') {
     return NextResponse.json({
-      id:'00000000-0000-0000-0000-000000000001', slug:'demo', name:'Business Pro Demo',
+      id:'00000000-0000-0000-0000-000000000001', slug:'demo', name:'Umbrella Suite Demo',
       plan:'shared', status:'active', db_url:null, db_anon_key:null,
-      logo_url:null, brand_color:'#0F172A', app_name:'Business Pro',
+      logo_url:null, brand_color:'#0F172A', app_name:'Umbrella Suite',
       custom_domain:null, b2c_enabled:true, max_users:999,
       modules:['crm','invoicing','retail','reports','ai','admin'], trial_ends_at:null,
     });

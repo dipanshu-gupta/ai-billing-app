@@ -241,7 +241,7 @@ export default function Header({ activePage, onNavigate }) {
     products:'Products', reports:'Fast Reports', approvals:'My Approvals',
     adminTools:'Admin Tools',
   };
-  const pageTitle = PAGE_LABELS[activePage] || getPageLabel(activePage) || 'Business Pro';
+  const pageTitle = PAGE_LABELS[activePage] || getPageLabel(activePage) || 'Umbrella Suite';
 
   return (
     <header className="h-16 flex items-center justify-between px-6 shadow-lg flex-shrink-0 sticky top-0 z-30"
@@ -260,7 +260,7 @@ export default function Header({ activePage, onNavigate }) {
         }
         {!appearance?.company_logo_url && (
           <div>
-            <div className="text-base font-bold text-white leading-tight">{appearance?.company_name||'Business Pro'}</div>
+            <div className="text-base font-bold text-white leading-tight">{appearance?.company_name||'Umbrella Suite'}</div>
             <p className="text-xs text-blue-300 leading-tight h-4" suppressHydrationWarning>{today}</p>
           </div>
         )}

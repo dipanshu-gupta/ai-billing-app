@@ -281,7 +281,7 @@ function LivePreview({ t }) {
         )}
 
         {t.show_powered_by && (
-          <div style={{textAlign:'center',fontSize:fs(7),color:'#D1D5DB',marginTop:4}}>Powered by Business Pro</div>
+          <div style={{textAlign:'center',fontSize:fs(7),color:'#D1D5DB',marginTop:4}}>Powered by Umbrella Suite</div>
         )}
       </div>
     </div>
@@ -746,7 +746,7 @@ export default function RetailInvoiceDesigner() {
             <Card title="Footer" icon="📝">
               <Toggle label="Show Footer Message" checked={!!t.show_footer} onChange={()=>upd('show_footer',!t.show_footer)}/>
               {t.show_footer && <div><L>Footer Message</L><TA value={t.footer_msg} onChange={v=>upd('footer_msg',v)} placeholder="Thank you for shopping!"/></div>}
-              <Toggle label="Show 'Powered by Business Pro'" checked={!!t.show_powered_by} onChange={()=>upd('show_powered_by',!t.show_powered_by)}/>
+              <Toggle label="Show 'Powered by Umbrella Suite'" checked={!!t.show_powered_by} onChange={()=>upd('show_powered_by',!t.show_powered_by)}/>
             </Card>
           </>}
         </div>

@@ -3,8 +3,15 @@ import type { Metadata } from 'next';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'Business Pro ERP',
-  description: 'Enterprise Resource Planning',
+  title: 'Umbrella Suite',
+  description: 'Enterprise ERP & CRM — B2B and B2C, all in one suite.',
+  metadataBase: new URL('https://cloud.umbrellasuite.com'),
+  openGraph: {
+    title: 'Umbrella Suite',
+    description: 'Enterprise ERP & CRM — B2B and B2C, all in one suite.',
+    url: 'https://cloud.umbrellasuite.com',
+    siteName: 'Umbrella Suite',
+  },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

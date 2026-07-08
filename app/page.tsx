@@ -39,7 +39,7 @@ function LoginPage() {
       <div className="bg-white rounded-[40px] shadow-2xl border border-blue-100 p-10 w-full max-w-md">
         <div className="text-center mb-8">
           <div className="w-16 h-16 rounded-[20px] bg-[#0F172A] text-white flex items-center justify-center text-2xl font-bold mx-auto mb-4">BP</div>
-          <h1 className="text-3xl font-bold text-[#0F172A]">Business Pro</h1>
+          <h1 className="text-3xl font-bold text-[#0F172A]">Umbrella Suite</h1>
           <p className="text-gray-500 mt-2">Enterprise CRM Platform</p>
         </div>
         <form onSubmit={submit} className="space-y-4">
@@ -187,7 +187,7 @@ function AppShell() {
       <div className="min-h-screen bg-gradient-to-br from-[#0F172A] to-blue-900 flex items-center justify-center">
         <div className="text-white text-center space-y-4">
           <div className="w-16 h-16 rounded-[20px] bg-white/10 flex items-center justify-center text-2xl font-bold mx-auto animate-pulse">BP</div>
-          <div className="font-semibold text-lg">Loading Business Pro...</div>
+          <div className="font-semibold text-lg">Loading Umbrella Suite...</div>
           <div className="text-blue-300 text-sm">Initialising enterprise platform</div>
         </div>
       </div>

@@ -17,7 +17,7 @@ export default function AppearancePanel() {
   const { appearance, saveAppearance, currentUser } = useApp();
 
   const [logoUrl,       setLogoUrl]       = useState(appearance?.company_logo_url || '');
-  const [companyName,   setCompanyName]   = useState(appearance?.company_name     || 'Business Pro');
+  const [companyName,   setCompanyName]   = useState(appearance?.company_name     || 'Umbrella Suite');
   const [theme,         setTheme]         = useState(appearance?.theme            || 'navy');
   const [language,      setLanguage]      = useState(appearance?.language         || 'en');
   const [font,          setFont]          = useState(appearance?.font             || 'geist');
@@ -31,7 +31,7 @@ export default function AppearancePanel() {
     if (appearance) {
       setLogoUrl(appearance.company_logo_url || '');
       setPreviewLogo(appearance.company_logo_url || '');
-      setCompanyName(appearance.company_name || 'Business Pro');
+      setCompanyName(appearance.company_name || 'Umbrella Suite');
       setTheme(appearance.theme || 'navy');
       setLanguage(appearance.language || 'en');
       setFont(appearance.font || 'geist');

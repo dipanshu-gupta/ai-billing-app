@@ -1,14 +1,14 @@
 // @ts-nocheck
 /**
- * Business Pro ERP — Tenant Resolution Middleware
+ * Umbrella Suite ERP — Tenant Resolution Middleware
  *
  * Runs on EVERY request before any page/API handler.
  * Reads the subdomain, resolves the tenant slug, and injects it as a header
  * so server components and API routes can call getTenant() without re-parsing.
  *
  * Routing:
- *   demo.erp.businesspro.com        → slug = "demo"
- *   abc.prod.erp.businesspro.com    → slug = "abc"
+ *   demo.cloud.umbrellasuite.com        → slug = "demo"
+ *   abc.prod.cloud.umbrellasuite.com    → slug = "abc"
  *   localhost:3000                  → slug = "demo" (dev fallback)
  *   erp.abccorp.com                 → resolved via custom_domain lookup
  */
@@ -20,7 +20,7 @@ const RESERVED = new Set(['www', 'api', 'cdn', 'status', 'mail', 'smtp']);
 
 /** Base domains we own — slug is the part before these */
 const BASE_DOMAINS = [
-  'erp.businesspro.com',
+  'cloud.umbrellasuite.com',
   'localhost',
   '127.0.0.1',
 ];
@@ -36,7 +36,7 @@ function extractSlug(host: string): string {
   for (const base of BASE_DOMAINS) {
     if (hostname.endsWith('.' + base)) {
       const prefix = hostname.slice(0, hostname.length - base.length - 1);
-      // Handle nested: abc.prod.erp.businesspro.com → first segment = "abc"
+      // Handle nested: abc.prod.cloud.umbrellasuite.com → first segment = "abc"
       const slug = prefix.split('.')[0];
       if (RESERVED.has(slug)) return 'demo';
       return slug;

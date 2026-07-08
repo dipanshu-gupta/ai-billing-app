@@ -2199,7 +2199,7 @@ export function AppProvider({ children, supabase = null }: { children: React.Rea
   const _cp = (p) => ({ crm_enabled:p?.crm_enabled??true, cpq_enabled:p?.cpq_enabled??true, b2c_mode:p?.b2c_mode??false, default_currency:p?.default_currency||'INR', date_format:p?.date_format||'DD/MM/YYYY', fiscal_year_start:p?.fiscal_year_start||'April', global_search_enabled:p?.global_search_enabled??false, business_mode:(p?.b2c_mode??false)?'B2C':'B2B' });
   // ─── Appearance ───────────────────────────────────────────────────────────
   const _APP_KEY = 'bp_appearance';
-  const _DEF_APP = { company_logo_url:'', company_name:'Business Pro', theme:'navy', language:'en', font:'geist' };
+  const _DEF_APP = { company_logo_url:'', company_name:'Umbrella Suite', theme:'navy', language:'en', font:'geist' };
 
   const THEME_COLORS: Record<string,any> = {
     navy:    { sidebar:'#0F172A', accent:'#3B82F6', to:'#1e3a8a' },

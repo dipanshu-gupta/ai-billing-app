@@ -3,7 +3,7 @@
 /**
  * TenantAdminPanel
  *
- * Super-admin panel (accessible only at demo.erp.businesspro.com or localhost)
+ * Super-admin panel (accessible only at demo.cloud.umbrellasuite.com or localhost)
  * for managing all tenants — create, configure, suspend, view stats.
  *
  * Only visible when:  tenant.slug === 'demo' && user.is_super_admin === true
@@ -19,7 +19,7 @@ const DEFAULT_MODULES = ['crm','invoicing'];
 const emptyTenant = () => ({
   slug:'', name:'', plan:'trial', status:'trial',
   admin_email:'', admin_name:'', company_size:'', industry:'', country:'India',
-  brand_color:'#0F172A', accent_color:'#2563EB', app_name:'Business Pro',
+  brand_color:'#0F172A', accent_color:'#2563EB', app_name:'Umbrella Suite',
   b2c_enabled:false, max_users:5,
   modules:[...DEFAULT_MODULES],
   db_url:'', db_anon_key:'',
@@ -148,7 +148,7 @@ export default function TenantAdminPanel() {
       country:        form.country||'India',
       brand_color:    form.brand_color||'#0F172A',
       accent_color:   form.accent_color||'#2563EB',
-      app_name:       form.app_name||'Business Pro',
+      app_name:       form.app_name||'Umbrella Suite',
       b2c_enabled:    !!form.b2c_enabled,
       max_users:      Number(form.max_users)||5,
       modules:        form.modules||['crm','invoicing'],
@@ -228,7 +228,7 @@ export default function TenantAdminPanel() {
         <div className="flex items-center justify-between flex-wrap gap-4">
           <div>
             <h2 className="text-2xl font-bold">🏢 Tenant Administration</h2>
-            <p className="text-white/60 text-sm mt-1">Manage all Business Pro client workspaces from one place.</p>
+            <p className="text-white/60 text-sm mt-1">Manage all Umbrella Suite client workspaces from one place.</p>
           </div>
           <div className="flex gap-2">
             <button onClick={()=>setTab('list')} className={`px-4 py-2 rounded-xl text-sm font-bold transition-all ${tab==='list'?'bg-white text-[#0F172A]':'bg-white/15 text-white hover:bg-white/25'}`}>
@@ -294,7 +294,7 @@ export default function TenantAdminPanel() {
                       {t.b2c_enabled && <Badge label="B2C" cls="bg-purple-100 text-purple-700"/>}
                     </div>
                     <div className="text-xs text-gray-400 mt-0.5 flex gap-3 flex-wrap">
-                      <span className="font-mono text-gray-600">{t.slug}.erp.businesspro.com</span>
+                      <span className="font-mono text-gray-600">{t.slug}.cloud.umbrellasuite.com</span>
                       {t.custom_domain && <span>🔗 {t.custom_domain}</span>}
                       {t.admin_email   && <span>✉️ {t.admin_email}</span>}
                       <span>👥 Max {t.max_users} users</span>
@@ -354,7 +354,7 @@ export default function TenantAdminPanel() {
                     <label className={lCls}>Subdomain Slug *</label>
                     <input value={form.slug||""} onChange={e=>upd('slug',e.target.value.toLowerCase().replace(/[^a-z0-9-]/g,''))}
                       placeholder="abc" className={`${iCls} font-mono`} disabled={!!selected}/>
-                    {form.slug && <p className="text-xs text-gray-400 mt-1">{form.slug}.erp.businesspro.com</p>}
+                    {form.slug && <p className="text-xs text-gray-400 mt-1">{form.slug}.cloud.umbrellasuite.com</p>}
                   </div>
                   <div>
                     <label className={lCls}>Company Name *</label>
@@ -364,7 +364,7 @@ export default function TenantAdminPanel() {
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className={lCls}>Application Name</label>
-                    <input value={form.app_name||""} onChange={e=>upd('app_name',e.target.value)} placeholder="Business Pro" className={iCls}/>
+                    <input value={form.app_name||""} onChange={e=>upd('app_name',e.target.value)} placeholder="Umbrella Suite" className={iCls}/>
                   </div>
                   <div>
                     <label className={lCls}>Custom Domain</label>
@@ -493,14 +493,14 @@ export default function TenantAdminPanel() {
                 {/* Branding preview */}
                 <div className="rounded-2xl overflow-hidden border border-gray-200">
                   <div className="p-4 text-white" style={{background:form.brand_color}}>
-                    <div className="font-bold text-sm">{form.app_name||'Business Pro'}</div>
+                    <div className="font-bold text-sm">{form.app_name||'Umbrella Suite'}</div>
                     <div className="text-white/60 text-xs mt-0.5">{form.name||'Company Name'}</div>
                   </div>
                   <div className="p-3 bg-white flex gap-2">
                     <button className="px-3 py-1.5 rounded-lg text-xs font-bold text-white" style={{background:form.brand_color}}>Primary</button>
                     <button className="px-3 py-1.5 rounded-lg text-xs font-bold text-white" style={{background:form.accent_color}}>Accent</button>
                     <div className="flex-1"/>
-                    <span className="text-xs text-gray-400 self-center">{form.slug||'slug'}.erp.businesspro.com</span>
+                    <span className="text-xs text-gray-400 self-center">{form.slug||'slug'}.cloud.umbrellasuite.com</span>
                   </div>
                 </div>
               </div>
@@ -551,7 +551,7 @@ export default function TenantAdminPanel() {
                   )}
                   <div className="flex items-center justify-between bg-white/10 rounded-xl px-3 py-2">
                     <span className="text-white/50">Future Subdomain</span>
-                    <span className="text-white/30">{form.slug||'slug'}.erp.businesspro.com</span>
+                    <span className="text-white/30">{form.slug||'slug'}.cloud.umbrellasuite.com</span>
                   </div>
                 </div>
                 <p className="text-white/40 text-[10px]">Share the Query Param URL with your client until domain is configured</p>

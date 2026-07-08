@@ -17,7 +17,7 @@ const buildSystemPrompt = (user, data, prefs) => {
   const overdueInv = invoices.filter(i=>i.status==='Overdue').length;
   const hotOpps = opportunities.filter(o=>['Proposal Sent','Negotiation'].includes(o.stage)).slice(0,5).map(o=>`${o.name} (${fmtCur(o.amount)}, ${o.stage})`).join(', ');
 
-  return `You are the Business Advisor Agent for Business Pro ERP — an intelligent sales assistant and CRM advisor.
+  return `You are the Business Advisor Agent for Umbrella Suite ERP — an intelligent sales assistant and CRM advisor.
 
 USER CONTEXT
 Name: ${user?.first_name || ''} ${user?.last_name || ''}
