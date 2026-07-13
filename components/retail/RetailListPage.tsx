@@ -1773,22 +1773,217 @@ function RetailCreateModal({ page, open, onClose, onCreated }) {
 }
 
 // ─── Main List Page ─────────────────────────────────────────────────────────
+
+// ─── Retail Saved Search Panel ────────────────────────────────────────────────
+function RetailSavedSearchPanel({ page, currentFilters, onApply, onClose }) {
+  const { currentUser, savedSearches, fetchSavedSearches, createSavedSearch, deleteSavedSearch, setDefaultSavedSearch } = useApp();
+  const [saveName, setSaveName] = useState('');
+  const [saveDef,  setSaveDef]  = useState(false);
+  const [saving,   setSaving]   = useState(false);
+
+  useEffect(() => { if (fetchSavedSearches) fetchSavedSearches(page); }, [page]);
+
+  const mySearches     = (savedSearches||[]).filter(s => s.object_type === page && s.created_by === currentUser?.email);
+  const globalSearches = (savedSearches||[]).filter(s => s.object_type === page && s.is_global_default && s.created_by !== currentUser?.email);
+
+  const describe = (f) => {
+    const parts = [];
+    if (f.search)            parts.push(`Search: "${f.search}"`);
+    if (f.status && f.status !== 'All') parts.push(`Status: ${f.status}`);
+    if (f.timePeriod)        parts.push(f.timePeriod.replace(/_/g,' '));
+    if (f.fieldFilter?.value) parts.push(`${f.fieldFilter.field}: ${f.fieldFilter.value}`);
+    if (f.owner)             parts.push(`Owner: ${f.owner}`);
+    return parts.length ? parts.join(' · ') : 'All records';
+  };
+
+  const SearchCard = ({ s }) => (
+    <div className="bg-white border border-blue-100 rounded-2xl p-4 hover:border-blue-300 transition-all">
+      <div className="font-semibold text-[#0F172A] flex items-center gap-2 mb-1 flex-wrap">
+        {s.name}
+        {s.is_global_default && <span className="bg-purple-100 text-purple-700 text-xs px-2 py-0.5 rounded-full">Global Default</span>}
+        {s.is_default && !s.is_global_default && <span className="bg-blue-100 text-blue-700 text-xs px-2 py-0.5 rounded-full">My Default</span>}
+      </div>
+      <div className="text-xs text-gray-400 mb-3">{describe(s.filters || {})}</div>
+      <div className="flex gap-2 flex-wrap">
+        <button onClick={() => { onApply(s.filters || {}); onClose(); }}
+          className="flex-1 bg-gradient-to-r from-[#0F172A] to-blue-800 text-white py-2 rounded-xl text-xs font-bold hover:opacity-90">
+          Apply
+        </button>
+        {!s.is_default && setDefaultSavedSearch && (
+          <button onClick={() => setDefaultSavedSearch(s.id, page, false)}
+            className="bg-blue-100 text-blue-700 px-3 py-2 rounded-xl text-xs font-semibold hover:bg-blue-200">
+            Set Default
+          </button>
+        )}
+        {deleteSavedSearch && (
+          <button onClick={() => deleteSavedSearch(s.id, page)}
+            className="bg-red-100 text-red-500 px-3 py-2 rounded-xl text-xs font-semibold hover:bg-red-200">
+            Delete
+          </button>
+        )}
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="absolute right-0 top-12 w-96 bg-white rounded-[28px] shadow-2xl border border-blue-100 z-50 overflow-hidden" style={{maxHeight:'85vh',overflowY:'auto'}}>
+      <div className="bg-gradient-to-r from-[#0F172A] to-blue-900 px-5 py-4 flex items-center justify-between">
+        <h3 className="text-white font-bold">Saved Searches</h3>
+        <button onClick={onClose} className="text-white/70 hover:text-white text-xl">✕</button>
+      </div>
+      <div className="p-4 space-y-5">
+        {/* Save current */}
+        <div className="bg-blue-50 rounded-2xl p-4 space-y-3">
+          <h4 className="font-bold text-[#0F172A] text-sm">Save Current Filters</h4>
+          <input value={saveName} onChange={e => setSaveName(e.target.value)}
+            placeholder="Name this search…"
+            className="w-full border border-blue-200 rounded-xl px-3 py-2 text-sm text-[#0F172A] focus:outline-none focus:ring-2 focus:ring-blue-400"/>
+          <div className="text-xs text-gray-500 bg-white rounded-xl px-3 py-2 border border-blue-100">{describe(currentFilters)}</div>
+          <label className="flex items-center gap-2 text-sm text-[#0F172A] cursor-pointer">
+            <input type="checkbox" checked={saveDef} onChange={e => setSaveDef(e.target.checked)} className="w-4 h-4 accent-blue-600"/>
+            Set as my default
+          </label>
+          <button
+            onClick={async () => {
+              if (!saveName.trim()) { alert('Enter a name.'); return; }
+              setSaving(true);
+              await createSavedSearch(saveName, page, currentFilters, saveDef, false);
+              setSaveName(''); setSaveDef(false); setSaving(false);
+            }}
+            disabled={saving}
+            className="w-full bg-gradient-to-r from-[#0F172A] to-blue-800 text-white py-2.5 rounded-xl font-bold text-sm disabled:opacity-50">
+            {saving ? 'Saving…' : 'Save Search'}
+          </button>
+        </div>
+        {/* Global defaults */}
+        {globalSearches.length > 0 && (
+          <div>
+            <h4 className="font-bold text-gray-500 text-xs uppercase tracking-wider mb-2">Global Defaults</h4>
+            <div className="space-y-2">{globalSearches.map(s => <SearchCard key={s.id} s={s}/>)}</div>
+          </div>
+        )}
+        {/* My searches */}
+        <div>
+          <h4 className="font-bold text-gray-500 text-xs uppercase tracking-wider mb-2">My Searches ({mySearches.length})</h4>
+          {mySearches.length === 0
+            ? <div className="text-gray-400 text-sm text-center py-4">No saved searches yet.</div>
+            : <div className="space-y-2">{mySearches.map(s => <SearchCard key={s.id} s={s}/>)}</div>
+          }
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function RetailListPage({ page }) {
-  const { retailCustomers, retailProducts, retailActivities, retailOrders, retailInvoices,
-          fetchRetailCustomers, fetchRetailProducts, fetchRetailActivities, fetchRetailOrders, fetchRetailInvoices,
-          pendingRecord, setPendingRecord, pendingReturnTo, setPendingReturnTo } = useApp();
+  const {
+    retailCustomers, retailProducts, retailActivities, retailOrders, retailInvoices,
+    fetchRetailCustomers, fetchRetailProducts, fetchRetailActivities, fetchRetailOrders, fetchRetailInvoices,
+    pendingRecord, setPendingRecord, pendingReturnTo, setPendingReturnTo,
+    enterpriseUsers, savedSearches, fetchSavedSearches, createSavedSearch,
+    deleteSavedSearch, setDefaultSavedSearch, currentUser, appPreferences,
+    createRetailInvoiceFromOrder, currentUserPermissions, permissionsLoaded,
+  } = useApp();
 
   const cfg = RETAIL_CONFIG[page];
   const dataMap = { retailCustomers, retailProducts, retailActivities, retailOrders, retailInvoices };
-  const fetchMap = { retailCustomers: fetchRetailCustomers, retailProducts: fetchRetailProducts, retailActivities: fetchRetailActivities, retailOrders: fetchRetailOrders, retailInvoices: fetchRetailInvoices };
+  const fetchMap = {
+    retailCustomers: fetchRetailCustomers, retailProducts: fetchRetailProducts,
+    retailActivities: fetchRetailActivities, retailOrders: fetchRetailOrders,
+    retailInvoices: fetchRetailInvoices,
+  };
   const data = dataMap[page] || [];
 
-  const [search, setSearch] = useState('');
-  const [statusFilter, setStatusFilter] = useState('All');
+  // ── Filter state ───────────────────────────────────────────────────────────
+  const [search,         setSearch]         = useState('');
+  const [statusFilter,   setStatusFilter]   = useState('All');
+  const [timePeriod,     setTimePeriod]     = useState('');
+  const [fieldFilter,    setFieldFilter]    = useState({ field: '', value: '' });
+  const [ownerFilter,    setOwnerFilter]    = useState('');
+  const [pageSize,       setPageSize]       = useState(25);
+  const [currentPage,    setCurrentPage]    = useState(1);
   const [selectedRecord, setSelectedRecord] = useState(null);
-  const [createOpen, setCreateOpen] = useState(false);
+  const [createOpen,     setCreateOpen]     = useState(false);
+  const [searchPanel,    setSearchPanel]    = useState(false);
+  const [menuOpenId,     setMenuOpenId]     = useState(null);
+  const [defaultLoaded,  setDefaultLoaded]  = useState(false);
 
-  // Pick up cross-page navigation (e.g. from customer activity history)
+  const RETAIL_FIELD_FILTERS = {
+    retailCustomers:  [{ v:'loyalty_tier', l:'Loyalty Tier' }, { v:'city', l:'City' }, { v:'country', l:'Country' }],
+    retailProducts:   [{ v:'category', l:'Category' }, { v:'brand', l:'Brand' }],
+    retailActivities: [{ v:'activity_type', l:'Activity Type' }, { v:'priority', l:'Priority' }],
+    retailOrders:     [{ v:'channel', l:'Channel' }, { v:'payment_method', l:'Payment Method' }, { v:'payment_status', l:'Payment Status' }],
+    retailInvoices:   [{ v:'payment_method', l:'Payment Method' }, { v:'payment_status', l:'Payment Status' }],
+  };
+
+  const TIME_PERIODS_R = [
+    { v:'',           l:'All Time' },
+    { v:'today',      l:'Today' },
+    { v:'yesterday',  l:'Yesterday' },
+    { v:'last_7',     l:'Last 7 Days' },
+    { v:'last_30',    l:'Last 30 Days' },
+    { v:'this_month', l:'This Month' },
+    { v:'last_month', l:'Last Month' },
+    { v:'this_year',  l:'This Year' },
+  ];
+
+  const DATE_FIELD = { retailOrders:'order_date', retailInvoices:'invoice_date', retailActivities:'activity_date', retailCustomers:'created_at', retailProducts:'created_at' };
+
+  const applyTimePeriodFilter = (rows) => {
+    if (!timePeriod) return rows;
+    const df = DATE_FIELD[page] || 'created_at';
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const starts = {
+      today: today, yesterday: new Date(today.getTime()-86400000),
+      last_7: new Date(today.getTime()-7*86400000), last_30: new Date(today.getTime()-30*86400000),
+      this_month: new Date(now.getFullYear(),now.getMonth(),1),
+      last_month: new Date(now.getFullYear(),now.getMonth()-1,1),
+      this_year: new Date(now.getFullYear(),0,1),
+    };
+    const ends = { yesterday: today, last_month: new Date(now.getFullYear(),now.getMonth(),1) };
+    const start = starts[timePeriod]; const end = ends[timePeriod];
+    return rows.filter(r => {
+      const raw = r[df] || r.created_at; if (!raw) return false;
+      const d = new Date(String(raw).slice(0,10)); if (isNaN(d.getTime())) return false;
+      if (start && d < start) return false;
+      if (end   && d >= end)  return false;
+      return true;
+    });
+  };
+
+  const canDo = (action) => {
+    if (!permissionsLoaded) return true;
+    if ((currentUserPermissions||[]).includes('__admin__')) return true;
+    const PCODE = {
+      retailCustomers: `retail_customers_${action}`, retailProducts: `retail_products_${action}`,
+      retailActivities:`retail_activities_${action}`, retailOrders: `retail_orders_${action}`,
+      retailInvoices:  `retail_invoices_${action}`,
+    };
+    return (currentUserPermissions||[]).includes(PCODE[page] || `${page}_${action}`);
+  };
+
+  useEffect(() => {
+    const h = (e) => { if (!e.target.closest('[data-menu-container]')) setMenuOpenId(null); };
+    document.addEventListener('mousedown', h);
+    return () => document.removeEventListener('mousedown', h);
+  }, []);
+
+  useEffect(() => {
+    if (fetchSavedSearches) fetchSavedSearches(page);
+    setSearch(''); setStatusFilter('All'); setTimePeriod('');
+    setFieldFilter({ field:'', value:'' }); setOwnerFilter('');
+    setCurrentPage(1); setDefaultLoaded(false);
+    setTimeout(() => setDefaultLoaded(true), 300);
+  }, [page]);
+
+  useEffect(() => {
+    if (!defaultLoaded || !savedSearches?.length) return;
+    const def = savedSearches.find(s => s.object_type===page && s.is_default)
+             || savedSearches.find(s => s.object_type===page && s.is_global_default);
+    if (def?.filters) applyFilters(def.filters);
+  }, [defaultLoaded]);
+
   useEffect(() => {
     if (pendingRecord && pendingRecord.page === page && pendingRecord.record) {
       setSelectedRecord(pendingRecord.record);
@@ -1796,34 +1991,123 @@ export default function RetailListPage({ page }) {
     }
   }, [pendingRecord, page]);
 
+  const applyFilters = (f) => {
+    if (f.search      !== undefined) setSearch(f.search || '');
+    if (f.status      !== undefined) setStatusFilter(f.status || 'All');
+    if (f.timePeriod  !== undefined) setTimePeriod(f.timePeriod || '');
+    if (f.fieldFilter !== undefined) setFieldFilter(f.fieldFilter || { field:'', value:'' });
+    if (f.owner       !== undefined) setOwnerFilter(f.owner || '');
+    setCurrentPage(1);
+  };
+
+  const currentFilters = { search, status: statusFilter, timePeriod, fieldFilter, owner: ownerFilter };
+
   const filtered = useMemo(() => {
     let rows = data;
-    if (statusFilter !== 'All') rows = rows.filter(r => r.status === statusFilter);
     if (search.trim()) {
       const q = search.toLowerCase();
-      rows = rows.filter(r => cfg.searchFields.some(f => String(r[f]||'').toLowerCase().includes(q)));
+      rows = rows.filter(r => [
+        r.display_number, r[cfg?.idField], r.name, r.email, r.phone,
+        r.customer, r.customer_phone, r.subject, r.sku, r.barcode,
+        r.brand, r.category, r.channel,
+      ].some(v => String(v||'').toLowerCase().includes(q)));
     }
+    if (statusFilter !== 'All') rows = rows.filter(r => r.status === statusFilter);
+    rows = applyTimePeriodFilter(rows);
+    if (fieldFilter.field && fieldFilter.value) {
+      rows = rows.filter(r => String(r[fieldFilter.field]||'').toLowerCase().includes(fieldFilter.value.toLowerCase()));
+    }
+    if (ownerFilter) rows = rows.filter(r => r.owner === ownerFilter || r.owner_id === ownerFilter);
     return rows;
-  }, [data, search, statusFilter]);
+  }, [data, search, statusFilter, timePeriod, fieldFilter, ownerFilter]);
+
+  const totalRecords = filtered.length;
+  const totalPages   = Math.max(1, Math.ceil(totalRecords / pageSize));
+  const safePage     = Math.min(currentPage, totalPages);
+  const pagedRows    = filtered.slice((safePage-1)*pageSize, safePage*pageSize);
+  const activeCount  = [search, statusFilter!=='All', timePeriod, fieldFilter.value, ownerFilter].filter(Boolean).length;
+  const clearFilters = () => { setSearch(''); setStatusFilter('All'); setTimePeriod(''); setFieldFilter({field:'',value:''}); setOwnerFilter(''); setCurrentPage(1); };
+  const objFieldDefs = RETAIL_FIELD_FILTERS[page] || [];
 
   if (!cfg) return <div className="p-6 text-gray-400">Unknown retail page: {page}</div>;
 
   return (
-    <div className="space-y-6">
-      <div className="bg-gradient-to-r from-[#0F172A] to-blue-900 rounded-[28px] p-6 text-white flex items-center justify-between">
-        <div><h1 className="text-3xl font-bold">{cfg.icon} {cfg.title}</h1><p className="text-blue-200 mt-1">Retail (B2C) module</p></div>
-        <button onClick={()=>setCreateOpen(true)} className="bg-white text-[#0F172A] px-5 py-2.5 rounded-2xl font-bold text-sm shadow-lg hover:bg-blue-50">+ Create {cfg.singular}</button>
+    <div className="space-y-4">
+
+      {/* Header */}
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <div>
+          <h1 className="text-2xl font-bold text-[#0F172A]">{cfg.icon} {cfg.title}</h1>
+          <p className="text-gray-400 text-sm mt-0.5">
+            {totalRecords} of {data.length} record{data.length!==1?'s':''}
+            {activeCount > 0 && <span className="text-blue-600 font-semibold"> · {activeCount} filter{activeCount>1?'s':''} active</span>}
+          </p>
+        </div>
+        <div className="flex items-center gap-3">
+          {activeCount > 0 && (
+            <button onClick={clearFilters} className="text-sm text-gray-500 hover:text-[#0F172A] flex items-center gap-1 border border-gray-200 rounded-xl px-3 py-2 hover:bg-gray-50">
+              ✕ Clear filters
+            </button>
+          )}
+          {canDo('create') && (
+            <button onClick={() => setCreateOpen(true)} className="bg-gradient-to-r from-[#0F172A] to-blue-800 text-white px-5 py-2.5 rounded-2xl font-semibold text-sm shadow hover:opacity-90">
+              + Create {cfg.singular}
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Filters */}
-      <div className="bg-white rounded-2xl border border-blue-100 p-4 shadow-sm flex flex-col sm:flex-row gap-3">
-        <input value={search} onChange={e=>setSearch(e.target.value)} placeholder={`Search ${cfg.title.toLowerCase()}...`}
-          className="flex-1 border border-blue-200 rounded-xl px-4 py-2.5 text-sm text-[#0F172A] focus:outline-none focus:ring-2 focus:ring-blue-300 placeholder:text-gray-400"/>
-        <select value={statusFilter} onChange={e=>setStatusFilter(e.target.value)}
-          className="border border-blue-200 rounded-xl px-4 py-2.5 text-sm text-[#0F172A] bg-white focus:outline-none focus:ring-2 focus:ring-blue-300">
-          <option>All</option>
-          {cfg.statusOptions.map(s=><option key={s}>{s}</option>)}
-        </select>
+      <div className="bg-white rounded-2xl border border-blue-100 p-4 shadow-sm space-y-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3">
+          <input value={search} onChange={e=>{setSearch(e.target.value);setCurrentPage(1);}}
+            placeholder="Search by name, record #, email, phone, SKU…"
+            className="border border-blue-200 rounded-xl px-4 py-2.5 text-sm text-[#0F172A] focus:outline-none focus:ring-2 focus:ring-blue-300 placeholder:text-gray-400 xl:col-span-2"/>
+          <select value={statusFilter} onChange={e=>{setStatusFilter(e.target.value);setCurrentPage(1);}}
+            className="border border-blue-200 rounded-xl px-4 py-2.5 text-sm text-[#0F172A] bg-white focus:outline-none focus:ring-2 focus:ring-blue-300">
+            <option value="All">All Statuses</option>
+            {cfg.statusOptions.map(s=><option key={s}>{s}</option>)}
+          </select>
+          <select value={timePeriod} onChange={e=>{setTimePeriod(e.target.value);setCurrentPage(1);}}
+            className="border border-blue-200 rounded-xl px-4 py-2.5 text-sm text-[#0F172A] bg-white focus:outline-none focus:ring-2 focus:ring-blue-300">
+            {TIME_PERIODS_R.map(t=><option key={t.v} value={t.v}>{t.l}</option>)}
+          </select>
+          {objFieldDefs.length > 0 && (
+            <div className="flex gap-2">
+              <select value={fieldFilter.field} onChange={e=>{setFieldFilter({field:e.target.value,value:''});setCurrentPage(1);}}
+                className="flex-1 border border-blue-200 rounded-xl px-3 py-2.5 text-sm text-[#0F172A] bg-white focus:outline-none focus:ring-2 focus:ring-blue-300">
+                <option value="">All Fields</option>
+                {objFieldDefs.map(f=><option key={f.v} value={f.v}>{f.l}</option>)}
+              </select>
+              {fieldFilter.field && (
+                <input value={fieldFilter.value} onChange={e=>{setFieldFilter(p=>({...p,value:e.target.value}));setCurrentPage(1);}}
+                  placeholder="Value"
+                  className="flex-1 border border-blue-200 rounded-xl px-3 py-2.5 text-sm text-[#0F172A] focus:outline-none focus:ring-2 focus:ring-blue-300"/>
+              )}
+            </div>
+          )}
+        </div>
+        <div className="flex items-center justify-between gap-3 pt-2 border-t border-blue-50 flex-wrap">
+          <select value={ownerFilter} onChange={e=>{setOwnerFilter(e.target.value);setCurrentPage(1);}}
+            className="border border-blue-200 rounded-xl px-4 py-2 text-sm text-[#0F172A] bg-white focus:outline-none focus:ring-2 focus:ring-blue-300">
+            <option value="">All Owners</option>
+            {enterpriseUsers.map(u=><option key={u.id} value={u.email}>{u.first_name} {u.last_name}</option>)}
+          </select>
+          <div className="relative">
+            <button onClick={()=>setSearchPanel(!searchPanel)}
+              className={`flex items-center gap-2 text-sm font-semibold px-4 py-2 rounded-xl transition-all ${searchPanel?'bg-[#0F172A] text-white':'bg-blue-100 text-blue-700 hover:bg-blue-200'}`}>
+              🔖 Saved Searches
+              {(savedSearches||[]).filter(s=>s.object_type===page).length > 0 && (
+                <span className={`text-xs font-bold px-1.5 py-0.5 rounded-full ${searchPanel?'bg-white/20 text-white':'bg-blue-200 text-blue-700'}`}>
+                  {(savedSearches||[]).filter(s=>s.object_type===page).length}
+                </span>
+              )}
+            </button>
+            {searchPanel && (
+              <RetailSavedSearchPanel page={page} currentFilters={currentFilters} onApply={applyFilters} onClose={()=>setSearchPanel(false)}/>
+            )}
+          </div>
+        </div>
       </div>
 
       {/* Table */}
@@ -1832,63 +2116,99 @@ export default function RetailListPage({ page }) {
           <table className="w-full text-sm">
             <thead className="bg-gradient-to-r from-[#0F172A] to-blue-900 text-white">
               <tr>
-                {cfg.listColumns.map(c=><th key={c.h} className={`px-5 py-3.5 font-semibold ${c.align==='right'?'text-right':'text-left'}`}>{c.h}</th>)}
-                <th className="px-5 py-3.5 text-left font-semibold">Status</th>
-                <th className="px-5 py-3.5 text-left font-semibold">Actions</th>
+                <th className="px-5 py-3.5 text-left text-xs font-semibold uppercase tracking-wider">Record #</th>
+                {cfg.listColumns.map(c=>(
+                  <th key={c.h} className={`px-5 py-3.5 text-xs font-semibold uppercase tracking-wider ${c.align==='right'?'text-right':'text-left'}`}>{c.h}</th>
+                ))}
+                <th className="px-5 py-3.5 text-left text-xs font-semibold uppercase tracking-wider">Status</th>
+                <th className="px-5 py-3.5 text-center text-xs font-semibold uppercase tracking-wider w-24">Actions</th>
               </tr>
             </thead>
             <tbody>
-              {filtered.length===0
-                ? <tr><td colSpan={cfg.listColumns.length+2} className="px-5 py-16 text-center">
-                    <div className="text-5xl mb-3">{cfg.icon}</div>
-                    <div className="font-bold text-[#0F172A] text-lg mb-2">No {cfg.title.toLowerCase()} yet</div>
-                    <p className="text-gray-400">Click "+ Create {cfg.singular}" to add your first record.</p>
-                  </td></tr>
-                : filtered.map(r => (
-                  <tr key={r.id} className="border-t border-blue-50 hover:bg-blue-50/40">
-                    {cfg.listColumns.map((c,ci) => (
-                      <td key={c.h} className={`px-5 py-3.5 ${c.align==='right'?'text-right font-semibold':''} ${c.mono?'font-mono text-xs text-gray-400':'text-gray-700'}`}>
-                        {ci === 0
-                          ? <button onClick={()=>setSelectedRecord(r)} className="text-left">
-                              {c.h.includes('#')
-                                ? <span className="text-xs font-mono font-bold text-blue-700 bg-blue-50 hover:bg-blue-100 px-2.5 py-1 rounded-full border border-blue-100 cursor-pointer transition-all">{c.v(r)}</span>
-                                : <div>
-                                    <div className="font-semibold text-[#0F172A] hover:text-blue-700">{c.v(r)}</div>
-                                    {r.displayNumber && <span className="text-xs font-mono text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full border border-blue-100 mt-0.5 inline-block">{formatDisplayNumber(PAGE_DISPLAY_PREFIX[page]||'REC', r.displayNumber)}</span>}
-                                  </div>
-                              }
-                            </button>
-                          : c.v(r)}
-                      </td>
-                    ))}
-                    <td className="px-5 py-3.5"><span className={`px-2.5 py-0.5 rounded-full text-xs font-semibold ${getStatusColor(r.status)}`}>{r.status}</span></td>
-                    <td className="px-5 py-3.5">
-                      <button onClick={()=>setSelectedRecord(r)} className="bg-blue-100 hover:bg-blue-200 text-blue-700 px-3 py-1.5 rounded-xl text-xs font-semibold">Open</button>
+              {pagedRows.length === 0 ? (
+                <tr><td colSpan={cfg.listColumns.length+3} className="px-5 py-16 text-center">
+                  <div className="text-5xl mb-3">{activeCount>0?'🔍':cfg.icon}</div>
+                  <div className="font-bold text-[#0F172A] text-lg mb-1">{activeCount>0?'No matching records':`No ${cfg.title.toLowerCase()} yet`}</div>
+                  <p className="text-gray-400 text-sm">{activeCount>0?'Try adjusting your filters.':`Click "+ Create ${cfg.singular}" to add your first record.`}</p>
+                  {activeCount>0 && <button onClick={clearFilters} className="mt-3 text-blue-600 text-sm font-semibold hover:underline">Clear all filters</button>}
+                </td></tr>
+              ) : pagedRows.map(r => (
+                <tr key={r.id} className="border-t border-blue-50 hover:bg-blue-50/40 transition-all">
+                  <td className="px-5 py-3.5">
+                    <button onClick={()=>setSelectedRecord(r)}>
+                      <span className="text-xs font-mono font-bold text-blue-700 bg-blue-50 hover:bg-blue-100 px-2.5 py-1 rounded-full border border-blue-100 cursor-pointer transition-all">
+                        {r.displayNumber || r[cfg.idField] || r.id}
+                      </span>
+                    </button>
+                  </td>
+                  {cfg.listColumns.map((c,ci)=>(
+                    <td key={c.h} className={`px-5 py-3.5 ${c.align==='right'?'text-right font-semibold text-[#0F172A]':'text-gray-700'} ${c.mono?'font-mono text-xs text-gray-400':''}`}>
+                      {ci===0
+                        ? <button onClick={()=>setSelectedRecord(r)} className="font-semibold text-[#0F172A] hover:text-blue-700 hover:underline text-left">{c.v(r)}</button>
+                        : c.v(r)}
                     </td>
-                  </tr>
-                ))
-              }
+                  ))}
+                  <td className="px-5 py-3.5">
+                    <span className={`px-2.5 py-0.5 rounded-full text-xs font-bold border ${getStatusColor(r.status)}`}>{r.status}</span>
+                  </td>
+                  <td className="px-5 py-3.5">
+                    <div className="relative flex justify-center" data-menu-container>
+                      <button onClick={()=>setMenuOpenId(menuOpenId===r.id?null:r.id)}
+                        className="w-8 h-8 rounded-full bg-[#0F172A] text-white hover:bg-blue-800 flex items-center justify-center text-lg font-bold shadow transition-all">⋮</button>
+                      {menuOpenId===r.id && (
+                        <div className="absolute right-0 top-9 bg-[#0F172A] border border-blue-800 shadow-2xl rounded-2xl p-2 z-[999] min-w-[200px]">
+                          <button onClick={()=>{setSelectedRecord(r);setMenuOpenId(null);}} className="w-full text-left px-4 py-3 rounded-xl text-sm font-medium hover:bg-blue-800 text-white">Open Details</button>
+                          {page==='retailOrders' && (
+                            <button onClick={()=>{createRetailInvoiceFromOrder(r);setMenuOpenId(null);}} className="w-full text-left px-4 py-3 rounded-xl text-sm font-medium hover:bg-blue-800 text-white">🧾 Create Invoice</button>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>
+
+        {/* Pagination */}
+        {totalRecords > 0 && (
+          <div className="px-6 py-3 border-t border-blue-50 bg-white flex items-center justify-between flex-wrap gap-3">
+            <div className="flex items-center gap-3">
+              <span className="text-xs text-gray-400">
+                Showing <strong className="text-[#0F172A]">{(safePage-1)*pageSize+1}–{Math.min(safePage*pageSize,totalRecords)}</strong> of <strong className="text-[#0F172A]">{totalRecords}</strong> records
+              </span>
+              <select value={pageSize} onChange={e=>{setPageSize(Number(e.target.value));setCurrentPage(1);}}
+                className="border border-blue-200 rounded-lg px-2 py-1 text-xs text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-blue-400">
+                {[10,25,50,100].map(n=><option key={n} value={n}>{n} per page</option>)}
+              </select>
+            </div>
+            {totalPages > 1 && (
+              <div className="flex items-center gap-1">
+                <button onClick={()=>setCurrentPage(1)} disabled={safePage===1} className="px-2 py-1 rounded-lg text-xs font-semibold text-gray-500 hover:bg-blue-50 disabled:opacity-30">«</button>
+                <button onClick={()=>setCurrentPage(p=>Math.max(1,p-1))} disabled={safePage===1} className="px-3 py-1 rounded-lg text-xs font-semibold text-gray-500 hover:bg-blue-50 disabled:opacity-30">‹ Prev</button>
+                {Array.from({length:Math.min(5,totalPages)},(_,i)=>{
+                  const pg = Math.max(1,Math.min(totalPages-4,safePage-2))+i;
+                  return <button key={pg} onClick={()=>setCurrentPage(pg)} className={`px-3 py-1 rounded-lg text-xs font-bold transition-all ${pg===safePage?'bg-[#0F172A] text-white':'text-gray-500 hover:bg-blue-50'}`}>{pg}</button>;
+                })}
+                <button onClick={()=>setCurrentPage(p=>Math.min(totalPages,p+1))} disabled={safePage===totalPages} className="px-3 py-1 rounded-lg text-xs font-semibold text-gray-500 hover:bg-blue-50 disabled:opacity-30">Next ›</button>
+                <button onClick={()=>setCurrentPage(totalPages)} disabled={safePage===totalPages} className="px-2 py-1 rounded-lg text-xs font-semibold text-gray-500 hover:bg-blue-50 disabled:opacity-30">»</button>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {selectedRecord && (
         <RetailDetailPanel
-          page={page}
-          record={selectedRecord}
-          pendingReturnTo={pendingReturnTo}
+          page={page} record={selectedRecord} pendingReturnTo={pendingReturnTo}
           onClose={()=>{
             setSelectedRecord(null);
-            if (pendingReturnTo) {
-              const rt = pendingReturnTo; setPendingReturnTo(null);
-              window.dispatchEvent(new CustomEvent('open-crm-record', { detail: rt }));
-            }
+            if (pendingReturnTo) { const rt=pendingReturnTo; setPendingReturnTo(null); window.dispatchEvent(new CustomEvent('open-crm-record',{detail:rt})); }
           }}
-          onSaved={()=>{ fetchMap[page]?.(); }}
+          onSaved={()=>fetchMap[page]?.()}
         />
       )}
-
       <RetailCreateModal page={page} open={createOpen} onClose={()=>setCreateOpen(false)} onCreated={()=>fetchMap[page]?.()}/>
     </div>
   );
