@@ -2137,7 +2137,7 @@ export default function RetailListPage({ page }) {
                   <td className="px-5 py-3.5">
                     <button onClick={()=>setSelectedRecord(r)}>
                       <span className="text-xs font-mono font-bold text-blue-700 bg-blue-50 hover:bg-blue-100 px-2.5 py-1 rounded-full border border-blue-100 cursor-pointer transition-all">
-                        {r.displayNumber || r[cfg.idField] || r.id}
+                        {r.displayNumber ? formatDisplayNumber(PAGE_DISPLAY_PREFIX[page]||'REC', r.displayNumber) : (r[cfg.idField] || r.id)}
                       </span>
                     </button>
                   </td>

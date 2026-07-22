@@ -111,7 +111,16 @@ function OrganizationsPanel() {
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState({});
-  const s = (k,v)=>setForm(f=>({...f,[k]:v}));
+  const s = (k,v)=>{
+    setForm(f=>{
+      const next={...f,[k]:v};
+      // Auto-populate username from email
+      if(k==='email') next.username=v;
+      // Clear business unit when org changes
+      if(k==='organization_id') next.business_unit_id='';
+      return next;
+    });
+  };
 
   return (
     <div className="space-y-5">
@@ -158,7 +167,16 @@ function BusinessUnitsPanel() {
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState({status:'Active'});
-  const s = (k,v)=>setForm(f=>({...f,[k]:v}));
+  const s = (k,v)=>{
+    setForm(f=>{
+      const next={...f,[k]:v};
+      // Auto-populate username from email
+      if(k==='email') next.username=v;
+      // Clear business unit when org changes
+      if(k==='organization_id') next.business_unit_id='';
+      return next;
+    });
+  };
 
   return (
     <div className="space-y-5">
@@ -211,13 +229,30 @@ function UsersPanel() {
   const [resetPwValue, setResetPwValue] = useState('');
   const [saving, setSaving] = useState(false);
   const [search, setSearch] = useState('');
-  const s = (k,v)=>setForm(f=>({...f,[k]:v}));
+  const s = (k,v)=>{
+    setForm(f=>{
+      const next={...f,[k]:v};
+      // Auto-populate username from email
+      if(k==='email') next.username=v;
+      // Clear business unit when org changes
+      if(k==='organization_id') next.business_unit_id='';
+      return next;
+    });
+  };
 
   const filtered = enterpriseUsers.filter(u=>[u.first_name,u.last_name,u.email,u.employee_code].some(v=>v?.toLowerCase().includes(search.toLowerCase())));
 
   const handleSave = async () => {
+    // Validate email
+    if (!form.email?.trim()) { alert('Email is required.'); return; }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(form.email)) { alert('Invalid email format.'); return; }
+    // Validate phone if provided
+    if (form.phone) {
+      const digits = form.phone.replace(/[\s\-\+\(\)]/g,'');
+      if (!/^\d+$/.test(digits)) { alert('Phone must contain digits only (no letters).'); return; }
+      if (digits.length < 7 || digits.length > 15) { alert('Phone must be 7-15 digits.'); return; }
+    }
     if (!editing) {
-      if (!form.email?.trim()) { alert('Email is required.'); return; }
       if (!password) { alert('Password is required for new users.'); return; }
       if (password !== confirmPassword) { alert('Passwords do not match.'); return; }
       if (password.length < 6) { alert('Password must be at least 6 characters.'); return; }
@@ -329,21 +364,27 @@ function UsersPanel() {
         <div className="space-y-5">
           {/* Profile fields */}
           <div className="grid grid-cols-2 gap-4">
-            {[['First Name','first_name'],['Last Name','last_name'],['Email','email'],['Phone','phone'],['Employee Code','employee_code'],['Username','username'],['Designation','designation']].map(([label,field])=>(
+            {([['First Name','first_name','text',true],['Last Name','last_name','text',false],['Email','email','email',true],['Phone','phone','tel',false],['Employee Code','employee_code','text',false],['Username','username','text',false],['Designation','designation','text',false]] as [string,string,string,boolean][]).map(([label,field,type,req])=>(
               <div key={field}>
-                <L t={label}/>
+                <L t={label+(req?' *':'')}/>
                 <input
                   value={form[field]||''}
                   onChange={e=>s(field,e.target.value)}
-                  type={field==='email'?'email':'text'}
+                  type={type}
                   disabled={field==='email'&&!!editing}
+                  maxLength={field==='phone'?20:field==='designation'?100:undefined}
                   className={`${iCls} ${field==='email'&&editing?'bg-gray-50 text-gray-400':''}`}
-                  placeholder={field==='email'&&editing?'Cannot change email':''}
+                  placeholder={
+                    field==='email'&&editing?'Cannot change email':
+                    field==='phone'?'+91 9876543210':
+                    field==='designation'?'e.g. Sales Executive':
+                    field==='username'?'Auto-filled from email':''
+                  }
                 />
               </div>
             ))}
             <div><L t="Organization"/><select value={form.organization_id||''} onChange={e=>s('organization_id',e.target.value)} className={sCls}><option value="">Select</option>{organizations.map(o=><option key={o.id} value={o.id}>{o.name}</option>)}</select></div>
-            <div><L t="Business Unit"/><select value={form.business_unit_id||''} onChange={e=>s('business_unit_id',e.target.value)} className={sCls}><option value="">Select</option>{businessUnits.map(b=><option key={b.id} value={b.id}>{b.name}</option>)}</select></div>
+            <div><L t="Business Unit"/><select value={form.business_unit_id||''} onChange={e=>s('business_unit_id',e.target.value)} className={sCls} disabled={!form.organization_id}><option value="">{form.organization_id?'Select Business Unit':'Select org first'}</option>{businessUnits.filter(b=>!form.organization_id||b.organization_id===form.organization_id).map(b=><option key={b.id} value={b.id}>{b.name}</option>)}</select></div>
             <div><L t="Role"/>
                 <select value={form.role_id||''} onChange={e=>s('role_id',e.target.value)} className={sCls}>
                   <option value="">No Role Assigned</option>
@@ -440,7 +481,16 @@ function UserGroupsPanel() {
   const [activeGroup, setActiveGroup] = useState(null);
   const [form, setForm] = useState({status:'Active'});
   const [selectedUserIds, setSelectedUserIds] = useState([]);
-  const s = (k,v)=>setForm(f=>({...f,[k]:v}));
+  const s = (k,v)=>{
+    setForm(f=>{
+      const next={...f,[k]:v};
+      // Auto-populate username from email
+      if(k==='email') next.username=v;
+      // Clear business unit when org changes
+      if(k==='organization_id') next.business_unit_id='';
+      return next;
+    });
+  };
 
   const openMembers = async(group)=>{setActiveGroup(group);await fetchGroupMembers(group.id);setMembersOpen(true);};
 
@@ -515,7 +565,16 @@ function SecurityConsolePanel() {
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState({status:'Active'});
   const [selectedPerms, setSelectedPerms] = useState([]);
-  const s = (k,v)=>setForm(f=>({...f,[k]:v}));
+  const s = (k,v)=>{
+    setForm(f=>{
+      const next={...f,[k]:v};
+      // Auto-populate username from email
+      if(k==='email') next.username=v;
+      // Clear business unit when org changes
+      if(k==='organization_id') next.business_unit_id='';
+      return next;
+    });
+  };
   const modules = [...new Set(permissions.map(p=>p.module_name))];
 
   const openForm = async(role)=>{
@@ -773,7 +832,16 @@ function WorkflowBuilderPanel({ objectList = ALL_OBJECTS, conditionFields = COND
   const [conditions, setCond]   = useState({ logic:'AND', conditions:[] });
   const [actions, setActions]   = useState([{ action_type:'send_notification', action_config:{} }]);
   const [saving, setSaving]     = useState(false);
-  const s = (k,v)=>setForm(f=>({...f,[k]:v}));
+  const s = (k,v)=>{
+    setForm(f=>{
+      const next={...f,[k]:v};
+      // Auto-populate username from email
+      if(k==='email') next.username=v;
+      // Clear business unit when org changes
+      if(k==='organization_id') next.business_unit_id='';
+      return next;
+    });
+  };
 
   const fields = conditionFields[form.object_type] || [];
   const triggerFieldOpts = getFieldOptions(form.object_type, form.trigger_field);
@@ -982,7 +1050,16 @@ function AssignmentRulesPanel({ objectList = ALL_OBJECTS, conditionFields = COND
   const [editing, setEditing] = useState(null);
   const [form, setForm]       = useState({ name:'', object_type:'leads', condition_field:'', condition_operator:'equals', condition_value:'', assign_to_user_id:'', assign_to_group_id:'', priority:1, is_active:true });
   const [saving, setSaving]   = useState(false);
-  const s = (k,v)=>setForm(f=>({...f,[k]:v}));
+  const s = (k,v)=>{
+    setForm(f=>{
+      const next={...f,[k]:v};
+      // Auto-populate username from email
+      if(k==='email') next.username=v;
+      // Clear business unit when org changes
+      if(k==='organization_id') next.business_unit_id='';
+      return next;
+    });
+  };
 
   const fields    = conditionFields[form.object_type] || [];
   const valueOpts = getFieldOptions(form.object_type, form.condition_field);
@@ -1163,7 +1240,16 @@ function SLAPanel({ objectList = ALL_OBJECTS, conditionFields = CONDITION_FIELDS
   const [editing, setEditing] = useState(null);
   const [form, setForm]       = useState({ name:'', object_type:'leads', condition_field:'status', condition_value:'', response_time_hours:24, resolution_time_hours:72, warning_threshold_pct:80, escalate_to_user_id:'', is_active:true });
   const [saving, setSaving]   = useState(false);
-  const s = (k,v)=>setForm(f=>({...f,[k]:v}));
+  const s = (k,v)=>{
+    setForm(f=>{
+      const next={...f,[k]:v};
+      // Auto-populate username from email
+      if(k==='email') next.username=v;
+      // Clear business unit when org changes
+      if(k==='organization_id') next.business_unit_id='';
+      return next;
+    });
+  };
 
   const fields    = conditionFields[form.object_type] || [];
   const valueOpts = getFieldOptions(form.object_type, form.condition_field);
@@ -1327,7 +1413,16 @@ function ApprovalProcessPanel({ objectList = ALL_OBJECTS, conditionFields = COND
   const [conditions, setCond]   = useState({ logic:'AND', conditions:[] });
   const [steps, setSteps]       = useState([{ step_number:1, step_name:'Manager Approval', approver_user_id:'', approver_group_id:'', approval_type:'any', on_approve_action:'proceed', on_reject_action:'reject' }]);
   const [saving, setSaving]     = useState(false);
-  const s = (k,v)=>setForm(f=>({...f,[k]:v}));
+  const s = (k,v)=>{
+    setForm(f=>{
+      const next={...f,[k]:v};
+      // Auto-populate username from email
+      if(k==='email') next.username=v;
+      // Clear business unit when org changes
+      if(k==='organization_id') next.business_unit_id='';
+      return next;
+    });
+  };
   const fields    = conditionFields[form.object_type] || [];
   const OBJ_LABELS = objectLabels || {};
 

@@ -211,8 +211,9 @@ export function AppProvider({ children, supabase = null }: { children: React.Rea
   }, [currentUser]);
 
   const applyDataSecurity = useCallback((records: any[]) => {
-    // If currentUser not loaded yet, return empty array to prevent flash of all data
-    if (!currentUser) return [];
+    // If currentUser not loaded yet or permissions not loaded, return records as-is
+    // Re-fetch will correct scope once userDataScope is confirmed
+    if (!currentUser || !permissionsLoaded) return records;
     const isAdmin    = currentUserPermissions.includes('__admin__') || (currentUser as any)?.is_admin === true;
     // Use dedicated userDataScope state (most reliable) then fall back to currentUser.data_scope
     const dataScope  = userDataScope || (currentUser as any)?.data_scope || (isAdmin ? 'all' : 'own');
@@ -262,7 +263,7 @@ export function AppProvider({ children, supabase = null }: { children: React.Rea
         (r.created_by && r.created_by.toLowerCase() === userEmail?.toLowerCase())
       );
     });
-  }, [currentUser, currentUserPermissions, userDataScope]);
+  }, [currentUser, currentUserPermissions, userDataScope, permissionsLoaded]);
 
   // \u2500\u2500\u2500 Auth \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 
@@ -335,6 +336,14 @@ export function AppProvider({ children, supabase = null }: { children: React.Rea
         .from('enterprise_users').select('*, roles(id, role_name, role_code, data_scope)')
         .ilike('email', session.user.email || '').maybeSingle();
       userData = d2;
+    }
+    // Admin shortcut: is_admin=true → full access regardless of role
+    if (userData?.is_admin) {
+      setCurrentUser((u: any) => u ? { ...u, data_scope: 'all' } : u);
+      setUserDataScope('all');
+      setCurrentUserPermissions(['__admin__']);
+      setPermissionsLoaded(true);
+      return;
     }
     if (!userData?.role_id) {
       setCurrentUserPermissions([]);
@@ -2525,7 +2534,7 @@ export function AppProvider({ children, supabase = null }: { children: React.Rea
     await refs[page]?.();
   };
 
-  const adminResetPassword = async (userId, newPass) => { try{await fetch('/api/admin/reset-password',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({userId,newPass})})}catch(e){} };
+  const adminResetPassword = async (authUserId, password) => { if(!authUserId||!password){console.warn('[adminResetPassword] missing args');return;} try{const tenant=(window as any).__bp_tenant||{};const r=await fetch('/api/admin/reset-password',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({authUserId,password,db_url:tenant.db_url||null})});const j=await r.json();if(!r.ok)alert('Password reset failed: '+(j.error||r.status));}catch(e:any){alert('Password reset error: '+e.message);} };
 
 
   const fetchRolePermissionsForEdit = async (roleId) => {

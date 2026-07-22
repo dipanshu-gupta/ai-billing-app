@@ -3,18 +3,25 @@ import { NextResponse } from 'next/server';
 
 export async function POST(request: Request) {
   try {
-    const { authUserId, password } = await request.json();
+    const { authUserId, password, db_url } = await request.json();
     if (!authUserId || !password) return NextResponse.json({ error: 'Auth user ID and password are required.' }, { status: 400 });
     if (password.length < 6) return NextResponse.json({ error: 'Password must be at least 6 characters.' }, { status: 400 });
 
-    const supabaseAdmin = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!,
-      { auth: { autoRefreshToken: false, persistSession: false } }
-    );
+    const masterUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+    const masterKey = process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY!;
 
+    let targetUrl = masterUrl;
+    let targetKey = masterKey;
+
+    // If tenant has its own Supabase, look up the service key
+    if (db_url && db_url !== masterUrl) {
+      const masterClient = createClient(masterUrl, masterKey, { auth: { autoRefreshToken: false, persistSession: false } });
+      const { data: tenant } = await masterClient.from('tenants').select('db_service_key').eq('db_url', db_url).maybeSingle();
+      if (tenant?.db_service_key) { targetUrl = db_url; targetKey = tenant.db_service_key; }
+    }
+
+    const supabaseAdmin = createClient(targetUrl, targetKey, { auth: { autoRefreshToken: false, persistSession: false } });
     const { error } = await supabaseAdmin.auth.admin.updateUserById(authUserId, { password });
-
     if (error) return NextResponse.json({ error: error.message }, { status: 400 });
     return NextResponse.json({ success: true });
   } catch (err: any) {
