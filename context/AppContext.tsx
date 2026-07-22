@@ -209,7 +209,9 @@ export function AppProvider({ children, supabase = null }: { children: React.Rea
   }, [currentUser]);
 
   const applyDataSecurity = useCallback((records: any[]) => {
-    if (!currentUser) return records;
+    // If currentUser not loaded yet, return empty array to avoid showing all data
+    // Records will be re-fetched and filtered once currentUser + data_scope are available
+    if (!currentUser) return [];
     const isAdmin    = currentUserPermissions.includes('__admin__') || (currentUser as any)?.is_admin === true;
     const dataScope  = (currentUser as any)?.data_scope || (isAdmin ? 'all' : 'own');
     const viewAll    = currentUserPermissions.includes('view_all_records');
@@ -281,19 +283,20 @@ export function AppProvider({ children, supabase = null }: { children: React.Rea
 
   const fetchCurrentUser = async () => {
     if (!supabase || !session?.user) return;
-    // Try auth_user_id first (most reliable)
+    // Join roles to get data_scope immediately so applyDataSecurity works on first fetch
     let { data } = await supabase
-      .from('enterprise_users').select('*')
+      .from('enterprise_users').select('*, roles(id, role_name, role_code, data_scope)')
       .eq('auth_user_id', session.user.id).maybeSingle();
     // Fallback: email match
     if (!data && session.user.email) {
       const { data: d2 } = await supabase
-        .from('enterprise_users').select('*')
+        .from('enterprise_users').select('*, roles(id, role_name, role_code, data_scope)')
         .ilike('email', session.user.email).maybeSingle();
       data = d2;
     }
     if (data) {
-      setCurrentUser(data);
+      // Merge data_scope from role directly so applyDataSecurity has it immediately
+      setCurrentUser({ ...data, data_scope: data.roles?.data_scope || data.data_scope || null });
       // If auth_user_id not set in DB, update it now
       if (!data.auth_user_id && session.user.id) {
         await supabase.from('enterprise_users')
@@ -405,7 +408,7 @@ export function AppProvider({ children, supabase = null }: { children: React.Rea
     const { data, error } = await supabase.from('contacts').select('*').order('created_at', { ascending: false });
     if (error) console.error(error);
     if (data) {
-      setContacts(data.map((c: any) => ({
+      setContacts(applyDataSecurity(data).map((c: any) => ({
         ...c,
         id: c.contact_number, displayNumber: c.display_number, customerId: c.customer_id, customer: c.customer,
         name: c.name, email: c.email, phone: c.phone, designation: c.designation,
@@ -421,7 +424,7 @@ export function AppProvider({ children, supabase = null }: { children: React.Rea
     const { data, error } = await supabase.from('products').select('*').order('created_at', { ascending: false });
     if (error) console.error(error);
     if (data) {
-      setProducts(data.map((p: any) => ({
+      setProducts(applyDataSecurity(data).map((p: any) => ({
         ...p,
         id: p.product_number || p.id, displayNumber: p.display_number, _uuid: p.id, name: p.name, category: p.category,
         price: Number(p.price || 0), status: p.status,
@@ -436,7 +439,7 @@ export function AppProvider({ children, supabase = null }: { children: React.Rea
     const { data, error } = await supabase.from('leads').select('*').order('created_at', { ascending: false });
     if (error) console.error(error);
     if (data) {
-      setLeads(data.map((l: any) => ({
+      setLeads(applyDataSecurity(data).map((l: any) => ({
         ...l,
         id: l.lead_number, displayNumber: l.display_number, name: l.name, customer: l.customer, customerId: l.customer_id,
         contact: l.contact, contactId: l.contact_id, email: l.email, phone: l.phone,
@@ -452,7 +455,7 @@ export function AppProvider({ children, supabase = null }: { children: React.Rea
     const { data, error } = await supabase.from('opportunities').select('*').order('created_at', { ascending: false });
     if (error) console.error(error);
     if (data) {
-      setOpportunities(data.map((o: any) => ({
+      setOpportunities(applyDataSecurity(data).map((o: any) => ({
         ...o,
         id: o.opportunity_number, displayNumber: o.display_number, name: o.name, customer: o.customer, customerId: o.customer_id,
         contact: o.contact, contactId: o.contact_id, stage: o.stage,
@@ -468,7 +471,7 @@ export function AppProvider({ children, supabase = null }: { children: React.Rea
     const { data, error } = await supabase.from('orders').select('*').order('created_at', { ascending: false });
     if (error) console.error(error);
     if (data) {
-      setOrders(data.map((o: any) => ({
+      setOrders(applyDataSecurity(data).map((o: any) => ({
         ...o,
         id: o.order_number, displayNumber: o.display_number, name: o.name, customer: o.customer, customerId: o.customer_id,
         contact: o.contact, contactId: o.contact_id, amount: Number(o.amount || 0),
@@ -484,7 +487,7 @@ export function AppProvider({ children, supabase = null }: { children: React.Rea
     const { data, error } = await supabase.from('invoices').select('*').order('created_at', { ascending: false });
     if (error) console.error(error);
     if (data) {
-      setInvoices(data.map((inv: any) => ({
+      setInvoices(applyDataSecurity(data).map((inv: any) => ({
         ...inv,
         id: inv.invoice_number, displayNumber: inv.display_number, name: inv.name, customer: inv.customer, customerId: inv.customer_id,
         contact: inv.contact, contactId: inv.contact_id, amount: Number(inv.amount || 0),
@@ -501,7 +504,7 @@ export function AppProvider({ children, supabase = null }: { children: React.Rea
     const { data, error } = await supabase.from('activities').select('*').order('created_at', { ascending: false });
     if (error) console.error(error);
     if (data) {
-      setActivities(data.map((a: any) => ({
+      setActivities(applyDataSecurity(data).map((a: any) => ({
         ...a,
         id: a.activity_number, displayNumber: a.display_number, name: a.name, customer: a.customer, customerId: a.customer_id,
         contact: a.contact, contactId: a.contact_id, subject: a.subject,
@@ -2180,6 +2183,21 @@ export function AppProvider({ children, supabase = null }: { children: React.Rea
     if (!session?.user?.email) return;
     loadCurrentUserPermissions();
   }, [session?.user?.email, currentUser?.role_id]);
+
+  // Re-fetch all data once permissions + data_scope are loaded
+  // This ensures applyDataSecurity runs with the correct scope
+  useEffect(() => {
+    if (!permissionsLoaded || !currentUser?.data_scope) return;
+    // Only re-fetch if scope is restrictive (not 'all') to avoid double-fetching for admins
+    if (currentUser.data_scope === 'all') return;
+    // Re-fetch all B2B objects with correct scope applied
+    Promise.all([
+      fetchCustomers(), fetchLeads(), fetchOpportunities(), fetchOrders(),
+      fetchInvoices(), fetchContacts(), fetchActivities(), fetchProducts(), fetchQuotations(),
+      fetchRetailCustomers(), fetchRetailProducts(), fetchRetailActivities(),
+      fetchRetailOrders(), fetchRetailInvoices(),
+    ]);
+  }, [permissionsLoaded, currentUser?.data_scope]);
 
   useEffect(() => {
     if (!currentUser?.email) return;
