@@ -111,16 +111,7 @@ function OrganizationsPanel() {
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState({});
-  const s = (k,v)=>{
-    setForm(f=>{
-      const next={...f,[k]:v};
-      // Auto-populate username from email
-      if(k==='email') next.username=v;
-      // Clear business unit when org changes
-      if(k==='organization_id') next.business_unit_id='';
-      return next;
-    });
-  };
+  const s = (k,v)=>setForm(f=>({...f,[k]:v}));
 
   return (
     <div className="space-y-5">
@@ -167,16 +158,7 @@ function BusinessUnitsPanel() {
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState({status:'Active'});
-  const s = (k,v)=>{
-    setForm(f=>{
-      const next={...f,[k]:v};
-      // Auto-populate username from email
-      if(k==='email') next.username=v;
-      // Clear business unit when org changes
-      if(k==='organization_id') next.business_unit_id='';
-      return next;
-    });
-  };
+  const s = (k,v)=>setForm(f=>({...f,[k]:v}));
 
   return (
     <div className="space-y-5">
@@ -219,26 +201,24 @@ function BusinessUnitsPanel() {
 
 // ═══════════════════════════ USERS ════════════════════════════════════════════
 function UsersPanel() {
-  const { enterpriseUsers, organizations, businessUnits, roles, saveEnterpriseUser, adminResetPassword, updateAdminStatus } = useApp();
+  const { enterpriseUsers, organizations, businessUnits, roles, saveEnterpriseUser, adminResetPassword, updateAdminStatus, fetchEnterpriseUsers } = useApp();
+  const { supabase } = useTenant();
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(null);
-  const [form, setForm] = useState({status:'Active'});
+  const [form, setForm] = useState({ status:'Active', designation:'', username:'', first_name:'', last_name:'', email:'', phone:'', employee_code:'', organization_id:'', business_unit_id:'', role_id:'' });
+  const [extraRoles, setExtraRoles] = useState([]); // multi-role
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [resetPwUserId, setResetPwUserId] = useState(null);
   const [resetPwValue, setResetPwValue] = useState('');
   const [saving, setSaving] = useState(false);
   const [search, setSearch] = useState('');
-  const s = (k,v)=>{
-    setForm(f=>{
-      const next={...f,[k]:v};
-      // Auto-populate username from email
-      if(k==='email') next.username=v;
-      // Clear business unit when org changes
-      if(k==='organization_id') next.business_unit_id='';
-      return next;
-    });
-  };
+  const s = (k,v) => setForm(f => {
+    const next = { ...f, [k]: v };
+    if (k === 'email') next.username = v; // auto-populate username
+    if (k === 'organization_id') next.business_unit_id = ''; // reset BU on org change
+    return next;
+  });
 
   const filtered = enterpriseUsers.filter(u=>[u.first_name,u.last_name,u.email,u.employee_code].some(v=>v?.toLowerCase().includes(search.toLowerCase())));
 
@@ -246,10 +226,10 @@ function UsersPanel() {
     // Validate email
     if (!form.email?.trim()) { alert('Email is required.'); return; }
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(form.email)) { alert('Invalid email format.'); return; }
-    // Validate phone if provided
+    // Validate phone
     if (form.phone) {
-      const digits = form.phone.replace(/[\s\-\+\(\)]/g,'');
-      if (!/^\d+$/.test(digits)) { alert('Phone must contain digits only (no letters).'); return; }
+      const digits = (form.phone as string).replace(/[\s\-\+\(\)]/g,'');
+      if (!/^\d+$/.test(digits)) { alert('Phone must contain digits only.'); return; }
       if (digits.length < 7 || digits.length > 15) { alert('Phone must be 7-15 digits.'); return; }
     }
     if (!editing) {
@@ -300,6 +280,23 @@ function UsersPanel() {
     setOpen(false);
     setPassword('');
     setConfirmPassword('');
+    // Save extra roles to user_roles table
+    if (extraRoles.length > 0 || editing) {
+      const bp = (window as any).__bp_supabase;
+      if (bp) {
+        try {
+          // Find enterprise_user id
+          const { data: eu } = await bp.from('enterprise_users').select('id').eq('email', form.email).maybeSingle();
+          if (eu?.id) {
+            // Delete old extra roles and re-insert
+            await bp.from('user_roles').delete().eq('enterprise_user_id', eu.id);
+            if (extraRoles.length > 0) {
+              await bp.from('user_roles').insert(extraRoles.map((rid: string) => ({ enterprise_user_id: eu.id, role_id: rid })));
+            }
+          }
+        } catch(e) { console.warn('user_roles save:', e); }
+      }
+    }
   };
 
   const handleResetPassword = async () => {
@@ -314,7 +311,7 @@ function UsersPanel() {
     <div className="space-y-5">
       <div className="flex items-center justify-between">
         <div><h2 className="text-2xl font-bold text-[#0F172A]">Enterprise Users</h2><p className="text-gray-500 text-sm">{enterpriseUsers.length} user(s)</p></div>
-        <button onClick={()=>{setEditing(null);setForm({status:'Active'});setPassword('');setConfirmPassword('');setOpen(true);}} className="bg-gradient-to-r from-[#0F172A] to-blue-800 text-white px-5 py-2.5 rounded-2xl font-semibold text-sm shadow-lg hover:opacity-90">+ Add User</button>
+        <button onClick={()=>{setEditing(null);setForm({status:'Active',designation:'',username:'',first_name:'',last_name:'',email:'',phone:'',employee_code:'',organization_id:'',business_unit_id:'',role_id:''});setExtraRoles([]);setPassword('');setConfirmPassword('');setOpen(true);}} className="bg-gradient-to-r from-[#0F172A] to-blue-800 text-white px-5 py-2.5 rounded-2xl font-semibold text-sm shadow-lg hover:opacity-90">+ Add User</button>
       </div>
       <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search users by name, email, code..." className={iCls}/>
 
@@ -341,7 +338,16 @@ function UsersPanel() {
                   <td className="px-5 py-3"><span className={`px-2.5 py-0.5 rounded-full text-xs font-semibold ${u.status==='Active'?'bg-green-100 text-green-700':'bg-gray-100 text-gray-600'}`}>{u.status}</span></td>
                   <td className="px-5 py-3">
                     <div className="flex gap-2 flex-wrap">
-                      <button onClick={()=>{setEditing(u);setForm({...u});setPassword('');setConfirmPassword('');setOpen(true);}} className="bg-blue-100 hover:bg-blue-200 text-blue-700 px-3 py-1.5 rounded-xl text-xs font-semibold">Edit</button>
+                      <button onClick={async()=>{
+                        setEditing(u);setForm({...u,designation:u.designation||''});setPassword('');setConfirmPassword('');
+                        // Load extra roles
+                        const bp = (window as any).__bp_supabase;
+                        if (bp) {
+                          const { data } = await bp.from('user_roles').select('role_id').eq('enterprise_user_id', u.id);
+                          setExtraRoles((data||[]).map((r:any)=>r.role_id));
+                        } else { setExtraRoles([]); }
+                        setOpen(true);
+                      }} className="bg-blue-100 hover:bg-blue-200 text-blue-700 px-3 py-1.5 rounded-xl text-xs font-semibold">Edit</button>
                       {u.auth_user_id && <button onClick={()=>{setResetPwUserId(u.id);setResetPwValue('');}} className="bg-purple-100 hover:bg-purple-200 text-purple-700 px-3 py-1.5 rounded-xl text-xs font-semibold">Reset PW</button>}
                       <button onClick={()=>updateAdminStatus('enterprise_users',u.id,u.status==='Active'?'Inactive':'Active')} className="bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1.5 rounded-xl text-xs font-semibold">{u.status==='Active'?'Deactivate':'Activate'}</button>
                     </div>
@@ -364,11 +370,19 @@ function UsersPanel() {
         <div className="space-y-5">
           {/* Profile fields */}
           <div className="grid grid-cols-2 gap-4">
-            {([['First Name','first_name','text',true],['Last Name','last_name','text',false],['Email','email','email',true],['Phone','phone','tel',false],['Employee Code','employee_code','text',false],['Username','username','text',false],['Designation','designation','text',false]] as [string,string,string,boolean][]).map(([label,field,type,req])=>(
+            {([
+              ['First Name *','first_name','text'],
+              ['Last Name *','last_name','text'],
+              ['Email *','email','email'],
+              ['Phone','phone','tel'],
+              ['Employee Code','employee_code','text'],
+              ['Username','username','text'],
+              ['Designation','designation','text'],
+            ] as [string,string,string][]).map(([label,field,type])=>(
               <div key={field}>
-                <L t={label+(req?' *':'')}/>
+                <L t={label}/>
                 <input
-                  value={form[field]||''}
+                  value={(form as any)[field]||''}
                   onChange={e=>s(field,e.target.value)}
                   type={type}
                   disabled={field==='email'&&!!editing}
@@ -378,21 +392,41 @@ function UsersPanel() {
                     field==='email'&&editing?'Cannot change email':
                     field==='phone'?'+91 9876543210':
                     field==='designation'?'e.g. Sales Executive':
-                    field==='username'?'Auto-filled from email':''
+                    field==='username'?'Auto-filled from email':
+                    ''
                   }
                 />
               </div>
             ))}
-            <div><L t="Organization"/><select value={form.organization_id||''} onChange={e=>s('organization_id',e.target.value)} className={sCls}><option value="">Select</option>{organizations.map(o=><option key={o.id} value={o.id}>{o.name}</option>)}</select></div>
-            <div><L t="Business Unit"/><select value={form.business_unit_id||''} onChange={e=>s('business_unit_id',e.target.value)} className={sCls} disabled={!form.organization_id}><option value="">{form.organization_id?'Select Business Unit':'Select org first'}</option>{businessUnits.filter(b=>!form.organization_id||b.organization_id===form.organization_id).map(b=><option key={b.id} value={b.id}>{b.name}</option>)}</select></div>
-            <div><L t="Role"/>
-                <select value={form.role_id||''} onChange={e=>s('role_id',e.target.value)} className={sCls}>
-                  <option value="">No Role Assigned</option>
-                  {roles.map(r=><option key={r.id} value={r.id}>{r.role_name}</option>)}
-                </select>
-                {form.role_id && <div className="text-xs text-blue-600 mt-1">Role permissions will apply on next login or page refresh.</div>}
+            <div><L t="Organization"/><select value={(form as any).organization_id||''} onChange={e=>s('organization_id',e.target.value)} className={sCls}><option value="">Select Organization</option>{organizations.map(o=><option key={o.id} value={o.id}>{o.name}</option>)}</select></div>
+            <div><L t="Business Unit"/><select value={(form as any).business_unit_id||''} onChange={e=>s('business_unit_id',e.target.value)} className={sCls} disabled={!(form as any).organization_id}><option value="">{(form as any).organization_id?'Select Business Unit':'Select org first'}</option>{businessUnits.filter(b=>!(form as any).organization_id||b.organization_id===(form as any).organization_id).map(b=><option key={b.id} value={b.id}>{b.name}</option>)}</select></div>
+            <div className="col-span-2">
+              <L t="Primary Role"/>
+              <select value={(form as any).role_id||''} onChange={e=>s('role_id',e.target.value)} className={sCls}>
+                <option value="">No Role Assigned</option>
+                {roles.map(r=><option key={r.id} value={r.id}>{r.role_name} ({r.data_scope||'own'})</option>)}
+              </select>
+              {(form as any).role_id && <div className="text-xs text-blue-600 mt-1">Primary role permissions apply on next login.</div>}
+            </div>
+            <div className="col-span-2">
+              <L t="Additional Roles (Multi-Role)"/>
+              <p className="text-xs text-gray-400 mb-2">Select additional roles — permissions are combined across all assigned roles.</p>
+              <div className="grid grid-cols-2 gap-2 max-h-40 overflow-y-auto border border-gray-200 rounded-xl p-3">
+                {roles.filter(r=>r.id!==(form as any).role_id).map(r=>(
+                  <label key={r.id} className={`flex items-center gap-2 p-2 rounded-xl cursor-pointer border text-sm transition-all ${extraRoles.includes(r.id)?'bg-blue-50 border-blue-300 text-blue-800':'border-gray-100 hover:border-blue-200'}`}>
+                    <input type="checkbox" checked={extraRoles.includes(r.id)}
+                      onChange={e=>setExtraRoles(p=>e.target.checked?[...p,r.id]:p.filter(x=>x!==r.id))}
+                      className="w-4 h-4 accent-blue-600 flex-shrink-0"/>
+                    <div>
+                      <div className="font-semibold text-xs">{r.role_name}</div>
+                      <div className="text-[10px] text-gray-400">Scope: {r.data_scope||'own'}</div>
+                    </div>
+                  </label>
+                ))}
               </div>
-            <div><L t="Status"/><select value={form.status||'Active'} onChange={e=>s('status',e.target.value)} className={sCls}><option>Active</option><option>Inactive</option></select></div>
+              {extraRoles.length > 0 && <div className="text-xs text-green-600 mt-1">✓ {extraRoles.length} additional role{extraRoles.length>1?'s':''} selected</div>}
+            </div>
+            <div><L t="Status"/><select value={(form as any).status||'Active'} onChange={e=>s('status',e.target.value)} className={sCls}><option>Active</option><option>Inactive</option></select></div>
           </div>
 
           {/* Password — only shown when creating new user */}
@@ -481,16 +515,7 @@ function UserGroupsPanel() {
   const [activeGroup, setActiveGroup] = useState(null);
   const [form, setForm] = useState({status:'Active'});
   const [selectedUserIds, setSelectedUserIds] = useState([]);
-  const s = (k,v)=>{
-    setForm(f=>{
-      const next={...f,[k]:v};
-      // Auto-populate username from email
-      if(k==='email') next.username=v;
-      // Clear business unit when org changes
-      if(k==='organization_id') next.business_unit_id='';
-      return next;
-    });
-  };
+  const s = (k,v)=>setForm(f=>({...f,[k]:v}));
 
   const openMembers = async(group)=>{setActiveGroup(group);await fetchGroupMembers(group.id);setMembersOpen(true);};
 
@@ -565,16 +590,7 @@ function SecurityConsolePanel() {
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState({status:'Active'});
   const [selectedPerms, setSelectedPerms] = useState([]);
-  const s = (k,v)=>{
-    setForm(f=>{
-      const next={...f,[k]:v};
-      // Auto-populate username from email
-      if(k==='email') next.username=v;
-      // Clear business unit when org changes
-      if(k==='organization_id') next.business_unit_id='';
-      return next;
-    });
-  };
+  const s = (k,v)=>setForm(f=>({...f,[k]:v}));
   const modules = [...new Set(permissions.map(p=>p.module_name))];
 
   const openForm = async(role)=>{
@@ -832,16 +848,7 @@ function WorkflowBuilderPanel({ objectList = ALL_OBJECTS, conditionFields = COND
   const [conditions, setCond]   = useState({ logic:'AND', conditions:[] });
   const [actions, setActions]   = useState([{ action_type:'send_notification', action_config:{} }]);
   const [saving, setSaving]     = useState(false);
-  const s = (k,v)=>{
-    setForm(f=>{
-      const next={...f,[k]:v};
-      // Auto-populate username from email
-      if(k==='email') next.username=v;
-      // Clear business unit when org changes
-      if(k==='organization_id') next.business_unit_id='';
-      return next;
-    });
-  };
+  const s = (k,v)=>setForm(f=>({...f,[k]:v}));
 
   const fields = conditionFields[form.object_type] || [];
   const triggerFieldOpts = getFieldOptions(form.object_type, form.trigger_field);
@@ -1050,16 +1057,7 @@ function AssignmentRulesPanel({ objectList = ALL_OBJECTS, conditionFields = COND
   const [editing, setEditing] = useState(null);
   const [form, setForm]       = useState({ name:'', object_type:'leads', condition_field:'', condition_operator:'equals', condition_value:'', assign_to_user_id:'', assign_to_group_id:'', priority:1, is_active:true });
   const [saving, setSaving]   = useState(false);
-  const s = (k,v)=>{
-    setForm(f=>{
-      const next={...f,[k]:v};
-      // Auto-populate username from email
-      if(k==='email') next.username=v;
-      // Clear business unit when org changes
-      if(k==='organization_id') next.business_unit_id='';
-      return next;
-    });
-  };
+  const s = (k,v)=>setForm(f=>({...f,[k]:v}));
 
   const fields    = conditionFields[form.object_type] || [];
   const valueOpts = getFieldOptions(form.object_type, form.condition_field);
@@ -1240,16 +1238,7 @@ function SLAPanel({ objectList = ALL_OBJECTS, conditionFields = CONDITION_FIELDS
   const [editing, setEditing] = useState(null);
   const [form, setForm]       = useState({ name:'', object_type:'leads', condition_field:'status', condition_value:'', response_time_hours:24, resolution_time_hours:72, warning_threshold_pct:80, escalate_to_user_id:'', is_active:true });
   const [saving, setSaving]   = useState(false);
-  const s = (k,v)=>{
-    setForm(f=>{
-      const next={...f,[k]:v};
-      // Auto-populate username from email
-      if(k==='email') next.username=v;
-      // Clear business unit when org changes
-      if(k==='organization_id') next.business_unit_id='';
-      return next;
-    });
-  };
+  const s = (k,v)=>setForm(f=>({...f,[k]:v}));
 
   const fields    = conditionFields[form.object_type] || [];
   const valueOpts = getFieldOptions(form.object_type, form.condition_field);
@@ -1413,16 +1402,7 @@ function ApprovalProcessPanel({ objectList = ALL_OBJECTS, conditionFields = COND
   const [conditions, setCond]   = useState({ logic:'AND', conditions:[] });
   const [steps, setSteps]       = useState([{ step_number:1, step_name:'Manager Approval', approver_user_id:'', approver_group_id:'', approval_type:'any', on_approve_action:'proceed', on_reject_action:'reject' }]);
   const [saving, setSaving]     = useState(false);
-  const s = (k,v)=>{
-    setForm(f=>{
-      const next={...f,[k]:v};
-      // Auto-populate username from email
-      if(k==='email') next.username=v;
-      // Clear business unit when org changes
-      if(k==='organization_id') next.business_unit_id='';
-      return next;
-    });
-  };
+  const s = (k,v)=>setForm(f=>({...f,[k]:v}));
   const fields    = conditionFields[form.object_type] || [];
   const OBJ_LABELS = objectLabels || {};
 

@@ -211,8 +211,7 @@ export function AppProvider({ children, supabase = null }: { children: React.Rea
   }, [currentUser]);
 
   const applyDataSecurity = useCallback((records: any[]) => {
-    // If currentUser not loaded yet or permissions not loaded, return records as-is
-    // Re-fetch will correct scope once userDataScope is confirmed
+    // Return records as-is until permissions are loaded (re-fetch will correct scope)
     if (!currentUser || !permissionsLoaded) return records;
     const isAdmin    = currentUserPermissions.includes('__admin__') || (currentUser as any)?.is_admin === true;
     // Use dedicated userDataScope state (most reliable) then fall back to currentUser.data_scope
@@ -337,7 +336,7 @@ export function AppProvider({ children, supabase = null }: { children: React.Rea
         .ilike('email', session.user.email || '').maybeSingle();
       userData = d2;
     }
-    // Admin shortcut: is_admin=true → full access regardless of role
+    // Admin shortcut: is_admin=true gets full access immediately
     if (userData?.is_admin) {
       setCurrentUser((u: any) => u ? { ...u, data_scope: 'all' } : u);
       setUserDataScope('all');
@@ -357,26 +356,42 @@ export function AppProvider({ children, supabase = null }: { children: React.Rea
     } else if (userData.is_admin) {
       setUserDataScope('all');
     }
-    const { data: rpData } = await supabase
-      .from('role_permissions').select('permission_id').eq('role_id', userData.role_id);
-    const ids = (rpData || []).map((x: any) => x.permission_id);
-    if (!ids.length) {
-      // If user is_admin, grant __admin__ even with no role permissions
-      if (userData.is_admin) {
-        setCurrentUserPermissions(['__admin__']);
-      } else {
-        setCurrentUserPermissions([]);
+    // Collect all role IDs: primary + any extras from user_roles table
+    const allRoleIds: string[] = [userData.role_id];
+    try {
+      const { data: extraRoles } = await supabase
+        .from('user_roles').select('role_id').eq('enterprise_user_id', userData.id);
+      (extraRoles || []).forEach((r: any) => {
+        if (r.role_id && !allRoleIds.includes(r.role_id)) allRoleIds.push(r.role_id);
+      });
+      // Determine most-permissive data_scope across all roles
+      if (allRoleIds.length > 1) {
+        const { data: allRolesData } = await supabase
+          .from('roles').select('id, data_scope').in('id', allRoleIds);
+        const RANK: Record<string,number> = { all:4, org:3, bu:2, own:1 };
+        let bestScope = userData.roles?.data_scope || 'own';
+        (allRolesData || []).forEach((r: any) => {
+          if ((RANK[r.data_scope]||0) > (RANK[bestScope]||0)) bestScope = r.data_scope;
+        });
+        if (RANK[bestScope] > RANK[userData.roles?.data_scope||'own']) {
+          setCurrentUser((u: any) => u ? { ...u, data_scope: bestScope } : u);
+          setUserDataScope(bestScope);
+        }
       }
+    } catch(e) { /* user_roles table may not exist yet */ }
+
+    // Collect permissions from all roles
+    const { data: rpData } = await supabase
+      .from('role_permissions').select('permission_id').in('role_id', allRoleIds);
+    const ids = [...new Set((rpData || []).map((x: any) => x.permission_id))];
+    if (!ids.length) {
+      setCurrentUserPermissions([]);
       setPermissionsLoaded(true);
       return;
     }
     const { data: permsData } = await supabase
       .from('permissions').select('permission_code').in('id', ids);
-    const codes = (permsData || []).map((x: any) => x.permission_code);
-    // Always inject __admin__ if user has is_admin flag, regardless of DB permissions
-    if (userData.is_admin && !codes.includes('__admin__')) {
-      codes.push('__admin__');
-    }
+    const codes = [...new Set((permsData || []).map((x: any) => x.permission_code).filter(Boolean))];
     setCurrentUserPermissions(codes);
     setPermissionsLoaded(true);
   };
@@ -2534,7 +2549,19 @@ export function AppProvider({ children, supabase = null }: { children: React.Rea
     await refs[page]?.();
   };
 
-  const adminResetPassword = async (authUserId, password) => { if(!authUserId||!password){console.warn('[adminResetPassword] missing args');return;} try{const tenant=(window as any).__bp_tenant||{};const r=await fetch('/api/admin/reset-password',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({authUserId,password,db_url:tenant.db_url||null})});const j=await r.json();if(!r.ok)alert('Password reset failed: '+(j.error||r.status));}catch(e:any){alert('Password reset error: '+e.message);} };
+  const adminResetPassword = async (authUserId: string, password: string) => {
+    if (!authUserId || !password) { console.warn('[adminResetPassword] missing args'); return; }
+    try {
+      const tenant = (window as any).__bp_tenant || {};
+      const r = await fetch('/api/admin/reset-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ authUserId, password, db_url: tenant.db_url || null }),
+      });
+      const j = await r.json();
+      if (!r.ok) alert('Password reset failed: ' + (j.error || r.status));
+    } catch(e: any) { alert('Password reset error: ' + e.message); }
+  };
 
 
   const fetchRolePermissionsForEdit = async (roleId) => {

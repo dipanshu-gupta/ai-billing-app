@@ -9,19 +9,19 @@ export async function POST(request: Request) {
 
     const masterUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
     const masterKey = process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY!;
-
     let targetUrl = masterUrl;
     let targetKey = masterKey;
 
-    // If tenant has its own Supabase, look up the service key
-    if (db_url && db_url !== masterUrl) {
-      const masterClient = createClient(masterUrl, masterKey, { auth: { autoRefreshToken: false, persistSession: false } });
-      const { data: tenant } = await masterClient.from('tenants').select('db_service_key').eq('db_url', db_url).maybeSingle();
+    // Support tenant databases
+    if (db_url && db_url !== masterUrl && masterKey) {
+      const master = createClient(masterUrl, masterKey, { auth: { autoRefreshToken: false, persistSession: false } });
+      const { data: tenant } = await master.from('tenants').select('db_service_key').eq('db_url', db_url).maybeSingle();
       if (tenant?.db_service_key) { targetUrl = db_url; targetKey = tenant.db_service_key; }
     }
 
     const supabaseAdmin = createClient(targetUrl, targetKey, { auth: { autoRefreshToken: false, persistSession: false } });
     const { error } = await supabaseAdmin.auth.admin.updateUserById(authUserId, { password });
+
     if (error) return NextResponse.json({ error: error.message }, { status: 400 });
     return NextResponse.json({ success: true });
   } catch (err: any) {
