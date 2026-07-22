@@ -21,6 +21,7 @@ interface AppContextValue {
   currentUser: EnterpriseUser | null;
   currentUserPermissions: string[];
   permissionsLoaded: boolean;
+  userDataScope: string | null;
   handleLogin: (email: string, password: string) => Promise<void>;
   handleLogout: () => Promise<void>;
   resetMyPassword: (newPassword: string) => Promise<void>;
@@ -158,6 +159,7 @@ export function AppProvider({ children, supabase = null }: { children: React.Rea
   const [session, setSession] = useState<any>(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [currentUser, setCurrentUser] = useState<EnterpriseUser | null>(null);
+  const [userDataScope, setUserDataScope] = useState<string | null>(null); // dedicated scope state
   const [currentUserPermissions, setCurrentUserPermissions] = useState<string[]>([]);
   const [permissionsLoaded, setPermissionsLoaded] = useState(false);
 
@@ -209,11 +211,11 @@ export function AppProvider({ children, supabase = null }: { children: React.Rea
   }, [currentUser]);
 
   const applyDataSecurity = useCallback((records: any[]) => {
-    // If currentUser not loaded yet, return empty array to avoid showing all data
-    // Records will be re-fetched and filtered once currentUser + data_scope are available
+    // If currentUser not loaded yet, return empty array to prevent flash of all data
     if (!currentUser) return [];
     const isAdmin    = currentUserPermissions.includes('__admin__') || (currentUser as any)?.is_admin === true;
-    const dataScope  = (currentUser as any)?.data_scope || (isAdmin ? 'all' : 'own');
+    // Use dedicated userDataScope state (most reliable) then fall back to currentUser.data_scope
+    const dataScope  = userDataScope || (currentUser as any)?.data_scope || (isAdmin ? 'all' : 'own');
     const viewAll    = currentUserPermissions.includes('view_all_records');
     const viewTeam   = currentUserPermissions.includes('view_team_records');
 
@@ -243,10 +245,24 @@ export function AppProvider({ children, supabase = null }: { children: React.Rea
     }
 
     // Default: own records only
-    return records.filter((r: any) =>
-      !r.owner_id || r.owner_id === currentUser.id || r.owner === currentUser.email
-    );
-  }, [currentUser, currentUserPermissions]);
+    // Match on owner_id (UUID), owner email, or created_by email
+    // owner_id may be null on older records so we check all three
+    return records.filter((r: any) => {
+      const userId    = (currentUser as any).id;
+      const userEmail = (currentUser as any).email;
+      const authId    = (currentUser as any).auth_user_id;
+      return (
+        // No owner set — include (unassigned records visible to all)
+        (!r.owner_id && !r.owner && !r.created_by) ||
+        // Match by owner_id UUID
+        (r.owner_id && (r.owner_id === userId || r.owner_id === authId)) ||
+        // Match by owner email
+        (r.owner && r.owner.toLowerCase() === userEmail?.toLowerCase()) ||
+        // Match by created_by email (for records without explicit owner)
+        (r.created_by && r.created_by.toLowerCase() === userEmail?.toLowerCase())
+      );
+    });
+  }, [currentUser, currentUserPermissions, userDataScope]);
 
   // \u2500\u2500\u2500 Auth \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 
@@ -295,8 +311,9 @@ export function AppProvider({ children, supabase = null }: { children: React.Rea
       data = d2;
     }
     if (data) {
-      // Merge data_scope from role directly so applyDataSecurity has it immediately
-      setCurrentUser({ ...data, data_scope: data.roles?.data_scope || data.data_scope || null });
+      const scope = data.roles?.data_scope || data.data_scope || null;
+      setCurrentUser({ ...data, data_scope: scope });
+      if (scope) setUserDataScope(scope);
       // If auth_user_id not set in DB, update it now
       if (!data.auth_user_id && session.user.id) {
         await supabase.from('enterprise_users')
@@ -324,9 +341,12 @@ export function AppProvider({ children, supabase = null }: { children: React.Rea
       setPermissionsLoaded(true);
       return;
     }
-    // Store data_scope on currentUser for applyDataSecurity
+    // Store data_scope on currentUser AND dedicated state for applyDataSecurity
     if (userData.roles?.data_scope) {
       setCurrentUser((u: any) => u ? { ...u, data_scope: userData.roles.data_scope } : u);
+      setUserDataScope(userData.roles.data_scope);
+    } else if (userData.is_admin) {
+      setUserDataScope('all');
     }
     const { data: rpData } = await supabase
       .from('role_permissions').select('permission_id').eq('role_id', userData.role_id);
@@ -2184,12 +2204,12 @@ export function AppProvider({ children, supabase = null }: { children: React.Rea
     loadCurrentUserPermissions();
   }, [session?.user?.email, currentUser?.role_id]);
 
-  // Re-fetch all data once permissions + data_scope are loaded
-  // This ensures applyDataSecurity runs with the correct scope
+  // Re-fetch all data once permissions + data_scope are confirmed
+  // This ensures applyDataSecurity runs with the correct scope after auth resolves
   useEffect(() => {
-    if (!permissionsLoaded || !currentUser?.data_scope) return;
+    if (!permissionsLoaded || !userDataScope) return;
     // Only re-fetch if scope is restrictive (not 'all') to avoid double-fetching for admins
-    if (currentUser.data_scope === 'all') return;
+    if (userDataScope === 'all') return;
     // Re-fetch all B2B objects with correct scope applied
     Promise.all([
       fetchCustomers(), fetchLeads(), fetchOpportunities(), fetchOrders(),
@@ -2197,7 +2217,7 @@ export function AppProvider({ children, supabase = null }: { children: React.Rea
       fetchRetailCustomers(), fetchRetailProducts(), fetchRetailActivities(),
       fetchRetailOrders(), fetchRetailInvoices(),
     ]);
-  }, [permissionsLoaded, currentUser?.data_scope]);
+  }, [permissionsLoaded, userDataScope]);
 
   useEffect(() => {
     if (!currentUser?.email) return;
