@@ -399,7 +399,7 @@ export function AppProvider({ children, supabase = null }: { children: React.Rea
   // ─── RBAC helpers ─────────────────────────────────────────────────────────
   // Returns true if user has the given permission code OR is an admin (__admin__)
   const hasPermission = (code: string): boolean => {
-    if (!permissionsLoaded) return true; // optimistic while loading
+    if (!permissionsLoaded) return false; // deny until loaded (prevents premature UI access)
     if (currentUserPermissions.includes('__admin__')) return true;
     return currentUserPermissions.includes(code);
   };

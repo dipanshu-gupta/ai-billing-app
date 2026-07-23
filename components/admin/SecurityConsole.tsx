@@ -136,16 +136,32 @@ export default function SecurityConsole() {
   useEffect(() => {
     if (!roles.length || !supabase) return;
     const loadAllPerms = async () => {
-      for (const r of roles) {
-        const { data: rpData } = await supabase
-          .from('role_permissions').select('permission_id').eq('role_id', r.id);
-        if (!rpData?.length) { setRolePermsMap(p => ({ ...p, [r.id]: [] })); continue; }
-        const permIds = rpData.map(x => x.permission_id);
-        const { data: permData } = await supabase
-          .from('permissions').select('permission_code').in('id', permIds);
-        const codes = (permData || []).map(p => p.permission_code).filter(Boolean);
-        setRolePermsMap(prev => ({ ...prev, [r.id]: codes }));
+      // Batch load ALL role_permissions in 2 queries (not N+1)
+      const allIds = roles.map(r => r.id);
+      const { data: rpAll } = await supabase
+        .from('role_permissions')
+        .select('role_id, permission_id')
+        .in('role_id', allIds);
+      if (!rpAll?.length) {
+        const empty: Record<string,string[]> = {};
+        allIds.forEach(id => { empty[id] = []; });
+        setRolePermsMap(empty);
+        return;
       }
+      const permIds = [...new Set(rpAll.map(x => x.permission_id))];
+      const { data: permData } = await supabase
+        .from('permissions').select('id, permission_code').in('id', permIds);
+      const permCodeMap: Record<string,string> = {};
+      (permData || []).forEach((p: any) => { permCodeMap[p.id] = p.permission_code; });
+
+      // Build roleId → permission codes map
+      const map: Record<string, string[]> = {};
+      allIds.forEach(id => { map[id] = []; });
+      rpAll.forEach((rp: any) => {
+        const code = permCodeMap[rp.permission_id];
+        if (code && map[rp.role_id]) map[rp.role_id].push(code);
+      });
+      setRolePermsMap(map);
     };
     loadAllPerms();
   }, [roleIds]);
@@ -269,48 +285,53 @@ export default function SecurityConsole() {
 
   const handleSeedRoles = async () => {
     if (!supabase) { showToast('No database connection', true); return; }
-    if (!confirm('This will create 4 standard roles with permissions. Continue?')) return;
+    if (!confirm('This will create/update 4 standard roles with full permissions. Existing roles with matching codes will be updated. Continue?')) return;
     setSeeding(true);
-    console.log('[Seed] Starting role seeding...');
     try {
-      for (const seed of SEEDED_ROLES) {
-        // Check if role already exists
-        const { data: existing } = await supabase.from('roles').select('id').eq('role_code', seed.role_code).maybeSingle();
-        let roleId = existing?.id;
+      // Step 1: Batch upsert all permission definitions
+      const permRows = FULL_PERMISSIONS.map(p => ({
+        permission_name: p.name, permission_code: p.code, module_name: p.module,
+      }));
+      // Upsert in batches of 50
+      for (let i = 0; i < permRows.length; i += 50) {
+        await supabase.from('permissions')
+          .upsert(permRows.slice(i, i+50), { onConflict: 'permission_code', ignoreDuplicates: false });
+      }
 
-        if (!roleId) {
-          const { data: nr } = await supabase.from('roles')
-            .insert({ role_name: seed.role_name, role_code: seed.role_code, description: seed.description, status: seed.status, data_scope: seed.data_scope })
-            .select().single();
-          roleId = nr?.id;
-        }
+      // Step 2: Load all permissions to build code→id map
+      const { data: allPerms } = await supabase.from('permissions').select('id, permission_code');
+      const permMap: Record<string, string> = {};
+      (allPerms || []).forEach((p: any) => { permMap[p.permission_code] = p.id; });
+
+      // Step 3: Upsert each role and batch-insert its permissions
+      for (const seed of SEEDED_ROLES) {
+        // Upsert role
+        const { data: roleRow } = await supabase.from('roles')
+          .upsert({
+            role_name: seed.role_name, role_code: seed.role_code,
+            description: seed.description, status: seed.status, data_scope: seed.data_scope,
+          }, { onConflict: 'role_code' })
+          .select('id').single();
+        const roleId = roleRow?.id;
         if (!roleId) continue;
 
-        // Sync permissions
+        // Delete and batch re-insert permissions
         await supabase.from('role_permissions').delete().eq('role_id', roleId);
 
-        for (const code of seed.permissions) {
-          const pdef = FULL_PERMISSIONS.find(p => p.code === code);
-          if (!pdef) continue;
-          let { data: perm } = await supabase.from('permissions').select('id').eq('permission_code', code).maybeSingle();
-          if (!perm) {
-            const { data: np } = await supabase.from('permissions')
-              .insert({ permission_name: pdef.name, permission_code: code, module_name: pdef.module })
-              .select().single();
-            perm = np;
-          }
-          if (perm) await supabase.from('role_permissions').insert({ role_id: roleId, permission_id: perm.id });
+        const rpRows = seed.permissions
+          .filter(code => !!permMap[code])
+          .map(code => ({ role_id: roleId, permission_id: permMap[code] }));
+
+        // Batch insert in groups of 100
+        for (let i = 0; i < rpRows.length; i += 100) {
+          await supabase.from('role_permissions').insert(rpRows.slice(i, i+100));
         }
       }
-      // Reload roles directly
-      const { data: freshRoles } = await supabase.from('roles').select('*').order('created_at');
-      if (freshRoles) {
-        // Trigger a page refresh to reload via AppContext
-        await fetchRoles();
-      }
-      showToast('✓ 4 standard roles seeded successfully');
+
+      await fetchRoles();
+      showToast('✓ 4 standard roles seeded with all permissions');
       setTab('roles');
-    } catch(e) {
+    } catch(e: any) {
       console.error('[Seed] Failed:', e);
       showToast('Seeding failed: ' + (e.message || String(e)), true);
     }
@@ -381,6 +402,10 @@ export default function SecurityConsole() {
           </div>
           <div className="flex gap-2 flex-wrap">
 
+            <button onClick={handleSeedRoles} disabled={seeding}
+              className="bg-amber-500 hover:bg-amber-600 text-white px-4 py-2.5 rounded-xl text-sm font-bold disabled:opacity-50">
+              {seeding ? '⏳ Seeding…' : '🌱 Seed Standard Roles'}
+            </button>
             <button onClick={() => openEdit(null)}
               className="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2.5 rounded-xl text-sm font-bold">
               + New Role
