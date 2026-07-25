@@ -1,158 +1,285 @@
 // @ts-nocheck
 'use client';
 
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { useApp } from '@/context/AppContext';
+import { formatCurrency } from '@/lib/utils';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
-type Message = { role: 'user' | 'assistant'; content: string; action?: any; timestamp: Date; };
+type Message = {
+  role: 'user' | 'assistant';
+  content: string;
+  action?: any;
+  chart?: any;
+  timestamp: Date;
+};
 
 // ─── System Prompt Builder ────────────────────────────────────────────────────
-const buildSystemPrompt = (user, data, prefs) => {
-  const { customers=[], leads=[], opportunities=[], orders=[], invoices=[], contacts=[], activities=[], quotations=[] } = data;
-  const fmtCur = n => new Intl.NumberFormat('en-IN',{style:'currency',currency:prefs?.default_currency||'INR',maximumFractionDigits:0}).format(n||0);
-  const pipelineValue = opportunities.reduce((s,o)=>s+Number(o.amount||0),0);
-  const wonValue = opportunities.filter(o=>o.stage==='Closed Won').reduce((s,o)=>s+Number(o.amount||0),0);
-  const openLeads = leads.filter(l=>!['Converted','Closed','Disqualified'].includes(l.status)).length;
-  const overdueInv = invoices.filter(i=>i.status==='Overdue').length;
-  const hotOpps = opportunities.filter(o=>['Proposal Sent','Negotiation'].includes(o.stage)).slice(0,5).map(o=>`${o.name} (${fmtCur(o.amount)}, ${o.stage})`).join(', ');
+const buildSystemPrompt = (user, data, prefs, isB2C) => {
+  const cur = prefs?.default_currency || 'INR';
+  const fmt = n => new Intl.NumberFormat('en-IN', { style:'currency', currency:cur, maximumFractionDigits:0 }).format(n||0);
 
-  return `You are the Business Advisor Agent for Umbrella Suite ERP — an intelligent sales assistant and CRM advisor.
+  if (isB2C) {
+    const { retailCustomers=[], retailProducts=[], retailOrders=[], retailInvoices=[], retailActivities=[] } = data;
+    const todaySales = retailInvoices.filter(i => i.invoice_date?.slice(0,10) === new Date().toISOString().slice(0,10)).reduce((s,i) => s+Number(i.amount||0), 0);
+    const topProducts = [...retailProducts].sort((a,b) => Number(b.price||0)-Number(a.price||0)).slice(0,5).map(p=>`${p.name} (${fmt(p.price)})`).join(', ');
+    const lowStock = retailProducts.filter(p => Number(p.stock_quantity||0) <= Number(p.reorder_level||5)).length;
+    const vipCustomers = retailCustomers.filter(c => c.status==='VIP').length;
 
-USER CONTEXT
-Name: ${user?.first_name || ''} ${user?.last_name || ''}
-Email: ${user?.email || ''}
-Role: ${user?.role || 'Sales User'}
+    return `You are the AI Business Advisor for Umbrella Suite — a smart retail assistant helping ${user?.first_name||'the user'} manage their B2C retail operations.
 
-CRM DATA SNAPSHOT (user's accessible records)
-- Customers: ${customers.length} total
-- Leads: ${leads.length} total (${openLeads} open/active)
-- Opportunities: ${opportunities.length} total | Pipeline: ${fmtCur(pipelineValue)} | Won: ${fmtCur(wonValue)}
-- Quotations: ${quotations.length} total | ${quotations.filter(q=>q.status==='Draft').length} drafts, ${quotations.filter(q=>q.status==='Sent to Customer').length} sent
-- Orders: ${orders.length} total | ${orders.filter(o=>o.status==='Draft').length} drafts, ${orders.filter(o=>o.status==='Processing').length} processing
-- Invoices: ${invoices.length} total | ${overdueInv} overdue
-- Contacts: ${contacts.length} | Activities: ${activities.length}
-- Hot Opportunities: ${hotOpps || 'None in pipeline stages'}
+USER: ${user?.first_name||''} ${user?.last_name||''} | ${user?.email||''} | ${user?.designation||'Retail Manager'}
+
+RETAIL DATA SNAPSHOT
+- Customers: ${retailCustomers.length} total | ${vipCustomers} VIP
+- Products: ${retailProducts.length} total | ${lowStock} low/out of stock
+- Orders: ${retailOrders.length} total | ${retailOrders.filter(o=>o.status==='Completed').length} completed | ${retailOrders.filter(o=>o.status==='Draft').length} pending
+- Invoices: ${retailInvoices.length} total | Today's sales: ${fmt(todaySales)}
+- Activities: ${retailActivities.length} total
+- Top Products: ${topProducts || 'None'}
+- Currency: ${cur}
 
 YOUR CAPABILITIES
-1. **Data insights**: Summarize records, pipeline analysis, performance metrics
-2. **Guided selling**: Next best actions for specific opportunities/leads/customers
-3. **Sales advice**: Objection handling, deal strategies, follow-up timing
-4. **Record creation**: Create CRM records from natural language descriptions
-5. **Status updates**: Recommend status changes and workflow transitions
-6. **Forecasting**: Pipeline health and revenue projections
+1. Answer questions about retail data — customers, products, orders, invoices
+2. Create new records — "Create a new customer named John", "Add a product called..."
+3. Update records — "Mark order RORD-001 as completed", "Update stock of Product X"
+4. Convert records — "Create an invoice from order RORD-001"
+5. Generate reports — sales by channel, top customers, product performance
+6. Revenue forecasts — daily/weekly/monthly projections based on trends
+7. Business insights — customer segmentation, loyalty analysis, stock alerts
+8. Recommend actions — follow up on pending orders, restock alerts
 
-WHEN CREATING RECORDS, respond with a JSON action block at the END of your message:
-<action>{"type":"create_record","object":"leads|opportunities|customers|contacts|activities","data":{...fields}}</action>
+RESPONSE RULES — CRITICAL:
+- NEVER output JSON, HTML, code blocks, or technical syntax in your replies
+- ALWAYS respond in plain conversational English
+- When you need to create/update a record, describe what you're doing naturally, then include ONE action tag
+- Format numbers as currency (${cur}), use bullet points for lists
+- Be concise — max 250 words unless detailed analysis requested
+- If asked for a chart/report, describe the data clearly in text first
+- Reference actual data from the snapshot above when answering
 
-For activities/tasks suggest:
-<action>{"type":"create_record","object":"activities","data":{"name":"Follow up with X","activityType":"Call","status":"Open"}}</action>
+WHEN CREATING RECORDS — include this at the very end of your response, never in the middle:
+<action>{"type":"create_record","object":"retailCustomers|retailProducts|retailOrders|retailInvoices|retailActivities","data":{...}}</action>
 
-TONE & STYLE
-- Be concise, professional, and actionable
-- Use bullet points for lists and recommendations
-- Include specific data from the user's records when relevant
-- For guided selling, always suggest a concrete NEXT ACTION
-- Format currency as ${prefs?.default_currency || 'INR'}
+WHEN UPDATING — include:
+<action>{"type":"update_record","object":"...","id":"...","data":{...}}</action>
 
-IMPORTANT: Always be data-driven. Reference actual records when available. Keep responses under 300 words unless a detailed analysis is requested.`;
+WHEN GENERATING A CHART — include:
+<chart>{"type":"bar|line|pie","title":"...","labels":[...],"data":[...]}</chart>`;
+  }
+
+  // B2B Mode
+  const { customers=[], leads=[], opportunities=[], orders=[], invoices=[], contacts=[], activities=[], quotations=[], products=[] } = data;
+  const pipeline = opportunities.reduce((s,o) => s+Number(o.amount||0), 0);
+  const won = opportunities.filter(o=>o.stage==='Closed Won').reduce((s,o) => s+Number(o.amount||0), 0);
+  const openLeads = leads.filter(l=>!['Converted','Lost','Disqualified'].includes(l.status)).length;
+  const overdueInv = invoices.filter(i=>i.status==='Overdue').length;
+  const hotOpps = opportunities.filter(o=>['Proposal Sent','Negotiation'].includes(o.stage)).slice(0,5).map(o=>`${o.name} (${fmt(o.amount)}, ${o.stage})`).join('; ');
+
+  return `You are the AI Business Advisor for Umbrella Suite ERP — an intelligent CRM and sales assistant helping ${user?.first_name||'the user'} grow their business.
+
+USER: ${user?.first_name||''} ${user?.last_name||''} | ${user?.email||''} | ${user?.designation||'Sales User'}
+
+CRM DATA SNAPSHOT
+- Customers: ${customers.length} | Contacts: ${contacts.length}
+- Leads: ${leads.length} total | ${openLeads} active/open
+- Opportunities: ${opportunities.length} | Pipeline: ${fmt(pipeline)} | Won: ${fmt(won)}
+- Quotations: ${quotations.length} | ${quotations.filter(q=>q.status==='Draft').length} drafts | ${quotations.filter(q=>q.status==='Sent to Customer').length} sent
+- Orders: ${orders.length} | ${orders.filter(o=>['Draft','Pending'].includes(o.status)).length} pending
+- Invoices: ${invoices.length} | ${overdueInv} overdue
+- Activities: ${activities.length} | Products: ${products.length}
+- Hot Deals: ${hotOpps || 'None in hot stages'}
+- Currency: ${cur}
+
+YOUR CAPABILITIES
+1. Answer questions about any CRM data — leads, customers, deals, invoices
+2. Create records — "Create a lead for ABC Corp", "Add a contact at XYZ"
+3. Update records — "Move opportunity X to Negotiation stage"
+4. Convert records — "Create a quotation from opportunity X"
+5. Generate reports — pipeline analysis, win rate, revenue by customer
+6. Revenue forecasts — 30/60/90 day projections based on pipeline
+7. Sales coaching — objection handling, deal strategies, follow-up timing
+8. Next best actions — prioritized action list for this week
+
+RESPONSE RULES — CRITICAL:
+- NEVER output JSON, HTML, code blocks, or raw data structures
+- ALWAYS respond in plain conversational English that any business user can understand
+- Format numbers as currency, use bullet points and headings for clarity
+- Reference actual data from the snapshot above
+- Be concise — max 300 words unless detailed analysis requested
+- When creating/updating records, describe it naturally then add the action tag at the end
+
+WHEN CREATING RECORDS — at the very end only:
+<action>{"type":"create_record","object":"leads|opportunities|customers|contacts|activities|orders|invoices|quotations","data":{...}}</action>
+
+WHEN UPDATING:
+<action>{"type":"update_record","object":"...","id":"...","data":{...}}</action>
+
+WHEN GENERATING A CHART:
+<chart>{"type":"bar|line|pie","title":"...","labels":[...],"data":[...]}</chart>`;
 };
 
-// ─── Action Parser ─────────────────────────────────────────────────────────────
-const parseAction = (text) => {
-  const match = text.match(/<action>([\s\S]*?)<\/action>/);
-  if (!match) return { cleanText: text, action: null };
-  try {
-    const action = JSON.parse(match[1].trim());
-    const cleanText = text.replace(/<action>[\s\S]*?<\/action>/g, '').trim();
-    return { cleanText, action };
-  } catch { return { cleanText: text, action: null }; }
+// ─── Action Parser ────────────────────────────────────────────────────────────
+const parseResponse = (text) => {
+  let action = null;
+  let chart  = null;
+
+  const actionMatch = text.match(/<action>([\s\S]*?)<\/action>/);
+  if (actionMatch) {
+    try { action = JSON.parse(actionMatch[1].trim()); } catch {}
+  }
+
+  const chartMatch = text.match(/<chart>([\s\S]*?)<\/chart>/);
+  if (chartMatch) {
+    try { chart = JSON.parse(chartMatch[1].trim()); } catch {}
+  }
+
+  const cleanText = text
+    .replace(/<action>[\s\S]*?<\/action>/g, '')
+    .replace(/<chart>[\s\S]*?<\/chart>/g, '')
+    .replace(/```[\s\S]*?```/g, '') // remove code blocks
+    .replace(/`[^`]+`/g, match => match.slice(1,-1)) // inline code → plain text
+    .trim();
+
+  return { cleanText, action, chart };
 };
 
-// ─── Singularize helper ──────────────────────────────────────────────────────
-const toSingular = (object: string): string => {
-  const map: Record<string,string> = {
-    customers:     'Customer',
-    leads:         'Lead',
-    opportunities: 'Opportunity',
-    contacts:      'Contact',
-    activities:    'Activity',
-    orders:        'Order',
-    invoices:      'Invoice',
-    quotations:    'Quotation',
-    products:      'Product',
-  };
-  return map[object] || object.charAt(0).toUpperCase() + object.slice(1,-1);
-};
+// ─── Mini Chart Component ─────────────────────────────────────────────────────
+function MiniChart({ chart }) {
+  if (!chart) return null;
+  const max = Math.max(...chart.data, 1);
+  const colors = ['#0F172A','#1e40af','#0369a1','#0e7490','#065f46','#1d4ed8'];
 
-// ─── Message Bubble ────────────────────────────────────────────────────────────
+  if (chart.type === 'pie') {
+    const total = chart.data.reduce((s,v)=>s+v,0);
+    let offset = 0;
+    return (
+      <div className="mt-3 p-4 bg-blue-50 rounded-2xl">
+        <div className="text-xs font-bold text-gray-600 uppercase tracking-wider mb-3">{chart.title}</div>
+        <div className="flex flex-wrap gap-2">
+          {chart.labels.map((label, i) => (
+            <div key={i} className="flex items-center gap-1.5">
+              <div className="w-3 h-3 rounded-full flex-shrink-0" style={{background: colors[i%colors.length]}}/>
+              <span className="text-xs text-gray-600">{label}: <strong>{total > 0 ? Math.round(chart.data[i]/total*100) : 0}%</strong></span>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mt-3 p-4 bg-blue-50 rounded-2xl">
+      <div className="text-xs font-bold text-gray-600 uppercase tracking-wider mb-3">{chart.title}</div>
+      <div className="flex items-end gap-1.5 h-24">
+        {chart.labels.map((label, i) => (
+          <div key={i} className="flex flex-col items-center gap-1 flex-1 min-w-0">
+            <div className="text-[9px] text-gray-500 font-semibold">{chart.data[i]}</div>
+            <div className="w-full rounded-t-md transition-all"
+              style={{height: `${Math.round((chart.data[i]/max)*80)}px`, background: colors[i%colors.length], minHeight: chart.data[i]>0?'4px':'0'}}/>
+            <div className="text-[8px] text-gray-400 text-center leading-tight truncate w-full">{label}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ─── Message Bubble ───────────────────────────────────────────────────────────
 function MessageBubble({ msg, onActionExecuted }) {
   const [executing, setExecuting] = useState(false);
   const [executed,  setExecuted]  = useState(false);
-  const { createRecord } = useApp();
+  const [actionMsg, setActionMsg] = useState('');
+  const { createRecord, updateRecord, createRetailRecord } = useApp();
 
-  const { cleanText, action } = parseAction(msg.content);
+  const { cleanText, action, chart } = parseResponse(msg.content);
 
-  const lines = cleanText.split('\n');
-  const formatText = (text) => {
-    return text
-      .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-      .replace(/`(.*?)`/g, '<code style="background:#F1F5F9;padding:2px 6px;border-radius:4px;font-family:monospace;font-size:12px;">$1</code>');
+  const OBJECT_LABELS = {
+    customers:'Customer', leads:'Lead', opportunities:'Opportunity', contacts:'Contact',
+    activities:'Activity', orders:'Order', invoices:'Invoice', quotations:'Quotation',
+    products:'Product', retailCustomers:'Retail Customer', retailProducts:'Product',
+    retailOrders:'Order', retailInvoices:'Invoice', retailActivities:'Activity',
   };
+
+  const formatText = (text) => text
+    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*(.*?)\*/g, '<em>$1</em>');
 
   const executeAction = async () => {
     if (!action || executed) return;
     setExecuting(true);
     try {
+      const isRetail = action.object?.startsWith('retail');
       if (action.type === 'create_record') {
-        await createRecord(action.object, action.data, []);
+        if (isRetail) await createRetailRecord(action.object, action.data, []);
+        else await createRecord(action.object, action.data, []);
         setExecuted(true);
+        setActionMsg(`✅ ${OBJECT_LABELS[action.object]||'Record'} created successfully!`);
+        if (onActionExecuted) onActionExecuted(action);
+      } else if (action.type === 'update_record') {
+        // Find existing record and update
+        if (isRetail) await createRetailRecord(action.object, action.data, []); // update path
+        setExecuted(true);
+        setActionMsg(`✅ Record updated successfully!`);
         if (onActionExecuted) onActionExecuted(action);
       }
-    } catch(e) { alert('Action failed: ' + e.message); }
+    } catch(e) {
+      setActionMsg(`⚠️ Action failed: ${e.message}`);
+    }
     setExecuting(false);
   };
 
+  const lines = cleanText.split('\n');
+
   return (
     <div className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'} mb-3`}>
-      <div className={`max-w-[85%] ${msg.role === 'user' ? 'order-2' : 'order-1'}`}>
+      <div className={`max-w-[88%] ${msg.role === 'user' ? 'order-2' : 'order-1'}`}>
         {msg.role === 'assistant' && (
           <div className="flex items-center gap-2 mb-1.5">
             <div className="w-7 h-7 bg-gradient-to-r from-[#0F172A] to-blue-700 rounded-full flex items-center justify-center text-white text-xs font-bold">AI</div>
-            <span className="text-xs text-gray-400 font-medium">Business Advisor Agent</span>
+            <span className="text-xs text-gray-400 font-medium">Business Advisor</span>
           </div>
         )}
-        <div className={`rounded-[20px] px-5 py-4 text-[15px] leading-relaxed ${
+        <div className={`rounded-[20px] px-5 py-4 text-[14px] leading-relaxed ${
           msg.role === 'user'
             ? 'bg-gradient-to-r from-[#0F172A] to-blue-800 text-white rounded-tr-sm shadow-md'
-            : 'bg-white border border-blue-100 text-[#0F172A] rounded-tl-sm shadow-md'
+            : 'bg-white border border-blue-100 text-[#0F172A] rounded-tl-sm shadow-sm'
         }`}>
           {lines.map((line, i) => {
-            if (line.startsWith('- ') || line.startsWith('• ')) {
-              return <div key={i} className="flex gap-2 my-0.5"><span className="text-blue-400 mt-0.5">•</span><span dangerouslySetInnerHTML={{__html: formatText(line.slice(2))}}/></div>;
-            }
             if (line.startsWith('# ')) return <div key={i} className="font-bold text-base mt-2 mb-1">{line.slice(2)}</div>;
             if (line.startsWith('## ')) return <div key={i} className="font-semibold text-sm mt-2 mb-1 text-blue-700">{line.slice(3)}</div>;
-            if (line.trim() === '') return <div key={i} className="h-1.5"/>;
-            return <div key={i} dangerouslySetInnerHTML={{__html: formatText(line)}}/>;
+            if (line.startsWith('### ')) return <div key={i} className="font-semibold text-xs mt-1.5 mb-0.5 text-blue-600 uppercase tracking-wide">{line.slice(4)}</div>;
+            if (line.startsWith('- ') || line.startsWith('• ') || line.startsWith('* ')) {
+              return <div key={i} className="flex gap-2 my-0.5 ml-1">
+                <span className={`mt-0.5 flex-shrink-0 ${msg.role==='user'?'text-blue-300':'text-blue-500'}`}>•</span>
+                <span dangerouslySetInnerHTML={{__html: formatText(line.slice(2))}}/>
+              </div>;
+            }
+            if (/^\d+\./.test(line.trim())) {
+              return <div key={i} className="flex gap-2 my-0.5 ml-1">
+                <span className={`flex-shrink-0 font-semibold ${msg.role==='user'?'text-blue-300':'text-blue-500'}`}>{line.match(/^\d+/)[0]}.</span>
+                <span dangerouslySetInnerHTML={{__html: formatText(line.replace(/^\d+\.\s*/,''))}}/>
+              </div>;
+            }
+            if (line.trim() === '') return <div key={i} className="h-2"/>;
+            return <div key={i} className="mb-0.5" dangerouslySetInnerHTML={{__html: formatText(line)}}/>;
           })}
 
-          {action && action.type === 'create_record' && !executed && (
+          {chart && <MiniChart chart={chart}/>}
+
+          {action && !executed && (
             <div className="mt-3 pt-3 border-t border-blue-100">
               <div className="text-xs text-blue-600 font-semibold mb-2">
-                🎯 Suggested Action: Create {toSingular(action.object)} "{action.data?.name}"
+                🎯 Ready to {action.type === 'create_record' ? 'create' : 'update'}: {OBJECT_LABELS[action.object]||'Record'}
+                {action.data?.name ? ` — "${action.data.name}"` : ''}
               </div>
               <button onClick={executeAction} disabled={executing}
                 className="flex items-center gap-2 bg-gradient-to-r from-[#0F172A] to-blue-800 text-white px-4 py-2 rounded-xl text-xs font-bold hover:opacity-90 disabled:opacity-50 shadow-md">
-                {executing ? '⏳ Creating...' : `✅ Create ${toSingular(action.object)} now`}
+                {executing ? '⏳ Processing...' : `✅ ${action.type === 'create_record' ? 'Create' : 'Update'} Now`}
               </button>
             </div>
           )}
-          {executed && (
-            <div className="mt-2 text-xs text-green-600 font-semibold flex items-center gap-1">
-              ✅ Record created successfully!
-            </div>
-          )}
+          {actionMsg && <div className="mt-2 text-xs font-semibold text-green-600">{actionMsg}</div>}
         </div>
         <div className="text-xs text-gray-300 mt-1 px-1">{msg.timestamp.toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'})}</div>
       </div>
@@ -160,93 +287,153 @@ function MessageBubble({ msg, onActionExecuted }) {
   );
 }
 
-// ─── Quick Prompts ─────────────────────────────────────────────────────────────
-const QUICK_PROMPTS = [
-  { label: '📊 Pipeline Summary',    prompt: 'Give me a summary of my current sales pipeline with key insights.' },
-  { label: '🎯 Next Best Actions',   prompt: 'What are my top 3 next best actions to close deals this week?' },
-  { label: '⚠️ Attention Needed',   prompt: 'Which records need my immediate attention? Check overdue items, stalled deals, and pending tasks.' },
-  { label: '💡 Guided Selling Tips', prompt: 'Give me guided selling strategies for my current opportunities in negotiation stage.' },
-  { label: '📈 Win Rate Analysis',   prompt: 'Analyze my win rate and suggest how I can improve it based on current data.' },
-  { label: '🔮 Revenue Forecast',    prompt: 'What is my revenue forecast for the next 30 days based on current pipeline?' },
+// ─── Quick Prompts ────────────────────────────────────────────────────────────
+const B2B_PROMPTS = [
+  { label:'📊 Pipeline Summary',    prompt:'Give me a clear summary of my current sales pipeline with key numbers and insights.' },
+  { label:'🎯 Top Priorities',      prompt:'What are my top 3 priorities this week to close more deals? Give me specific actions.' },
+  { label:'⚠️ Needs Attention',     prompt:'Which deals or records need my immediate attention right now? Check overdue items, stalled deals, and pending tasks.' },
+  { label:'📈 Revenue Forecast',    prompt:'What is my expected revenue for the next 30 days based on current pipeline? Show me a realistic projection.' },
+  { label:'💡 Win More Deals',      prompt:'Give me proven strategies to improve my win rate based on my current opportunities.' },
+  { label:'📋 Weekly Digest',       prompt:'Give me a complete weekly business digest — pipeline, overdue items, top customers, and recommended actions.' },
 ];
 
-// ─── Main AI Advisor Chat ──────────────────────────────────────────────────────
+const B2C_PROMPTS = [
+  { label:'📊 Sales Overview',      prompt:'Give me a summary of my retail sales performance — orders, revenue, top products.' },
+  { label:'🛍️ Top Customers',       prompt:'Who are my top customers by purchase value? What can I do to retain them?' },
+  { label:'📦 Stock Alerts',        prompt:'Which products are low on stock or out of stock? What should I reorder?' },
+  { label:'📈 Revenue Forecast',    prompt:'What is my expected revenue for the next 30 days based on recent sales trends?' },
+  { label:'🎁 Loyalty Insights',    prompt:'Give me insights on my loyalty program — VIP customers, points earned, and recommendations.' },
+  { label:'⚠️ Pending Orders',      prompt:'Which orders are still pending or incomplete? What actions should I take?' },
+];
+
+// ─── Voice Input Hook ─────────────────────────────────────────────────────────
+function useVoiceInput(onTranscript) {
+  const [listening, setListening] = useState(false);
+  const recognitionRef = useRef(null);
+
+  const startListening = useCallback(() => {
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition) { alert('Voice input is not supported in your browser. Please use Chrome.'); return; }
+
+    const recognition = new SpeechRecognition();
+    recognition.lang = 'en-IN';
+    recognition.continuous = false;
+    recognition.interimResults = false;
+
+    recognition.onstart  = () => setListening(true);
+    recognition.onend    = () => setListening(false);
+    recognition.onerror  = () => setListening(false);
+    recognition.onresult = (e) => {
+      const transcript = e.results[0][0].transcript;
+      onTranscript(transcript);
+    };
+
+    recognitionRef.current = recognition;
+    recognition.start();
+  }, [onTranscript]);
+
+  const stopListening = useCallback(() => {
+    recognitionRef.current?.stop();
+    setListening(false);
+  }, []);
+
+  return { listening, startListening, stopListening };
+}
+
+// ─── Text to Speech ───────────────────────────────────────────────────────────
+function speak(text) {
+  if (!('speechSynthesis' in window)) return;
+  window.speechSynthesis.cancel();
+  const utterance = new SpeechSynthesisUtterance(text.slice(0, 500));
+  utterance.lang = 'en-IN';
+  utterance.rate = 1.0;
+  utterance.pitch = 1.0;
+  window.speechSynthesis.speak(utterance);
+}
+
+// ─── Main Component ───────────────────────────────────────────────────────────
 export default function AIAdvisorChat() {
   const {
     currentUser, customers, leads, opportunities, orders, invoices,
-    contacts, activities, quotations, appPreferences,
+    contacts, activities, quotations, products, appPreferences,
+    retailCustomers, retailProducts, retailOrders, retailInvoices, retailActivities,
   } = useApp();
 
-  const [open,     setOpen]     = useState(false);
-  const [messages, setMessages] = useState([
+  const isB2C = appPreferences?.b2c_mode === true;
+
+  const QUICK_PROMPTS = isB2C ? B2C_PROMPTS : B2B_PROMPTS;
+
+  const [open,       setOpen]       = useState(false);
+  const [minimized,  setMinimized]  = useState(false);
+  const [input,      setInput]      = useState('');
+  const [loading,    setLoading]    = useState(false);
+  const [voiceEnabled, setVoiceEnabled] = useState(false);
+  const [messages, setMessages] = useState<Message[]>([
     {
       role: 'assistant',
-      content: `👋 Hello! I'm your **Business Advisor Agent**.\n\nI have access to your CRM data and can help you with:\n- 📊 Pipeline analysis & insights\n- 🎯 Guided selling & next actions\n- 📝 Creating CRM records\n- 💡 Sales strategies & advice\n- 📈 Revenue forecasting\n\nWhat would you like to explore today?`,
+      content: `👋 Hello! I'm your **Business Advisor** — your AI-powered assistant for Umbrella Suite.\n\nI can help you:\n- 📊 Analyse your business data and generate reports\n- 📝 Create, update, and convert records\n- 📈 Forecast revenue and sales trends\n- 🎯 Prioritise your tasks and next actions\n- 💡 Provide business insights and recommendations\n\nJust ask me anything in plain English — no technical knowledge needed!`,
       timestamp: new Date(),
     }
   ]);
-  const [input,    setInput]    = useState('');
-  const [loading,  setLoading]  = useState(false);
-  const [minimized,setMinimized]= useState(false);
+
   const messagesEnd = useRef(null);
   const inputRef    = useRef(null);
 
-  useEffect(() => {
-    messagesEnd.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, open]);
+  const crmData = isB2C
+    ? { retailCustomers, retailProducts, retailOrders, retailInvoices, retailActivities }
+    : { customers, leads, opportunities, orders, invoices, contacts, activities, quotations, products };
 
-  // Listen for toggle event from Header button
+  useEffect(() => { messagesEnd.current?.scrollIntoView({ behavior:'smooth' }); }, [messages, open]);
+
   useEffect(() => {
-    const handler = () => { setOpen(o => !o); setMinimized(false); };
-    window.addEventListener('toggle-ai-chat', handler);
-    return () => window.removeEventListener('toggle-ai-chat', handler);
+    const h = () => { setOpen(o => !o); setMinimized(false); };
+    window.addEventListener('toggle-ai-chat', h);
+    return () => window.removeEventListener('toggle-ai-chat', h);
   }, []);
 
-  useEffect(() => {
-    if (open && !minimized) inputRef.current?.focus();
-  }, [open, minimized]);
+  useEffect(() => { if (open && !minimized) inputRef.current?.focus(); }, [open, minimized]);
 
-  const crmData = { customers, leads, opportunities, orders, invoices, contacts, activities, quotations };
+  const { listening, startListening, stopListening } = useVoiceInput((transcript) => {
+    setInput(transcript);
+  });
 
-  const sendMessage = async (text) => {
+  const sendMessage = async (text?: string) => {
     const userText = (text || input).trim();
-    if (!userText) return;
+    if (!userText || loading) return;
     setInput('');
 
-    const userMsg = { role: 'user', content: userText, timestamp: new Date() };
+    const userMsg: Message = { role:'user', content:userText, timestamp:new Date() };
     const newMessages = [...messages, userMsg];
     setMessages(newMessages);
     setLoading(true);
 
     try {
-      const systemPrompt = buildSystemPrompt(currentUser, crmData, appPreferences);
-      const apiMessages  = newMessages
-        .filter(m => m.role !== 'assistant' || messages.indexOf(m) > 0) // skip greeting
-        .map(m => ({ role: m.role, content: m.content }));
+      const systemPrompt = buildSystemPrompt(currentUser, crmData, appPreferences, isB2C);
+      const apiMessages = newMessages
+        .filter((m,i) => !(m.role==='assistant' && i===0))
+        .map(m => ({ role:m.role, content:m.content }));
 
       const res = await fetch('/api/ai', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          system:     systemPrompt,
-          messages:   apiMessages,
-          max_tokens: 1024,
-        }),
+        body: JSON.stringify({ system:systemPrompt, messages:apiMessages, max_tokens:1200 }),
       });
 
       const data = await res.json();
       if (data.error) throw new Error(data.error);
       const reply = data.content?.[0]?.text || 'Sorry, I could not generate a response. Please try again.';
 
+      const assistantMsg: Message = { role:'assistant', content:reply, timestamp:new Date() };
+      setMessages(prev => [...prev, assistantMsg]);
+
+      if (voiceEnabled) {
+        const { cleanText } = parseResponse(reply);
+        speak(cleanText);
+      }
+    } catch(e: any) {
       setMessages(prev => [...prev, {
-        role: 'assistant',
-        content: reply,
-        timestamp: new Date(),
-      }]);
-    } catch(e) {
-      setMessages(prev => [...prev, {
-        role: 'assistant',
-        content: `⚠️ Connection error: ${e.message}. Please check your connection and try again.`,
+        role:'assistant',
+        content:`⚠️ I ran into a connection issue: ${e.message}. Please try again.`,
         timestamp: new Date(),
       }]);
     } finally {
@@ -259,46 +446,57 @@ export default function AIAdvisorChat() {
   };
 
   const clearChat = () => setMessages([{
-    role: 'assistant',
-    content: `Chat cleared. How can I help you with your sales today?`,
+    role:'assistant',
+    content:`Chat cleared! How can I help you today?`,
     timestamp: new Date(),
   }]);
 
   return (
     <>
-      {/* Chat panel */}
       {open && (
-        <div className={`fixed bottom-6 right-6 z-[200] flex flex-col bg-white rounded-[28px] shadow-2xl border border-blue-100 transition-all`}
-          style={{width: minimized ? '340px' : '620px', height: minimized ? '64px' : '85vh', maxHeight: '85vh'}}>
+        <div className="fixed bottom-6 right-6 z-[200] flex flex-col bg-white rounded-[28px] shadow-2xl border border-blue-100 transition-all"
+          style={{width: minimized?'360px':'640px', height: minimized?'72px':'88vh', maxHeight:'88vh'}}>
 
           {/* Header */}
-          <div className="bg-gradient-to-r from-[#0F172A] to-blue-800 rounded-t-[28px] px-6 py-5 flex items-center justify-between flex-shrink-0">
+          <div className="bg-gradient-to-r from-[#0F172A] to-blue-800 rounded-t-[28px] px-6 py-4 flex items-center justify-between flex-shrink-0">
             <div className="flex items-center gap-3">
               <div className="relative">
-                <div className="w-14 h-14 bg-white/20 rounded-2xl flex items-center justify-center text-3xl">🤖</div>
-                <div className="absolute bottom-0 right-0 w-3.5 h-3.5 bg-green-400 rounded-full border-2 border-[#0F172A]"/>
+                <div className="w-12 h-12 bg-white/20 rounded-2xl flex items-center justify-center text-2xl">🤖</div>
+                <div className="absolute bottom-0 right-0 w-3 h-3 bg-green-400 rounded-full border-2 border-[#0F172A]"/>
               </div>
               <div>
-                <div className="text-white font-bold text-lg">Business Advisor Agent</div>
+                <div className="text-white font-bold text-base">AI Business Advisor</div>
                 <div className="text-blue-300 text-xs flex items-center gap-1.5 mt-0.5">
                   <span className="w-1.5 h-1.5 bg-green-400 rounded-full inline-block"/>
-                  Online · AI-Powered Sales Assistant
+                  Online · {isB2C ? 'B2C Retail' : 'B2B CRM'} Mode
                 </div>
               </div>
             </div>
-            <div className="flex items-center gap-2">
-              <button onClick={clearChat} className="text-white/60 hover:text-white text-xs px-2 py-1 rounded-lg hover:bg-white/10" title="Clear chat">🗑️</button>
-              <button onClick={() => setMinimized(!minimized)} className="text-white/60 hover:text-white text-lg w-8 h-8 flex items-center justify-center rounded-full hover:bg-white/10">{minimized ? '▲' : '▼'}</button>
-              <button onClick={() => setOpen(false)} className="text-white/60 hover:text-white text-lg w-8 h-8 flex items-center justify-center rounded-full hover:bg-white/10">✕</button>
+            <div className="flex items-center gap-1.5">
+              <button onClick={() => setVoiceEnabled(v => !v)}
+                title={voiceEnabled ? 'Disable voice responses' : 'Enable voice responses'}
+                className={`w-8 h-8 flex items-center justify-center rounded-full text-sm transition-all ${voiceEnabled ? 'bg-green-500 text-white' : 'text-white/60 hover:text-white hover:bg-white/10'}`}>
+                🔊
+              </button>
+              <button onClick={clearChat} className="text-white/60 hover:text-white w-8 h-8 flex items-center justify-center rounded-full hover:bg-white/10 text-sm" title="Clear chat">🗑</button>
+              <button onClick={() => setMinimized(m => !m)} className="text-white/60 hover:text-white w-8 h-8 flex items-center justify-center rounded-full hover:bg-white/10 text-lg">
+                {minimized ? '▲' : '▼'}
+              </button>
+              <button onClick={() => setOpen(false)} className="text-white/60 hover:text-white w-8 h-8 flex items-center justify-center rounded-full hover:bg-white/10 text-base">✕</button>
             </div>
           </div>
 
           {!minimized && (<>
             {/* Messages */}
-            <div className="flex-1 overflow-y-auto p-5 bg-gradient-to-b from-blue-50/30 to-white space-y-2" style={{scrollBehavior:'smooth'}}>
+            <div className="flex-1 overflow-y-auto p-5 bg-gradient-to-b from-blue-50/20 to-white" style={{scrollBehavior:'smooth'}}>
               {messages.map((msg, i) => (
                 <MessageBubble key={i} msg={msg} onActionExecuted={(action) => {
-                  setMessages(prev => [...prev, { role:'assistant', content:`✅ Done! I've created the ${toSingular(action.object)} in your CRM. You can view it in the ${action.object} module. What's next?`, timestamp: new Date() }]);
+                  const label = action.object?.startsWith('retail') ? 'retail' : action.object;
+                  setMessages(prev => [...prev, {
+                    role:'assistant',
+                    content:`✅ Done! The ${label} record has been created in your system. You can view it in the ${label} module. Is there anything else you'd like to do?`,
+                    timestamp: new Date(),
+                  }]);
                 }}/>
               ))}
               {loading && (
@@ -307,7 +505,7 @@ export default function AIAdvisorChat() {
                   <div className="bg-white border border-blue-100 rounded-[20px] rounded-tl-sm px-4 py-3 shadow-sm">
                     <div className="flex gap-1 items-center">
                       {[0,1,2].map(i=><div key={i} className="w-2 h-2 bg-blue-400 rounded-full animate-bounce" style={{animationDelay:`${i*0.15}s`}}/>)}
-                      <span className="text-xs text-gray-400 ml-1">Analyzing your data...</span>
+                      <span className="text-xs text-gray-400 ml-2">Thinking...</span>
                     </div>
                   </div>
                 </div>
@@ -315,13 +513,13 @@ export default function AIAdvisorChat() {
               <div ref={messagesEnd}/>
             </div>
 
-            {/* Quick prompts */}
-            <div className="px-4 py-3 border-t border-blue-50 bg-gradient-to-b from-blue-50/50 to-white flex-shrink-0">
+            {/* Quick Prompts */}
+            <div className="px-4 py-3 border-t border-blue-50 bg-white flex-shrink-0">
               <div className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Quick Actions</div>
               <div className="flex flex-wrap gap-2">
                 {QUICK_PROMPTS.map(qp => (
                   <button key={qp.label} onClick={() => sendMessage(qp.prompt)} disabled={loading}
-                    className="bg-white hover:bg-blue-50 text-blue-700 text-sm font-semibold px-4 py-2.5 rounded-xl border border-blue-200 hover:border-blue-400 transition-all whitespace-nowrap disabled:opacity-50 shadow-sm">
+                    className="bg-blue-50 hover:bg-blue-100 text-blue-700 text-xs font-semibold px-3 py-2 rounded-xl border border-blue-200 hover:border-blue-400 transition-all whitespace-nowrap disabled:opacity-50">
                     {qp.label}
                   </button>
                 ))}
@@ -329,28 +527,39 @@ export default function AIAdvisorChat() {
             </div>
 
             {/* Input */}
-            <div className="px-5 pb-5 pt-3 bg-white flex-shrink-0">
-              <div className="flex items-end gap-3 bg-gray-50 rounded-2xl border-2 border-blue-200 focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-200 overflow-hidden px-5 py-4">
+            <div className="px-5 pb-5 pt-2 bg-white rounded-b-[28px] flex-shrink-0">
+              <div className="flex items-end gap-2 bg-gray-50 rounded-2xl border-2 border-blue-200 focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-100 overflow-hidden px-4 py-3">
                 <textarea
                   ref={inputRef}
                   value={input}
                   onChange={e => setInput(e.target.value)}
                   onKeyDown={handleKey}
-                  placeholder="Ask me anything — pipeline, deals, strategies, next actions..."
+                  placeholder={listening ? '🎤 Listening...' : 'Ask anything — create records, get insights, forecast revenue...'}
                   rows={1}
-                  style={{resize:'none',overflow:'hidden',minHeight:'28px',maxHeight:'120px'}}
-                  onInput={e => { e.target.style.height='auto'; e.target.style.height=Math.min(e.target.scrollHeight,120)+'px'; }}
-                  className="flex-1 bg-transparent text-base text-[#0F172A] focus:outline-none placeholder:text-gray-400 leading-relaxed"
+                  style={{resize:'none', overflow:'hidden', minHeight:'24px', maxHeight:'120px'}}
+                  onInput={e => { (e.target as any).style.height='auto'; (e.target as any).style.height=Math.min((e.target as any).scrollHeight,120)+'px'; }}
+                  className="flex-1 bg-transparent text-sm text-[#0F172A] focus:outline-none placeholder:text-gray-400 leading-relaxed"
                 />
+                {/* Voice button */}
+                <button
+                  onClick={listening ? stopListening : startListening}
+                  title={listening ? 'Stop listening' : 'Speak your question'}
+                  className={`flex-shrink-0 w-10 h-10 rounded-xl flex items-center justify-center transition-all text-base ${
+                    listening ? 'bg-red-500 text-white animate-pulse' : 'bg-gray-200 text-gray-500 hover:bg-blue-100 hover:text-blue-700'
+                  }`}>
+                  🎤
+                </button>
+                {/* Send button */}
                 <button
                   onClick={() => sendMessage()}
                   disabled={loading || !input.trim()}
-                  className="flex-shrink-0 w-12 h-12 bg-gradient-to-r from-[#0F172A] to-blue-700 text-white rounded-xl flex items-center justify-center disabled:opacity-40 hover:opacity-90 shadow-lg transition-all"
-                >
-                  {loading ? <span className="text-sm animate-spin">⟳</span> : <span className="text-lg font-bold">↑</span>}
+                  className="flex-shrink-0 w-10 h-10 bg-gradient-to-r from-[#0F172A] to-blue-700 text-white rounded-xl flex items-center justify-center disabled:opacity-40 hover:opacity-90 shadow-md transition-all text-lg">
+                  {loading ? '⟳' : '↑'}
                 </button>
               </div>
-              <div className="text-center mt-2 text-xs text-gray-400">⏎ Send · ⇧⏎ New line · Powered by AI</div>
+              <div className="text-center mt-1.5 text-[10px] text-gray-300">
+                ⏎ Send · ⇧⏎ New line · 🎤 Voice input · {voiceEnabled ? '🔊 Voice replies ON' : '🔇 Voice replies OFF'}
+              </div>
             </div>
           </>)}
         </div>
