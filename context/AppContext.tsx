@@ -156,11 +156,21 @@ export const useApp = (): AppContextValue => {
 
 export function AppProvider({ children, supabase = null, tenant = null }: { children: React.ReactNode }) {
   // Tenant isolation — tenantId injected into all DB inserts for shared-plan tenants
-  // Read from prop first, then window (set by TenantContext after resolution)
-  const tenantId: string | null = 
+  // Use useState so it persists even if tenant prop arrives late
+  const [tenantId, setTenantId] = useState<string | null>(
     tenant?.id ||
     (typeof window !== 'undefined' ? (window as any).__bp_tenant?.id : null) ||
-    null;
+    null
+  );
+  // Update tenantId whenever tenant prop changes (TenantContext resolves async)
+  useEffect(() => {
+    const id = tenant?.id ||
+      (typeof window !== 'undefined' ? (window as any).__bp_tenant?.id : null) ||
+      null;
+    if (id && id !== tenantId) {
+      setTenantId(id);
+    }
+  }, [tenant?.id]);
   const isSharedPlan = !tenant?.db_url && !(typeof window !== 'undefined' && (window as any).__bp_tenant?.db_url);
   // Auth
   const [session, setSession] = useState<any>(null);
@@ -208,13 +218,17 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
   const buildSystemFields = useCallback((isUpdate = false) => {
     if (!currentUser) return {};
     const now = new Date().toISOString();
+    // Always read freshest tenantId
+    const effectiveTenantId = tenantId
+      || (typeof window !== 'undefined' ? (window as any).__bp_tenant?.id : null)
+      || null;
     if (isUpdate) return { updated_by: currentUser.email, updated_at: now };
     return {
       created_by: currentUser.email, created_at: now,
       updated_by: currentUser.email, updated_at: now,
       organization_id: currentUser.organization_id,
       business_unit_id: currentUser.business_unit_id,
-      ...(tenantId ? { tenant_id: tenantId } : {}),
+      ...(effectiveTenantId ? { tenant_id: effectiveTenantId } : {}),
     };
   }, [currentUser, tenantId]);
 
@@ -590,6 +604,10 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
   // Provider-level line item upsert — used by quotation CRUD (richer payload than updateRecord's local one)
   const upsertLineItemsGeneric = async (table: string, fkField: string, id: string, items: any[]) => {
     if (!supabase || !items) return;
+    // Always read freshest tenantId — state may not have updated yet if tenant resolved late
+    const effectiveTenantId = tenantId
+      || (typeof window !== 'undefined' ? (window as any).__bp_tenant?.id : null)
+      || null;
     await supabase.from(table).delete().eq(fkField, id);
     if (items.length) {
       const { error } = await supabase.from(table).insert(items.map((i: any, idx: number) => ({
@@ -602,9 +620,9 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
         tax_pct:        Number(i.tax_pct    || 0),
         extended_price: Number(i.quantity||1) * Number(i.unit_price ?? i.price ?? 0) * (1 - Number(i.discount_pct ?? i.discount ?? 0)/100),
         sort_order:     idx,
-        ...(tenantId ? { tenant_id: tenantId } : {}),
+        ...(effectiveTenantId ? { tenant_id: effectiveTenantId } : {}),
       })));
-      if (error) console.error('[upsertLineItemsGeneric] insert error:', error.message);
+      if (error) console.error('[upsertLineItemsGeneric] insert error:', error.message, 'tenantId:', effectiveTenantId);
     }
   }
   // ─── Customer status automation: Prospect on lead/opp/quote, Active on order/invoice ──
