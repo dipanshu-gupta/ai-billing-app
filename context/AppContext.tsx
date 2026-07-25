@@ -156,10 +156,12 @@ export const useApp = (): AppContextValue => {
 
 export function AppProvider({ children, supabase = null, tenant = null }: { children: React.ReactNode }) {
   // Tenant isolation — tenantId injected into all DB inserts for shared-plan tenants
-  const tenantId: string | null = tenant?.id
-    || (typeof window !== 'undefined' ? (window as any).__bp_tenant?.id : null)
-    || null;
-  const isSharedPlan = !tenant?.db_url;
+  // Read from prop first, then window (set by TenantContext after resolution)
+  const tenantId: string | null = 
+    tenant?.id ||
+    (typeof window !== 'undefined' ? (window as any).__bp_tenant?.id : null) ||
+    null;
+  const isSharedPlan = !tenant?.db_url && !(typeof window !== 'undefined' && (window as any).__bp_tenant?.db_url);
   // Auth
   const [session, setSession] = useState<any>(null);
   const [authLoading, setAuthLoading] = useState(true);
@@ -2422,8 +2424,59 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
   // eslint-disable-next-line react-hooks/exhaustive-deps
 
   const [appPreferences, setAppPreferences] = useState(() => { try { const s=typeof window!=='undefined'&&window.localStorage.getItem(_LS_KEY); if(s) return _cp(JSON.parse(s)); } catch(e) {} return _DEF_PREFS; });
-  const fetchAppPreferences = async () => { try { const s=window.localStorage.getItem(_LS_KEY); if(s){setAppPreferences(_cp(JSON.parse(s)));return;} } catch(e) {} if(!supabase)return; try{const{data}=await supabase.from('app_preferences').select('*').limit(1).maybeSingle(); if(data){const p=_cp(data.settings?{..._cp(data),...data.settings}:data);setAppPreferences(p);window.localStorage.setItem(_LS_KEY,JSON.stringify(p));}}catch(e){} };
-  const saveAppPreferences = async (prefs) => { const clean=_cp(prefs); window.localStorage.setItem(_LS_KEY,JSON.stringify(clean)); setAppPreferences(clean); if(!supabase)return; try{const{data:row}=await supabase.from('app_preferences').select('id').limit(1).maybeSingle(); const payload={settings:clean,default_currency:clean.default_currency,crm_enabled:clean.crm_enabled,cpq_enabled:clean.cpq_enabled,date_format:clean.date_format,fiscal_year_start:clean.fiscal_year_start,global_search_enabled:clean.global_search_enabled,updated_at:new Date().toISOString()}; if(row?.id)await supabase.from('app_preferences').update(payload).eq('id',row.id); else await supabase.from('app_preferences').insert([{...payload,organization_id:currentUser?.organization_id,...(tenantId?{tenant_id:tenantId}:{})}]);}catch(e){} if(prefs.default_currency)fetchExchangeRates(prefs.default_currency); };
+  const fetchAppPreferences = async () => {
+    // Try localStorage first (fast path)
+    try {
+      const s = window.localStorage.getItem(_LS_KEY);
+      if (s) { setAppPreferences(_cp(JSON.parse(s))); }
+    } catch(e) {}
+    // Always also fetch from DB to get latest (don't return early)
+    if (!supabase) return;
+    try {
+      const { data } = await supabase
+        .from('app_preferences').select('*').limit(1).maybeSingle();
+      if (data) {
+        const p = _cp(data.settings ? { ..._cp(data), ...data.settings } : data);
+        setAppPreferences(p);
+        try { window.localStorage.setItem(_LS_KEY, JSON.stringify(p)); } catch(e) {}
+      }
+    } catch(e: any) { console.error('[fetchAppPreferences] error:', e.message); }
+  };
+  const saveAppPreferences = async (prefs) => {
+    const clean = _cp(prefs);
+    // Always save to localStorage immediately
+    try { window.localStorage.setItem(_LS_KEY, JSON.stringify(clean)); } catch(e) {}
+    setAppPreferences(clean);
+    if (!supabase) return;
+    try {
+      const payload = {
+        settings: clean,
+        default_currency:        clean.default_currency,
+        crm_enabled:             clean.crm_enabled,
+        cpq_enabled:             clean.cpq_enabled,
+        b2c_mode:                clean.b2c_mode,
+        date_format:             clean.date_format,
+        fiscal_year_start:       clean.fiscal_year_start,
+        global_search_enabled:   clean.global_search_enabled,
+        company_name:            clean.company_name,
+        updated_at:              new Date().toISOString(),
+        ...(tenantId ? { tenant_id: tenantId } : {}),
+        ...(currentUser?.organization_id ? { organization_id: currentUser.organization_id } : {}),
+      };
+      // Find existing row for THIS tenant
+      const { data: row } = await supabase
+        .from('app_preferences').select('id')
+        .limit(1).maybeSingle();
+      if (row?.id) {
+        const { error } = await supabase.from('app_preferences').update(payload).eq('id', row.id);
+        if (error) console.error('[saveAppPreferences] update error:', error.message);
+      } else {
+        const { error } = await supabase.from('app_preferences').insert([payload]);
+        if (error) console.error('[saveAppPreferences] insert error:', error.message);
+      }
+    } catch(e: any) { console.error('[saveAppPreferences] error:', e.message); }
+    if (prefs.default_currency) fetchExchangeRates(prefs.default_currency);
+  };
 
   // ─── Exchange Rates ────────────────────────────────────────────────────────
   const [exchangeRates, setExchangeRates] = useState({});

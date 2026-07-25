@@ -77,9 +77,10 @@ export function TenantProvider({ children }: { children: React.ReactNode }) {
         if (typeof window !== 'undefined') {
           (window as any).__bp_supabase = client;
           (window as any).__bp_tenant = {
-            slug:           resolved.slug,
-            db_url:         resolved.db_url  || null,
-            // Never expose service key to window — server API uses env vars
+            slug:   resolved.slug,
+            id:     resolved.id      || null,
+            db_url: resolved.db_url  || null,
+            plan:   resolved.plan    || 'shared',
           };
         }
       } catch (e) {
