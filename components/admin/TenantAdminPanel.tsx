@@ -321,12 +321,10 @@ export default function TenantAdminPanel() {
                       className={`px-3 py-1.5 text-xs font-semibold rounded-xl transition-all ${t.status==='suspended'?'bg-green-50 border border-green-200 text-green-700 hover:bg-green-100':'bg-red-50 border border-red-200 text-red-600 hover:bg-red-100'}`}>
                       {t.status==='suspended'?'Reactivate':'Suspend'}
                     </button>
-                    {(t.plan === 'dedicated' || t.plan === 'enterprise') && t.db_url && (
-                      <button onClick={()=>provisionTenant(t)}
-                        className="px-3 py-1.5 text-xs font-semibold bg-purple-600 hover:bg-purple-700 text-white rounded-xl transition-all">
-                        🚀 Provision
-                      </button>
-                    )}
+                    <button onClick={()=>provisionTenant(t)}
+                      className="px-3 py-1.5 text-xs font-semibold bg-purple-600 hover:bg-purple-700 text-white rounded-xl transition-all">
+                      🚀 Provision First User
+                    </button>
                     <a href={`${typeof window!=='undefined'?window.location.origin:''}/`+`?tenant=${t.slug}`} target="_blank" rel="noreferrer"
                       className="px-3 py-1.5 text-xs font-semibold bg-[#0F172A] text-white rounded-xl hover:bg-slate-700 transition-all">
                       Open ↗
@@ -584,8 +582,8 @@ export default function TenantAdminPanel() {
         <div className="bg-white rounded-[28px] shadow-2xl w-full max-w-lg">
           {/* Header */}
           <div className="bg-gradient-to-r from-purple-900 to-purple-700 px-6 py-5 rounded-t-[28px] text-white">
-            <h3 className="text-xl font-bold">🚀 Provision Client Database</h3>
-            <p className="text-purple-200 text-sm mt-1">{provisioning.name} — {provisioning.db_url}</p>
+            <h3 className="text-xl font-bold">🚀 Provision First User</h3>
+            <p className="text-purple-200 text-sm mt-1">{provisioning.name} — {provisioning.db_url ? 'Dedicated' : 'Shared Plan'}</p>
           </div>
 
           <div className="p-6 space-y-4">
