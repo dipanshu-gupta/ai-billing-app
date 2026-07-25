@@ -54,7 +54,7 @@ const defaultTpl = () => ({
   show_customer: true, show_customer_phone: true, show_customer_gstin: false,
   // Line items
   col_sno: false, col_item: true, col_qty: true, col_unit: false,
-  col_price: true, col_discount: false, col_tax_rate: true, col_hsn: false, col_total: true,
+  col_price: true, col_discount: false, col_tax_rate: true, col_hsn: false, col_subtotal_line: false, col_total: true,
   alt_row: false,
   // Tax & totals
   show_subtotal: true, show_discount_total: true, show_tax_total: true,
@@ -183,10 +183,11 @@ function LivePreview({ t }) {
             <span style={{flex:1,fontSize:fs(8),color:TL,fontWeight:700,textTransform:'uppercase'}}>Item</span>
             {t.col_unit   && <span style={{width:th?28:36,fontSize:fs(8),color:TL,fontWeight:700,textAlign:'center'}}>Unit</span>}
             {t.col_qty    && <span style={{width:th?24:32,fontSize:fs(8),color:TL,fontWeight:700,textAlign:'right'}}>Qty</span>}
-            {t.col_price  && <span style={{width:th?44:56,fontSize:fs(8),color:TL,fontWeight:700,textAlign:'right'}}>Price</span>}
+            {t.col_price  && <span style={{width:th?44:56,fontSize:fs(8),color:TL,fontWeight:700,textAlign:'right'}}>Unit Price</span>}
             {t.col_discount && <span style={{width:th?28:36,fontSize:fs(8),color:TL,fontWeight:700,textAlign:'right'}}>Disc</span>}
             {t.col_tax_rate && <span style={{width:th?32:40,fontSize:fs(8),color:TL,fontWeight:700,textAlign:'right'}}>GST%</span>}
             {t.col_hsn    && <span style={{width:th?36:44,fontSize:fs(8),color:TL,fontWeight:700,textAlign:'right'}}>HSN</span>}
+            {t.col_subtotal_line && <span style={{width:th?48:60,fontSize:fs(8),color:TL,fontWeight:700,textAlign:'right'}}>Subtotal</span>}
             {t.col_total  && <span style={{width:th?48:60,fontSize:fs(8),color:TL,fontWeight:700,textAlign:'right'}}>Total</span>}
           </div>
           {/* Item rows */}
@@ -200,6 +201,7 @@ function LivePreview({ t }) {
               {t.col_discount && <span style={{width:th?28:36,fontSize:fs(9),color:'#16A34A',textAlign:'right'}}>{item.disc}%</span>}
               {t.col_tax_rate && <span style={{width:th?32:40,fontSize:fs(9),color:TL,textAlign:'right'}}>{item.taxRate}%</span>}
               {t.col_hsn    && <span style={{width:th?36:44,fontSize:fs(8),color:TL,textAlign:'right'}}>{item.hsn}</span>}
+              {t.col_subtotal_line && <span style={{width:th?48:60,fontSize:fs(10),color:TL,textAlign:'right'}}>₹{(item.total-item.taxAmt).toFixed(2)}</span>}
               {t.col_total  && <span style={{width:th?48:60,fontSize:fs(11),color:T,fontWeight:600,textAlign:'right'}}>₹{item.total}</span>}
             </div>
           ))}
@@ -375,7 +377,7 @@ export default function RetailInvoiceDesigner() {
       'header_align','show_store_info','show_gst_header',
       'show_invoice_number','show_date','show_cashier','show_barcode','show_qr_code',
       'show_customer','show_customer_phone','show_customer_gstin',
-      'col_sno','col_item','col_qty','col_unit','col_price','col_discount','col_hsn','col_total',
+      'col_sno','col_item','col_qty','col_unit','col_price','col_discount','col_hsn','col_subtotal_line','col_total',
       'alt_row','alt_row_color','show_subtotal','show_discount_total','show_tax_total','show_cgst_sgst','show_round_off',
       'tax_regime','default_gst_rate','place_of_supply',
       'show_payment','show_payment_mode','show_amount_paid','show_change','show_upi_id','upi_id',
@@ -659,11 +661,12 @@ export default function RetailInvoiceDesigner() {
               <Toggle label="Item Name"     checked={t.col_item!==false} onChange={()=>upd('col_item',!(t.col_item!==false))}/>
               <Toggle label="Unit"          checked={!!t.col_unit}     onChange={()=>upd('col_unit',!t.col_unit)}/>
               <Toggle label="Quantity"      checked={t.col_qty!==false} onChange={()=>upd('col_qty',!(t.col_qty!==false))}/>
-              <Toggle label="Unit Price"    checked={t.col_price!==false} onChange={()=>upd('col_price',!(t.col_price!==false))}/>
+              <Toggle label="Unit Price (per item)"    checked={t.col_price!==false} onChange={()=>upd('col_price',!(t.col_price!==false))}/>
               <Toggle label="Discount %"    checked={!!t.col_discount}  onChange={()=>upd('col_discount',!t.col_discount)}/>
               <Toggle label="GST Rate %"    checked={!!t.col_tax_rate}  onChange={()=>upd('col_tax_rate',!t.col_tax_rate)}/>
               <Toggle label="HSN / SAC"     checked={!!t.col_hsn}       onChange={()=>upd('col_hsn',!t.col_hsn)}/>
-              <Toggle label="Line Total"    checked={t.col_total!==false} onChange={()=>upd('col_total',!(t.col_total!==false))}/>
+              <Toggle label="Subtotal (excl. tax)" checked={!!t.col_subtotal_line} onChange={()=>upd('col_subtotal_line',!t.col_subtotal_line)}/>
+              <Toggle label="Line Total (incl. tax)"    checked={t.col_total!==false} onChange={()=>upd('col_total',!(t.col_total!==false))}/>
             </Card>
 
             <Card title="Row Styling" icon="🎨">

@@ -110,7 +110,8 @@ const INVOICE_SECTIONS = [
 const ALL_COLUMNS = {
   sno:'#', name:'Product/Service', description:'Description', hsn:'HSN/SAC', sku:'SKU',
   qty:'Qty', unit:'Unit', unit_price:'Unit Price', discount:'Disc %', tax:'Tax %',
-  cgst:'CGST', sgst:'SGST', igst:'IGST', amount:'Amount',
+  cgst:'CGST', sgst:'SGST', igst:'IGST',
+  net_amount:'Amount (excl. tax)', amount:'Amount (incl. tax)',
 };
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -539,13 +540,13 @@ function LivePreview({ sections, pageSettings, globalSettings, docType }) {
               <tbody>
                 {SAMPLE_ITEMS.map((item,idx)=>{
                   const net = item.q*item.p*(1-item.d/100);
-                  const ROWVALS = {...VALS,sno:idx+1,name:item.n,hsn:item.hsn,sku:item.sku,qty:item.q,unit:item.u,unit_price:item.p,discount:item.d,tax:item.tax,cgst:item.tax/2,sgst:item.tax/2,igst:0,amount:net*(1+item.tax/100)};
+                  const ROWVALS = {...VALS,sno:idx+1,name:item.n,hsn:item.hsn,sku:item.sku,qty:item.q,unit:item.u,unit_price:item.p,discount:item.d,tax:item.tax,cgst:item.tax/2,sgst:item.tax/2,igst:0,net_amount:net,amount:net*(1+item.tax/100)};
                   return (
                     <React.Fragment key={idx}>
                     <tr style={{background:s.altRowColor&&idx%2===1?s.altRowColor:'#FFF'}}>
                       {cols.map(c=>(
-                        <td key={c} style={{...cellStyle,textAlign:c==='sno'?'center':['unit_price','discount','tax','cgst','sgst','igst','qty','amount'].includes(c)?'right':'left',color:c==='sno'?'#94A3B8':c==='amount'?'#0F172A':'inherit',fontWeight:c==='amount'?600:400,borderRight:s.showColumnBorders?`1px solid ${s.borderColor||'#E2E8F0'}`:'none'}}>
-                          {c==='amount'?fmt(ROWVALS[c]):c==='unit_price'?fmt(ROWVALS[c]):c==='description'?<span style={{fontSize:(s.fontSize||11)-1,color:'#64748B'}}>{item.n+' — '+ROWVALS[c]}</span>:String(ROWVALS[c]||'')}
+                        <td key={c} style={{...cellStyle,textAlign:c==='sno'?'center':['unit_price','discount','tax','cgst','sgst','igst','qty','amount','net_amount'].includes(c)?'right':'left',color:c==='sno'?'#94A3B8':c==='amount'?'#0F172A':'inherit',fontWeight:(c==='amount'||c==='net_amount')?600:400,borderRight:s.showColumnBorders?`1px solid ${s.borderColor||'#E2E8F0'}`:'none'}}>
+                          {c==='amount'||c==='net_amount'||c==='unit_price'?fmt(ROWVALS[c]):c==='description'?<span style={{fontSize:(s.fontSize||11)-1,color:'#64748B'}}>{item.n+' — '+ROWVALS[c]}</span>:String(ROWVALS[c]||'')}
                         </td>
                       ))}
                     </tr>
