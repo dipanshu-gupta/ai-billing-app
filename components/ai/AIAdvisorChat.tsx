@@ -29,6 +29,8 @@ const buildSystemPrompt = (user, data, prefs, isB2C) => {
     return `You are the AI Business Advisor for Umbrella Suite — a smart retail assistant helping ${user?.first_name||'the user'} manage their B2C retail operations.
 
 USER: ${user?.first_name||''} ${user?.last_name||''} | ${user?.email||''} | ${user?.designation||'Retail Manager'}
+Role: ${user?.role_name || user?.role || 'Retail User'}
+Data Access: ${user?.data_scope === 'all' ? 'Full access — all records' : user?.data_scope === 'org' ? 'Organization level' : user?.data_scope === 'bu' ? 'Business unit level' : 'Own records only'}
 
 RETAIL DATA SNAPSHOT
 - Customers: ${retailCustomers.length} total | ${vipCustomers} VIP
@@ -49,6 +51,12 @@ YOUR CAPABILITIES
 7. Business insights — customer segmentation, loyalty analysis, stock alerts
 8. Recommend actions — follow up on pending orders, restock alerts
 
+DATA ACCESS RULES — STRICTLY ENFORCE:
+- You can ONLY see and discuss the records shown in the data snapshot above
+- The snapshot reflects this user's access level (${user?.data_scope || 'own'})
+- If asked for data outside their access, say: "I can only show you records within your access level. Please contact your manager or admin for broader reports."
+- NEVER invent or estimate data not in the snapshot
+
 RESPONSE RULES — CRITICAL:
 - NEVER output JSON, HTML, code blocks, or technical syntax in your replies
 - ALWAYS respond in plain conversational English
@@ -56,7 +64,7 @@ RESPONSE RULES — CRITICAL:
 - Format numbers as currency (${cur}), use bullet points for lists
 - Be concise — max 250 words unless detailed analysis requested
 - If asked for a chart/report, describe the data clearly in text first
-- Reference actual data from the snapshot above when answering
+- Reference actual data from the snapshot above only
 
 WHEN CREATING RECORDS — include this at the very end of your response, never in the middle:
 <action>{"type":"create_record","object":"retailCustomers|retailProducts|retailOrders|retailInvoices|retailActivities","data":{...}}</action>
@@ -79,6 +87,8 @@ WHEN GENERATING A CHART — include:
   return `You are the AI Business Advisor for Umbrella Suite ERP — an intelligent CRM and sales assistant helping ${user?.first_name||'the user'} grow their business.
 
 USER: ${user?.first_name||''} ${user?.last_name||''} | ${user?.email||''} | ${user?.designation||'Sales User'}
+Role: ${user?.role_name || user?.role || 'Sales User'}
+Data Access: ${user?.data_scope === 'all' ? 'Full access — all records across all users and organizations' : user?.data_scope === 'org' ? 'Organization level — all records within own organization' : user?.data_scope === 'bu' ? 'Business unit level — records within own business unit' : 'Own records only — records assigned to or created by this user'}
 
 CRM DATA SNAPSHOT
 - Customers: ${customers.length} | Contacts: ${contacts.length}
@@ -101,11 +111,18 @@ YOUR CAPABILITIES
 7. Sales coaching — objection handling, deal strategies, follow-up timing
 8. Next best actions — prioritized action list for this week
 
+DATA ACCESS RULES — STRICTLY ENFORCE:
+- You can ONLY see and discuss the records shown in the data snapshot above
+- The snapshot already reflects this user's data access level (${user?.data_scope || 'own'})
+- If asked about data outside their access (e.g. a SALES_REP asking for all team data, or competitor data), politely explain: "I can only show you data within your access level. Your manager or admin can provide team-wide reports."
+- NEVER invent, estimate, or speculate about records not in the snapshot
+- NEVER generate reports that include data the user cannot access
+
 RESPONSE RULES — CRITICAL:
 - NEVER output JSON, HTML, code blocks, or raw data structures
 - ALWAYS respond in plain conversational English that any business user can understand
 - Format numbers as currency, use bullet points and headings for clarity
-- Reference actual data from the snapshot above
+- Reference actual data from the snapshot above only
 - Be concise — max 300 words unless detailed analysis requested
 - When creating/updating records, describe it naturally then add the action tag at the end
 
@@ -379,6 +396,13 @@ export default function AIAdvisorChat() {
   const messagesEnd = useRef(null);
   const inputRef    = useRef(null);
 
+  // Enrich currentUser with role and scope for system prompt
+  const userWithRole = {
+    ...currentUser,
+    role_name: currentUser?.role_name || currentUser?.roles?.role_name || '',
+    data_scope: currentUser?.data_scope || 'own',
+  };
+
   const crmData = isB2C
     ? { retailCustomers, retailProducts, retailOrders, retailInvoices, retailActivities }
     : { customers, leads, opportunities, orders, invoices, contacts, activities, quotations, products };
@@ -408,7 +432,7 @@ export default function AIAdvisorChat() {
     setLoading(true);
 
     try {
-      const systemPrompt = buildSystemPrompt(currentUser, crmData, appPreferences, isB2C);
+      const systemPrompt = buildSystemPrompt(userWithRole, crmData, appPreferences, isB2C);
       const apiMessages = newMessages
         .filter((m,i) => !(m.role==='assistant' && i===0))
         .map(m => ({ role:m.role, content:m.content }));
