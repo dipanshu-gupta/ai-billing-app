@@ -563,7 +563,12 @@ function buildRetailPrintHTML(t, record, items) {
   const amtPaid    = Number(record.amount_paid || grandTotal);
   const change     = Math.max(0, amtPaid - grandTotal);
   const roundOff   = Math.round(grandTotal) - grandTotal;
-  const invNum     = record.invoice_number || record.id?.slice(0,8) || '';
+  // record.id = invoice_number (set by fetchRetailInvoices mapping)
+  // record.displayNumber = raw integer from display_number column
+  // Prefer formatted displayNumber, fall back to record.id (which is already the invoice_number string)
+  const invNum = record.displayNumber
+    ? 'RINV-' + String(record.displayNumber).padStart(5, '0')
+    : (record.id || record.invoice_number || '');
 
   return `<!DOCTYPE html><html><head><meta charset="UTF-8"/>
   <style>
