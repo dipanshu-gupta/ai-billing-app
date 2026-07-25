@@ -5,23 +5,35 @@ import { useState, useEffect, useRef, useMemo } from 'react';
 import { useApp } from '@/context/AppContext';
 import { getStatusColor } from '@/lib/utils';
 
-const SEARCH_CONFIG = [
-  { page:'customers',     icon:'👥', label:'Customers',    fields:['name','email','company','city'],                  secondary: r => r.industry || r.email || r.city },
-  { page:'leads',         icon:'🎯', label:'Leads',        fields:['name','customer','source','email'],               secondary: r => `${r.customer||''} · ${r.status||''}` },
-  { page:'opportunities', icon:'💼', label:'Opportunities',fields:['name','customer','stage'],                        secondary: r => `${r.customer||''} · ${r.stage||''}` },
-  { page:'contacts',      icon:'📇', label:'Contacts',     fields:['name','email','customer','designation'],          secondary: r => `${r.customer||''} · ${r.designation||''}` },
-  { page:'activities',    icon:'📅', label:'Activities',   fields:['name','customer','subject','activityType'],       secondary: r => `${r.customer||''} · ${r.activityType||''}` },
-  { page:'quotations',    icon:'📄', label:'Quotations',   fields:['name','customer','quote_number'],                 secondary: r => `${r.customer||''} · ${r.status||''}` },
-  { page:'orders',        icon:'🛒', label:'Orders',       fields:['name','customer'],                               secondary: r => `${r.customer||''} · ${r.status||''}` },
-  { page:'invoices',      icon:'🧾', label:'Invoices',     fields:['name','customer'],                               secondary: r => `${r.customer||''} · ${r.status||''}` },
-  { page:'products',      icon:'📦', label:'Products',     fields:['name','category','productFamily'],               secondary: r => `${r.category||''} · ${r.productFamily||''}` },
+const B2B_SEARCH_CONFIG = [
+  { page:'customers',     icon:'👥', label:'Customers',    fields:['name','email','company','city'],            secondary: r => r.industry || r.email || r.city },
+  { page:'leads',         icon:'🎯', label:'Leads',        fields:['name','customer','source','email'],         secondary: r => `${r.customer||''} · ${r.status||''}` },
+  { page:'opportunities', icon:'💼', label:'Opportunities',fields:['name','customer','stage'],                  secondary: r => `${r.customer||''} · ${r.stage||''}` },
+  { page:'contacts',      icon:'📇', label:'Contacts',     fields:['name','email','customer','designation'],    secondary: r => `${r.customer||''} · ${r.designation||''}` },
+  { page:'activities',    icon:'📅', label:'Activities',   fields:['name','customer','subject','activityType'], secondary: r => `${r.customer||''} · ${r.activityType||''}` },
+  { page:'quotations',    icon:'📄', label:'Quotations',   fields:['name','customer','quote_number'],           secondary: r => `${r.customer||''} · ${r.status||''}` },
+  { page:'orders',        icon:'🛒', label:'Orders',       fields:['name','customer'],                         secondary: r => `${r.customer||''} · ${r.status||''}` },
+  { page:'invoices',      icon:'🧾', label:'Invoices',     fields:['name','customer'],                         secondary: r => `${r.customer||''} · ${r.status||''}` },
+  { page:'products',      icon:'📦', label:'Products',     fields:['name','category','productFamily'],         secondary: r => `${r.category||''} · ${r.productFamily||''}` },
+];
+
+const B2C_SEARCH_CONFIG = [
+  { page:'retailCustomers',  icon:'🧑', label:'Customers',  fields:['name','email','phone','customer_number'], secondary: r => `${r.loyalty_tier||''} · ${r.status||''}` },
+  { page:'retailProducts',   icon:'📦', label:'Products',   fields:['name','sku','brand','category'],          secondary: r => `${r.brand||''} · ${r.category||''}` },
+  { page:'retailOrders',     icon:'🛒', label:'Orders',     fields:['customer','order_number','channel'],      secondary: r => `${r.customer||''} · ${r.status||''}` },
+  { page:'retailInvoices',   icon:'🧾', label:'Invoices',   fields:['customer','invoice_number'],              secondary: r => `${r.customer||''} · ${r.status||''}` },
+  { page:'retailActivities', icon:'📅', label:'Activities', fields:['subject','customer','activity_type'],     secondary: r => `${r.customer||''} · ${r.activity_type||''}` },
 ];
 
 export default function GlobalSearch({ onNavigate }) {
   const {
     customers, leads, opportunities, contacts, activities,
     quotations, orders, invoices, products,
+    retailCustomers, retailProducts, retailOrders, retailInvoices, retailActivities,
+    appPreferences,
   } = useApp();
+  const isB2C = appPreferences?.b2c_mode === true;
+  const SEARCH_CONFIG = isB2C ? B2C_SEARCH_CONFIG : B2B_SEARCH_CONFIG;
 
   const [query,   setQuery]   = useState('');
   const [results, setResults] = useState([]);
@@ -30,11 +42,14 @@ export default function GlobalSearch({ onNavigate }) {
   const inputRef = useRef(null);
   const panelRef = useRef(null);
 
-  const dataMap = { customers, leads, opportunities, contacts, activities, quotations, orders, invoices, products };
+  const dataMap = { customers, leads, opportunities, contacts, activities, quotations, orders, invoices, products, retailCustomers, retailProducts, retailOrders, retailInvoices, retailActivities };
 
   // Debounced search
   useEffect(() => {
     if (!query.trim() || query.length < 2) { setResults([]); setOpen(false); return; }
+    // Check if any data is loaded
+    const totalItems = Object.values(dataMap).reduce((s, arr) => s + (arr?.length || 0), 0);
+    if (totalItems === 0) { setResults([]); setOpen(true); return; } // show 'no data' state
     const timer = setTimeout(() => {
       const q = query.toLowerCase();
       const found = [];
@@ -52,7 +67,7 @@ export default function GlobalSearch({ onNavigate }) {
       setFocused(0);
     }, 200);
     return () => clearTimeout(timer);
-  }, [query, customers, leads, opportunities, contacts, activities, quotations, orders, invoices, products]);
+  }, [query, customers, leads, opportunities, contacts, activities, quotations, orders, invoices, products, retailCustomers, retailProducts, retailOrders, retailInvoices, retailActivities, isB2C]);
 
   // Close on outside click
   useEffect(() => {
@@ -171,13 +186,20 @@ export default function GlobalSearch({ onNavigate }) {
       )}
 
       {/* No results */}
-      {open && query.length >= 2 && results.length === 0 && (
-        <div ref={panelRef} className="absolute top-full left-0 right-0 mt-2 bg-white rounded-[20px] shadow-2xl border border-blue-100 px-6 py-8 text-center z-[100]">
-          <div className="text-3xl mb-2">🔍</div>
-          <div className="text-sm font-semibold text-gray-600">No records found for "{query}"</div>
-          <div className="text-xs text-gray-400 mt-1">Try a different keyword</div>
-        </div>
-      )}
+      {open && query.length >= 2 && results.length === 0 && (() => {
+        const totalItems = Object.values(dataMap).reduce((s, arr) => s + ((arr as any[])?.length || 0), 0);
+        return (
+          <div ref={panelRef} className="absolute top-full left-0 right-0 mt-2 bg-white rounded-[20px] shadow-2xl border border-blue-100 px-6 py-8 text-center z-[100]">
+            <div className="text-3xl mb-2">{totalItems === 0 ? '⏳' : '🔍'}</div>
+            <div className="text-sm font-semibold text-gray-600">
+              {totalItems === 0 ? 'Data is still loading…' : `No records found for "${query}"`}
+            </div>
+            <div className="text-xs text-gray-400 mt-1">
+              {totalItems === 0 ? 'Please wait a moment and try again' : 'Try a different keyword'}
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }
