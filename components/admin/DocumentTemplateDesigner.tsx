@@ -473,7 +473,7 @@ function LivePreview({ sections, pageSettings, globalSettings, docType }) {
                 <div style={{display:'flex',alignItems:'center',gap:12}}>
                   {s.logoUrl && <img src={s.logoUrl} alt="logo" style={{height:s.logoHeight||48,objectFit:'contain',maxWidth:160}} onError={e=>e.target.style.display='none'}/>}
                   {s.showCompanyName && <div>
-                    <div style={{fontWeight:800,fontSize:16,letterSpacing:'-0.3px'}}>{s.companyName || appPreferences?.company_name || ''}</div>
+                    <div style={{fontWeight:800,fontSize:16,letterSpacing:'-0.3px'}}>{s.companyName || ''}</div>
                     {s.tagline && <div style={{fontSize:10,opacity:0.7,marginTop:2}}>{s.tagline}</div>}
                     {s.showAddress && s.address && <div style={{fontSize:9,opacity:0.6,marginTop:2,maxWidth:200}}>{s.address}</div>}
                     {s.showAddress && s.gstIn && <div style={{fontSize:9,opacity:0.6}}>GSTIN: {s.gstIn}</div>}

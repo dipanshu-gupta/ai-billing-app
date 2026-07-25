@@ -135,7 +135,7 @@ function LivePreview({ t }) {
             }
           </div>
         )}
-        <div style={{fontWeight:900,fontSize:fs(16),letterSpacing:2,color:'#fff'}}>{t.store_name || appPreferences?.company_name || ''}</div>
+        <div style={{fontWeight:900,fontSize:fs(16),letterSpacing:2,color:'#fff'}}>{t.store_name || ''}</div>
         {t.store_tagline && <div style={{fontSize:fs(9),color:'rgba(255,255,255,0.7)',marginTop:2,fontStyle:'italic'}}>{t.store_tagline}</div>}
         {t.show_store_info && (
           <div style={{fontSize:fs(9),color:'rgba(255,255,255,0.8)',marginTop:4,lineHeight:1.7}}>
