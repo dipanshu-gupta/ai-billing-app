@@ -592,7 +592,7 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     if (!supabase || !items) return;
     await supabase.from(table).delete().eq(fkField, id);
     if (items.length) {
-      await supabase.from(table).insert(items.map((i: any, idx: number) => ({
+      const { error } = await supabase.from(table).insert(items.map((i: any, idx: number) => ({
         [fkField]:      id,
         product_name:   i.product_name || i.product || '',
         quantity:       Number(i.quantity   || 1),
@@ -602,7 +602,9 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
         tax_pct:        Number(i.tax_pct    || 0),
         extended_price: Number(i.quantity||1) * Number(i.unit_price ?? i.price ?? 0) * (1 - Number(i.discount_pct ?? i.discount ?? 0)/100),
         sort_order:     idx,
+        ...(tenantId ? { tenant_id: tenantId } : {}),
       })));
+      if (error) console.error('[upsertLineItemsGeneric] insert error:', error.message);
     }
   }
   // ─── Customer status automation: Prospect on lead/opp/quote, Active on order/invoice ──
@@ -1519,7 +1521,10 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
 
   const setDefaultInvoiceTemplate = async (templateId: string) => {
     if (!supabase) return;
-    await supabase.from('invoice_templates').update({ is_default: false }).neq('id', '');
+    // Unset default only for current tenant's templates
+    let q1 = supabase.from('invoice_templates').update({ is_default: false }).neq('id', '');
+    if (tenantId) q1 = (q1 as any).eq('tenant_id', tenantId);
+    await q1;
     await supabase.from('invoice_templates').update({ is_default: true }).eq('id', templateId);
     await fetchInvoiceTemplates();
   };
@@ -2430,7 +2435,7 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
       const s = window.localStorage.getItem(_LS_KEY);
       if (s) { setAppPreferences(_cp(JSON.parse(s))); }
     } catch(e) {}
-    // Always also fetch from DB to get latest (don't return early)
+    // Always fetch from DB to get latest
     if (!supabase) return;
     try {
       const { data } = await supabase
@@ -2439,6 +2444,19 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
         const p = _cp(data.settings ? { ..._cp(data), ...data.settings } : data);
         setAppPreferences(p);
         try { window.localStorage.setItem(_LS_KEY, JSON.stringify(p)); } catch(e) {}
+      } else {
+        // No app_preferences row yet — use tenant-level b2c_enabled as fallback
+        const tenantInfo = typeof window !== 'undefined' ? (window as any).__bp_tenant : null;
+        if (tenantInfo?.b2c_enabled !== undefined) {
+          const defaults = {
+            b2c_mode:         !!tenantInfo.b2c_enabled,
+            crm_enabled:      !tenantInfo.b2c_enabled,
+            cpq_enabled:      !tenantInfo.b2c_enabled,
+            date_format:      'DD/MM/YYYY',
+            default_currency: 'INR',
+          };
+          setAppPreferences(defaults as any);
+        }
       }
     } catch(e: any) { console.error('[fetchAppPreferences] error:', e.message); }
   };

@@ -298,24 +298,34 @@ export default function RetailDashboard() {
     [retailProducts]);
 
   // ── Palette ────────────────────────────────────────────────────────────────
-  const buildPalette = (tc: any) => {
-    if (!tc) return null;
+  const buildPalette = (tc: any, prefs: any) => {
+    const brand  = prefs?.brand_color  || tc?.sidebar || '#0F172A';
+    const accent = prefs?.accent_color || tc?.accent  || '#2563EB';
+    const darken = (hex: string, pct: number) => {
+      const n = parseInt(hex.replace('#',''), 16);
+      const r = Math.max(0, Math.min(255, ((n>>16)&0xFF) * (1-pct)));
+      const g = Math.max(0, Math.min(255, ((n>>8)&0xFF)  * (1-pct)));
+      const b = Math.max(0, Math.min(255, (n&0xFF)        * (1-pct)));
+      return '#' + [r,g,b].map((x: number) => Math.round(x).toString(16).padStart(2,'0')).join('');
+    };
     return [
-      { from: tc.sidebar, to: tc.to },
-      { from: '#059669', to: '#065f46' },
-      { from: '#2563eb', to: '#1e40af' },
-      { from: '#d97706', to: '#b45309' },
-      { from: '#dc2626', to: '#991b1b' },
-      { from: tc.accent,  to: tc.sidebar },
-      { from: '#0d9488', to: '#0f766e' },
-      { from: '#db2777', to: '#9d174d' },
+      { from: brand,              to: darken(brand, 0.2) },
+      { from: accent,             to: darken(accent, 0.2) },
+      { from: darken(brand, 0.1), to: darken(brand, 0.3) },
+      { from: darken(accent, 0.1), to: darken(accent, 0.3) },
+      { from: darken(brand, 0.2), to: darken(brand, 0.4) },
+      { from: accent,             to: brand },
+      { from: brand,              to: accent },
+      { from: darken(accent, 0.15), to: darken(brand, 0.15) },
     ];
   };
-  const palette = buildPalette(appearance?.themeColors);
+  const palette = buildPalette(appearance?.themeColors, appPreferences);
 
   // ── Sub-components ─────────────────────────────────────────────────────────
   const StatCard = ({ label, value, sub, icon, paletteIdx = 0, trend = null }) => {
-    const p = palette?.[paletteIdx];
+    const brand = appPreferences?.brand_color || appearance?.themeColors?.sidebar || '#0F172A';
+    const accent = appPreferences?.accent_color || appearance?.themeColors?.accent || '#2563EB';
+    const p = palette?.[paletteIdx] || { from: brand, to: accent };
     const style = p
       ? { background: `linear-gradient(135deg, ${p.from}, ${p.to})` }
       : { background: 'linear-gradient(135deg, #0F172A, #1e3a8a)' };

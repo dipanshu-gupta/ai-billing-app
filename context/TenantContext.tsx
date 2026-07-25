@@ -77,10 +77,12 @@ export function TenantProvider({ children }: { children: React.ReactNode }) {
         if (typeof window !== 'undefined') {
           (window as any).__bp_supabase = client;
           (window as any).__bp_tenant = {
-            slug:   resolved.slug,
-            id:     resolved.id      || null,
-            db_url: resolved.db_url  || null,
-            plan:   resolved.plan    || 'shared',
+            slug:        resolved.slug,
+            id:          resolved.id          || null,
+            db_url:      resolved.db_url      || null,
+            plan:        resolved.plan         || 'shared',
+            b2c_enabled: resolved.b2c_enabled ?? false,
+            app_name:    resolved.app_name     || 'Umbrella Suite',
           };
         }
       } catch (e) {

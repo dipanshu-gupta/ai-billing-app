@@ -111,23 +111,36 @@ export default function DashboardPage() {
   const recentLeads = [...leads].sort((a,b)=>new Date(b.created_at)-new Date(a.created_at)).slice(0,5);
   const recentOpps  = [...opportunities].sort((a,b)=>new Date(b.created_at)-new Date(a.created_at)).slice(0,5);
 
-  const buildPalette = (tc) => {
-    if (!tc) return null;
+  const buildPalette = (tc, prefs) => {
+    // Use brand color from app preferences, fall back to appearance theme, then default
+    const brand   = prefs?.brand_color   || tc?.sidebar || '#0F172A';
+    const accent  = prefs?.accent_color  || tc?.accent  || '#2563EB';
+    // Generate palette variations from brand + accent only
+    // All cards use shades of the same brand/accent colors — no random multi-colors
+    const darken  = (hex, pct) => {
+      const n = parseInt(hex.replace('#',''), 16);
+      const r = Math.max(0, Math.min(255, ((n>>16)&0xFF) * (1-pct)));
+      const g = Math.max(0, Math.min(255, ((n>>8)&0xFF)  * (1-pct)));
+      const b = Math.max(0, Math.min(255, (n&0xFF)        * (1-pct)));
+      return '#' + [r,g,b].map(x=>Math.round(x).toString(16).padStart(2,'0')).join('');
+    };
     return [
-      { from: tc.sidebar,   to: tc.to },
-      { from: '#059669',    to: '#065f46' },
-      { from: '#2563eb',    to: '#1e40af' },
-      { from: '#d97706',    to: '#b45309' },
-      { from: '#dc2626',    to: '#991b1b' },
-      { from: tc.accent,    to: tc.sidebar },
-      { from: '#0d9488',    to: '#0f766e' },
-      { from: '#db2777',    to: '#9d174d' },
+      { from: brand,             to: darken(brand, 0.2) },
+      { from: accent,            to: darken(accent, 0.2) },
+      { from: darken(brand, 0.1), to: darken(brand, 0.3) },
+      { from: darken(accent, 0.1), to: darken(accent, 0.3) },
+      { from: darken(brand, 0.2), to: darken(brand, 0.4) },
+      { from: accent,            to: brand },
+      { from: brand,             to: accent },
+      { from: darken(accent, 0.15), to: darken(brand, 0.15) },
     ];
   };
-  const palette = buildPalette(appearance?.themeColors);
+  const palette = buildPalette(appearance?.themeColors, appPreferences);
 
   const StatCard = ({ label, value, sub, icon, trend, paletteIdx = 0 }) => {
-    const p = palette?.[paletteIdx];
+    const brand = appPreferences?.brand_color || appearance?.themeColors?.sidebar || '#0F172A';
+    const accent = appPreferences?.accent_color || appearance?.themeColors?.accent || '#2563EB';
+    const p = palette?.[paletteIdx] || { from: brand, to: accent };
     const cardStyle = p
       ? { background: `linear-gradient(135deg, ${p.from}, ${p.to})` }
       : { background: 'linear-gradient(135deg, #0F172A, #1e3a8a)' };

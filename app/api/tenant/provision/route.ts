@@ -71,43 +71,29 @@ async function ensureSysadminRole(client) {
 
 export async function POST(req: NextRequest) {
   const body = await req.json();
-  const { db_url, db_service_key, admin_email, admin_name, tenant_name, tenant_id, is_shared } = body;
+  const { db_url, db_service_key, admin_email, admin_name, tenant_name } = body;
 
-  if (!admin_email) {
-    return NextResponse.json({ error: 'admin_email is required' }, { status: 400 });
+  if (!db_url || !db_service_key || !admin_email) {
+    return NextResponse.json({ error: 'db_url, db_service_key and admin_email are required' }, { status: 400 });
   }
 
   const firstName    = admin_name?.split(' ')[0] || 'System';
   const lastName     = admin_name?.split(' ').slice(1).join(' ') || 'Administrator';
+  // Use custom password if provided, otherwise generate one
   const chars        = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   const rand         = Array.from({length:8}, ()=>chars[Math.floor(Math.random()*chars.length)]).join('');
-  const tempPassword = body.use_custom_password || `UmbS@${rand}!`;
+  const tempPassword = body.use_custom_password || `Bpro@${rand}!`;
 
-  // For shared tenants: use master Supabase credentials (server env vars)
-  // For dedicated tenants: use provided db_url + db_service_key
-  const masterUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-  const masterKey = process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY!;
-
-  let targetUrl = masterUrl;
-  let effectiveServiceKey = masterKey;
-
-  if (!is_shared && db_url) {
-    // Dedicated tenant — need explicit service key from UI
-    if (!db_service_key) {
-      return NextResponse.json({ error: 'db_service_key is required for dedicated tenants' }, { status: 400 });
-    }
-    targetUrl = db_url;
-    effectiveServiceKey = db_service_key;
-  } else if (!is_shared && !db_url) {
-    return NextResponse.json({ error: 'db_url is required for dedicated tenants' }, { status: 400 });
-  }
-  // is_shared=true: use master credentials (targetUrl and effectiveServiceKey already set)
+  // If no service key provided, use the server-side one
+  const effectiveServiceKey = db_service_key
+    || process.env.SUPABASE_SERVICE_KEY
+    || process.env.SUPABASE_SERVICE_ROLE_KEY;
 
   if (!effectiveServiceKey) {
-    return NextResponse.json({ error: 'No service key available — check server environment variables' }, { status: 500 });
+    return NextResponse.json({ error: 'No service key available' }, { status: 500 });
   }
 
-  const client = createClient(targetUrl, effectiveServiceKey, {
+  const client = createClient(db_url || process.env.NEXT_PUBLIC_SUPABASE_URL!, effectiveServiceKey, {
     auth: { autoRefreshToken: false, persistSession: false }
   });
 
@@ -158,7 +144,7 @@ export async function POST(req: NextRequest) {
   }
 
   // ── Step 4: Upsert enterprise_user with SYSADMIN role ────────────
-  const euBase: any = {
+  const euBase = {
     auth_user_id: authUserId,
     first_name:   firstName,
     last_name:    lastName,
@@ -168,11 +154,6 @@ export async function POST(req: NextRequest) {
     is_admin:     true,
     role_id:      sysadminRoleId,
   };
-  // For shared plan: include tenant_id so RLS isolation works
-  if (is_shared && tenant_id) {
-    euBase.tenant_id = tenant_id;
-    log.push(`Setting tenant_id: ${tenant_id}`);
-  }
 
   // Try with temporary_password column
   const { error: upsertErr } = await client.from('enterprise_users')
@@ -190,18 +171,41 @@ export async function POST(req: NextRequest) {
 
   log.push(forceErr ? `Force update error: ${forceErr.message}` : 'Force update: role_id set');
 
-  // ── Step 5b: For shared plan, backfill tenant_id on any seed data ──
-  if (is_shared && tenant_id) {
-    const seedTables = [
-      'roles','permissions','role_permissions',
-      'app_preferences','appearance',
-    ];
-    for (const t of seedTables) {
-      try {
-        await client.from(t).update({ tenant_id }).is('tenant_id', null);
-      } catch(e) { /* ignore if column doesn't exist on this table */ }
-    }
-    log.push('Backfilled tenant_id on seed tables');
+  // ── Step 5: Create default app_preferences for new tenant ──────────────
+  const b2cEnabled = body.is_shared
+    ? !!(await (async () => {
+        try {
+          const { data: t } = await client.from('tenants').select('b2c_enabled').eq('id', body.tenant_id).maybeSingle();
+          return t?.b2c_enabled;
+        } catch(e) { return false; }
+      })())
+    : false;
+
+  const existingPrefs = await client.from('app_preferences').select('id').limit(1).maybeSingle();
+  if (!existingPrefs?.data?.id) {
+    const prefsPayload: any = {
+      b2c_mode:         b2cEnabled,
+      crm_enabled:      !b2cEnabled,
+      cpq_enabled:      !b2cEnabled,
+      date_format:      'DD/MM/YYYY',
+      default_currency: 'INR',
+      company_name:     tenant_name || 'My Company',
+      updated_at:       new Date().toISOString(),
+      settings: {
+        b2c_mode:         b2cEnabled,
+        crm_enabled:      !b2cEnabled,
+        cpq_enabled:      !b2cEnabled,
+        date_format:      'DD/MM/YYYY',
+        default_currency: 'INR',
+        company_name:     tenant_name || 'My Company',
+      },
+    };
+    if (is_shared && tenant_id) prefsPayload.tenant_id = tenant_id;
+    const { error: prefsErr } = await client.from('app_preferences').insert([prefsPayload]);
+    if (prefsErr) log.push(`app_preferences warning: ${prefsErr.message}`);
+    else log.push(`app_preferences created (b2c_mode: ${b2cEnabled})`);
+  } else {
+    log.push('app_preferences already exists — skipped');
   }
 
   // ── Step 6: Verify ───────────────────────────────────────────────
