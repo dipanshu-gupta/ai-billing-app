@@ -228,7 +228,7 @@ function AppShell() {
 // ─── Root ─────────────────────────────────────────────────────────────────────
 
 function AppWithTenant() {
-  const { supabase, loading } = useTenant();
+  const { supabase, tenant, loading } = useTenant();
 
   // Wait for tenant + supabase to be ready before mounting AppProvider
   // This ensures AppContext always gets a real supabase client, never null
@@ -244,7 +244,7 @@ function AppWithTenant() {
   }
 
   return (
-    <AppProvider supabase={supabase}>
+    <AppProvider supabase={supabase} tenant={tenant}>
       <AppShell />
     </AppProvider>
   );

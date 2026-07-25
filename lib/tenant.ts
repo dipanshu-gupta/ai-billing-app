@@ -162,7 +162,7 @@ export function extractTenantSlug(): string {
   }
 
   // 3. Custom subdomain (once you have a domain)
-  const BASE_DOMAINS = ['erp.businesspro.com', 'businesspro.app'];
+  const BASE_DOMAINS = ['cloud.umbrellasuite.com', 'umbrellasuite.com', 'erp.businesspro.com', 'businesspro.app'];
   for (const base of BASE_DOMAINS) {
     if (hostname.endsWith('.' + base)) {
       return hostname.slice(0, hostname.length - base.length - 1).split('.')[0];

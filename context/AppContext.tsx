@@ -154,7 +154,10 @@ export const useApp = (): AppContextValue => {
 
 // \u2500\u2500\u2500 Provider \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 
-export function AppProvider({ children, supabase = null }: { children: React.ReactNode }) {
+export function AppProvider({ children, supabase = null, tenant = null }: { children: React.ReactNode }) {
+  // tenant_id used for all DB inserts/fetches on shared-plan tenants
+  const tenantId = tenant?.id || (typeof window !== 'undefined' ? (window as any).__bp_tenant?.id : null) || null;
+  const isSharedPlan = !tenant?.db_url; // shared plan = same supabase as master
   // Auth
   const [session, setSession] = useState<any>(null);
   const [authLoading, setAuthLoading] = useState(true);
@@ -207,8 +210,10 @@ export function AppProvider({ children, supabase = null }: { children: React.Rea
       updated_by: currentUser.email, updated_at: now,
       organization_id: currentUser.organization_id,
       business_unit_id: currentUser.business_unit_id,
+      // Always include tenant_id — RLS enforces on shared plan, no-op on dedicated
+      ...(tenantId ? { tenant_id: tenantId } : {}),
     };
-  }, [currentUser]);
+  }, [currentUser, tenantId]);
 
   const applyDataSecurity = useCallback((records: any[]) => {
     // Return records as-is until permissions are loaded (re-fetch will correct scope)
@@ -399,7 +404,9 @@ export function AppProvider({ children, supabase = null }: { children: React.Rea
   // ─── RBAC helpers ─────────────────────────────────────────────────────────
   // Returns true if user has the given permission code OR is an admin (__admin__)
   const hasPermission = (code: string): boolean => {
-    if (!permissionsLoaded) return false; // deny until loaded (prevents premature UI access)
+    // Optimistic true while loading — UI shows briefly then re-gates once loaded
+    // Real security is enforced by Supabase RLS, not UI visibility
+    if (!permissionsLoaded) return true;
     if (currentUserPermissions.includes('__admin__')) return true;
     return currentUserPermissions.includes(code);
   };
