@@ -3,7 +3,7 @@
 
 import { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { supabase } from '@/lib/supabase';
+import { useTenant } from '@/context/TenantContext';
 
 const ADDR_TYPES = ['Billing','Shipping','Registered','Branch','Warehouse','Other'];
 const COUNTRIES = ['India','United States','United Kingdom','UAE','Singapore','Australia','Canada','Germany','France','Japan','China','Brazil','South Africa','Other'];
@@ -47,6 +47,7 @@ function AddressCard({ addr, onEdit, onDelete, onSetDefault }) {
 
 function AddressForm({ initial, onSave, onCancel }) {
   const [form, setForm] = useState({ ...emptyAddr(), ...initial });
+  const { supabase } = useTenant();
   const [errors, setErrors] = useState({});
   const s = (k, v) => { setForm(p => ({ ...p, [k]: v })); setErrors(e=>({...e,[k]:''})); };
 

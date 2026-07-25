@@ -2,7 +2,7 @@
 'use client';
 import { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { supabase } from '@/lib/supabase';
+import { useTenant } from '@/context/TenantContext';
 
 // ─── Evaluate conditional logic ──────────────────────────────────────────────
 const isVisible = (question, allQuestions, answers) => {
@@ -68,6 +68,7 @@ export default function ConfigureLineItemModal({
   open, onClose, productName, productId, productNumber, existingAnswers, onSave,
 }) {
   const [questions, setQuestions] = useState([]);
+  const { supabase } = useTenant();
   const [answers,   setAnswers]   = useState({});
   const [loading,   setLoading]   = useState(false);
 

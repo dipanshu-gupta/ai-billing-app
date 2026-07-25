@@ -2,7 +2,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { supabase } from '@/lib/supabase';
+import { useTenant } from '@/context/TenantContext';
 
 interface AddressSelectorProps {
   customerId?: string;
@@ -14,6 +14,7 @@ interface AddressSelectorProps {
 
 export default function AddressSelector({ customerId, value, onChange, placeholder = 'Select or type address', label }: AddressSelectorProps) {
   const [addresses, setAddresses] = useState([]);
+  const { supabase } = useTenant();
   const [open, setOpen]           = useState(false);
   const [manual, setManual]       = useState(value || '');
 

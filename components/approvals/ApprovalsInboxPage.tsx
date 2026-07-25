@@ -3,11 +3,12 @@
 
 import { useState, useEffect } from 'react';
 import { useApp } from '@/context/AppContext';
-import { supabase } from '@/lib/supabase';
+import { useTenant } from '@/context/TenantContext';
 import { formatDateTime, getStatusColor } from '@/lib/utils';
 
 export default function ApprovalsInboxPage() {
   const { currentUser, approvalRequests, processApproval, fetchApprovalRequests } = useApp();
+  const { supabase } = useTenant();
   const [myRequests,  setMyRequests]  = useState([]);
   const [allRequests, setAllRequests] = useState([]);
   const [tab,         setTab]         = useState('mine');

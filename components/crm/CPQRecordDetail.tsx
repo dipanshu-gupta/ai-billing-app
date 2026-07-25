@@ -3,7 +3,7 @@
 
 import { useState, useEffect } from 'react';
 import { useApp } from '@/context/AppContext';
-import { supabase } from '@/lib/supabase';
+import { useTenant } from '@/context/TenantContext';
 import ApprovalBanner from '@/components/crm/ApprovalBanner';
 import QuickCreateModal from '@/components/shared/QuickCreateModal';
 import { getStatusOptions, getStatusColor, getPageLabel, formatDateTime, formatDisplayNumber, PAGE_DISPLAY_PREFIX } from '@/lib/utils';
@@ -135,6 +135,7 @@ export default function CPQRecordDetail({ page, record, onClose }) {
     updateRecord, createInvoiceFromOrder, appPreferences,
     checkMatchingApprovalProcess, submitForApproval, approvalRequests,
   } = useApp();
+  const { supabase } = useTenant();
 
   const [edited,          setEdited]          = useState({ ...record });
   const [items,           setItems]           = useState([]);

@@ -2,7 +2,7 @@
 'use client';
 import { useState, useEffect } from 'react';
 import { useApp } from '@/context/AppContext';
-import { supabase } from '@/lib/supabase';
+import { useTenant } from '@/context/TenantContext';
 
 const iCls = 'w-full border border-blue-200 rounded-xl px-3 py-2.5 text-[#0F172A] bg-white focus:outline-none focus:ring-2 focus:ring-blue-400 text-sm';
 
@@ -11,6 +11,7 @@ export default function ApprovalBanner({ recordId, recordType, onDecision }) {
     appPreferences, createOrderFromOpportunity,
     checkMatchingApprovalProcess, submitForApproval, fetchLineItems, createQuotationFromOpportunity, convertLeadToOpportunity, createInvoiceFromOrder
   } = useApp();
+  const { supabase } = useTenant();
   const [request,    setRequest]    = useState(null);
   const [step,       setStep]       = useState(null);
   const [isApprover, setIsApprover] = useState(false);

@@ -3,7 +3,7 @@
 'use client';
 
 import { useApp } from '@/context/AppContext';
-import { supabase } from '@/lib/supabase';
+import { useTenant } from '@/context/TenantContext';
 import { useEffect, useState } from 'react';
 
 // ─── SLA Badge ────────────────────────────────────────────────────────────────
@@ -15,6 +15,7 @@ interface SLABadgeProps {
 
 export function SLABadge({ recordType, recordId }: SLABadgeProps) {
   const [slaRecord, setSlaRecord] = useState<any>(null);
+  const { supabase } = useTenant();
 
   useEffect(() => {
     if (!supabase) return;

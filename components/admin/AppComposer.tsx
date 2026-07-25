@@ -12,7 +12,7 @@
  * - Zero impact on B2B flow — scoped to retail objects only
  */
 import { useState, useEffect } from 'react';
-import { supabase } from '@/lib/supabase';
+import { useTenant } from '@/context/TenantContext';
 import { invalidateCustomFieldCache } from '@/lib/useCustomFields';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -59,6 +59,7 @@ function emptyField() {
 // ─── Component ───────────────────────────────────────────────────────────────
 export default function AppComposer() {
   const [selectedObj,   setSelectedObj]   = useState('retailCustomers');
+  const { supabase } = useTenant();
   const [fields,        setFields]        = useState([]);
   const [loading,       setLoading]       = useState(false);
   const [saving,        setSaving]        = useState(false);

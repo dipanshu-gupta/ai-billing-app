@@ -10,7 +10,7 @@ import {
   formatCurrency, formatDateTime, getStatusColor,
   formatDisplayNumber, PAGE_DISPLAY_PREFIX,
 } from '@/lib/utils';
-import { supabase } from '@/lib/supabase';
+import { useTenant } from '@/context/TenantContext';
 import ApprovalBanner from '@/components/crm/ApprovalBanner';
 import ProductConfigurator from '@/components/products/ProductConfigurator';
 import ConfigureLineItemModal from '@/components/shared/ConfigureLineItemModal';
@@ -42,6 +42,7 @@ function Pill({ status }) {
 //     if none, the currently logged-in user. ─────────────────────────────────────
 function OwnerField({ record, edited, onPick }) {
   const { enterpriseUsers, currentUser } = useApp();
+  const { supabase } = useTenant();
   const [backup, setBackup] = useState([]);
 
   useEffect(() => {

@@ -3,7 +3,7 @@
 
 import { useState, useEffect, useMemo } from 'react';
 import { useApp } from '@/context/AppContext';
-import { supabase } from '@/lib/supabase';
+import { useTenant } from '@/context/TenantContext';
 import { formatCurrency, getStatusColor, formatDisplayNumber } from '@/lib/utils';
 import AISummary from '@/components/ai/AISummary';
 import SearchableSelect from '@/components/shared/SearchableSelect';
@@ -96,6 +96,7 @@ const buildQuoteHTML = (quote, items, template) => {
 // ─── Line Items Editor ─────────────────────────────────────────────────────────
 function QuoteLineItems({ items, setItems, products, currency }) {
   const [configModal, setConfigModal] = useState(null);
+  const { supabase } = useTenant();
   const fmt = n => new Intl.NumberFormat('en-IN',{style:'currency',currency:currency||'INR',maximumFractionDigits:0}).format(n||0);
   const iCls = 'w-full border border-blue-200 rounded-lg px-2 py-2 text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-blue-400 text-xs';
   const sCls = 'w-full border border-blue-200 rounded-lg px-2 py-2 text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-blue-400 text-xs';

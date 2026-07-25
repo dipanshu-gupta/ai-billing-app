@@ -1,7 +1,7 @@
 // @ts-nocheck
 'use client';
 import { useState, useEffect } from 'react';
-import { supabase } from '@/lib/supabase';
+import { useTenant } from '@/context/TenantContext';
 
 const FIELD_TYPES = [
   { v:'text',          l:'Text',          icon:'✏️' },
@@ -17,6 +17,7 @@ const emptyQ = () => ({ _key:Date.now(), question_text:'', field_type:'text', op
 
 export default function ProductConfigurator({ product }) {
   const [questions,   setQuestions]   = useState([]);
+  const { supabase } = useTenant();
   const [saving,      setSaving]      = useState(false);
   const [loading,     setLoading]     = useState(true);
   const [saved,       setSaved]       = useState(false);

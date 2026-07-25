@@ -4,7 +4,7 @@
 
 
 import { useState, useEffect, useRef } from 'react';
-import { supabase } from '@/lib/supabase';
+import { useTenant } from '@/context/TenantContext';
 import { useApp } from '@/context/AppContext';
 import { formatDateTime, timeAgo, formatFileSize } from '@/lib/utils';
 import { EmptyState, inputClass, textareaClass, Button } from '@/components/shared';
@@ -19,6 +19,7 @@ interface CollabProps {
 
 function NotesTab({ recordType, recordId, recordName }: CollabProps) {
   const { currentUser, buildSystemFields } = useApp();
+  const { supabase } = useTenant();
   const [notes, setNotes] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
