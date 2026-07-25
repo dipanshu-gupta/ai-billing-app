@@ -154,7 +154,12 @@ export const useApp = (): AppContextValue => {
 
 // \u2500\u2500\u2500 Provider \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 
-export function AppProvider({ children, supabase = null }: { children: React.ReactNode }) {
+export function AppProvider({ children, supabase = null, tenant = null }: { children: React.ReactNode }) {
+  // Tenant isolation — tenantId injected into all DB inserts for shared-plan tenants
+  const tenantId: string | null = tenant?.id
+    || (typeof window !== 'undefined' ? (window as any).__bp_tenant?.id : null)
+    || null;
+  const isSharedPlan = !tenant?.db_url;
   // Auth
   const [session, setSession] = useState<any>(null);
   const [authLoading, setAuthLoading] = useState(true);
