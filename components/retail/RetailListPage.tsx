@@ -512,157 +512,149 @@ function RetailLineItems({ items, setItems, products, taxRegime }) {
 function buildRetailPrintHTML(t, record, items) {
   const isTh = t.paper_size?.startsWith('thermal');
   const widthMM = t.paper_size==='thermal_58'||t.paper_size==='thermal_57' ? 58 : t.paper_size==='thermal_80' ? 80 : t.paper_size==='A5' ? 148 : 210;
-  const font   = t.font_family || 'monospace';
-  const brand  = t.brand_color || '#0F172A';
+  const font   = t.font_family || 'Arial, sans-serif';
+  const fsize  = Number(t.font_size || 11);
+  const brand  = t.brand_color  || '#0F172A';
   const accent = t.accent_color || '#2563EB';
-  const bg     = t.bg_color || '#FFFFFF';
-  const fs     = (n) => isTh ? Math.max(8, n-2) : n;
-  const fmt    = (n) => '₹' + Number(n||0).toLocaleString('en-IN', {minimumFractionDigits:2});
-  const divider = t.show_dividers
-    ? `<hr style="border:none;border-top:1px ${t.border_style||'dashed'} #ccc;margin:6px 0;"/>`
-    : '';
+  const bg     = t.bg_color     || '#FFFFFF';
+  const fs     = (n) => isTh ? Math.max(7, n-2) : Math.max(8, Math.round(n * fsize / 11));
+  const fmt    = (n) => String.fromCharCode(8377) + Number(n||0).toLocaleString('en-IN', {minimumFractionDigits:2});
+  const div    = t.show_dividers !== false ? `<hr style="border:none;border-top:1px ${t.border_style||'dashed'} #ccc;margin:6px 0;"/>` : '';
+
+  const colHeaders = [
+    t.col_sno && `<th style="padding:3px 4px;text-align:left;font-size:${fs(8)}px;color:#6B7280;text-transform:uppercase">#</th>`,
+    t.col_item!==false && `<th style="padding:3px 4px;text-align:left;font-size:${fs(8)}px;color:#6B7280;text-transform:uppercase">Item</th>`,
+    t.col_unit && `<th style="padding:3px 4px;text-align:center;font-size:${fs(8)}px;color:#6B7280;text-transform:uppercase">Unit</th>`,
+    t.col_qty!==false && `<th style="padding:3px 4px;text-align:right;font-size:${fs(8)}px;color:#6B7280;text-transform:uppercase">Qty</th>`,
+    t.col_price!==false && `<th style="padding:3px 4px;text-align:right;font-size:${fs(8)}px;color:#6B7280;text-transform:uppercase">Unit Price</th>`,
+    t.col_discount && `<th style="padding:3px 4px;text-align:right;font-size:${fs(8)}px;color:#6B7280;text-transform:uppercase">Disc%</th>`,
+    t.col_tax_rate && `<th style="padding:3px 4px;text-align:right;font-size:${fs(8)}px;color:#6B7280;text-transform:uppercase">Tax%</th>`,
+    t.col_hsn && `<th style="padding:3px 4px;text-align:right;font-size:${fs(8)}px;color:#6B7280;text-transform:uppercase">HSN</th>`,
+    t.col_subtotal_line && `<th style="padding:3px 4px;text-align:right;font-size:${fs(8)}px;color:#6B7280;text-transform:uppercase">Subtotal</th>`,
+    t.col_total!==false && `<th style="padding:3px 4px;text-align:right;font-size:${fs(8)}px;color:#6B7280;text-transform:uppercase">Total</th>`,
+  ].filter(Boolean).join('');
 
   const rows = (items||[]).map((item, i) => {
-    const bg2 = t.alt_row && i%2===1 ? t.alt_row_color||'#F9FAFB' : 'transparent';
-    return `<tr style="background:${bg2}">
-      ${t.col_item!==false ? `<td style="padding:3px 4px;font-size:${fs(11)}px">${item.product||item.product_name||''}</td>` : ''}
-      ${t.col_qty!==false  ? `<td style="padding:3px 4px;text-align:right;font-size:${fs(11)}px">${item.quantity||0}</td>` : ''}
-      ${t.col_price!==false? `<td style="padding:3px 4px;text-align:right;font-size:${fs(11)}px">${fmt(item.unit_price)}</td>` : ''}
-      ${t.col_tax          ? `<td style="padding:3px 4px;text-align:right;font-size:${fs(9)}px;color:#6B7280">${item.tax_rate||0}%</td>` : ''}
-      ${t.col_hsn          ? `<td style="padding:3px 4px;text-align:right;font-size:${fs(8)}px;color:#6B7280">${item.hsn_code||''}</td>` : ''}
-      ${t.col_total!==false? `<td style="padding:3px 4px;text-align:right;font-size:${fs(11)}px;font-weight:600">${fmt(item.extended_price||item.unit_price*item.quantity)}</td>` : ''}
+    const rowBg = t.alt_row && i%2===1 ? (t.alt_row_color||'#F9FAFB') : 'transparent';
+    const qty   = Number(item.quantity||1);
+    const price = Number(item.unit_price ?? item.price ?? 0);
+    const disc  = Number(item.discount_pct ?? item.disc ?? 0);
+    const tax   = Number(item.tax_pct ?? item.gst_rate ?? item.taxRate ?? 0);
+    const net   = qty * price * (1 - disc/100);
+    const total = Number(item.extended_price ?? item.total ?? (net * (1 + tax/100)));
+    return `<tr style="background:${rowBg}">
+      ${t.col_sno ? `<td style="padding:3px 4px;font-size:${fs(10)}px">${i+1}</td>` : ''}
+      ${t.col_item!==false ? `<td style="padding:3px 4px;font-size:${fs(11)}px">${item.product_name||item.product||''}</td>` : ''}
+      ${t.col_unit ? `<td style="padding:3px 4px;text-align:center;font-size:${fs(10)}px">${item.unit||''}</td>` : ''}
+      ${t.col_qty!==false ? `<td style="padding:3px 4px;text-align:right;font-size:${fs(11)}px">${qty}</td>` : ''}
+      ${t.col_price!==false ? `<td style="padding:3px 4px;text-align:right;font-size:${fs(11)}px">${fmt(price)}</td>` : ''}
+      ${t.col_discount ? `<td style="padding:3px 4px;text-align:right;font-size:${fs(10)}px;color:#6B7280">${disc}%</td>` : ''}
+      ${t.col_tax_rate ? `<td style="padding:3px 4px;text-align:right;font-size:${fs(9)}px;color:#6B7280">${tax}%</td>` : ''}
+      ${t.col_hsn ? `<td style="padding:3px 4px;text-align:right;font-size:${fs(8)}px;color:#6B7280">${item.hsn_code||item.hsn||''}</td>` : ''}
+      ${t.col_subtotal_line ? `<td style="padding:3px 4px;text-align:right;font-size:${fs(10)}px;color:#4B5563">${fmt(net)}</td>` : ''}
+      ${t.col_total!==false ? `<td style="padding:3px 4px;text-align:right;font-size:${fs(11)}px;font-weight:600">${fmt(total)}</td>` : ''}
     </tr>`;
   }).join('');
 
-  const colHeaders = [
-    t.col_item!==false  && `<th style="padding:3px 4px;text-align:left;font-size:${fs(9)}px;color:#6B7280;text-transform:uppercase">Item</th>`,
-    t.col_qty!==false   && `<th style="padding:3px 4px;text-align:right;font-size:${fs(9)}px;color:#6B7280;text-transform:uppercase">Qty</th>`,
-    t.col_price!==false && `<th style="padding:3px 4px;text-align:right;font-size:${fs(9)}px;color:#6B7280;text-transform:uppercase">Price</th>`,
-    t.col_tax           && `<th style="padding:3px 4px;text-align:right;font-size:${fs(9)}px;color:#6B7280;text-transform:uppercase">Tax</th>`,
-    t.col_hsn           && `<th style="padding:3px 4px;text-align:right;font-size:${fs(9)}px;color:#6B7280;text-transform:uppercase">HSN</th>`,
-    t.col_total!==false && `<th style="padding:3px 4px;text-align:right;font-size:${fs(9)}px;color:#6B7280;text-transform:uppercase">Total</th>`,
-  ].filter(Boolean).join('');
+  const subtotal   = Number(record.subtotal || (items||[]).reduce((s,i)=>s+Number(i.unit_price??i.price??0)*Number(i.quantity||1),0));
+  const totalDisc  = Number(record.total_discount || 0);
+  const totalTax   = Number(record.total_tax || 0);
+  const grandTotal = Number(record.amount || record.grand_total || (subtotal - totalDisc + totalTax));
+  const amtPaid    = Number(record.amount_paid || grandTotal);
+  const change     = Math.max(0, amtPaid - grandTotal);
+  const roundOff   = Math.round(grandTotal) - grandTotal;
+  const invNum     = record.invoice_number || record.id?.slice(0,8) || '';
 
-  return `<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="UTF-8"/>
-  <title>Invoice #${record.display_number?String(record.display_number).padStart(5,'0'):record.invoice_number||record.id?.slice(0,8)||''}</title>
+  return `<!DOCTYPE html><html><head><meta charset="UTF-8"/>
   <style>
-    * { box-sizing:border-box; margin:0; padding:0; }
-    body { font-family:${font}; background:${bg}; color:#111827; }
-    .page { width:${widthMM}mm; margin:0 auto; padding:${isTh?'0':'8mm'}; background:${bg}; }
-    .header { background:${brand}; color:#fff; padding:${isTh?'8px 10px':'14px 18px'}; text-align:${t.header_align||'center'}; }
-    .header .store-name { font-weight:800; font-size:${fs(14)}px; letter-spacing:1.5px; }
-    .header .store-sub  { font-size:${fs(9)}px; opacity:.82; margin-top:3px; line-height:1.5; }
-    .header .tagline    { font-size:${fs(9)}px; opacity:.7; font-style:italic; margin-top:2px; }
-    .body { padding:${isTh?'6px 10px':'12px 18px'}; }
-    .inv-meta { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:${isTh?'5px':'8px'}; }
-    .inv-num  { font-weight:800; font-size:${fs(13)}px; }
-    .inv-date { font-size:${fs(9)}px; color:#6B7280; margin-top:2px; }
-    .barcode  { font-size:${isTh?'18':'22'}px; color:#9CA3AF; letter-spacing:-2px; }
-    .meta-row { display:flex; justify-content:space-between; margin-bottom:${isTh?'2px':'3px'}; }
-    .meta-l   { font-size:${fs(10)}px; color:#6B7280; }
-    .meta-v   { font-size:${fs(11)}px; font-weight:500; color:#111827; }
-    .meta-vb  { font-size:${fs(11)}px; font-weight:700; color:#111827; }
-    table     { width:100%; border-collapse:collapse; }
-    thead tr  { border-bottom:1px solid ${brand}40; }
-    .totals-row { display:flex; justify-content:space-between; margin-bottom:${isTh?'2px':'3px'}; }
-    .total-final{ display:flex; justify-content:space-between; font-weight:800; font-size:${fs(14)}px; padding-top:${isTh?'5px':'7px'}; margin-top:${isTh?'4px':'6px'}; border-top:2px solid ${brand}; }
-    .loyalty-box{ background:${accent}12; border:1px solid ${accent}30; border-radius:6px; padding:${isTh?'5px 8px':'8px 12px'}; text-align:center; margin:${isTh?'4px 0':'6px 0'}; }
-    .savings    { text-align:center; color:#15803D; font-weight:600; background:#F0FDF4; border-radius:5px; padding:3px 8px; margin:${isTh?'3px 0':'5px 0'}; }
-    .footer-msg { text-align:center; color:#4B5563; line-height:1.6; padding-bottom:${isTh?'6px':'10px'}; }
-    @media print {
-      body { -webkit-print-color-adjust:exact; print-color-adjust:exact; }
-      .page { width:${widthMM}mm; }
-      @page { size:${isTh?widthMM+'mm 1000mm':'A4'}; margin:${isTh?'0':'10mm'}; }
-    }
-  </style>
-</head>
-<body>
-<div class="page">
-  <!-- HEADER -->
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{font-family:${font};background:${bg};color:#111827;font-size:${fsize}px}
+    .page{width:${widthMM}mm;margin:0 auto;padding:${isTh?'0':'8mm'};background:${bg}}
+    .header{background:${brand};color:#fff;padding:${isTh?'8px 10px':'14px 18px'};text-align:${t.header_align||'center'}}
+    .store-name{font-weight:800;font-size:${fs(16)}px;letter-spacing:1.5px;text-transform:uppercase}
+    .store-sub{font-size:${fs(9)}px;opacity:.82;margin-top:4px;line-height:1.6}
+    .gst-hdr{background:${brand}dd;padding:3px 10px;text-align:center;font-size:${fs(8)}px;color:#fff;font-weight:600;letter-spacing:1px}
+    .body{padding:${isTh?'6px 10px':'12px 18px'}}
+    .inv-meta{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px}
+    .inv-num{font-weight:800;font-size:${fs(13)}px}
+    .inv-date{font-size:${fs(9)}px;color:#6B7280;margin-top:2px}
+    .meta-row{display:flex;justify-content:space-between;margin-bottom:3px}
+    .meta-l{font-size:${fs(10)}px;color:#6B7280}
+    .meta-v{font-size:${fs(11)}px;font-weight:500}
+    .meta-vb{font-size:${fs(11)}px;font-weight:700}
+    table{width:100%;border-collapse:collapse}
+    thead tr{border-bottom:2px solid ${brand}}
+    .tot-row{display:flex;justify-content:space-between;margin-bottom:3px}
+    .tot-final{display:flex;justify-content:space-between;font-weight:800;font-size:${fs(14)}px;padding:6px 0;margin-top:4px;border-top:2px solid ${brand}}
+    .loyalty-box{background:${accent}18;border:1px solid ${accent}40;border-radius:6px;padding:8px 12px;text-align:center;margin:6px 0}
+    .savings{text-align:center;color:#15803D;font-weight:600;background:#F0FDF4;border-radius:5px;padding:3px 8px;margin:5px 0;font-size:${fs(9)}px}
+    .footer-msg{text-align:center;color:#4B5563;line-height:1.6;padding:8px 0;font-size:${fs(9)}px}
+    .powered-by{text-align:center;font-size:${fs(7)}px;color:#9CA3AF;margin-top:8px}
+    .signature{margin-top:20px;border-top:1px solid #E5E7EB;padding-top:6px;text-align:right;font-size:${fs(9)}px;color:#6B7280}
+    @media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact}.page{width:${widthMM}mm}@page{size:${isTh?widthMM+'mm 1000mm':t.paper_size==='A5'?'A5':'A4'};margin:${isTh?'0':'8mm'}}}
+  </style></head><body><div class="page">
+
   <div class="header">
-    ${t.show_logo && t.logo_url ? `<div style="margin-bottom:6px;text-align:${t.header_align||'center'}"><img src="${t.logo_url}" style="height:${t.logo_size||48}px;object-fit:contain"/></div>` : ''}
-    <div class="store-name">${t.store_name||'Store'}</div>
-    ${t.tagline ? `<div class="tagline">${t.tagline}</div>` : ''}
-    ${t.show_store_info ? `<div class="store-sub">
-      ${t.store_address||''}${t.store_phone?'<br>'+t.store_phone:''}
-      ${t.store_email?'<br>'+t.store_email:''}
-      ${t.store_website?'<br>'+t.store_website:''}
-      ${t.show_gst&&t.store_gstin?'<br>GSTIN: '+t.store_gstin:''}
-    </div>` : ''}
+    ${t.show_logo && t.logo_url ? `<div style="margin-bottom:6px;text-align:${t.logo_position==='left'?'left':t.logo_position==='right'?'right':'center'}"><img src="${t.logo_url}" style="height:${t.logo_size||48}px;object-fit:contain"/></div>` : ''}
+    <div class="store-name">${t.store_name||''}</div>
+    ${t.store_tagline ? `<div style="font-size:${fs(9)}px;opacity:.82;font-style:italic;margin-top:2px">${t.store_tagline}</div>` : ''}
+    ${t.show_store_info!==false ? `<div class="store-sub">${t.store_address||''}${t.store_phone?'<br/>'+t.store_phone:''}${t.store_email?'<br/>'+t.store_email:''}${t.store_website?'<br/>'+t.store_website:''}</div>` : ''}
   </div>
+  ${t.show_gst_header && t.store_gstin ? `<div class="gst-hdr">GSTIN: ${t.store_gstin}</div>` : ''}
 
   <div class="body">
-    <!-- META -->
     <div class="inv-meta">
       <div>
-        <div class="inv-num">${t.headline||'RECEIPT'}</div>
-        ${(t.show_invoice_number!==false) ? `<div class="inv-date" style="font-weight:600;color:#374151">${record.display_number ? 'RINV-'+String(record.display_number).padStart(5,'0') : record.invoice_number || record.id?.slice(0,8) || ''}</div>` : ''}
-        <div class="inv-date">${record.invoice_date ? new Date(record.invoice_date).toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric'}) : new Date().toLocaleDateString('en-IN')}</div>
-        ${t.show_date&&record.created_at ? `<div class="inv-date">${new Date(record.created_at).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'})}</div>` : ''}
-        ${t.show_cashier&&(record.owner_name||record.owner) ? `<div class="inv-date">Cashier: ${record.owner_name||record.owner}</div>` : ''}
+        <div class="inv-num">${t.headline||'INVOICE'}</div>
+        ${t.sub_headline ? `<div style="font-size:${fs(9)}px;color:#6B7280;font-style:italic;margin-top:1px">${t.sub_headline}</div>` : ''}
+        ${t.show_invoice_number!==false ? `<div class="inv-date" style="font-weight:600;color:#374151">${invNum}</div>` : ''}
+        ${t.show_date!==false ? `<div class="inv-date">${record.invoice_date ? new Date(record.invoice_date).toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric'}) : new Date().toLocaleDateString('en-IN')}</div>` : ''}
+        ${t.show_cashier && (record.owner_name||record.owner) ? `<div class="inv-date">Cashier: ${record.owner_name||record.owner}</div>` : ''}
+        ${t.place_of_supply ? `<div class="inv-date">Place of Supply: ${t.place_of_supply}</div>` : ''}
       </div>
-      ${t.show_barcode ? '<div class="barcode">▌▌▌▌▌▌</div>' : ''}
-      ${t.show_qr_code ? '<div style="width:40px;height:40px;background:#F3F4F6;border:1px solid #E5E7EB;border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:22px">◼</div>' : ''}
+      <div style="text-align:right">
+        ${t.show_barcode ? '<div style="font-size:22px;color:#9CA3AF;letter-spacing:-2px">▌▌▌▌▌▌</div>' : ''}
+        ${t.show_qr_code ? '<div style="width:48px;height:48px;background:#F3F4F6;border:1px solid #E5E7EB;border-radius:4px;display:inline-flex;align-items:center;justify-content:center;font-size:24px">◼</div>' : ''}
+      </div>
     </div>
+    ${div}
+    ${t.show_customer!==false && record.customer ? `
+    <div class="meta-row"><span class="meta-l">Customer</span><span class="meta-vb">${record.customer}</span></div>
+    ${t.show_customer_phone!==false && record.customer_phone ? `<div class="meta-row"><span class="meta-l">Phone</span><span class="meta-v">${record.customer_phone}</span></div>` : ''}
+    ${t.show_customer_gstin && record.customer_gstin ? `<div class="meta-row"><span class="meta-l">GSTIN</span><span class="meta-v">${record.customer_gstin}</span></div>` : ''}
+    ${div}` : ''}
 
-    ${divider}
+    <table><thead><tr>${colHeaders}</tr></thead><tbody>${rows}</tbody></table>
+    ${div}
 
-    <!-- CUSTOMER -->
-    ${t.show_customer ? `
-    <div class="meta-row"><span class="meta-l">Customer</span><span class="meta-vb">${record.customer||'-'}</span></div>
-    ${t.show_customer_phone&&record.customer_phone ? `<div class="meta-row"><span class="meta-l">Phone</span><span class="meta-v">${record.customer_phone}</span></div>` : ''}
-    ${t.show_customer_gstin&&record.customer_gstin ? `<div class="meta-row"><span class="meta-l">GSTIN</span><span class="meta-v">${record.customer_gstin}</span></div>` : ''}
+    ${t.show_subtotal!==false ? `<div class="tot-row"><span class="meta-l">Subtotal</span><span class="meta-v">${fmt(subtotal)}</span></div>` : ''}
+    ${t.show_discount_total!==false && totalDisc>0 ? `<div class="tot-row"><span class="meta-l">Discount</span><span class="meta-v" style="color:#15803D">-${fmt(totalDisc)}</span></div>` : ''}
+    ${t.show_tax_total!==false && totalTax>0 ? `<div class="tot-row"><span class="meta-l">Tax</span><span class="meta-v">${fmt(totalTax)}</span></div>` : ''}
+    ${t.show_cgst_sgst && totalTax>0 ? `
+      <div style="display:flex;justify-content:space-between;margin-bottom:2px;font-size:${fs(9)}px;color:#6B7280"><span>CGST</span><span>${fmt(totalTax/2)}</span></div>
+      <div style="display:flex;justify-content:space-between;margin-bottom:2px;font-size:${fs(9)}px;color:#6B7280"><span>SGST</span><span>${fmt(totalTax/2)}</span></div>
+    ` : ''}
+    ${t.show_round_off && Math.abs(roundOff)>0.001 ? `<div class="tot-row"><span class="meta-l">Round Off</span><span class="meta-v">${fmt(roundOff)}</span></div>` : ''}
+    <div class="tot-final"><span>TOTAL</span><span>${fmt(grandTotal)}</span></div>
+
+    ${t.show_payment!==false ? `${div}
+    ${t.show_payment_mode!==false ? `<div class="meta-row"><span class="meta-l">Payment</span><span class="meta-vb">${record.payment_method||''}</span></div>` : ''}
+    ${t.show_amount_paid ? `<div class="meta-row"><span class="meta-l">Amount Paid</span><span class="meta-v">${fmt(amtPaid)}</span></div>` : ''}
+    ${t.show_change && change>0 ? `<div class="meta-row"><span class="meta-l">Change</span><span class="meta-v">${fmt(change)}</span></div>` : ''}
+    ${t.show_upi_id && t.upi_id ? `<div class="meta-row"><span class="meta-l">UPI</span><span class="meta-v">${t.upi_id}</span></div>` : ''}
     ` : ''}
 
-    ${divider}
-
-    <!-- LINE ITEMS -->
-    <table>
-      <thead><tr>${colHeaders}</tr></thead>
-      <tbody>${rows}</tbody>
-    </table>
-
-    ${divider}
-
-    <!-- TOTALS -->
-    <div class="totals-row"><span class="meta-l">Subtotal</span><span class="meta-v">${fmt(record.subtotal)}</span></div>
-    <div class="totals-row"><span class="meta-l">Discount</span><span class="meta-v">-${fmt(record.total_discount)}</span></div>
-    <div class="totals-row"><span class="meta-l">Tax</span><span class="meta-v">${fmt(record.total_tax)}</span></div>
-    <div class="total-final"><span>TOTAL</span><span>${fmt(record.amount)}</span></div>
-
-    <!-- PAYMENT -->
-    ${t.show_payment ? `${divider}
-    <div class="meta-row"><span class="meta-l">Payment Method</span><span class="meta-vb">${record.payment_method||''}</span></div>
-    <div class="meta-row"><span class="meta-l">Status</span><span class="meta-v">${record.payment_status||record.status||''}</span></div>
-    ` : ''}
-
-    <!-- LOYALTY -->
-    ${t.show_loyalty && record.loyalty_points_earned ? `${divider}
-    <div class="loyalty-box">
-      <div style="font-size:${fs(9)}px;color:#6B7280">Loyalty Points Earned</div>
-      <div style="font-weight:800;font-size:${fs(15)}px;color:#111827">+${record.loyalty_points_earned} pts</div>
-    </div>` : ''}
-
-    <!-- SAVINGS -->
-    ${t.show_savings && record.total_discount > 0 ? `
-    <div class="savings">🎉 You saved ${fmt(record.total_discount)} on this purchase!</div>` : ''}
-
-    <!-- FOOTER -->
-    ${t.show_footer && t.footer_msg ? `${divider}
-    <div class="footer-msg">${t.footer_msg}</div>` : ''}
-
-    <!-- WATERMARK -->
-    ${t.watermark ? `<div style="position:fixed;top:50%;left:50%;transform:translate(-50%,-50%) rotate(-35deg);font-size:48px;font-weight:900;color:rgba(0,0,0,0.05);pointer-events:none;white-space:nowrap;letter-spacing:6px">${t.watermark}</div>` : ''}
-  </div>
-</div>
-</body>
-</html>`;
+    ${t.show_loyalty && record.loyalty_points_earned ? `${div}<div class="loyalty-box"><div style="font-size:${fs(9)}px;color:#6B7280">Points Earned</div><div style="font-weight:800;font-size:${fs(15)}px">+${record.loyalty_points_earned}</div></div>` : ''}
+    ${totalDisc>0 ? `<div class="savings">You saved ${fmt(totalDisc)}!</div>` : ''}
+    ${t.show_return_policy && t.return_policy ? `${div}<div style="font-size:${fs(8)}px;color:#6B7280;line-height:1.5">Return Policy: ${t.return_policy}</div>` : ''}
+    ${t.show_signature ? `<div class="signature">${t.signature_label||'Authorised Signatory'}</div>` : ''}
+    ${t.show_footer!==false && t.footer_msg ? `${div}<div class="footer-msg">${t.footer_msg}</div>` : ''}
+    ${t.show_powered_by!==false ? `<div class="powered-by">Powered by Umbrella Suite</div>` : ''}
+    ${t.watermark ? `<div style="position:fixed;top:50%;left:50%;transform:translate(-50%,-50%) rotate(-35deg);font-size:64px;font-weight:900;color:rgba(0,0,0,0.04);pointer-events:none;white-space:nowrap;letter-spacing:6px">${t.watermark}</div>` : ''}
+  </div></div></body></html>`;
 }
 
-// ─── Print Preview Modal ──────────────────────────────────────────────────────
+
 function RetailInvoicePrintModal({ template, record, items, onClose, onPrint }) {
   if (!template) return (
     <div className="fixed inset-0 bg-black/60 z-[200] flex items-center justify-center p-4" onClick={onClose}>
@@ -2137,7 +2129,7 @@ export default function RetailListPage({ page }) {
                   <td className="px-5 py-3.5">
                     <button onClick={()=>setSelectedRecord(r)}>
                       <span className="text-xs font-mono font-bold text-blue-700 bg-blue-50 hover:bg-blue-100 px-2.5 py-1 rounded-full border border-blue-100 cursor-pointer transition-all">
-                        {r.displayNumber ? formatDisplayNumber(PAGE_DISPLAY_PREFIX[page]||'REC', r.displayNumber) : (r[cfg.idField] || r.id)}
+                        {r.displayNumber || r[cfg.idField] || r.id}
                       </span>
                     </button>
                   </td>
