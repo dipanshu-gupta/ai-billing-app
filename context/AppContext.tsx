@@ -696,9 +696,12 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
 
   const upsertRetailLineItems = async (table: 'retail_order_line_items'|'retail_invoice_line_items', fkField: string, id: string, items: any[]) => {
     if (!supabase || !id) return;
+    const effectiveTenantId = tenantId
+      || (typeof window !== 'undefined' ? (window as any).__bp_tenant?.id : null)
+      || null;
     await supabase.from(table).delete().eq(fkField, id);
     if (items && items.length) {
-      await supabase.from(table).insert(items.map((i: any, idx: number) => ({
+      const { error } = await supabase.from(table).insert(items.map((i: any, idx: number) => ({
         [fkField]:      id,
         product_name:   i.product_name || i.product || '',
         product_code:   i.product_code || '',
@@ -707,7 +710,6 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
         unit_price:     Number(i.unit_price ?? i.price ?? 0),
         list_price:     Number(i.list_price ?? i.unit_price ?? i.price ?? 0),
         discount_pct:   Number(i.discount_pct ?? i.discount ?? 0),
-        // Tax fields — store whichever regime fields are present on the line
         hsn_code:        i.hsn_code ?? null,
         gst_rate:        i.gst_rate != null ? Number(i.gst_rate) : null,
         taxable:         i.taxable ?? null,
@@ -718,7 +720,9 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
           Number(i.quantity||1) * Number(i.unit_price ?? i.price ?? 0) * (1 - Number(i.discount_pct ?? i.discount ?? 0)/100)
         )),
         sort_order:     idx,
+        ...(effectiveTenantId ? { tenant_id: effectiveTenantId } : {}),
       })));
+      if (error) console.error('[upsertRetailLineItems] error:', error.message, 'tenantId:', effectiveTenantId);
     }
   };
 
