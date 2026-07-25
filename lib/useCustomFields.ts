@@ -20,13 +20,21 @@ export interface CustomField {
   is_published: boolean;
 }
 
-// Module-level cache
+// Module-level cache — keyed by tenantId:objectType to avoid cross-tenant bleed
 const _cache: Record<string, CustomField[]> = {};
+
+function getCacheKey(objectType: string): string {
+  const tenantId = typeof window !== 'undefined'
+    ? (window as any).__bp_tenant?.id || 'default'
+    : 'default';
+  return `${tenantId}:${objectType}`;
+}
 
 /** Call after publishing to force fresh fetch */
 export function invalidateCustomFieldCache(objectType?: string) {
   if (objectType) {
-    delete _cache[objectType];
+    // Clear all cache keys for this objectType across tenants
+    Object.keys(_cache).forEach(k => { if (k.endsWith(':' + objectType)) delete _cache[k]; });
   } else {
     Object.keys(_cache).forEach(k => delete _cache[k]);
   }
@@ -48,15 +56,16 @@ function getClient() {
 }
 
 export function useCustomFields(objectType: string) {
-  const [fields,  setFields]  = useState<CustomField[]>(_cache[objectType] || []);
-  const [loading, setLoading] = useState(!_cache[objectType]);
+  const cacheKey = getCacheKey(objectType);
+  const [fields,  setFields]  = useState<CustomField[]>(_cache[cacheKey] || []);
+  const [loading, setLoading] = useState(!_cache[cacheKey]);
 
   useEffect(() => {
     if (!objectType) { setLoading(false); return; }
 
     // Use cache if available
-    if (_cache[objectType] !== undefined) {
-      setFields(_cache[objectType]);
+    if (_cache[cacheKey] !== undefined) {
+      setFields(_cache[cacheKey]);
       setLoading(false);
       return;
     }
@@ -83,7 +92,7 @@ export function useCustomFields(objectType: string) {
             options: f.options || [],
             show_on: f.show_on || 'both',
           }));
-          _cache[objectType] = result; // cache even empty arrays
+          _cache[cacheKey] = result; // cache even empty arrays
           setFields(result);
         }
       } catch(e) {

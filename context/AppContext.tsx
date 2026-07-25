@@ -1037,7 +1037,9 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
   const saveEnterpriseUser = async (data: any, editingId?: string, password?: string) => {
     if (!supabase) return;
     if (editingId) {
-      await supabase.from('enterprise_users').update(data).eq('id', editingId);
+      const updatePayload = { ...data, ...(tenantId ? { tenant_id: tenantId } : {}) };
+      const { error } = await supabase.from('enterprise_users').update(updatePayload).eq('id', editingId);
+      if (error) { alert('Failed to update user: ' + error.message); return; }
       await fetchEnterpriseUsers();
       return;
     }
@@ -1064,6 +1066,7 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
             username:         data.username          || null,
             phone:            data.phone             || null,
             db_url:           tenant.db_url          || null,
+            tenant_id:        tenantId               || null,
           }),
         });
       } catch(e) {
@@ -1088,7 +1091,7 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
       }
     }
     // Fallback: insert enterprise_user only (no auth)
-    await supabase.from('enterprise_users').insert([data]);
+    await supabase.from('enterprise_users').insert([{ ...data, ...(tenantId ? { tenant_id: tenantId } : {}) }]);
     await fetchEnterpriseUsers();
   };
 

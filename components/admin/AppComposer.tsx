@@ -58,8 +58,8 @@ function emptyField() {
 
 // ─── Component ───────────────────────────────────────────────────────────────
 export default function AppComposer() {
+  const { supabase, tenant } = useTenant();
   const [selectedObj,   setSelectedObj]   = useState('retailCustomers');
-  const { supabase } = useTenant();
   const [fields,        setFields]        = useState([]);
   const [loading,       setLoading]       = useState(false);
   const [saving,        setSaving]        = useState(false);
@@ -80,11 +80,12 @@ export default function AppComposer() {
     if (!supabase) return;
     setLoading(true);
     try {
-      const { data, error } = await supabase
-        .from('app_custom_fields')
+      let q = supabase.from('app_custom_fields')
         .select('*')
         .eq('object_type', selectedObj)
         .order('sort_order');
+      if (tenant?.id) q = q.eq('tenant_id', tenant.id);
+      const { data, error } = await q;
       if (error?.code === '42P01') { setTableExists(false); setLoading(false); return; }
       setTableExists(true);
       setFields((data || []).map(f => ({ ...f, _key: f.id, options: f.options || [], is_active: f.is_active !== false, show_on: f.show_on || 'both' })));
@@ -179,7 +180,7 @@ export default function AppComposer() {
       } else {
         // New field — starts unpublished
         const { data } = await supabase.from('app_custom_fields')
-          .insert({ ...row, is_published: false, created_at: new Date().toISOString() })
+          .insert({ ...row, is_published: false, created_at: new Date().toISOString(), ...(tenant?.id ? { tenant_id: tenant.id } : {}) })
           .select().single();
         if (data) setFields(p => p.map((ff, fi) => fi === i ? { ...ff, id: data.id, _key: data.id } : ff));
       }
@@ -194,10 +195,12 @@ export default function AppComposer() {
   async function publishToMainline() {
     if (!supabase || !tableExists) return;
     setPublishing(true);
-    await supabase.from('app_custom_fields')
+    let pubQ = supabase.from('app_custom_fields')
       .update({ is_published: true, updated_at: new Date().toISOString() })
       .eq('object_type', selectedObj)
       .eq('is_active', true);
+    if (tenant?.id) pubQ = pubQ.eq('tenant_id', tenant.id);
+    await pubQ;
     setPublishing(false);
     // Bust the cache so RetailDetailPanel picks up new fields immediately
     invalidateCustomFieldCache(selectedObj);

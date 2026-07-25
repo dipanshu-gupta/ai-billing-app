@@ -9,7 +9,7 @@ export async function POST(req: NextRequest) {
     role_id, designation, organization_id, business_unit_id,
     status = 'Active', is_admin = false,
     employee_code, username, phone,
-    db_url, db_service_key, tenant_slug,
+    db_url, db_service_key, tenant_slug, tenant_id,
   } = body;
 
   if (!email || !password) {
@@ -99,6 +99,7 @@ export async function POST(req: NextRequest) {
   };
   if (organization_id)  payload.organization_id  = organization_id;
   if (business_unit_id) payload.business_unit_id = business_unit_id;
+  if (tenant_id)        payload.tenant_id         = tenant_id;
 
   const { error: e1 } = await adminClient.from('enterprise_users')
     .upsert({ ...payload, temporary_password: password }, { onConflict: 'email' });
