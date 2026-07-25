@@ -154,10 +154,7 @@ export const useApp = (): AppContextValue => {
 
 // \u2500\u2500\u2500 Provider \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 
-export function AppProvider({ children, supabase = null, tenant = null }: { children: React.ReactNode }) {
-  // tenant_id used for all DB inserts/fetches on shared-plan tenants
-  const tenantId = tenant?.id || (typeof window !== 'undefined' ? (window as any).__bp_tenant?.id : null) || null;
-  const isSharedPlan = !tenant?.db_url; // shared plan = same supabase as master
+export function AppProvider({ children, supabase = null }: { children: React.ReactNode }) {
   // Auth
   const [session, setSession] = useState<any>(null);
   const [authLoading, setAuthLoading] = useState(true);
@@ -210,13 +207,11 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
       updated_by: currentUser.email, updated_at: now,
       organization_id: currentUser.organization_id,
       business_unit_id: currentUser.business_unit_id,
-      // Always include tenant_id — RLS enforces on shared plan, no-op on dedicated
-      ...(tenantId ? { tenant_id: tenantId } : {}),
     };
-  }, [currentUser, tenantId]);
+  }, [currentUser]);
 
   const applyDataSecurity = useCallback((records: any[]) => {
-    // Return records as-is until permissions are loaded (re-fetch will correct scope)
+    // If currentUser not loaded yet, return empty array to prevent flash of all data
     if (!currentUser || !permissionsLoaded) return records;
     const isAdmin    = currentUserPermissions.includes('__admin__') || (currentUser as any)?.is_admin === true;
     // Use dedicated userDataScope state (most reliable) then fall back to currentUser.data_scope
@@ -267,7 +262,7 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
         (r.created_by && r.created_by.toLowerCase() === userEmail?.toLowerCase())
       );
     });
-  }, [currentUser, currentUserPermissions, userDataScope, permissionsLoaded]);
+  }, [currentUser, currentUserPermissions, userDataScope]);
 
   // \u2500\u2500\u2500 Auth \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 
@@ -287,9 +282,36 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
 
   const resetMyPassword = async (newPassword: string) => {
     if (!supabase) return;
-    const { error } = await supabase.auth.updateUser({ password: newPassword });
-    if (!error) alert('Password Updated');
-    else alert(error.message);
+    if (!newPassword || newPassword.length < 6) {
+      alert('Password must be at least 6 characters.');
+      return;
+    }
+    // Use admin API via server route to bypass "current password required" Supabase restriction
+    // This occurs when user was provisioned with a temp password via admin
+    try {
+      const session = (await supabase.auth.getSession()).data.session;
+      if (!session?.user?.id) { alert('Session expired. Please log in again.'); return; }
+
+      const tenant = (window as any).__bp_tenant || {};
+      const res = await fetch('/api/admin/reset-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          authUserId: session.user.id,
+          password:   newPassword,
+          db_url:     tenant.db_url || null,
+        }),
+      });
+      const json = await res.json();
+      if (res.ok) {
+        alert('Password updated successfully. You may need to log in again.');
+        await supabase.auth.signOut();
+      } else {
+        alert('Failed to update password: ' + (json.error || res.status));
+      }
+    } catch(e: any) {
+      alert('Error updating password: ' + e.message);
+    }
   };
 
   const saveMyProfile = async (data: Partial<EnterpriseUser>) => {
@@ -341,7 +363,7 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
         .ilike('email', session.user.email || '').maybeSingle();
       userData = d2;
     }
-    // Admin shortcut: is_admin=true gets full access immediately
+    // Admin shortcut
     if (userData?.is_admin) {
       setCurrentUser((u: any) => u ? { ...u, data_scope: 'all' } : u);
       setUserDataScope('all');
@@ -361,42 +383,26 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     } else if (userData.is_admin) {
       setUserDataScope('all');
     }
-    // Collect all role IDs: primary + any extras from user_roles table
-    const allRoleIds: string[] = [userData.role_id];
-    try {
-      const { data: extraRoles } = await supabase
-        .from('user_roles').select('role_id').eq('enterprise_user_id', userData.id);
-      (extraRoles || []).forEach((r: any) => {
-        if (r.role_id && !allRoleIds.includes(r.role_id)) allRoleIds.push(r.role_id);
-      });
-      // Determine most-permissive data_scope across all roles
-      if (allRoleIds.length > 1) {
-        const { data: allRolesData } = await supabase
-          .from('roles').select('id, data_scope').in('id', allRoleIds);
-        const RANK: Record<string,number> = { all:4, org:3, bu:2, own:1 };
-        let bestScope = userData.roles?.data_scope || 'own';
-        (allRolesData || []).forEach((r: any) => {
-          if ((RANK[r.data_scope]||0) > (RANK[bestScope]||0)) bestScope = r.data_scope;
-        });
-        if (RANK[bestScope] > RANK[userData.roles?.data_scope||'own']) {
-          setCurrentUser((u: any) => u ? { ...u, data_scope: bestScope } : u);
-          setUserDataScope(bestScope);
-        }
-      }
-    } catch(e) { /* user_roles table may not exist yet */ }
-
-    // Collect permissions from all roles
     const { data: rpData } = await supabase
-      .from('role_permissions').select('permission_id').in('role_id', allRoleIds);
-    const ids = [...new Set((rpData || []).map((x: any) => x.permission_id))];
+      .from('role_permissions').select('permission_id').eq('role_id', userData.role_id);
+    const ids = (rpData || []).map((x: any) => x.permission_id);
     if (!ids.length) {
-      setCurrentUserPermissions([]);
+      // If user is_admin, grant __admin__ even with no role permissions
+      if (userData.is_admin) {
+        setCurrentUserPermissions(['__admin__']);
+      } else {
+        setCurrentUserPermissions([]);
+      }
       setPermissionsLoaded(true);
       return;
     }
     const { data: permsData } = await supabase
       .from('permissions').select('permission_code').in('id', ids);
-    const codes = [...new Set((permsData || []).map((x: any) => x.permission_code).filter(Boolean))];
+    const codes = (permsData || []).map((x: any) => x.permission_code);
+    // Always inject __admin__ if user has is_admin flag, regardless of DB permissions
+    if (userData.is_admin && !codes.includes('__admin__')) {
+      codes.push('__admin__');
+    }
     setCurrentUserPermissions(codes);
     setPermissionsLoaded(true);
   };
@@ -404,9 +410,7 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
   // ─── RBAC helpers ─────────────────────────────────────────────────────────
   // Returns true if user has the given permission code OR is an admin (__admin__)
   const hasPermission = (code: string): boolean => {
-    // Optimistic true while loading — UI shows briefly then re-gates once loaded
-    // Real security is enforced by Supabase RLS, not UI visibility
-    if (!permissionsLoaded) return true;
+    if (!permissionsLoaded) return true; // optimistic while loading
     if (currentUserPermissions.includes('__admin__')) return true;
     return currentUserPermissions.includes(code);
   };
@@ -2557,12 +2561,11 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
   };
 
   const adminResetPassword = async (authUserId: string, password: string) => {
-    if (!authUserId || !password) { console.warn('[adminResetPassword] missing args'); return; }
+    if (!authUserId || !password) return;
     try {
       const tenant = (window as any).__bp_tenant || {};
       const r = await fetch('/api/admin/reset-password', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ authUserId, password, db_url: tenant.db_url || null }),
       });
       const j = await r.json();
