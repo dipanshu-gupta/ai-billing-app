@@ -49,24 +49,18 @@ export function TenantProvider({ children }: { children: React.ReactNode }) {
       try {
         const slug = extractTenantSlug();
 
-        // Check for suspension/expiry via API
-        if (slug !== 'demo') {
-          const res = await fetch(`/api/tenant/${slug}`);
-          if (res.status === 403) {
-            setBlocked(true); setBlockReason('Account Suspended'); setLoading(false); return;
-          }
-          if (res.status === 402) {
-            setBlocked(true); setBlockReason('Trial Expired'); setLoading(false); return;
-          }
-          if (res.status === 404) {
-            setBlocked(true); setBlockReason('Workspace Not Found'); setLoading(false); return;
-          }
-          if (!res.ok) {
-            setBlocked(true); setBlockReason('Workspace Unavailable'); setLoading(false); return;
-          }
+        let resolved;
+        if (slug === 'demo') {
+          resolved = await resolveTenantBySlug(slug);
+        } else {
+          // Fetch tenant from API — handles status checks + returns full tenant object
+          const res = await fetch(`/api/tenant/${slug}`, { cache: 'no-store' });
+          if (res.status === 403) { setBlocked(true); setBlockReason('Account Suspended'); setLoading(false); return; }
+          if (res.status === 402) { setBlocked(true); setBlockReason('Trial Expired'); setLoading(false); return; }
+          if (res.status === 404) { setBlocked(true); setBlockReason('Workspace Not Found'); setLoading(false); return; }
+          if (!res.ok) { setBlocked(true); setBlockReason('Workspace Unavailable'); setLoading(false); return; }
+          resolved = await res.json();
         }
-
-        const resolved = await resolveTenantBySlug(slug);
 
         // Block suspended tenants
         if (resolved.status === 'suspended') {

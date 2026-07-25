@@ -87,9 +87,23 @@ export function getTenantSupabaseClient(tenant: Tenant): SupabaseClient {
       });
     }
   } else {
-    // Shared plan — same Supabase, but all queries MUST include tenant_id filter
-    // RLS policies on the shared DB enforce this automatically
-    client = getSharedClient();
+    // Shared plan — same Supabase URL/key, but each tenant gets its OWN client
+    // with isolated auth storageKey so sessions don't bleed between tenants
+    // RLS enforces data isolation via tenant_id column + tenant_isolation policy
+    client = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+      {
+        auth: {
+          storageKey: `bp_auth_${tenant.slug}`, // isolate auth tokens per tenant
+          autoRefreshToken: true,
+          persistSession: true,
+        },
+        global: {
+          headers: { 'x-tenant-slug': tenant.slug },
+        },
+      }
+    );
   }
 
   _clientCache.set(cacheKey, client);
@@ -100,14 +114,14 @@ export function getTenantSupabaseClient(tenant: Tenant): SupabaseClient {
 export const DEMO_TENANT: Tenant = {
   id:           '00000000-0000-0000-0000-000000000001',
   slug:         'demo',
-  name:         'Business Pro Demo',
+  name:         'Umbrella Suite Demo',
   plan:         'shared',
   status:       'active',
   db_url:       null,
   db_anon_key:  null,
   logo_url:     null,
   brand_color:  '#0F172A',
-  app_name:     'Business Pro',
+  app_name:     'Umbrella Suite',
   custom_domain: null,
   b2c_enabled:  true,
   max_users:    999,
@@ -148,36 +162,35 @@ export async function resolveTenantBySlug(slug: string): Promise<Tenant> {
 export function extractTenantSlug(): string {
   if (typeof window === 'undefined') return 'demo';
 
-  // 1. Query param — highest priority, works on any URL
-  //    e.g. cloud.umbrellasuite.com/?tenant=infunity
+  // 1. Query param — works on any URL including Vercel free plan
+  //    e.g. ai-billing-app-xi.vercel.app/?tenant=abc
   const params = new URLSearchParams(window.location.search);
   const tenantParam = params.get('tenant');
   if (tenantParam && tenantParam.length >= 2) return tenantParam.toLowerCase();
 
   const hostname = window.location.hostname;
 
-  // 2. Master app domains → always demo (no tenant in URL = master workspace)
+  // 2. Master app domains → always demo (no tenant param = master workspace)
   const MASTER_DOMAINS = [
     'localhost', '127.0.0.1',
-    'cloud.umbrellasuite.com',  // production master app
-    'umbrellasuite.com',         // marketing/root domain
+    'cloud.umbrellasuite.com',
+    'umbrellasuite.com',
   ];
   if (MASTER_DOMAINS.includes(hostname) || hostname.endsWith('.vercel.app')) {
     return 'demo';
   }
 
-  // 3. Tenant subdomain pattern: tenant.cloud.umbrellasuite.com
-  //    e.g. infunity.cloud.umbrellasuite.com → 'infunity'
-  const SUBDOMAIN_BASES = ['cloud.umbrellasuite.com', 'umbrellasuite.com', 'erp.businesspro.com', 'businesspro.app'];
+  // 3. Tenant subdomain: tenant.cloud.umbrellasuite.com → 'tenant'
+  const SUBDOMAIN_BASES = [
+    'cloud.umbrellasuite.com', 'umbrellasuite.com',
+    'erp.businesspro.com', 'businesspro.app',
+  ];
   for (const base of SUBDOMAIN_BASES) {
     if (hostname.endsWith('.' + base)) {
-      const sub = hostname.slice(0, hostname.length - base.length - 1);
-      // Only return the first subdomain part (avoid double-subdomain issues)
-      return sub.split('.').pop() || 'demo';
+      return hostname.slice(0, hostname.length - base.length - 1).split('.').pop() || 'demo';
     }
   }
 
-  // 4. Fully custom domain (e.g. app.infunity.com) → looked up via x-tenant-host header in API
-  //    Use the hostname itself as a slug hint — API will match via custom_domain field
+  // 4. Fully custom domain — use hostname prefix as slug hint
   return hostname.split('.')[0] || 'demo';
 }

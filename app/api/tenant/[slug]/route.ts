@@ -10,7 +10,9 @@ export async function GET(req: NextRequest, context: { params: Promise<{ slug: s
   if (s === 'demo') {
     return NextResponse.json({
       id:'00000000-0000-0000-0000-000000000001', slug:'demo', name:'Umbrella Suite Demo',
-      plan:'shared', status:'active', db_url:null, db_anon_key:null,
+      plan:'shared', status:'active', is_shared: true,
+      db_url:     process.env.NEXT_PUBLIC_SUPABASE_URL     || null,
+      db_anon_key: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || null,
       logo_url:null, brand_color:'#0F172A', app_name:'Umbrella Suite',
       custom_domain:null, b2c_enabled:true, max_users:999,
       modules:['crm','invoicing','retail','reports','ai','admin'], trial_ends_at:null,
@@ -47,5 +49,17 @@ export async function GET(req: NextRequest, context: { params: Promise<{ slug: s
     return NextResponse.json({ error: 'Trial Expired', status: 'expired' }, { status: 402 });
   }
 
-  return NextResponse.json(tenant, { headers: { 'Cache-Control': 'private, max-age=30' } });
+  // For shared-plan tenants: include master Supabase connection details
+  // so clients (mobile app, web) know where to connect
+  // NEVER include service key — only anon key is safe to expose
+  const responseData = { ...tenant };
+  if (!tenant.db_url || !tenant.db_anon_key) {
+    responseData.db_url     = process.env.NEXT_PUBLIC_SUPABASE_URL     || null;
+    responseData.db_anon_key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || null;
+    responseData.is_shared   = true;
+  } else {
+    responseData.is_shared = false;
+  }
+
+  return NextResponse.json(responseData, { headers: { 'Cache-Control': 'private, max-age=30' } });
 }
