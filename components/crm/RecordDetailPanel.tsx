@@ -42,7 +42,6 @@ function Pill({ status }) {
 //     if none, the currently logged-in user. ─────────────────────────────────────
 function OwnerField({ record, edited, onPick }) {
   const { enterpriseUsers, currentUser } = useApp();
-  const { supabase } = useTenant();
   const [backup, setBackup] = useState([]);
 
   useEffect(() => {
@@ -209,7 +208,11 @@ function Customer360({ customer, onSubRecordOpen, onCreateFor }) {
   const { contacts, leads, opportunities, orders, invoices, activities, quotations } = useApp();
   const [tab, setTab] = useState('contacts');
 
-  const m = r => r.customerId === customer.id || r.customer === customer.name;
+  // Match by UUID (customerId), display number (customer.id = customer_number), or name
+  const m = r =>
+    (r.customerId && (r.customerId === customer._uuid || r.customerId === customer.id)) ||
+    (r.customer_id && (r.customer_id === customer._uuid || r.customer_id === customer.id)) ||
+    (r.customer && customer.name && r.customer.toLowerCase() === customer.name.toLowerCase());
   const fmt = n => new Intl.NumberFormat('en-IN',{style:'currency',currency:'INR',maximumFractionDigits:0}).format(n||0);
 
   const secs = {

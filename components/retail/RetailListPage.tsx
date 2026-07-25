@@ -757,10 +757,13 @@ function RetailCustomer360({ customer }) {
   useEffect(() => {
     if (!supabase || !customer?.id) return;
     setLoading(true);
+    // customer.id = customer_number (display ID), customer._uuid = actual DB UUID
+    // Try matching by _uuid first, fall back to customer_number
+    const custId = customer._uuid || customer.id;
     Promise.all([
-      supabase.from('retail_orders')    .select('*').eq('customer_id', customer.id).order('created_at', { ascending: false }),
-      supabase.from('retail_invoices')  .select('*').eq('customer_id', customer.id).order('created_at', { ascending: false }),
-      supabase.from('retail_activities').select('*').eq('customer_id', customer.id).order('created_at', { ascending: false }),
+      supabase.from('retail_orders')    .select('*').or(`customer_id.eq.${custId},customer.eq.${customer.name||''}`).order('created_at', { ascending: false }),
+      supabase.from('retail_invoices')  .select('*').or(`customer_id.eq.${custId},customer.eq.${customer.name||''}`).order('created_at', { ascending: false }),
+      supabase.from('retail_activities').select('*').or(`customer_id.eq.${custId},customer.eq.${customer.name||''}`).order('created_at', { ascending: false }),
     ]).then(([{ data: orders }, { data: invoices }, { data: activities }]) => {
       setData({ orders: orders || [], invoices: invoices || [], activities: activities || [] });
       setLoading(false);
