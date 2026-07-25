@@ -148,26 +148,36 @@ export async function resolveTenantBySlug(slug: string): Promise<Tenant> {
 export function extractTenantSlug(): string {
   if (typeof window === 'undefined') return 'demo';
 
-  // 1. Query param — works on any URL including Vercel free plan
-  //    e.g. ai-billing-app-xi.vercel.app/?tenant=abc
+  // 1. Query param — highest priority, works on any URL
+  //    e.g. cloud.umbrellasuite.com/?tenant=infunity
   const params = new URLSearchParams(window.location.search);
   const tenantParam = params.get('tenant');
   if (tenantParam && tenantParam.length >= 2) return tenantParam.toLowerCase();
 
   const hostname = window.location.hostname;
 
-  // 2. localhost / Vercel preview → always demo
-  if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname.endsWith('.vercel.app')) {
+  // 2. Master app domains → always demo (no tenant in URL = master workspace)
+  const MASTER_DOMAINS = [
+    'localhost', '127.0.0.1',
+    'cloud.umbrellasuite.com',  // production master app
+    'umbrellasuite.com',         // marketing/root domain
+  ];
+  if (MASTER_DOMAINS.includes(hostname) || hostname.endsWith('.vercel.app')) {
     return 'demo';
   }
 
-  // 3. Custom subdomain (once you have a domain)
-  const BASE_DOMAINS = ['cloud.umbrellasuite.com', 'umbrellasuite.com', 'erp.businesspro.com', 'businesspro.app'];
-  for (const base of BASE_DOMAINS) {
+  // 3. Tenant subdomain pattern: tenant.cloud.umbrellasuite.com
+  //    e.g. infunity.cloud.umbrellasuite.com → 'infunity'
+  const SUBDOMAIN_BASES = ['cloud.umbrellasuite.com', 'umbrellasuite.com', 'erp.businesspro.com', 'businesspro.app'];
+  for (const base of SUBDOMAIN_BASES) {
     if (hostname.endsWith('.' + base)) {
-      return hostname.slice(0, hostname.length - base.length - 1).split('.')[0];
+      const sub = hostname.slice(0, hostname.length - base.length - 1);
+      // Only return the first subdomain part (avoid double-subdomain issues)
+      return sub.split('.').pop() || 'demo';
     }
   }
 
-  return 'demo';
+  // 4. Fully custom domain (e.g. app.infunity.com) → looked up via x-tenant-host header in API
+  //    Use the hostname itself as a slug hint — API will match via custom_domain field
+  return hostname.split('.')[0] || 'demo';
 }
