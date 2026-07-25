@@ -345,7 +345,7 @@ const Pill = ({active,onClick,children}) => (
 
 // ─── Main Designer ────────────────────────────────────────────────────────────
 export default function RetailInvoiceDesigner() {
-  const { supabase } = useTenant();
+  const { supabase, tenant } = useTenant();
   const { appPreferences } = useApp();
   const [templates,  setTemplates]  = useState([]);
   const [activeId,   setActiveId]   = useState(null);
@@ -390,7 +390,7 @@ export default function RetailInvoiceDesigner() {
       const {error} = await supabase.from('retail_invoice_templates').update(payload).eq('id',activeId);
       err=error;
     } else {
-      const {data:d,error} = await supabase.from('retail_invoice_templates').insert({...payload,created_at:new Date().toISOString()}).select().single();
+      const {data:d,error} = await supabase.from('retail_invoice_templates').insert({...payload,created_at:new Date().toISOString(),...(tenant?.id?{tenant_id:tenant.id}:{})}).select().single();
       err=error; if(d&&!error) setActiveId(d.id);
     }
     if(err) { showToast('Save failed: '+err.message,'err'); setSaving(false); return; }
