@@ -82,6 +82,7 @@ function ProfileModal({ open, onClose }) {
     }
   }, [currentUser?.id]);
   const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
 
   return (
     <Modal
@@ -112,8 +113,8 @@ function ProfileModal({ open, onClose }) {
         </div>
         <div className="border-t border-blue-100 pt-4 space-y-3">
           <div>
-            <label className="text-xs font-bold uppercase tracking-wider text-gray-400 block mb-1.5">Change My Password</label>
-            <p className="text-xs text-gray-400 mb-3">Enter a new password to update your login credentials. Minimum 6 characters.</p>
+            <label className="text-xs font-bold uppercase tracking-wider text-gray-400 block mb-1.5">Change Password</label>
+            <p className="text-xs text-gray-400 mb-3">Enter a new password. Minimum 6 characters. You will be signed out after changing.</p>
           </div>
           <div className="grid grid-cols-1 gap-3">
             <div>
@@ -122,7 +123,17 @@ function ProfileModal({ open, onClose }) {
                 type="password"
                 value={newPassword}
                 onChange={e => setNewPassword(e.target.value)}
-                placeholder="Enter new password"
+                placeholder="Enter new password (min 6 characters)"
+                className={inputClass}
+              />
+            </div>
+            <div>
+              <label className="text-xs font-semibold text-gray-500 block mb-1">Confirm New Password</label>
+              <input
+                type="password"
+                value={confirmPassword}
+                onChange={e => setConfirmPassword(e.target.value)}
+                placeholder="Re-enter new password"
                 className={inputClass}
               />
             </div>
@@ -130,8 +141,10 @@ function ProfileModal({ open, onClose }) {
               onClick={async () => {
                 if (!newPassword) { alert('Please enter a new password.'); return; }
                 if (newPassword.length < 6) { alert('Password must be at least 6 characters.'); return; }
+                if (newPassword !== confirmPassword) { alert('Passwords do not match.'); return; }
                 await resetMyPassword(newPassword);
                 setNewPassword('');
+                setConfirmPassword('');
               }}
             >
               Update Password

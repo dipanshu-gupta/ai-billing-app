@@ -207,8 +207,9 @@ export function AppProvider({ children, supabase = null }: { children: React.Rea
       updated_by: currentUser.email, updated_at: now,
       organization_id: currentUser.organization_id,
       business_unit_id: currentUser.business_unit_id,
+      ...(tenantId ? { tenant_id: tenantId } : {}),
     };
-  }, [currentUser]);
+  }, [currentUser, tenantId]);
 
   const applyDataSecurity = useCallback((records: any[]) => {
     // If currentUser not loaded yet, return empty array to prevent flash of all data
@@ -743,6 +744,7 @@ export function AppProvider({ children, supabase = null }: { children: React.Rea
       ...filtered,
       owner: data.owner || currentUser.email,
       owner_id: data.owner_id || currentUser.id,
+      ...(tenantId ? { tenant_id: tenantId } : {}),
     };
     delete payload.id; delete payload._uuid;
     const { data: inserted, error } = await supabase.from(cfg.table).insert([payload]).select().single();
@@ -1003,22 +1005,26 @@ export function AppProvider({ children, supabase = null }: { children: React.Rea
 
   const saveOrganization = async (data: any, editingId?: string) => {
     if (!supabase) return;
+    const payload = { ...data, ...(tenantId ? { tenant_id: tenantId } : {}) };
     if (editingId) {
-      await supabase.from('organizations').update(data).eq('id', editingId);
+      const { error } = await supabase.from('organizations').update(payload).eq('id', editingId);
+      if (error) { alert('Failed to update: ' + error.message); return; }
     } else {
-      await supabase.from('organizations').insert([data]);
+      const { error } = await supabase.from('organizations').insert([payload]);
+      if (error) { alert('Failed to create: ' + error.message); return; }
     }
     await fetchOrganizations();
   };
 
   const saveBusinessUnit = async (data: any, editingId?: string) => {
     if (!supabase) return;
+    const payload = { ...data, ...(tenantId ? { tenant_id: tenantId } : {}) };
     if (editingId) {
-      const { error } = await supabase.from('business_units').update(data).eq('id', editingId);
-      if (error) { alert(error.message); return; }
+      const { error } = await supabase.from('business_units').update(payload).eq('id', editingId);
+      if (error) { alert('Failed to update: ' + error.message); return; }
     } else {
-      const { error } = await supabase.from('business_units').insert([data]);
-      if (error) { alert(error.message); return; }
+      const { error } = await supabase.from('business_units').insert([payload]);
+      if (error) { alert('Failed to create: ' + error.message); return; }
     }
     await fetchBusinessUnits();
   };
@@ -1083,10 +1089,13 @@ export function AppProvider({ children, supabase = null }: { children: React.Rea
 
   const saveUserGroup = async (data: any, editingId?: string) => {
     if (!supabase) return;
+    const payload = { ...data, ...(tenantId ? { tenant_id: tenantId } : {}) };
     if (editingId) {
-      await supabase.from('user_groups').update(data).eq('id', editingId);
+      const { error } = await supabase.from('user_groups').update(payload).eq('id', editingId);
+      if (error) { alert('Failed: ' + error.message); return; }
     } else {
-      await supabase.from('user_groups').insert([data]);
+      const { error } = await supabase.from('user_groups').insert([payload]);
+      if (error) { alert('Failed: ' + error.message); return; }
     }
     await fetchUserGroups();
   };
@@ -1458,7 +1467,7 @@ export function AppProvider({ children, supabase = null }: { children: React.Rea
       if (error) { alert('Save failed: ' + error.message); return; }
     } else {
       const tNum = generateId('TEMP');
-      const { error } = await supabase.from('quote_templates').insert([{ ...payload, template_number: tNum, is_default: false, created_by: currentUser?.email }]);
+      const { error } = await supabase.from('quote_templates').insert([{ ...payload, template_number: tNum, is_default: false, ...(tenantId?{tenant_id:tenantId}:{}), created_by: currentUser?.email }]);
       if (error) { alert('Save failed: ' + error.message); return; }
     }
     await fetchQuoteTemplates();
@@ -1486,7 +1495,7 @@ export function AppProvider({ children, supabase = null }: { children: React.Rea
       if (error) { alert('Save failed: ' + error.message); return; }
     } else {
       const tNum = 'INVTPL-' + Date.now();
-      const { error } = await supabase.from('invoice_templates').insert([{ ...payload, template_number: tNum, created_by: currentUser?.email }]);
+      const { error } = await supabase.from('invoice_templates').insert([{ ...payload, template_number: tNum, ...(tenantId?{tenant_id:tenantId}:{}), created_by: currentUser?.email }]);
       if (error) { alert('Save failed: ' + error.message); return; }
     }
     await fetchInvoiceTemplates();
@@ -1519,7 +1528,7 @@ export function AppProvider({ children, supabase = null }: { children: React.Rea
       const { error } = await supabase.from('warehouses').update(payload).eq('id', editingId);
       if (error) { alert('Save failed: ' + error.message); return; }
     } else {
-      const { error } = await supabase.from('warehouses').insert([{ ...payload, created_at: new Date().toISOString() }]);
+      const { error } = await supabase.from('warehouses').insert([{ ...payload, created_at: new Date().toISOString(), ...(tenantId ? { tenant_id: tenantId } : {}) }]);
       if (error) { alert('Save failed: ' + error.message); return; }
     }
     await fetchWarehouses();
@@ -1633,7 +1642,7 @@ export function AppProvider({ children, supabase = null }: { children: React.Rea
       if (error) { alert('Save failed: ' + error.message); return; }
     } else {
       const { data: proc, error } = await supabase.from('approval_processes')
-        .insert([{ ...payload, process_number: generateId('AP') }]).select().single();
+        .insert([{ ...payload, process_number: generateId('AP'), ...(tenantId?{tenant_id:tenantId}:{}) }]).select().single();
       if (error || !proc) { alert(error?.message || 'Error saving approval process'); return; }
       processId = proc.id;
     }
@@ -1680,6 +1689,7 @@ export function AppProvider({ children, supabase = null }: { children: React.Rea
       .select('id').eq('record_id', recordId).eq('record_type', recordType).eq('status', 'Pending').maybeSingle();
     if (existing) { alert('An approval request is already pending for this record.'); return; }
     const { error } = await supabase.from('approval_requests').insert([{
+      ...(tenantId ? { tenant_id: tenantId } : {}),
       request_number: generateId('REQ'),
       approval_process_id: process.id,
       current_step_id: firstStep.id,
@@ -2132,6 +2142,7 @@ export function AppProvider({ children, supabase = null }: { children: React.Rea
       const resolutionDate = new Date(now.getTime() + (policy.resolution_time_hours || 72) * 3600000);
 
       await supabase.from('sla_records').insert([{
+        ...(tenantId ? { tenant_id: tenantId } : {}),
         sla_policy_id:      policy.id,
         record_type:        objectType,
         record_id:          recordId,
@@ -2335,7 +2346,7 @@ export function AppProvider({ children, supabase = null }: { children: React.Rea
     try {
       const { data:row } = await supabase.from('appearance').select('id').limit(1).maybeSingle();
       if (row?.id) await supabase.from('appearance').update(clean).eq('id', row.id);
-      else await supabase.from('appearance').insert([clean]);
+      else await supabase.from('appearance').insert([{...clean,...(tenantId?{tenant_id:tenantId}:{})}]);
     } catch(e) { console.warn('saveAppearance Supabase error:', e); }
   };
 
@@ -2403,7 +2414,7 @@ export function AppProvider({ children, supabase = null }: { children: React.Rea
 
   const [appPreferences, setAppPreferences] = useState(() => { try { const s=typeof window!=='undefined'&&window.localStorage.getItem(_LS_KEY); if(s) return _cp(JSON.parse(s)); } catch(e) {} return _DEF_PREFS; });
   const fetchAppPreferences = async () => { try { const s=window.localStorage.getItem(_LS_KEY); if(s){setAppPreferences(_cp(JSON.parse(s)));return;} } catch(e) {} if(!supabase)return; try{const{data}=await supabase.from('app_preferences').select('*').limit(1).maybeSingle(); if(data){const p=_cp(data.settings?{..._cp(data),...data.settings}:data);setAppPreferences(p);window.localStorage.setItem(_LS_KEY,JSON.stringify(p));}}catch(e){} };
-  const saveAppPreferences = async (prefs) => { const clean=_cp(prefs); window.localStorage.setItem(_LS_KEY,JSON.stringify(clean)); setAppPreferences(clean); if(!supabase)return; try{const{data:row}=await supabase.from('app_preferences').select('id').limit(1).maybeSingle(); const payload={settings:clean,default_currency:clean.default_currency,crm_enabled:clean.crm_enabled,cpq_enabled:clean.cpq_enabled,date_format:clean.date_format,fiscal_year_start:clean.fiscal_year_start,global_search_enabled:clean.global_search_enabled,updated_at:new Date().toISOString()}; if(row?.id)await supabase.from('app_preferences').update(payload).eq('id',row.id); else await supabase.from('app_preferences').insert([{...payload,organization_id:currentUser?.organization_id}]);}catch(e){} if(prefs.default_currency)fetchExchangeRates(prefs.default_currency); };
+  const saveAppPreferences = async (prefs) => { const clean=_cp(prefs); window.localStorage.setItem(_LS_KEY,JSON.stringify(clean)); setAppPreferences(clean); if(!supabase)return; try{const{data:row}=await supabase.from('app_preferences').select('id').limit(1).maybeSingle(); const payload={settings:clean,default_currency:clean.default_currency,crm_enabled:clean.crm_enabled,cpq_enabled:clean.cpq_enabled,date_format:clean.date_format,fiscal_year_start:clean.fiscal_year_start,global_search_enabled:clean.global_search_enabled,updated_at:new Date().toISOString()}; if(row?.id)await supabase.from('app_preferences').update(payload).eq('id',row.id); else await supabase.from('app_preferences').insert([{...payload,organization_id:currentUser?.organization_id,...(tenantId?{tenant_id:tenantId}:{})}]);}catch(e){} if(prefs.default_currency)fetchExchangeRates(prefs.default_currency); };
 
   // ─── Exchange Rates ────────────────────────────────────────────────────────
   const [exchangeRates, setExchangeRates] = useState({});
@@ -2479,11 +2490,11 @@ export function AppProvider({ children, supabase = null }: { children: React.Rea
 
   // ─── Notes / Comments / Attachments ───────────────────────────────────────
   const fetchRecordNotes = async (rType,rId) => { if(!supabase)return[]; const{data}=await supabase.from('record_notes').select('*').eq('record_type',rType).eq('record_id',rId).order('created_at',{ascending:false}); return data||[]; };
-  const saveNote = async (rType,rId,note) => { if(!supabase||!currentUser)return; if(note.id)await supabase.from('record_notes').update({...note,updated_at:new Date().toISOString()}).eq('id',note.id); else await supabase.from('record_notes').insert([{...note,record_type:rType,record_id:rId,created_by:currentUser.email,created_at:new Date().toISOString(),updated_at:new Date().toISOString()}]); };
+  const saveNote = async (rType,rId,note) => { if(!supabase||!currentUser)return; if(note.id)await supabase.from('record_notes').update({...note,updated_at:new Date().toISOString()}).eq('id',note.id); else await supabase.from('record_notes').insert([{...note,record_type:rType,record_id:rId,created_by:currentUser.email,created_at:new Date().toISOString(),updated_at:new Date().toISOString(),...(tenantId?{tenant_id:tenantId}:{}),...(tenantId?{tenant_id:tenantId}:{})}]); };
   const deleteNote = async (id) => { if(!supabase)return; await supabase.from('record_notes').delete().eq('id',id); };
   const toggleNotePin = async (id,pinned) => { if(!supabase)return; await supabase.from('record_notes').update({is_pinned:!pinned}).eq('id',id); };
   const fetchRecordComments = async (rType,rId) => { if(!supabase)return[]; const{data}=await supabase.from('record_comments').select('*').eq('record_type',rType).eq('record_id',rId).order('created_at',{ascending:false}); return data||[]; };
-  const postComment = async (rType,rId,body) => { if(!supabase||!currentUser)return; await supabase.from('record_comments').insert([{record_type:rType,record_id:rId,body,created_by:currentUser.email,created_at:new Date().toISOString()}]); };
+  const postComment = async (rType,rId,body) => { if(!supabase||!currentUser)return; await supabase.from('record_comments').insert([{record_type:rType,record_id:rId,body,created_by:currentUser.email,created_at:new Date().toISOString(),...(tenantId?{tenant_id:tenantId}:{})}]); };
   const deleteComment = async (id) => { if(!supabase)return; await supabase.from('record_comments').delete().eq('id',id); };
   const fetchRecordAttachments = async (rType,rId) => { if(!supabase)return[]; const{data}=await supabase.from('record_attachments').select('*').eq('record_type',rType).eq('record_id',rId).order('created_at',{ascending:false}); return data||[]; };
   const uploadAttachment = async (rType,rId,file) => { if(!supabase||!currentUser)return null; try{const path=`${rType}/${rId}/${Date.now()}_${file.name}`; const{error}=await supabase.storage.from('attachments').upload(path,file); if(error)return null; await supabase.from('record_attachments').insert([{record_type:rType,record_id:rId,file_name:file.name,file_path:path,file_size:file.size,created_by:currentUser.email,created_at:new Date().toISOString()}]); return path;}catch(e){return null;} };
