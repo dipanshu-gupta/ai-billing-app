@@ -2320,7 +2320,7 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
   const _DEF_PREFS = { crm_enabled:true, cpq_enabled:true, b2c_mode:false, default_currency:'INR', date_format:'DD/MM/YYYY', fiscal_year_start:'April', global_search_enabled:false, business_mode:'B2B' };
   const _cp = (p) => ({ crm_enabled:p?.crm_enabled??true, cpq_enabled:p?.cpq_enabled??true, b2c_mode:p?.b2c_mode??false, default_currency:p?.default_currency||'INR', date_format:p?.date_format||'DD/MM/YYYY', fiscal_year_start:p?.fiscal_year_start||'April', global_search_enabled:p?.global_search_enabled??false, business_mode:(p?.b2c_mode??false)?'B2C':'B2B' });
   // ─── Appearance ───────────────────────────────────────────────────────────
-  const _APP_KEY = 'bp_appearance';
+  const _APP_KEY = tenantId ? `bp_appearance_${tenantId}` : 'bp_appearance';
   const _DEF_APP = { company_logo_url:'', company_name:'Umbrella Suite', theme:'navy', language:'en', font:'geist' };
 
   const THEME_COLORS: Record<string,any> = {
@@ -2361,7 +2361,10 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     } catch(e) {}
     if (!supabase) return;
     try {
-      const { data } = await supabase.from('appearance').select('*').limit(1).maybeSingle();
+      const effectiveTenantId = tenantId || (typeof window !== 'undefined' ? (window as any).__bp_tenant?.id : null) || null;
+      let aq = supabase.from('appearance').select('*').limit(1);
+      if (effectiveTenantId) aq = (aq as any).eq('tenant_id', effectiveTenantId);
+      const { data } = await aq.maybeSingle();
       if (data) {
         const a = { ..._DEF_APP, ...data };
         const tc = THEME_COLORS[a.theme] || THEME_COLORS['navy'];
@@ -2382,9 +2385,16 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     applyAppearance(clean);
     if (!supabase) return;
     try {
-      const { data:row } = await supabase.from('appearance').select('id').limit(1).maybeSingle();
-      if (row?.id) await supabase.from('appearance').update(clean).eq('id', row.id);
-      else await supabase.from('appearance').insert([{...clean,...(tenantId?{tenant_id:tenantId}:{})}]);
+      const effectiveTenantId = tenantId || (typeof window !== 'undefined' ? (window as any).__bp_tenant?.id : null) || null;
+      let q = supabase.from('appearance').select('id').limit(1);
+      if (effectiveTenantId) q = (q as any).eq('tenant_id', effectiveTenantId);
+      const { data:row } = await q.maybeSingle();
+      const savePayload = { ...clean, ...(effectiveTenantId ? { tenant_id: effectiveTenantId } : {}) };
+      if (row?.id) {
+        await supabase.from('appearance').update(savePayload).eq('id', row.id);
+      } else {
+        await supabase.from('appearance').insert([savePayload]);
+      }
     } catch(e) { console.warn('saveAppearance Supabase error:', e); }
   };
 
@@ -2504,14 +2514,15 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
         ...(currentUser?.organization_id ? { organization_id: currentUser.organization_id } : {}),
       };
       // Find existing row for THIS tenant
-      const { data: row } = await supabase
-        .from('app_preferences').select('id')
-        .limit(1).maybeSingle();
+      const effectiveTenantId2 = tenantId || (typeof window !== 'undefined' ? (window as any).__bp_tenant?.id : null) || null;
+      let pq = supabase.from('app_preferences').select('id').limit(1);
+      if (effectiveTenantId2) pq = (pq as any).eq('tenant_id', effectiveTenantId2);
+      const { data: row } = await pq.maybeSingle();
       if (row?.id) {
         const { error } = await supabase.from('app_preferences').update(payload).eq('id', row.id);
         if (error) console.error('[saveAppPreferences] update error:', error.message);
       } else {
-        const { error } = await supabase.from('app_preferences').insert([payload]);
+        const { error } = await supabase.from('app_preferences').insert([{ ...payload, ...(effectiveTenantId2 ? { tenant_id: effectiveTenantId2 } : {}) }]);
         if (error) console.error('[saveAppPreferences] insert error:', error.message);
       }
     } catch(e: any) { console.error('[saveAppPreferences] error:', e.message); }
