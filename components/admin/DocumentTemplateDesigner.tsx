@@ -27,7 +27,7 @@ const QUOTE_SECTIONS = [
     settings:{ bgColor:'#0F172A', textColor:'#FFFFFF', headline:'QUOTATION', subheadline:'Thank you for your interest', showLogo:true, logoUrl:'', bgImage:'' } },
   { id:'header',     type:'header',     name:'Header',             enabled:true,  order:1,
     settings:{ bgColor:'#0F172A', textColor:'#FFFFFF', logoUrl:'', logoPosition:'left', logoHeight:48,
-               showCompanyName:true, companyName:'Umbrella Suite', tagline:'Enterprise Solutions',
+               showCompanyName:true, companyName:'', tagline:'',
                showAddress:false, address:'', phone:'', email:'', gstIn:'',
                accentLine:true, accentColor:'#3B82F6' } },
   { id:'doc_info',   type:'doc_info',   name:'Document Info Bar',  enabled:true,  order:2,
@@ -68,7 +68,7 @@ const QUOTE_SECTIONS = [
 const INVOICE_SECTIONS = [
   { id:'header',     type:'header',     name:'Header',             enabled:true,  order:1,
     settings:{ bgColor:'#0F172A', textColor:'#FFFFFF', logoUrl:'', logoPosition:'left', logoHeight:48,
-               showCompanyName:true, companyName:'Umbrella Suite', tagline:'Enterprise Solutions',
+               showCompanyName:true, companyName:'', tagline:'',
                showAddress:true, address:'', phone:'', email:'', gstIn:'',
                accentLine:true, accentColor:'#3B82F6' } },
   { id:'doc_info',   type:'doc_info',   name:'Invoice Info Bar',   enabled:true,  order:2,
@@ -473,7 +473,7 @@ function LivePreview({ sections, pageSettings, globalSettings, docType }) {
                 <div style={{display:'flex',alignItems:'center',gap:12}}>
                   {s.logoUrl && <img src={s.logoUrl} alt="logo" style={{height:s.logoHeight||48,objectFit:'contain',maxWidth:160}} onError={e=>e.target.style.display='none'}/>}
                   {s.showCompanyName && <div>
-                    <div style={{fontWeight:800,fontSize:16,letterSpacing:'-0.3px'}}>{s.companyName||'Company Name'}</div>
+                    <div style={{fontWeight:800,fontSize:16,letterSpacing:'-0.3px'}}>{s.companyName || appPreferences?.company_name || ''}</div>
                     {s.tagline && <div style={{fontSize:10,opacity:0.7,marginTop:2}}>{s.tagline}</div>}
                     {s.showAddress && s.address && <div style={{fontSize:9,opacity:0.6,marginTop:2,maxWidth:200}}>{s.address}</div>}
                     {s.showAddress && s.gstIn && <div style={{fontSize:9,opacity:0.6}}>GSTIN: {s.gstIn}</div>}
@@ -681,7 +681,7 @@ export default function DocumentTemplateDesigner({ docType = 'quote' }) {
   const {
     quoteTemplates, saveQuoteTemplate, deleteQuoteTemplate, setDefaultTemplate,
     invoiceTemplates, saveInvoiceTemplate, deleteInvoiceTemplate, setDefaultInvoiceTemplate,
-    appearance,
+    appearance, appPreferences,
   } = useApp();
 
   const isInvoice  = docType === 'invoice';
@@ -717,7 +717,15 @@ export default function DocumentTemplateDesigner({ docType = 'quote' }) {
   const startNew = () => {
     setSelectedId(null);
     setForm({ name:'' });
-    setSections(DEFAULT_SECS.map(s=>({...s,settings:{...s.settings}})));
+    // Pre-fill companyName from appPreferences if set
+    const co = appPreferences?.company_name || '';
+    setSections(DEFAULT_SECS.map(s=>({
+      ...s,
+      settings:{
+        ...s.settings,
+        ...(s.settings?.companyName !== undefined ? { companyName: co } : {}),
+      }
+    })));
     setPageSettings({ fontFamily:'Arial, sans-serif', paperSize:'A4', marginMM:12 });
     setGlobalSettings({ watermark:'', brandColor:'#0F172A', accentColor:'#3B82F6' });
     setCreating(true);

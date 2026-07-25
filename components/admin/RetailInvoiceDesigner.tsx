@@ -43,7 +43,7 @@ const defaultTpl = () => ({
   // Logo
   show_logo: false, logo_url: '', logo_position: 'center', logo_size: 48,
   // Store info
-  store_name: 'Your Store', store_tagline: '', store_address: '',
+  store_name: '', store_tagline: '', store_address: '',
   store_phone: '', store_email: '', store_website: '', store_gstin: '',
   // Header
   header_align: 'center', show_store_info: true, show_gst_header: true,
@@ -135,7 +135,7 @@ function LivePreview({ t }) {
             }
           </div>
         )}
-        <div style={{fontWeight:900,fontSize:fs(16),letterSpacing:2,color:'#fff'}}>{t.store_name||'Your Store'}</div>
+        <div style={{fontWeight:900,fontSize:fs(16),letterSpacing:2,color:'#fff'}}>{t.store_name || appPreferences?.company_name || ''}</div>
         {t.store_tagline && <div style={{fontSize:fs(9),color:'rgba(255,255,255,0.7)',marginTop:2,fontStyle:'italic'}}>{t.store_tagline}</div>}
         {t.show_store_info && (
           <div style={{fontSize:fs(9),color:'rgba(255,255,255,0.8)',marginTop:4,lineHeight:1.7}}>
@@ -344,6 +344,7 @@ const Pill = ({active,onClick,children}) => (
 // ─── Main Designer ────────────────────────────────────────────────────────────
 export default function RetailInvoiceDesigner() {
   const { supabase } = useTenant();
+  const { appPreferences } = useApp();
   const [templates,  setTemplates]  = useState([]);
   const [activeId,   setActiveId]   = useState(null);
   const [t,          setT]          = useState(defaultTpl());
@@ -534,7 +535,7 @@ export default function RetailInvoiceDesigner() {
             </Card>
 
             <Card title="Store Information" icon="🏪">
-              <div><L>Store Name</L><TI value={t.store_name} onChange={v=>upd('store_name',v)} placeholder="Your Store Name"/></div>
+              <div><L>Store Name</L><TI value={t.store_name} onChange={v=>upd('store_name',v)} placeholder="Enter store name"/></div>
               <div><L>Tagline</L><TI value={t.store_tagline} onChange={v=>upd('store_tagline',v)} placeholder="Quality you can trust"/></div>
               <div><L>Address</L><TI value={t.store_address} onChange={v=>upd('store_address',v)} placeholder="123 Market St, Mumbai 400001"/></div>
               <div><L>Phone</L><TI value={t.store_phone} onChange={v=>upd('store_phone',v)} placeholder="+91 98765 43210"/></div>
