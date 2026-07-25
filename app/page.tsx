@@ -23,9 +23,22 @@ import { inputClass, Button } from '@/components/shared';
 
 function LoginPage() {
   const { handleLogin } = useApp();
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [loading, setLoading] = useState(false);
+  const { tenant } = useTenant();
+  const [email,      setEmail]      = React.useState('');
+  const [password,   setPassword]   = React.useState('');
+  const [loading,    setLoading]    = React.useState(false);
+  const [workspace,  setWorkspace]  = React.useState('');
+  const [showWS,     setShowWS]     = React.useState(false);
+
+  // Detect if this is master app (no ?tenant= param)
+  const isMaster = typeof window !== 'undefined'
+    ? !new URLSearchParams(window.location.search).get('tenant')
+    : false;
+
+  // Tenant-level logo from appearance (set in app preferences)
+  const tenantLogo = tenant?.logo_url || null;
+  const tenantName = tenant?.app_name || tenant?.name || 'Umbrella Suite';
+  const isDemo     = !tenant?.slug || tenant?.slug === 'demo';
 
   const submit = async (e) => {
     e.preventDefault();
@@ -34,28 +47,118 @@ function LoginPage() {
     setLoading(false);
   };
 
+  const goToWorkspace = (e) => {
+    e.preventDefault();
+    const slug = workspace.trim().toLowerCase().replace(/\s+/g, '-');
+    if (!slug) return;
+    window.location.href = `${window.location.origin}/?tenant=${slug}`;
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-[#0F172A] via-blue-950 to-blue-900 flex items-center justify-center p-4">
-      <div className="bg-white rounded-[40px] shadow-2xl border border-blue-100 p-10 w-full max-w-md">
-        <div className="text-center mb-8">
-          <div className="w-16 h-16 rounded-[20px] bg-[#0F172A] text-white flex items-center justify-center text-2xl font-bold mx-auto mb-4">BP</div>
-          <h1 className="text-3xl font-bold text-[#0F172A]">Umbrella Suite</h1>
-          <p className="text-gray-500 mt-2">Enterprise CRM Platform</p>
+      <div className="w-full max-w-md space-y-6">
+
+        {/* Logo header */}
+        <div className="text-center">
+          {!isDemo && tenantLogo ? (
+            // Tenant login: show both logos separated by pipe
+            <div className="flex items-center justify-center gap-4 mb-6">
+              {/* Umbrella Suite logo */}
+              <div className="flex flex-col items-center gap-1.5">
+                <img src="/umbrella-logo.png" alt="Umbrella Suite" className="w-12 h-12 rounded-2xl shadow-lg"/>
+                <span className="text-white/60 text-[10px] font-semibold uppercase tracking-wider">Umbrella Suite</span>
+              </div>
+              {/* Divider */}
+              <div className="h-14 w-px bg-white/25"/>
+              {/* Tenant logo */}
+              <div className="flex flex-col items-center gap-1.5">
+                <img src={tenantLogo} alt={tenantName} className="w-12 h-12 rounded-2xl object-contain bg-white shadow-lg p-1"/>
+                <span className="text-white/60 text-[10px] font-semibold uppercase tracking-wider truncate max-w-[80px]">{tenantName}</span>
+              </div>
+            </div>
+          ) : (
+            // Master / no tenant logo: show just umbrella logo
+            <div className="flex flex-col items-center gap-3 mb-6">
+              <img src="/umbrella-logo.png" alt="Umbrella Suite" className="w-16 h-16 rounded-[20px] shadow-xl"/>
+              <div>
+                <h1 className="text-2xl font-bold text-white">Umbrella Suite</h1>
+                <p className="text-blue-300 text-sm">Enterprise CRM & ERP Platform</p>
+              </div>
+            </div>
+          )}
+
+          {!isDemo && (
+            <div className="mb-2">
+              <h1 className="text-xl font-bold text-white">{tenantName}</h1>
+              <p className="text-blue-300 text-sm">Sign in to your workspace</p>
+            </div>
+          )}
         </div>
-        <form onSubmit={submit} className="space-y-4">
-          <div className="space-y-1">
-            <label className="text-xs font-bold uppercase tracking-wider text-gray-400">Email Address</label>
-            <input type="email" value={email} onChange={e => setEmail(e.target.value)} required placeholder="you@company.com" className={inputClass} />
-          </div>
-          <div className="space-y-1">
-            <label className="text-xs font-bold uppercase tracking-wider text-gray-400">Password</label>
-            <input type="password" value={password} onChange={e => setPassword(e.target.value)} required placeholder="••••••••" className={inputClass} />
-          </div>
-          <button type="submit" disabled={loading}
-            className="w-full bg-gradient-to-r from-[#0F172A] to-blue-800 text-white py-3.5 rounded-2xl font-bold shadow-lg hover:opacity-90 transition-all mt-2 disabled:opacity-60">
-            {loading ? 'Signing In...' : 'Sign In →'}
-          </button>
-        </form>
+
+        {/* Main card */}
+        <div className="bg-white rounded-[32px] shadow-2xl p-8">
+
+          {/* Sign in form */}
+          {!showWS && (
+            <form onSubmit={submit} className="space-y-4">
+              <div className="space-y-1">
+                <label className="text-xs font-bold uppercase tracking-wider text-gray-400">Email Address</label>
+                <input type="email" value={email} onChange={e => setEmail(e.target.value)} required
+                  placeholder="you@company.com" className={inputClass}/>
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs font-bold uppercase tracking-wider text-gray-400">Password</label>
+                <input type="password" value={password} onChange={e => setPassword(e.target.value)} required
+                  placeholder="••••••••" className={inputClass}/>
+              </div>
+              <button type="submit" disabled={loading}
+                className="w-full bg-gradient-to-r from-[#0F172A] to-blue-800 text-white py-3.5 rounded-2xl font-bold shadow-lg hover:opacity-90 transition-all disabled:opacity-60">
+                {loading ? 'Signing In...' : 'Sign In →'}
+              </button>
+
+              {/* Switch workspace — only show on master app */}
+              {isMaster && (
+                <button type="button" onClick={() => setShowWS(true)}
+                  className="w-full text-center text-sm text-gray-400 hover:text-blue-600 transition-colors pt-2">
+                  🏢 Sign in to a different workspace →
+                </button>
+              )}
+            </form>
+          )}
+
+          {/* Workspace entry */}
+          {showWS && (
+            <form onSubmit={goToWorkspace} className="space-y-4">
+              <div className="text-center mb-4">
+                <div className="text-2xl mb-1">🏢</div>
+                <h2 className="text-lg font-bold text-[#0F172A]">Enter your workspace</h2>
+                <p className="text-sm text-gray-400">Type your workspace name to navigate to it</p>
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs font-bold uppercase tracking-wider text-gray-400">Workspace Name</label>
+                <input type="text" value={workspace} onChange={e => setWorkspace(e.target.value)} required
+                  placeholder="e.g. infunity, jumpandjoy"
+                  className={inputClass}
+                  autoFocus/>
+                <p className="text-xs text-gray-400 mt-1">
+                  cloud.umbrellasuite.com/?tenant=<span className="font-mono text-blue-600">{workspace||'yourworkspace'}</span>
+                </p>
+              </div>
+              <button type="submit"
+                className="w-full bg-gradient-to-r from-[#0F172A] to-blue-800 text-white py-3.5 rounded-2xl font-bold shadow-lg hover:opacity-90 transition-all">
+                Go to Workspace →
+              </button>
+              <button type="button" onClick={() => setShowWS(false)}
+                className="w-full text-center text-sm text-gray-400 hover:text-gray-600 transition-colors">
+                ← Back to sign in
+              </button>
+            </form>
+          )}
+        </div>
+
+        <p className="text-center text-blue-400/50 text-xs">
+          Powered by Umbrella Suite · Enterprise ERP & CRM
+        </p>
       </div>
     </div>
   );
@@ -82,7 +185,6 @@ function ProfileModal({ open, onClose }) {
     }
   }, [currentUser?.id]);
   const [newPassword, setNewPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
 
   return (
     <Modal
@@ -113,8 +215,8 @@ function ProfileModal({ open, onClose }) {
         </div>
         <div className="border-t border-blue-100 pt-4 space-y-3">
           <div>
-            <label className="text-xs font-bold uppercase tracking-wider text-gray-400 block mb-1.5">Change Password</label>
-            <p className="text-xs text-gray-400 mb-3">Enter a new password. Minimum 6 characters. You will be signed out after changing.</p>
+            <label className="text-xs font-bold uppercase tracking-wider text-gray-400 block mb-1.5">Change My Password</label>
+            <p className="text-xs text-gray-400 mb-3">Enter a new password to update your login credentials. Minimum 6 characters.</p>
           </div>
           <div className="grid grid-cols-1 gap-3">
             <div>
@@ -123,17 +225,7 @@ function ProfileModal({ open, onClose }) {
                 type="password"
                 value={newPassword}
                 onChange={e => setNewPassword(e.target.value)}
-                placeholder="Enter new password (min 6 characters)"
-                className={inputClass}
-              />
-            </div>
-            <div>
-              <label className="text-xs font-semibold text-gray-500 block mb-1">Confirm New Password</label>
-              <input
-                type="password"
-                value={confirmPassword}
-                onChange={e => setConfirmPassword(e.target.value)}
-                placeholder="Re-enter new password"
+                placeholder="Enter new password"
                 className={inputClass}
               />
             </div>
@@ -141,10 +233,8 @@ function ProfileModal({ open, onClose }) {
               onClick={async () => {
                 if (!newPassword) { alert('Please enter a new password.'); return; }
                 if (newPassword.length < 6) { alert('Password must be at least 6 characters.'); return; }
-                if (newPassword !== confirmPassword) { alert('Passwords do not match.'); return; }
                 await resetMyPassword(newPassword);
                 setNewPassword('');
-                setConfirmPassword('');
               }}
             >
               Update Password
@@ -199,7 +289,7 @@ function AppShell() {
     return (
       <div className="min-h-screen bg-gradient-to-br from-[#0F172A] to-blue-900 flex items-center justify-center">
         <div className="text-white text-center space-y-4">
-          <div className="w-16 h-16 rounded-[20px] bg-white/10 flex items-center justify-center text-2xl font-bold mx-auto animate-pulse">BP</div>
+          <img src="/umbrella-logo.png" alt="Umbrella Suite" className="w-16 h-16 rounded-[20px] mx-auto animate-pulse opacity-80"/>
           <div className="font-semibold text-lg">Loading Umbrella Suite...</div>
           <div className="text-blue-300 text-sm">Initialising enterprise platform</div>
         </div>
