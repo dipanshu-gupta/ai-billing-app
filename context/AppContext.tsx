@@ -2366,7 +2366,10 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
       if (effectiveTenantId) aq = (aq as any).eq('tenant_id', effectiveTenantId);
       const { data } = await aq.maybeSingle();
       if (data) {
+        // Only merge _DEF_APP fields that are actually missing — don't overwrite saved values with defaults
         const a = { ..._DEF_APP, ...data };
+        // Ensure company_logo_url is never reset to empty if DB has a value
+        if (data.company_logo_url) a.company_logo_url = data.company_logo_url;
         const tc = THEME_COLORS[a.theme] || THEME_COLORS['navy'];
         a.themeColors = tc;
         setAppearance(a);

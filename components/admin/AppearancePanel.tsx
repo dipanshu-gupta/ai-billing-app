@@ -49,12 +49,13 @@ export default function AppearancePanel() {
 
     setUploading(true);
     try {
-      // Use Supabase Storage
-      const { supabase } = await import('@/lib/supabase');
+      // supabase is already available from useTenant() at top of component
       if (!supabase) { alert('Supabase not configured'); return; }
 
       const ext  = file.name.split('.').pop();
-      const path = `logos/company-logo.${ext}`;
+      // Include tenant slug in path to isolate logos per tenant
+      const tenantSlug = (window as any).__bp_tenant?.slug || 'default';
+      const path = `logos/${tenantSlug}/company-logo.${ext}`;
 
       const { error: upErr } = await supabase.storage
         .from('company-assets')
