@@ -720,8 +720,8 @@ function RetailInvoicePrintModal({ template, record, items, onClose, onPrint }) 
 }
 
 // ─── Retail Customer 360 ─────────────────────────────────────────────────────
-function RC360Table({ cols, rows, emptyMsg }) {
-  if (rows.length === 0) return (
+function RC360Table({ cols, rows, emptyMsg, onRowClick }) {
+  if (!rows || rows.length === 0) return (
     <div className="px-5 py-10 text-center text-gray-400 text-sm">{emptyMsg}</div>
   );
   return (
@@ -732,14 +732,20 @@ function RC360Table({ cols, rows, emptyMsg }) {
             {cols.map(c => (
               <th key={c.h} className="px-4 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider whitespace-nowrap">{c.h}</th>
             ))}
+            {onRowClick && <th className="px-2 py-3 w-8"/>}
           </tr>
         </thead>
         <tbody>
           {rows.map((r, i) => (
-            <tr key={r.id || i} className="border-t border-gray-50 hover:bg-blue-50/20 transition-colors">
+            <tr key={r.id || i}
+              onClick={() => onRowClick?.(r)}
+              className={`border-t border-gray-50 transition-colors ${onRowClick ? 'cursor-pointer hover:bg-blue-50/60 group' : 'hover:bg-blue-50/20'}`}>
               {cols.map(c => (
                 <td key={c.h} className="px-4 py-3 text-sm">{c.v(r)}</td>
               ))}
+              {onRowClick && (
+                <td className="px-2 py-3 text-gray-300 group-hover:text-blue-500 text-base">→</td>
+              )}
             </tr>
           ))}
         </tbody>
@@ -748,7 +754,7 @@ function RC360Table({ cols, rows, emptyMsg }) {
   );
 }
 
-function RetailCustomer360({ customer, onNavigate }) {
+function RetailCustomer360({ customer, onNavigate, onOpenCreate }) {
   const { supabase } = useTenant();
   const [tab, setTab]         = useState('orders');
   const [data, setData]       = useState({ orders: [], invoices: [], activities: [] });
@@ -786,7 +792,7 @@ function RetailCustomer360({ customer, onNavigate }) {
   );
 
   const orderCols = [
-    { h: 'Order #',   v: r => (<span className="font-mono text-xs text-blue-600 font-bold">{r.order_number || r.id?.slice(0, 8)}</span>) },
+    { h: 'Order #',   v: r => (<span className="font-mono text-xs text-blue-600 font-bold">{r.display_number ? 'RORD-'+String(r.display_number).padStart(5,'0') : (r.order_number || r.id?.slice(0, 8))}</span>) },
     { h: 'Date',      v: r => (<span className="text-gray-600">{r.order_date || r.created_at?.slice(0, 10) || '-'}</span>) },
     { h: 'Channel',   v: r => (<span className="text-gray-600">{r.channel || '-'}</span>) },
     { h: 'Payment',   v: r => (<span className="text-gray-600">{r.payment_method || '-'}</span>) },
@@ -796,7 +802,7 @@ function RetailCustomer360({ customer, onNavigate }) {
   ];
 
   const invoiceCols = [
-    { h: 'Invoice #',  v: r => (<span className="font-mono text-xs text-purple-600 font-bold">{r.invoice_number || r.id?.slice(0, 8)}</span>) },
+    { h: 'Invoice #',  v: r => (<span className="font-mono text-xs text-purple-600 font-bold">{r.display_number ? 'RINV-'+String(r.display_number).padStart(5,'0') : (r.invoice_number || r.id?.slice(0, 8))}</span>) },
     { h: 'Date',       v: r => (<span className="text-gray-600">{r.invoice_date || r.created_at?.slice(0, 10) || '-'}</span>) },
     { h: 'Due Date',   v: r => (<span className="text-gray-600">{r.due_date || '-'}</span>) },
     { h: 'Payment',    v: r => (<span className="text-gray-600">{r.payment_method || '-'}</span>) },
@@ -829,21 +835,20 @@ function RetailCustomer360({ customer, onNavigate }) {
   const activeRows = tab === 'orders' ? data.orders : tab === 'invoices' ? data.invoices : data.activities;
   const activeTab  = TABS.find(t => t.k === tab);
 
-  const { createRetailRecord } = useApp();
-
-  const handleCreateFor = async (type) => {
-    const custId = customer._uuid || customer.id;
-    const custName = customer.name || '';
-    if (type === 'order') {
-      await createRetailRecord('retailOrders', {customer:custName,customer_id:custId,order_date:new Date().toISOString().slice(0,10),status:'Open',channel:'In-Store',place_of_supply:'Tamil Nadu'}, []);
-      alert('Order created for '+custName+'!');
-    } else if (type === 'invoice') {
-      await createRetailRecord('retailInvoices', {customer:custName,customer_id:custId,invoice_date:new Date().toISOString().slice(0,10),status:'Draft',payment_status:'Pending',place_of_supply:'Tamil Nadu'}, []);
-      alert('Invoice created for '+custName+'!');
-    } else if (type === 'activity') {
-      await createRetailRecord('retailActivities', {customer:custName,customer_id:custId,subject:'Follow up with '+custName,activity_date:new Date().toISOString().slice(0,10),activity_type:'Call',status:'Planned'}, []);
-      alert('Activity created for '+custName+'!');
-    }
+  // Open create modal for the given type, pre-filled with this customer
+  const handleCreateFor = (type) => {
+    const custId   = customer._uuid || customer.id;
+    const custName = customer.name  || '';
+    const pageMap  = { order: 'retailOrders', invoice: 'retailInvoices', activity: 'retailActivities' };
+    const prefill  = {
+      customer:    custName,
+      customer_id: custId,
+      place_of_supply: 'Tamil Nadu',
+      ...(type === 'order'    ? { order_date:    new Date().toISOString().slice(0,10), status: 'Open',  channel: 'In-Store' } : {}),
+      ...(type === 'invoice'  ? { invoice_date:  new Date().toISOString().slice(0,10), status: 'Draft', payment_status: 'Pending' } : {}),
+      ...(type === 'activity' ? { activity_date: new Date().toISOString().slice(0,10), subject: 'Follow up with '+custName, activity_type: 'Call', status: 'Planned' } : {}),
+    };
+    if (onOpenCreate) onOpenCreate(pageMap[type], prefill);
   };
 
   return (
@@ -910,7 +915,7 @@ function RetailCustomer360({ customer, onNavigate }) {
             <span className="font-bold text-[#0F172A] text-sm">{activeTab?.label}</span>
             <span className="ml-auto text-xs text-gray-400">{activeRows.length} records</span>
           </div>
-          <RC360Table cols={activeCols} rows={activeRows} emptyMsg={`No ${activeTab?.label?.toLowerCase()} found for this customer`} onRowClick={onNavigate ? (r) => { const pageMap = { orders: "retailOrders", invoices: "retailInvoices", activities: "retailActivities" }; const pg = pageMap[activeTab?.key]; if(pg) onNavigate(pg, r); } : null}/>
+          <RC360Table cols={activeCols} rows={activeRows} emptyMsg={`No ${activeTab?.label?.toLowerCase()} found for this customer`} onRowClick={(r) => { const pageMap = { orders: "retailOrders", invoices: "retailInvoices", activities: "retailActivities" }; const pg = pageMap[activeTab?.k]; if(pg && onNavigate) onNavigate(pg, r); }}/>
         </div>
       )}
     </div>
@@ -1399,7 +1404,19 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo }) 
           )}
 
           {page === 'retailCustomers' && activeTab === '360' ? (
-            <RetailCustomer360 customer={record}/>
+            <RetailCustomer360
+              customer={record}
+              onNavigate={(page, rec) => {
+                // Navigate to the record — use setPendingRecord so page switches and record opens
+                setPendingRecord({ page, record: rec });
+                window.dispatchEvent(new CustomEvent('retail-navigate', { detail: { page } }));
+              }}
+              onOpenCreate={(targetPage, prefill) => {
+                // Navigate to that page and open create modal pre-filled with customer
+                setPendingRecord({ page: targetPage, openCreate: true, prefill });
+                window.dispatchEvent(new CustomEvent('retail-navigate', { detail: { page: targetPage } }));
+              }}
+            />
           ) : (
             <div className="space-y-6">
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
@@ -2030,8 +2047,16 @@ export default function RetailListPage({ page }) {
   }, [defaultLoaded]);
 
   useEffect(() => {
-    if (pendingRecord && pendingRecord.page === page && pendingRecord.record) {
-      setSelectedRecord(pendingRecord.record);
+    if (pendingRecord && pendingRecord.page === page) {
+      if (pendingRecord.record) {
+        setSelectedRecord(pendingRecord.record);
+      } else if (pendingRecord.openCreate) {
+        // Pre-fill form and open create modal
+        if (pendingRecord.prefill) {
+          setForm(f => ({ ...f, ...pendingRecord.prefill }));
+        }
+        setShowCreate(true);
+      }
       setPendingRecord(null);
     }
   }, [pendingRecord, page]);

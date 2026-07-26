@@ -196,13 +196,14 @@ export default function SearchableSelect({
               {query ? `No results for "${query}"` : 'No options available'}
               {onCreateNew && (
                 <button
-                  onMouseDown={e=>{
+                  onMouseDown={e=>{ e.preventDefault(); e.stopPropagation(); }}
+                  onClick={e=>{
                 e.preventDefault();
                 e.stopPropagation();
                 const q = query;
                 setOpen(false);
                 setQuery('');
-                setTimeout(() => onCreateNew(q), 50);
+                setTimeout(() => onCreateNew(q), 150);
               }}
                   className="mt-2 w-full flex items-center justify-center gap-1.5 px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition-colors">
                   <span>+</span> {query ? `Create "${query}"` : `${createLabel}`}
@@ -240,13 +241,14 @@ export default function SearchableSelect({
           )}
           {onCreateNew && (
             <div
-              onMouseDown={e=>{
+              onMouseDown={e=>{ e.preventDefault(); e.stopPropagation(); }}
+            onClick={e=>{
                 e.preventDefault();
                 e.stopPropagation();
                 const q = query;
                 setOpen(false);
                 setQuery('');
-                setTimeout(() => onCreateNew(q), 50);
+                setTimeout(() => onCreateNew(q), 150);
               }}
               className="px-4 py-2.5 border-t border-blue-50 flex items-center gap-2 cursor-pointer text-blue-600 hover:bg-blue-50 transition-colors sticky bottom-0 bg-white"
             >

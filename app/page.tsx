@@ -290,11 +290,17 @@ function AppShell() {
     };
     // open-record: from global search
     // open-crm-record: from Customer360 sub-tab click
+    const rn = (e: any) => {
+      const { page: targetPage } = e.detail || {};
+      if (targetPage) setActivePage(targetPage);
+    };
     window.addEventListener('open-record',     h);
     window.addEventListener('open-crm-record', h);
+    window.addEventListener('retail-navigate', rn);
     return () => {
       window.removeEventListener('open-record',     h);
       window.removeEventListener('open-crm-record', h);
+      window.removeEventListener('retail-navigate', rn);
     };
   }, []);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(true);
