@@ -3,6 +3,7 @@
 
 import { useState, useRef, useEffect } from 'react';
 import { useApp } from '@/context/AppContext';
+import { useTenant } from '@/context/TenantContext';
 import { THEMES, LANGUAGES } from '@/lib/i18n';
 
 const FONT_OPTIONS = [
@@ -15,6 +16,7 @@ const FONT_OPTIONS = [
 
 export default function AppearancePanel() {
   const { appearance, saveAppearance, currentUser } = useApp();
+  const { supabase } = useTenant();
 
   const [logoUrl,       setLogoUrl]       = useState(appearance?.company_logo_url || '');
   const [companyName,   setCompanyName]   = useState(appearance?.company_name     || 'Umbrella Suite');

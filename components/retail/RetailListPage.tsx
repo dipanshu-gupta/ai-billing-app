@@ -766,10 +766,14 @@ function RetailCustomer360({ customer, onNavigate, onOpenCreate }) {
     // customer.id = customer_number (display ID), customer._uuid = actual DB UUID
     // Try matching by _uuid first, fall back to customer_number
     const custId = customer._uuid || customer.id;
+    // Use UUID for customer_id match, name as fallback
+    const uuid = customer._uuid || null;
+    const name = customer.name || '';
+    const buildFilter = () => uuid ? `customer_id.eq.${uuid},customer.eq.${name}` : `customer.eq.${name}`;
     Promise.all([
-      supabase.from('retail_orders')    .select('*').or(`customer_id.eq.${custId},customer.eq.${customer.name||''}`).order('created_at', { ascending: false }),
-      supabase.from('retail_invoices')  .select('*').or(`customer_id.eq.${custId},customer.eq.${customer.name||''}`).order('created_at', { ascending: false }),
-      supabase.from('retail_activities').select('*').or(`customer_id.eq.${custId},customer.eq.${customer.name||''}`).order('created_at', { ascending: false }),
+      supabase.from('retail_orders')    .select('*').or(buildFilter()).order('created_at', { ascending: false }),
+      supabase.from('retail_invoices')  .select('*').or(buildFilter()).order('created_at', { ascending: false }),
+      supabase.from('retail_activities').select('*').or(buildFilter()).order('created_at', { ascending: false }),
     ]).then(([{ data: orders }, { data: invoices }, { data: activities }]) => {
       setData({ orders: orders || [], invoices: invoices || [], activities: activities || [] });
       setLoading(false);
@@ -843,12 +847,15 @@ function RetailCustomer360({ customer, onNavigate, onOpenCreate }) {
 
   // Open create modal for the given type, pre-filled with this customer
   const handleCreateFor = (type) => {
+    // customer._uuid = DB UUID, customer.id = display number (RCUST-00001)
+    // SearchableSelect options use _uuid as value, so prefill must use _uuid
     const custId   = customer._uuid || customer.id;
     const custName = customer.name  || '';
     const pageMap  = { order: 'retailOrders', invoice: 'retailInvoices', activity: 'retailActivities' };
     const prefill  = {
-      customer:    custName,
-      customer_id: custId,
+      customer:        custName,
+      customer_id:     custId,   // matches _uuid-based option values in SearchableSelect
+      customer_phone:  customer.phone || '',
       place_of_supply: 'Tamil Nadu',
       ...(type === 'order'    ? { order_date:    new Date().toISOString().slice(0,10), status: 'Open',  channel: 'In-Store' } : {}),
       ...(type === 'invoice'  ? { invoice_date:  new Date().toISOString().slice(0,10), status: 'Draft', payment_status: 'Pending' } : {}),
@@ -980,7 +987,7 @@ function RetailQuickCreateCustomer({ prefillName, onCreated, onClose }) {
 }
 
 // ─── Detail Panel ───────────────────────────────────────────────────────────
-function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo }) {
+function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo, onC360Navigate, onC360Create }) {
   const { updateRetailRecord, deleteRetailRecord, retailCustomers, retailProducts, enterpriseUsers, currentUser,
           fetchRetailLineItems, fetchRetailCustomers, createRetailRecord, appPreferences, setPendingReturnTo, createRetailInvoiceFromOrder,
           checkMatchingApprovalProcess, submitForApproval, currentUserPermissions, permissionsLoaded } = useApp();
@@ -1208,8 +1215,8 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo }) 
     }
     if (field.type === 'retailCustomer') return <SearchableSelect
       value={edited.customer_id||''}
-      onChange={cid=>{ const c=retailCustomers.find(x=>x.id===cid); set('customer_id',c?.id||''); set('customer',c?.name||''); set('customer_phone',c?.phone||''); }}
-      options={retailCustomers.map(c=>({value:c.id,label:c.name,sub:[c.phone,c.email].filter(Boolean).join(' · ')}))}
+      onChange={cid=>{ const c=retailCustomers.find(x=>(x._uuid||x.id)===cid); set('customer_id',c?._uuid||c?.id||''); set('customer',c?.name||''); set('customer_phone',c?.phone||''); }}
+      options={retailCustomers.map(c=>({value:c._uuid||c.id,label:c.name,sub:[c.phone,c.email].filter(Boolean).join(' · ')}))}
       onCreateNew={name=>setQuickCreateCustomer({prefillName:name, onCreated:(id,cname)=>{ set('customer_id',id); set('customer',cname); }})}
       placeholder="Search customers..." emptyLabel="No customer"
     />;
@@ -1421,14 +1428,8 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo }) 
           {page === 'retailCustomers' && activeTab === '360' ? (
             <RetailCustomer360
               customer={record}
-              onNavigate={(targetPage, rec) => {
-                // Open a floating overlay showing the record - no page navigation needed
-                setC360Record({ page: targetPage, record: rec });
-              }}
-              onOpenCreate={(targetPage, prefill) => {
-                // Open a cross-page create modal directly (no page navigation needed)
-                setCreatePrefill({ page: targetPage, data: prefill });
-              }}
+              onNavigate={(targetPage, rec) => onC360Navigate?.(targetPage, rec)}
+              onOpenCreate={(targetPage, prefill) => onC360Create?.(targetPage, prefill)}
             />
           ) : (
             <div className="space-y-6">
@@ -1647,7 +1648,7 @@ function RetailCreateModal({ page, open, onClose, onCreated, prefill = null }) {
   }, [open, page]);
 
   // When page changes (but not open), reset form — DON'T reset when open changes (prefill handles that)
-  useEffect(() => { setForm(f => ({...defaultForm(), ...( f._prefilled ? {} : {})})); setErrors({}); }, [page]);
+  // NOTE: form reset on page change removed — it was wiping prefill data
 
   const s = (k,v) => setForm(p => ({ ...p, [k]: v }));
 
@@ -1723,8 +1724,8 @@ function RetailCreateModal({ page, open, onClose, onCreated, prefill = null }) {
     }
     if (field.type === 'retailCustomer') return <SearchableSelect
       value={form.customer_id||''}
-      onChange={cid=>{ const c=retailCustomers.find(x=>x.id===cid); s('customer_id',c?.id||''); s('customer',c?.name||''); s('customer_phone',c?.phone||''); }}
-      options={retailCustomers.map(c=>({value:c.id,label:c.name,sub:[c.phone,c.email].filter(Boolean).join(' · ')}))}
+      onChange={cid=>{ const c=retailCustomers.find(x=>(x._uuid||x.id)===cid); s('customer_id',c?._uuid||c?.id||''); s('customer',c?.name||''); s('customer_phone',c?.phone||''); }}
+      options={retailCustomers.map(c=>({value:c._uuid||c.id,label:c.name,sub:[c.phone,c.email].filter(Boolean).join(' · ')}))}
       onCreateNew={name=>setQuickCreateCustomer({prefillName:name, onCreated:(id,cname,cphone)=>{ s('customer_id',id); s('customer',cname); s('customer_phone',cphone||''); setQuickCreateCustomer(null); }})}
       placeholder="Search customers..." emptyLabel="No customers — type to create new"
     />;
@@ -1845,11 +1846,19 @@ function RetailCreateModal({ page, open, onClose, onCreated, prefill = null }) {
       </div>
     </div>
     {quickCreateCustomer && (
-      <RetailQuickCreateCustomer
-        prefillName={quickCreateCustomer.prefillName}
-        onCreated={quickCreateCustomer.onCreated}
-        onClose={()=>setQuickCreateCustomer(null)}
-      />
+      <div className="fixed inset-0 bg-black/70 z-[99999] flex items-center justify-center p-4" onClick={()=>setQuickCreateCustomer(null)}>
+        <div className="bg-white rounded-[24px] shadow-2xl p-6 w-full max-w-md" onClick={e=>e.stopPropagation()}>
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="font-bold text-[#0F172A] text-lg">👤 New Customer</h3>
+            <button onClick={()=>setQuickCreateCustomer(null)} className="text-gray-400 hover:text-gray-600 text-xl leading-none">✕</button>
+          </div>
+          <RetailQuickCreateCustomer
+            prefillName={quickCreateCustomer.prefillName}
+            onCreated={quickCreateCustomer.onCreated}
+            onClose={()=>setQuickCreateCustomer(null)}
+          />
+        </div>
+      </div>
     )}
     </>
   );
@@ -2310,50 +2319,26 @@ export default function RetailListPage({ page }) {
             if (pendingReturnTo) { const rt=pendingReturnTo; setPendingReturnTo(null); window.dispatchEvent(new CustomEvent('open-crm-record',{detail:rt})); }
           }}
           onSaved={()=>fetchMap[page]?.()}
+          onC360Navigate={(targetPage, rec) => setC360Record({ page: targetPage, record: rec })}
+          onC360Create={(targetPage, prefill) => setCreatePrefill({ page: targetPage, data: prefill })}
         />
       )}
       <RetailCreateModal page={page} open={createOpen} onClose={()=>{setCreateOpen(false);setPendingRecord(null);}} onCreated={()=>{fetchMap[page]?.();setPendingRecord(null);}} prefill={pendingRecord?.openCreate ? pendingRecord.prefill : null}/>
       {/* Cross-object create modal — for Create Order/Invoice from customer list/360 */}
       {/* Customer 360 — Record detail overlay */}
-      {c360Record && (
-        <div className="fixed inset-0 z-[600] flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={()=>setC360Record(null)}/>
-          <div className="relative bg-white rounded-[28px] shadow-2xl w-full max-w-3xl max-h-[90vh] flex flex-col overflow-hidden">
-            <div className="bg-gradient-to-r from-[#0F172A] to-blue-900 px-6 py-4 flex items-center justify-between flex-shrink-0">
-              <div>
-                <h2 className="text-white font-bold text-lg">{c360Record.record?.name || c360Record.record?.subject || c360Record.record?.id}</h2>
-                <p className="text-blue-300 text-xs mt-0.5 capitalize">{c360Record.page?.replace('retail','').replace(/([A-Z])/g,' $1').trim()}</p>
-              </div>
-              <button onClick={()=>setC360Record(null)} className="text-white/70 hover:text-white text-2xl leading-none">✕</button>
-            </div>
-            <div className="overflow-y-auto flex-1 p-6">
-              {/* Show all fields of the record */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                {Object.entries(c360Record.record || {})
-                  .filter(([k]) => !['id','_uuid','displayNumber','created_at','updated_at','tenant_id','owner_id','customer_id'].includes(k) && !String(k).startsWith('_'))
-                  .map(([k,v]) => (
-                    <div key={k} className="bg-gray-50 rounded-2xl px-4 py-3">
-                      <div className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">{k.replace(/_/g,' ')}</div>
-                      <div className="text-sm font-semibold text-[#0F172A]">{String(v||'—')}</div>
-                    </div>
-                  ))}
-              </div>
-            </div>
-            <div className="border-t border-gray-100 px-6 py-4 flex justify-between items-center bg-gray-50 flex-shrink-0">
-              <span className="text-xs text-gray-400">Viewing from Customer 360</span>
-              <button
-                onClick={()=>{
-                  setPendingRecord({page:c360Record.page, record:c360Record.record});
-                  window.dispatchEvent(new CustomEvent('retail-navigate',{detail:{page:c360Record.page}}));
-                  setC360Record(null);
-                }}
-                className="bg-gradient-to-r from-[#0F172A] to-blue-800 text-white px-5 py-2 rounded-xl text-sm font-bold hover:opacity-90">
-                Open Full Record →
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {c360Record && (() => {
+        // Navigate to the target page and open the real RetailDetailPanel for that record
+        // We do this in a useEffect-like way by setting state immediately on render
+        // Use a small component to trigger the navigation
+        const doNav = () => {
+          setPendingRecord({ page: c360Record.page, record: c360Record.record });
+          window.dispatchEvent(new CustomEvent('retail-navigate', { detail: { page: c360Record.page } }));
+          setC360Record(null);
+        };
+        // Auto-navigate immediately when c360Record is set
+        setTimeout(doNav, 0);
+        return null;
+      })()}
 
       {createPrefill && (
         <RetailCreateModal
