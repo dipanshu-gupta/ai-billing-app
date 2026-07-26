@@ -2366,10 +2366,7 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
       if (effectiveTenantId) aq = (aq as any).eq('tenant_id', effectiveTenantId);
       const { data } = await aq.maybeSingle();
       if (data) {
-        // Only merge _DEF_APP fields that are actually missing — don't overwrite saved values with defaults
         const a = { ..._DEF_APP, ...data };
-        // Ensure company_logo_url is never reset to empty if DB has a value
-        if (data.company_logo_url) a.company_logo_url = data.company_logo_url;
         const tc = THEME_COLORS[a.theme] || THEME_COLORS['navy'];
         a.themeColors = tc;
         setAppearance(a);
@@ -2392,13 +2389,25 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
       let q = supabase.from('appearance').select('id').limit(1);
       if (effectiveTenantId) q = (q as any).eq('tenant_id', effectiveTenantId);
       const { data:row } = await q.maybeSingle();
-      const savePayload = { ...clean, ...(effectiveTenantId ? { tenant_id: effectiveTenantId } : {}) };
+      // Only save columns that exist in the appearance table
+      // Sending unknown columns (like themeColors) causes Supabase to reject the request
+      const savePayload: any = {
+        company_logo_url: clean.company_logo_url || '',
+        company_name:     clean.company_name     || 'Umbrella Suite',
+        theme:            clean.theme            || 'navy',
+        language:         clean.language         || 'en',
+        font:             clean.font             || 'geist',
+        updated_at:       new Date().toISOString(),
+        ...(effectiveTenantId ? { tenant_id: effectiveTenantId } : {}),
+      };
       if (row?.id) {
-        await supabase.from('appearance').update(savePayload).eq('id', row.id);
+        const { error } = await supabase.from('appearance').update(savePayload).eq('id', row.id);
+        if (error) console.error('[saveAppearance] update error:', error.message);
       } else {
-        await supabase.from('appearance').insert([savePayload]);
+        const { error } = await supabase.from('appearance').insert([savePayload]);
+        if (error) console.error('[saveAppearance] insert error:', error.message);
       }
-    } catch(e) { console.warn('saveAppearance Supabase error:', e); }
+    } catch(e) { console.warn('[saveAppearance] error:', e); }
   };
 
   const RTL_LANGS = ['ar'];
