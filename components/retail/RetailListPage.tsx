@@ -1962,7 +1962,6 @@ function RetailSavedSearchPanel({ page, currentFilters, onApply, onClose }) {
 export default function RetailListPage({ page }) {
   const {
     retailCustomers, retailProducts, retailActivities, retailOrders, retailInvoices,
-    fetchRetailOrders, fetchRetailInvoices, fetchRetailActivities,
     fetchRetailCustomers, fetchRetailProducts, fetchRetailActivities, fetchRetailOrders, fetchRetailInvoices,
     pendingRecord, setPendingRecord, pendingReturnTo, setPendingReturnTo,
     enterpriseUsers, savedSearches, fetchSavedSearches, createSavedSearch,
