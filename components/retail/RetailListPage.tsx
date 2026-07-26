@@ -208,7 +208,7 @@ const RETAIL_CONFIG = {
     statusOptions: ['Draft','Completed','Cancelled','Refunded'],
     hasLineItems: true,
     listColumns: [
-      { h: 'Order #', v: r => r.displayNumber ? formatDisplayNumber('RORD', r.displayNumber) : r.order_number, mono:true },
+
       { h: 'Customer', v: r => r.customer || '-' },
       { h: 'Channel', v: r => r.channel || '-' },
       { h: 'Date', v: r => r.order_date || '-' },
@@ -247,7 +247,7 @@ const RETAIL_CONFIG = {
     statusOptions: ['Draft','Sent','Paid','Overdue','Refunded','Cancelled'],
     hasLineItems: true,
     listColumns: [
-      { h: 'Invoice #', v: r => r.displayNumber ? formatDisplayNumber('RINV', r.displayNumber) : r.invoice_number, mono:true },
+
       { h: 'Customer', v: r => r.customer || '-' },
       { h: 'Order #', v: r => r.order_number || '-', mono:true },
       { h: 'Date', v: r => r.invoice_date || '-' },
@@ -792,7 +792,10 @@ function RetailCustomer360({ customer, onNavigate, onOpenCreate }) {
   );
 
   const orderCols = [
-    { h: 'Order #',   v: r => (<span className="font-mono text-xs text-blue-600 font-bold">{r.display_number ? 'RORD-'+String(r.display_number).padStart(5,'0') : (r.order_number || r.id?.slice(0, 8))}</span>) },
+    { h: 'Order #',   v: r => {
+      const num = r.display_number ? 'RORD-'+String(r.display_number).padStart(5,'0') : r.order_number || '-';
+      return <span className="font-mono text-xs text-blue-600 font-bold">{num}</span>;
+    }},
     { h: 'Date',      v: r => (<span className="text-gray-600">{r.order_date || r.created_at?.slice(0, 10) || '-'}</span>) },
     { h: 'Channel',   v: r => (<span className="text-gray-600">{r.channel || '-'}</span>) },
     { h: 'Payment',   v: r => (<span className="text-gray-600">{r.payment_method || '-'}</span>) },
@@ -802,7 +805,10 @@ function RetailCustomer360({ customer, onNavigate, onOpenCreate }) {
   ];
 
   const invoiceCols = [
-    { h: 'Invoice #',  v: r => (<span className="font-mono text-xs text-purple-600 font-bold">{r.display_number ? 'RINV-'+String(r.display_number).padStart(5,'0') : (r.invoice_number || r.id?.slice(0, 8))}</span>) },
+    { h: 'Invoice #',  v: r => {
+      const num = r.display_number ? 'RINV-'+String(r.display_number).padStart(5,'0') : r.invoice_number || '-';
+      return <span className="font-mono text-xs text-purple-600 font-bold">{num}</span>;
+    }},
     { h: 'Date',       v: r => (<span className="text-gray-600">{r.invoice_date || r.created_at?.slice(0, 10) || '-'}</span>) },
     { h: 'Due Date',   v: r => (<span className="text-gray-600">{r.due_date || '-'}</span>) },
     { h: 'Payment',    v: r => (<span className="text-gray-600">{r.payment_method || '-'}</span>) },
@@ -915,7 +921,16 @@ function RetailCustomer360({ customer, onNavigate, onOpenCreate }) {
             <span className="font-bold text-[#0F172A] text-sm">{activeTab?.label}</span>
             <span className="ml-auto text-xs text-gray-400">{activeRows.length} records</span>
           </div>
-          <RC360Table cols={activeCols} rows={activeRows} emptyMsg={`No ${activeTab?.label?.toLowerCase()} found for this customer`} onRowClick={(r) => { const pageMap = { orders: "retailOrders", invoices: "retailInvoices", activities: "retailActivities" }; const pg = pageMap[activeTab?.k]; if(pg && onNavigate) onNavigate(pg, r); }}/>
+          <RC360Table cols={activeCols} rows={activeRows} emptyMsg={`No ${activeTab?.label?.toLowerCase()} found for this customer`} onRowClick={(r) => {
+              const pageMap = { orders: 'retailOrders', invoices: 'retailInvoices', activities: 'retailActivities' };
+              const idMap   = { orders: 'order_number', invoices: 'invoice_number', activities: 'activity_number' };
+              const pg = pageMap[activeTab?.k];
+              if (!pg || !onNavigate) return;
+              // Map raw DB row to expected format (same as AppContext fetch mapping)
+              const idField = idMap[activeTab?.k] || 'id';
+              const mapped = { ...r, id: r[idField] || r.id, _uuid: r.id, displayNumber: r.display_number };
+              onNavigate(pg, mapped);
+            }}/>
         </div>
       )}
     </div>
@@ -1580,7 +1595,7 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo }) 
 }
 
 // ─── Create Modal ───────────────────────────────────────────────────────────
-function RetailCreateModal({ page, open, onClose, onCreated }) {
+function RetailCreateModal({ page, open, onClose, onCreated, prefill = null }) {
   const { createRetailRecord, retailCustomers, enterpriseUsers, currentUser, appPreferences } = useApp();
   const { supabase } = useTenant();
   const cfg = RETAIL_CONFIG[page];
@@ -1608,6 +1623,13 @@ function RetailCreateModal({ page, open, onClose, onCreated }) {
   });
 
   const [form, setForm] = useState(defaultForm);
+
+  // Apply prefill whenever it changes (e.g. when opened from Customer 360)
+  useEffect(() => {
+    if (open) {
+      setForm({ ...defaultForm(), ...(prefill || {}) });
+    }
+  }, [open, prefill]);
   const [saving, setSaving] = useState(false);
   const [errors, setErrors] = useState({});
   const [createCustomFields, setCreateCustomFields] = useState([]);
@@ -2047,17 +2069,16 @@ export default function RetailListPage({ page }) {
   }, [defaultLoaded]);
 
   useEffect(() => {
-    if (pendingRecord && pendingRecord.page === page) {
+    if (!pendingRecord) return;
+    if (pendingRecord.page === page) {
       if (pendingRecord.record) {
         setSelectedRecord(pendingRecord.record);
+        setPendingRecord(null);
       } else if (pendingRecord.openCreate) {
-        // Pre-fill form and open create modal
-        if (pendingRecord.prefill) {
-          setForm(f => ({ ...f, ...pendingRecord.prefill }));
-        }
-        setShowCreate(true);
+        // Open create modal — prefill is passed via prop to RetailCreateModal
+        setCreateOpen(true);
+        // Don't clear pendingRecord yet — RetailCreateModal reads prefill from it
       }
-      setPendingRecord(null);
     }
   }, [pendingRecord, page]);
 
@@ -2076,8 +2097,12 @@ export default function RetailListPage({ page }) {
     let rows = data;
     if (search.trim()) {
       const q = search.toLowerCase();
+      const fmtDisplayNum = r => r.displayNumber
+        ? formatDisplayNumber(PAGE_DISPLAY_PREFIX[page]||'REC', r.displayNumber)
+        : (r.display_number ? formatDisplayNumber(PAGE_DISPLAY_PREFIX[page]||'REC', r.display_number) : '');
       rows = rows.filter(r => [
-        r.display_number, r[cfg?.idField], r.name, r.email, r.phone,
+        r.display_number, r[cfg?.idField], fmtDisplayNum(r),
+        r.name, r.email, r.phone,
         r.customer, r.customer_phone, r.subject, r.sku, r.barcode,
         r.brand, r.category, r.channel,
       ].some(v => String(v||'').toLowerCase().includes(q)));
@@ -2279,7 +2304,7 @@ export default function RetailListPage({ page }) {
           onSaved={()=>fetchMap[page]?.()}
         />
       )}
-      <RetailCreateModal page={page} open={createOpen} onClose={()=>setCreateOpen(false)} onCreated={()=>fetchMap[page]?.()}/>
+      <RetailCreateModal page={page} open={createOpen} onClose={()=>{setCreateOpen(false);setPendingRecord(null);}} onCreated={()=>{fetchMap[page]?.();setPendingRecord(null);}} prefill={pendingRecord?.openCreate ? pendingRecord.prefill : null}/>
     </div>
   );
 }

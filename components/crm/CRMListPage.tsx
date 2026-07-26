@@ -259,7 +259,8 @@ export default function CRMListPage({ page }) {
     let data = getData();
     if (search.trim()) {
       const q = search.toLowerCase();
-      data = data.filter(r => [r.name,r.id,r.customer,r.email,r.subject].some(v=>String(v||'').toLowerCase().includes(q)));
+      const fmtNum = r => r.displayNumber ? formatDisplayNumber(PAGE_DISPLAY_PREFIX[page]||'REC', r.displayNumber) : '';
+      data = data.filter(r => [r.name, r.id, r.customer, r.email, r.subject, r.phone, fmtNum(r)].some(v => String(v||'').toLowerCase().includes(q)));
     }
     if (statusFilter !== 'All') data = data.filter(r => r.status === statusFilter);
     data = applyTimePeriod(data, timePeriod);

@@ -37,9 +37,10 @@ export default function SearchableSelect({
   const [query,  setQuery]  = useState('');
   const [focused,setFocused]= useState(-1);
   const [dropPos, setDropPos] = useState<{top:number,left:number,width:number} | null>(null);
-  const inputRef  = useRef<HTMLInputElement>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
-  const listRef   = useRef<HTMLDivElement>(null);
+  const inputRef      = useRef<HTMLInputElement>(null);
+  const containerRef  = useRef<HTMLDivElement>(null);
+  const listRef       = useRef<HTMLDivElement>(null);
+  const creatingRef   = useRef(false); // blocks outside-click when Create is clicked
 
   // Selected label
   const selectedOption = options.find(o => o.value === value);
@@ -58,6 +59,7 @@ export default function SearchableSelect({
   // Close on outside click
   useEffect(() => {
     const handler = (e: MouseEvent) => {
+      if (creatingRef.current) return; // don't close if Create was just clicked
       if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
         setOpen(false);
         setQuery('');
@@ -201,9 +203,11 @@ export default function SearchableSelect({
                 e.preventDefault();
                 e.stopPropagation();
                 const q = query;
+                creatingRef.current = true;
                 setOpen(false);
                 setQuery('');
-                setTimeout(() => onCreateNew(q), 150);
+                setFocused(-1);
+                setTimeout(() => { onCreateNew(q); creatingRef.current = false; }, 200);
               }}
                   className="mt-2 w-full flex items-center justify-center gap-1.5 px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition-colors">
                   <span>+</span> {query ? `Create "${query}"` : `${createLabel}`}
@@ -246,9 +250,11 @@ export default function SearchableSelect({
                 e.preventDefault();
                 e.stopPropagation();
                 const q = query;
+                creatingRef.current = true;
                 setOpen(false);
                 setQuery('');
-                setTimeout(() => onCreateNew(q), 150);
+                setFocused(-1);
+                setTimeout(() => { onCreateNew(q); creatingRef.current = false; }, 200);
               }}
               className="px-4 py-2.5 border-t border-blue-50 flex items-center gap-2 cursor-pointer text-blue-600 hover:bg-blue-50 transition-colors sticky bottom-0 bg-white"
             >
