@@ -209,9 +209,54 @@ function NotificationBell() {
   );
 }
 
+// ─── About Dialog ────────────────────────────────────────────────────────────
+function AboutDialog({ onClose }) {
+  return (
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[300] p-4" onClick={onClose}>
+      <div className="bg-white rounded-[28px] shadow-2xl w-full max-w-sm overflow-hidden" onClick={e=>e.stopPropagation()}>
+        {/* Header */}
+        <div className="bg-gradient-to-r from-[#0F172A] to-blue-800 px-6 py-8 text-center">
+          <img src="/umbrella-logo.png" alt="Umbrella Suite" className="w-16 h-16 mx-auto rounded-2xl mb-3 shadow-xl"/>
+          <h2 className="text-white text-xl font-bold tracking-tight">Umbrella Suite</h2>
+          <p className="text-blue-300 text-sm mt-1">Enterprise CRM & ERP Platform</p>
+        </div>
+        {/* Body */}
+        <div className="px-6 py-5 space-y-3">
+          {[
+            { label: 'Version',    value: '26.3' },
+            { label: 'Build',      value: 'July 2026' },
+            { label: 'Modules',    value: 'CRM · B2C Retail · AI Advisor · CPQ · Reports' },
+            { label: 'Platform',   value: 'Multi-tenant SaaS' },
+            { label: 'Copyright',  value: '© 2026 Umbrella Suite. All rights reserved.' },
+          ].map(({ label, value }) => (
+            <div key={label} className="flex items-start justify-between gap-3 py-2 border-b border-gray-100 last:border-0">
+              <span className="text-xs font-bold text-gray-400 uppercase tracking-wider flex-shrink-0 w-20">{label}</span>
+              <span className="text-xs text-gray-700 text-right leading-relaxed">{value}</span>
+            </div>
+          ))}
+          <div className="flex items-center justify-between py-2">
+            <span className="text-xs font-bold text-gray-400 uppercase tracking-wider w-20">Website</span>
+            <a href="https://www.umbrellasuite.com" target="_blank" rel="noopener noreferrer"
+              className="text-xs text-blue-600 font-semibold hover:underline">
+              www.umbrellasuite.com ↗
+            </a>
+          </div>
+        </div>
+        <div className="px-6 pb-5">
+          <button onClick={onClose}
+            className="w-full bg-gradient-to-r from-[#0F172A] to-blue-800 text-white py-3 rounded-2xl font-bold text-sm hover:opacity-90">
+            Close
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function Header({ activePage, onNavigate }) {
   const { currentUser, handleLogout, appPreferences, appearance } = useApp();
   const [profileOpen, setProfileOpen] = useState(false);
+  const [aboutOpen,   setAboutOpen]   = useState(false);
   const [today, setToday] = useState('');
   const menuRef = useRef(null);
 
@@ -244,6 +289,7 @@ export default function Header({ activePage, onNavigate }) {
   const pageTitle = PAGE_LABELS[activePage] || getPageLabel(activePage) || 'Umbrella Suite';
 
   return (
+    <>
     <header className="h-16 flex items-center justify-between px-6 shadow-lg flex-shrink-0 sticky top-0 z-30"
       style={{background: appearance?.themeColors
         ? `linear-gradient(135deg, ${appearance.themeColors.sidebar}, ${appearance.themeColors.to})`
@@ -325,6 +371,11 @@ export default function Header({ activePage, onNavigate }) {
                   className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 transition-colors">
                   <span>👤</span> My Profile
                 </button>
+                <button onClick={() => { setAboutOpen(true); setProfileOpen(false); }}
+                  className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 transition-colors">
+                  <span>ℹ️</span> About Umbrella Suite
+                </button>
+                <hr className="my-1 border-gray-100"/>
                 <button onClick={() => { handleLogout(); setProfileOpen(false); }}
                   className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-red-600 hover:bg-red-50 transition-colors">
                   <span>🚪</span> Sign Out
@@ -335,5 +386,7 @@ export default function Header({ activePage, onNavigate }) {
         </div>
       </div>
     </header>
+    {aboutOpen && <AboutDialog onClose={() => setAboutOpen(false)}/>}
+    </>
   );
 }

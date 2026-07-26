@@ -2596,8 +2596,23 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
 
   // ─── Saved Searches ────────────────────────────────────────────────────────
   const [savedSearches, setSavedSearches] = useState([]);
-  const fetchSavedSearches = async () => { if(!supabase||!currentUser)return; const{data}=await supabase.from('saved_searches').select('*').or(`created_by.eq.${currentUser.email},is_global_default.eq.true`).order('created_at',{ascending:false}); if(data)setSavedSearches(data); };
-  const createSavedSearch = async (data) => { if(!supabase||!currentUser)return null; const{data:r}=await supabase.from('saved_searches').insert([{...data,created_by:currentUser.email,organization_id:currentUser.organization_id,created_at:new Date().toISOString()}]).select().single(); await fetchSavedSearches(); return r; };
+  const fetchSavedSearches = async () => {
+    if(!supabase||!currentUser)return;
+    const tid = (window as any).__bp_tenant?.id || null;
+    let q = supabase.from('saved_searches').select('*').or(`created_by.eq.${currentUser.email},is_global_default.eq.true`).order('created_at',{ascending:false});
+    if(tid) q = (q as any).eq('tenant_id', tid);
+    const{data}=await q;
+    if(data)setSavedSearches(data);
+  };
+  const createSavedSearch = async (data) => {
+    if(!supabase||!currentUser)return null;
+    const tid = (window as any).__bp_tenant?.id || null;
+    const payload = {...data,created_by:currentUser.email,organization_id:currentUser.organization_id,created_at:new Date().toISOString(),...(tid?{tenant_id:tid}:{})};
+    const{data:r,error}=await supabase.from('saved_searches').insert([payload]).select().single();
+    if(error){console.error('createSavedSearch:',error.message);return null;}
+    await fetchSavedSearches();
+    return r;
+  };
   const deleteSavedSearch = async (id) => { if(!supabase)return; await supabase.from('saved_searches').delete().eq('id',id); await fetchSavedSearches(); };
   const setDefaultSavedSearch = async (id,isGlobal=false) => { if(!supabase||!currentUser)return; await supabase.from('saved_searches').update({is_default:false,is_global_default:false}).eq('created_by',currentUser.email); await supabase.from('saved_searches').update({is_default:true,is_global_default:isGlobal}).eq('id',id); await fetchSavedSearches(); };
 

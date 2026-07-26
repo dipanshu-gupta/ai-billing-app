@@ -36,7 +36,8 @@ function LoginPage() {
     : false;
 
   // Tenant-level logo from appearance (set in app preferences)
-  const tenantLogo = tenant?.logo_url || null;
+  const { appearance } = useApp();
+  const tenantLogo = appearance?.company_logo_url || tenant?.logo_url || null;
   const tenantName = tenant?.app_name || tenant?.name || 'Umbrella Suite';
   const isDemo     = !tenant?.slug || tenant?.slug === 'demo';
 
@@ -60,39 +61,41 @@ function LoginPage() {
 
         {/* Logo header */}
         <div className="text-center">
-          {!isDemo && tenantLogo ? (
-            // Tenant login: show both logos separated by pipe
-            <div className="flex items-center justify-center gap-4 mb-6">
+          {/* Always show Umbrella Suite logo */}
+          <div className="flex flex-col items-center mb-6">
+            {/* Co-branding: side by side when tenant has a logo */}
+            <div className="flex items-center justify-center gap-5 mb-4">
               {/* Umbrella Suite logo */}
-              <div className="flex flex-col items-center gap-1.5">
-                <img src="/umbrella-logo.png" alt="Umbrella Suite" className="w-12 h-12 rounded-2xl shadow-lg"/>
-                <span className="text-white/60 text-[10px] font-semibold uppercase tracking-wider">Umbrella Suite</span>
+              <div className="flex flex-col items-center gap-2">
+                <div className="w-14 h-14 rounded-2xl bg-white/10 backdrop-blur-sm border border-white/20 flex items-center justify-center shadow-xl overflow-hidden">
+                  <img src="/umbrella-logo.png" alt="Umbrella Suite" className="w-11 h-11 object-contain"/>
+                </div>
+                <span className="text-white/50 text-[10px] font-semibold uppercase tracking-widest">Umbrella Suite</span>
               </div>
-              {/* Divider */}
-              <div className="h-14 w-px bg-white/25"/>
-              {/* Tenant logo */}
-              <div className="flex flex-col items-center gap-1.5">
-                <img src={tenantLogo} alt={tenantName} className="w-12 h-12 rounded-2xl object-contain bg-white shadow-lg p-1"/>
-                <span className="text-white/60 text-[10px] font-semibold uppercase tracking-wider truncate max-w-[80px]">{tenantName}</span>
+              {/* Show tenant logo if available */}
+              {!isDemo && tenantLogo && (<>
+                <div className="h-12 w-px bg-white/20 rounded-full"/>
+                <div className="flex flex-col items-center gap-2">
+                  <div className="w-14 h-14 rounded-2xl bg-white border border-white/30 flex items-center justify-center shadow-xl overflow-hidden p-1.5">
+                    <img src={tenantLogo} alt={tenantName} className="w-full h-full object-contain"/>
+                  </div>
+                  <span className="text-white/50 text-[10px] font-semibold uppercase tracking-widest truncate max-w-[90px] text-center">{tenantName}</span>
+                </div>
+              </>)}
+            </div>
+            {/* Title */}
+            {isDemo ? (
+              <div className="text-center">
+                <h1 className="text-2xl font-bold text-white tracking-tight">Umbrella Suite</h1>
+                <p className="text-blue-300 text-sm mt-0.5">Enterprise CRM & ERP Platform</p>
               </div>
-            </div>
-          ) : (
-            // Master / no tenant logo: show just umbrella logo
-            <div className="flex flex-col items-center gap-3 mb-6">
-              <img src="/umbrella-logo.png" alt="Umbrella Suite" className="w-16 h-16 rounded-[20px] shadow-xl"/>
-              <div>
-                <h1 className="text-2xl font-bold text-white">Umbrella Suite</h1>
-                <p className="text-blue-300 text-sm">Enterprise CRM & ERP Platform</p>
+            ) : (
+              <div className="text-center">
+                <h1 className="text-xl font-bold text-white tracking-tight">{tenantName}</h1>
+                <p className="text-blue-300/80 text-sm mt-0.5">Sign in to your workspace</p>
               </div>
-            </div>
-          )}
-
-          {!isDemo && (
-            <div className="mb-2">
-              <h1 className="text-xl font-bold text-white">{tenantName}</h1>
-              <p className="text-blue-300 text-sm">Sign in to your workspace</p>
-            </div>
-          )}
+            )}
+          </div>
         </div>
 
         {/* Main card */}
@@ -255,7 +258,19 @@ const RETAIL_PAGES = ['retailCustomers', 'retailProducts', 'retailActivities', '
 function AppShell() {
   const { session, authLoading, appPreferences, setPendingReturnTo, setPendingRecord } = useApp();
   const { tenant } = useTenant();
-  const [activePage,       setActivePage]       = useState('dashboard');
+  // Persist active page in sessionStorage so refresh doesn't reset to dashboard
+  const [activePage, setActivePage] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return sessionStorage.getItem('bp_active_page') || 'dashboard';
+    }
+    return 'dashboard';
+  });
+  // Save to sessionStorage on every page change
+  React.useEffect(() => {
+    if (typeof window !== 'undefined') {
+      sessionStorage.setItem('bp_active_page', activePage);
+    }
+  }, [activePage]);
   // Listen for profile open event from Header
   React.useEffect(() => {
     const h = () => setProfileOpen(true);

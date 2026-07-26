@@ -383,36 +383,39 @@ export default function RetailDashboard() {
         </div>
       </div>
 
-      {/* ── KPI row 1: Revenue ── */}
+      {/* ── KPI Row 1: Invoice & Revenue focused ── */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <StatCard label={`Sales (${rangeLabel})`}       icon="💰" paletteIdx={0}
-          value={fmt(kpis.totalSales)}
-          sub={`${kpis.ordersCount} completed order${kpis.ordersCount!==1?'s':''}`}/>
-        <StatCard label="Avg Order Value"                icon="📊" paletteIdx={1}
-          value={fmt(kpis.avgOrderValue)}
-          sub="per completed order"/>
-        <StatCard label="Invoice Revenue"               icon="🧾" paletteIdx={2}
+        <StatCard label="Paid Invoice Revenue" icon="💰" paletteIdx={0}
           value={fmt(kpis.totalRevenue)}
-          sub={`${fInvoices.filter(i=>i.status==='Paid').length} paid invoice${fInvoices.filter(i=>i.status==='Paid').length!==1?'s':''}`}/>
-        <StatCard label="Pending Collections"           icon="⏳" paletteIdx={4}
+          sub={`${fInvoices.filter(i=>i.status==='Paid').length} paid this period`}
+          trend={kpis.totalRevenue > 0 ? 'up' : null}/>
+        <StatCard label="Pending Collections" icon="⏳" paletteIdx={1}
           value={fmt(kpis.pendingAmount)}
-          sub={`${kpis.pendingCount} unpaid · ${kpis.overdueCount} overdue`}/>
+          sub={`${kpis.pendingCount} invoices · ${kpis.overdueCount} overdue`}/>
+        <StatCard label="Invoices Issued" icon="🧾" paletteIdx={2}
+          value={fInvoices.length.toString()}
+          sub={`${fInvoices.filter(i=>i.status==='Draft').length} draft · ${fInvoices.filter(i=>i.status==='Sent').length} sent`}/>
+        <StatCard label="Refunds Processed" icon="↩️" paletteIdx={4}
+          value={fmt(kpis.refundAmount)}
+          sub={`${kpis.refundCount} invoice${kpis.refundCount!==1?'s':''} refunded`}/>
       </div>
 
-      {/* ── KPI row 2: Operations ── */}
+      {/* ── KPI Row 2: Customers & Products focused ── */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <StatCard label="New Customers"   icon="🧑‍🤝‍🧑" paletteIdx={2}
-          value={kpis.newCustomers.toString()}
-          sub={`${kpis.totalCustomers} total · ${kpis.vipCount} VIP`}/>
-        <StatCard label="Orders"          icon="🛒" paletteIdx={6}
-          value={fOrders.length.toString()}
-          sub={`${kpis.conversionRate}% completion · ${kpis.cancelledOrders} cancelled`}/>
-        <StatCard label="Refunds"         icon="↩️" paletteIdx={4}
-          value={fmt(kpis.refundAmount)}
-          sub={`${kpis.refundCount} order${kpis.refundCount!==1?'s':''} refunded`}/>
-        <StatCard label="Low Stock Items" icon="📦" paletteIdx={3}
+        <StatCard label="Total Customers" icon="🧑‍🤝‍🧑" paletteIdx={2}
+          value={kpis.totalCustomers.toString()}
+          sub={`${kpis.newCustomers} new · ${kpis.vipCount} VIP`}
+          trend={kpis.newCustomers > 0 ? 'up' : null}/>
+        <StatCard label="Active Products" icon="🏷️" paletteIdx={6}
+          value={kpis.activeProducts.toString()}
+          sub={`${kpis.totalProducts} total in catalogue`}/>
+        <StatCard label="⚠️ Low Stock" icon="📦" paletteIdx={3}
           value={kpis.lowStockCount.toString()}
-          sub={`${kpis.activeProducts} of ${kpis.totalProducts} products active`}/>
+          sub={kpis.lowStockCount > 0 ? 'Reorder required' : 'All products stocked'}
+          trend={kpis.lowStockCount > 0 ? 'down' : null}/>
+        <StatCard label="Open Activities" icon="📅" paletteIdx={5}
+          value={kpis.openActivities.toString()}
+          sub="follow-ups & tasks pending"/>
       </div>
 
       {/* ── Charts row 1 ── */}

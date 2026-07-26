@@ -447,8 +447,8 @@ export default function RecordDetailPanel({ page, record, onClose, prefillCustom
     );
     if (field==='customer')     return <SearchableSelect
               value={edited.customerId||''}
-              onChange={v=>{const c=[...customers,...pendingCustomers].find(x=>x.id===v);if(c)setEdited(p=>({...p,customerId:c.id,customer:c.name}));}}
-              options={[...customers,...pendingCustomers.filter(pc=>!customers.find(c=>c.id===pc.id))].map(c=>({value:c.id,label:c.name,sub:[c.email,c.phone,c.industry,c.city].filter(Boolean).join(' · ')}))}
+              onChange={v=>{const c=[...customers,...pendingCustomers].find(x=>(x._uuid||x.id)===v);if(c)setEdited(p=>({...p,customerId:c._uuid||c.id,customer:c.name}));}}
+              options={[...customers,...pendingCustomers.filter(pc=>!customers.find(c=>c.id===pc.id))].map(c=>({value:c._uuid||c.id,label:c.name,sub:[c.email,c.phone,c.industry,c.city].filter(Boolean).join(' · ')}))}
               placeholder="Select customer" emptyLabel="No customer"
               onCreateNew={q=>setQuickCreate({type:'customer',prefillName:q,onCreated:(id,name)=>{setEdited(p=>({...p,customerId:id,customer:name}));setPendingCustomers(prev=>[...prev,{id,name}]);}})}
               createLabel="Create Customer"
@@ -456,7 +456,7 @@ export default function RecordDetailPanel({ page, record, onClose, prefillCustom
     if (field==='contact')      return <SearchableSelect
               value={edited.contactId||''}
               onChange={v=>{const c=[...contacts,...pendingContacts].find(x=>x.id===v);if(c)setEdited(p=>({...p,contactId:c.id,contact:c.name}));}}
-              options={[...contacts,...pendingContacts.filter(pc=>!contacts.find(c=>c.id===pc.id))].map(c=>({value:c.id,label:c.name,sub:[c.email,c.phone,c.designation,c.customer].filter(Boolean).join(' · ')}))}
+              options={[...contacts,...pendingContacts.filter(pc=>!contacts.find(c=>c.id===pc.id))].map(c=>({value:c._uuid||c.id,label:c.name,sub:[c.email,c.phone,c.designation,c.customer].filter(Boolean).join(' · ')}))}
               placeholder="Select contact" emptyLabel="No contact"
               onCreateNew={q=>setQuickCreate({type:'contact',prefillName:q,prefillExtra:{customerId:edited.customerId,customer:edited.customer},onCreated:(id,name)=>{setEdited(p=>({...p,contactId:id,contact:name}));setPendingContacts(prev=>[...prev,{id,name}]);}})}
               createLabel="Create Contact"

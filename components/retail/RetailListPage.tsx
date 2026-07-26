@@ -748,7 +748,7 @@ function RC360Table({ cols, rows, emptyMsg }) {
   );
 }
 
-function RetailCustomer360({ customer }) {
+function RetailCustomer360({ customer, onNavigate }) {
   const { supabase } = useTenant();
   const [tab, setTab]         = useState('orders');
   const [data, setData]       = useState({ orders: [], invoices: [], activities: [] });
@@ -829,8 +829,31 @@ function RetailCustomer360({ customer }) {
   const activeRows = tab === 'orders' ? data.orders : tab === 'invoices' ? data.invoices : data.activities;
   const activeTab  = TABS.find(t => t.k === tab);
 
+  const { createRetailRecord } = useApp();
+
+  const handleCreateFor = async (type) => {
+    const custId = customer._uuid || customer.id;
+    const custName = customer.name || '';
+    if (type === 'order') {
+      await createRetailRecord('retailOrders', {customer:custName,customer_id:custId,order_date:new Date().toISOString().slice(0,10),status:'Open',channel:'In-Store',place_of_supply:'Tamil Nadu'}, []);
+      alert('Order created for '+custName+'!');
+    } else if (type === 'invoice') {
+      await createRetailRecord('retailInvoices', {customer:custName,customer_id:custId,invoice_date:new Date().toISOString().slice(0,10),status:'Draft',payment_status:'Pending',place_of_supply:'Tamil Nadu'}, []);
+      alert('Invoice created for '+custName+'!');
+    } else if (type === 'activity') {
+      await createRetailRecord('retailActivities', {customer:custName,customer_id:custId,subject:'Follow up with '+custName,activity_date:new Date().toISOString().slice(0,10),activity_type:'Call',status:'Planned'}, []);
+      alert('Activity created for '+custName+'!');
+    }
+  };
+
   return (
     <div className="space-y-5">
+      {/* Quick Actions */}
+      <div className="flex gap-2 flex-wrap">
+        <button onClick={()=>handleCreateFor('order')} className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-white px-3 py-2 rounded-xl text-xs font-bold shadow-sm">🛒 New Order</button>
+        <button onClick={()=>handleCreateFor('invoice')} className="flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-2 rounded-xl text-xs font-bold shadow-sm">🧾 New Invoice</button>
+        <button onClick={()=>handleCreateFor('activity')} className="flex items-center gap-1.5 bg-green-600 hover:bg-green-700 text-white px-3 py-2 rounded-xl text-xs font-bold shadow-sm">📅 New Activity</button>
+      </div>
       {/* KPI row */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
         {kpis.map(k => (
@@ -887,7 +910,7 @@ function RetailCustomer360({ customer }) {
             <span className="font-bold text-[#0F172A] text-sm">{activeTab?.label}</span>
             <span className="ml-auto text-xs text-gray-400">{activeRows.length} records</span>
           </div>
-          <RC360Table cols={activeCols} rows={activeRows} emptyMsg={`No ${activeTab?.label?.toLowerCase()} found for this customer`}/>
+          <RC360Table cols={activeCols} rows={activeRows} emptyMsg={`No ${activeTab?.label?.toLowerCase()} found for this customer`} onRowClick={onNavigate ? (r) => { const pageMap = { orders: "retailOrders", invoices: "retailInvoices", activities: "retailActivities" }; const pg = pageMap[activeTab?.key]; if(pg) onNavigate(pg, r); } : null}/>
         </div>
       )}
     </div>
@@ -1064,6 +1087,11 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo }) 
   };
 
   const handleSave = async (andClose=false) => {
+    // Fix 11a: Retail invoice status 'Paid' requires payment_status = 'Paid'
+    if (page==='retailInvoices' && edited.status==='Paid' && edited.payment_status!=='Paid') {
+      alert('Cannot mark invoice as Paid until Payment Status is set to Paid.');
+      return;
+    }
     // Validate required fields
     const allFields = cfg.sections.flatMap(s => Array.isArray(s.fields) ? s.fields : []);
     for (const f of allFields) {
@@ -1298,6 +1326,23 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo }) 
                   onClick={() => handleDirectPrint(invoiceTemplates.find(t=>t.id===selectedTemplateId), edited, items)}
                   className="bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded-xl text-sm font-bold transition-all">
                   🖨️ Print
+                </button>
+                {/* Fix 12: Share via WhatsApp or Email */}
+                <button onClick={()=>{
+                  const invNum = record?.displayNumber ? 'RINV-'+String(record.displayNumber).padStart(5,'0') : (edited.id||'');
+                  const msg = encodeURIComponent(`Dear ${edited.customer||'Customer'}, please find your invoice ${invNum}. Total: ₹${edited.amount||0}. Thank you!`);
+                  window.open('https://wa.me/?text='+msg,'_blank');
+                }} className="bg-[#25D366] hover:bg-[#128C7E] text-white px-3 py-2 rounded-xl text-sm font-bold transition-all flex items-center gap-1.5">
+                  <svg viewBox="0 0 24 24" className="w-4 h-4 fill-current"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/></svg>
+                  WhatsApp
+                </button>
+                <button onClick={()=>{
+                  const invNum = record?.displayNumber ? 'RINV-'+String(record.displayNumber).padStart(5,'0') : (edited.id||'');
+                  const sub = encodeURIComponent('Invoice '+invNum);
+                  const body = encodeURIComponent('Dear '+( edited.customer||'Customer')+',%0A%0APlease find your invoice '+invNum+'.%0ATotal: ₹'+(edited.amount||0)+'%0A%0AThank you!');
+                  window.open('mailto:'+(edited.customer_email||edited.email||'')+'?subject='+sub+'&body='+body,'_blank');
+                }} className="bg-blue-500 hover:bg-blue-600 text-white px-3 py-2 rounded-xl text-sm font-bold transition-all">
+                  ✉️ Email
                 </button>
               </>
             )}
@@ -1539,7 +1584,7 @@ function RetailCreateModal({ page, open, onClose, onCreated }) {
     activity_date: new Date().toISOString().split('T')[0],
     loyalty_points: 0, loyalty_tier: 'Standard', preferred_contact: 'Phone',
     country: 'India', unit: 'pc', price: 0, mrp: 0, cost: 0, stock_quantity: 0, reorder_level: 10,
-    quantity: 1, payment_method: 'Cash', payment_status: 'Pending', channel: 'In-Store', delivery_method: 'Pickup',
+    quantity: 1, payment_method: 'Cash', payment_status: 'Pending', channel: 'In-Store', delivery_method: 'Pickup', place_of_supply: 'Tamil Nadu',
     ...(taxRegime.regime==='india_gst' ? { gst_rate: 18 } : {}),
     ...(taxRegime.regime==='us_sales_tax' ? { taxable: 'Yes' } : {}),
     ...(taxRegime.regime==='uk_vat' ? { vat_rate: 20 } : {}),
