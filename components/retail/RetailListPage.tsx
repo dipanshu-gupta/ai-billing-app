@@ -1422,10 +1422,8 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo }) 
             <RetailCustomer360
               customer={record}
               onNavigate={(targetPage, rec) => {
-                // Open the record detail by setting it as selectedRecord AND switching page
-                // We store it in pendingRecord so when RetailListPage mounts for targetPage it opens
-                setPendingRecord({ page: targetPage, record: rec });
-                window.dispatchEvent(new CustomEvent('retail-navigate', { detail: { page: targetPage } }));
+                // Open a floating overlay showing the record - no page navigation needed
+                setC360Record({ page: targetPage, record: rec });
               }}
               onOpenCreate={(targetPage, prefill) => {
                 // Open a cross-page create modal directly (no page navigation needed)
@@ -1648,7 +1646,8 @@ function RetailCreateModal({ page, open, onClose, onCreated, prefill = null }) {
       .catch(()=>setCreateCustomFields([]));
   }, [open, page]);
 
-  useEffect(() => { if (open) { setForm(defaultForm()); setErrors({}); } }, [open, page]);
+  // When page changes (but not open), reset form — DON'T reset when open changes (prefill handles that)
+  useEffect(() => { setForm(f => ({...defaultForm(), ...( f._prefilled ? {} : {})})); setErrors({}); }, [page]);
 
   const s = (k,v) => setForm(p => ({ ...p, [k]: v }));
 
@@ -1989,6 +1988,7 @@ export default function RetailListPage({ page }) {
   const [selectedRecord, setSelectedRecord] = useState(null);
   const [createOpen,     setCreateOpen]     = useState(false);
   const [createPrefill,  setCreatePrefill]  = useState(null); // {page, data} for cross-object creates
+  const [c360Record,     setC360Record]     = useState(null); // {page, record} opened from customer 360
   const [searchPanel,    setSearchPanel]    = useState(false);
   const [menuOpenId,     setMenuOpenId]     = useState(null);
   const [defaultLoaded,  setDefaultLoaded]  = useState(false);
@@ -2252,9 +2252,16 @@ export default function RetailListPage({ page }) {
                       <button onClick={()=>setMenuOpenId(menuOpenId===r.id?null:r.id)}
                         className="w-8 h-8 rounded-full bg-[#0F172A] text-white hover:bg-blue-800 flex items-center justify-center text-lg font-bold shadow transition-all">⋮</button>
                       {menuOpenId===r.id && (
-                        <div className="absolute right-0 top-9 bg-[#0F172A] border border-blue-800 shadow-2xl rounded-2xl p-2 z-[999] min-w-[200px]">
-                          <button onClick={()=>{setSelectedRecord(r);setMenuOpenId(null);}} className="w-full text-left px-4 py-3 rounded-xl text-sm font-medium hover:bg-blue-800 text-white">Open Details</button>
-                          {page==='retailOrders' && (
+                        <div className="absolute right-0 top-9 bg-[#0F172A] border border-blue-800 shadow-2xl rounded-2xl p-2 z-[999] min-w-[220px]">
+                          <button onClick={()=>{setSelectedRecord(r);setMenuOpenId(null);}} className="w-full text-left px-4 py-3 rounded-xl text-sm font-medium hover:bg-blue-800 text-white">📄 Open Details</button>
+                          {page==='retailCustomers' && (
+                            <>
+                              <div className="border-t border-blue-800 my-1"/>
+                              <button onClick={()=>{setMenuOpenId(null);setCreatePrefill({page:'retailOrders',data:{customer:r.name,customer_id:r._uuid||r.id,order_date:new Date().toISOString().slice(0,10),status:'Open',channel:'In-Store',place_of_supply:'Tamil Nadu'}});}} className="w-full text-left px-4 py-3 rounded-xl text-sm font-medium hover:bg-blue-800 text-white">🛒 Create Order</button>
+                              <button onClick={()=>{setMenuOpenId(null);setCreatePrefill({page:'retailInvoices',data:{customer:r.name,customer_id:r._uuid||r.id,invoice_date:new Date().toISOString().slice(0,10),status:'Draft',payment_status:'Pending',place_of_supply:'Tamil Nadu'}});}} className="w-full text-left px-4 py-3 rounded-xl text-sm font-medium hover:bg-blue-800 text-white">🧾 Create Invoice</button>
+                            </>
+                          )}
+                          {page==='retailOrders' && r.status==='Completed' && (
                             <button onClick={()=>{createRetailInvoiceFromOrder(r);setMenuOpenId(null);}} className="w-full text-left px-4 py-3 rounded-xl text-sm font-medium hover:bg-blue-800 text-white">🧾 Create Invoice</button>
                           )}
                         </div>
@@ -2307,6 +2314,47 @@ export default function RetailListPage({ page }) {
       )}
       <RetailCreateModal page={page} open={createOpen} onClose={()=>{setCreateOpen(false);setPendingRecord(null);}} onCreated={()=>{fetchMap[page]?.();setPendingRecord(null);}} prefill={pendingRecord?.openCreate ? pendingRecord.prefill : null}/>
       {/* Cross-object create modal — for Create Order/Invoice from customer list/360 */}
+      {/* Customer 360 — Record detail overlay */}
+      {c360Record && (
+        <div className="fixed inset-0 z-[600] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={()=>setC360Record(null)}/>
+          <div className="relative bg-white rounded-[28px] shadow-2xl w-full max-w-3xl max-h-[90vh] flex flex-col overflow-hidden">
+            <div className="bg-gradient-to-r from-[#0F172A] to-blue-900 px-6 py-4 flex items-center justify-between flex-shrink-0">
+              <div>
+                <h2 className="text-white font-bold text-lg">{c360Record.record?.name || c360Record.record?.subject || c360Record.record?.id}</h2>
+                <p className="text-blue-300 text-xs mt-0.5 capitalize">{c360Record.page?.replace('retail','').replace(/([A-Z])/g,' $1').trim()}</p>
+              </div>
+              <button onClick={()=>setC360Record(null)} className="text-white/70 hover:text-white text-2xl leading-none">✕</button>
+            </div>
+            <div className="overflow-y-auto flex-1 p-6">
+              {/* Show all fields of the record */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {Object.entries(c360Record.record || {})
+                  .filter(([k]) => !['id','_uuid','displayNumber','created_at','updated_at','tenant_id','owner_id','customer_id'].includes(k) && !String(k).startsWith('_'))
+                  .map(([k,v]) => (
+                    <div key={k} className="bg-gray-50 rounded-2xl px-4 py-3">
+                      <div className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">{k.replace(/_/g,' ')}</div>
+                      <div className="text-sm font-semibold text-[#0F172A]">{String(v||'—')}</div>
+                    </div>
+                  ))}
+              </div>
+            </div>
+            <div className="border-t border-gray-100 px-6 py-4 flex justify-between items-center bg-gray-50 flex-shrink-0">
+              <span className="text-xs text-gray-400">Viewing from Customer 360</span>
+              <button
+                onClick={()=>{
+                  setPendingRecord({page:c360Record.page, record:c360Record.record});
+                  window.dispatchEvent(new CustomEvent('retail-navigate',{detail:{page:c360Record.page}}));
+                  setC360Record(null);
+                }}
+                className="bg-gradient-to-r from-[#0F172A] to-blue-800 text-white px-5 py-2 rounded-xl text-sm font-bold hover:opacity-90">
+                Open Full Record →
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {createPrefill && (
         <RetailCreateModal
           page={createPrefill.page}

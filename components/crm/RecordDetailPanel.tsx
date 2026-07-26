@@ -524,7 +524,7 @@ export default function RecordDetailPanel({ page, record, onClose, prefillCustom
 
   return (
     <>
-      <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[110] overflow-y-auto">
+      <div className="fixed inset-0 bg-black/50 z-[110] overflow-y-auto">
         <div className="bg-white rounded-[28px] shadow-2xl w-[98vw] my-4 mx-auto overflow-hidden flex flex-col" style={{minHeight:'95vh'}}>
 
           {/* Header */}
