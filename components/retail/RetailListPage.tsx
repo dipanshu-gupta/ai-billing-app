@@ -1421,15 +1421,15 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo }) 
           {page === 'retailCustomers' && activeTab === '360' ? (
             <RetailCustomer360
               customer={record}
-              onNavigate={(page, rec) => {
-                // Navigate to the record — use setPendingRecord so page switches and record opens
-                setPendingRecord({ page, record: rec });
-                window.dispatchEvent(new CustomEvent('retail-navigate', { detail: { page } }));
+              onNavigate={(targetPage, rec) => {
+                // Open the record detail by setting it as selectedRecord AND switching page
+                // We store it in pendingRecord so when RetailListPage mounts for targetPage it opens
+                setPendingRecord({ page: targetPage, record: rec });
+                window.dispatchEvent(new CustomEvent('retail-navigate', { detail: { page: targetPage } }));
               }}
               onOpenCreate={(targetPage, prefill) => {
-                // Navigate to that page and open create modal pre-filled with customer
-                setPendingRecord({ page: targetPage, openCreate: true, prefill });
-                window.dispatchEvent(new CustomEvent('retail-navigate', { detail: { page: targetPage } }));
+                // Open a cross-page create modal directly (no page navigation needed)
+                setCreatePrefill({ page: targetPage, data: prefill });
               }}
             />
           ) : (
@@ -1558,7 +1558,7 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo }) 
 
     {/* Quick Create Retail Customer */}
     {quickCreateCustomer && (
-      <div className="fixed inset-0 bg-black/60 z-[200] flex items-center justify-center p-4" onClick={()=>setQuickCreateCustomer(null)}>
+      <div className="fixed inset-0 bg-black/60 z-[9999] flex items-center justify-center p-4" onClick={()=>setQuickCreateCustomer(null)}>
         <div className="bg-white rounded-[24px] shadow-2xl p-6 w-full max-w-md" onClick={e=>e.stopPropagation()}>
           <h3 className="font-bold text-[#0F172A] text-lg mb-4">👤 New Retail Customer</h3>
           <RetailQuickCreateCustomer
@@ -1962,6 +1962,7 @@ function RetailSavedSearchPanel({ page, currentFilters, onApply, onClose }) {
 export default function RetailListPage({ page }) {
   const {
     retailCustomers, retailProducts, retailActivities, retailOrders, retailInvoices,
+    fetchRetailOrders, fetchRetailInvoices, fetchRetailActivities,
     fetchRetailCustomers, fetchRetailProducts, fetchRetailActivities, fetchRetailOrders, fetchRetailInvoices,
     pendingRecord, setPendingRecord, pendingReturnTo, setPendingReturnTo,
     enterpriseUsers, savedSearches, fetchSavedSearches, createSavedSearch,
@@ -1988,6 +1989,7 @@ export default function RetailListPage({ page }) {
   const [currentPage,    setCurrentPage]    = useState(1);
   const [selectedRecord, setSelectedRecord] = useState(null);
   const [createOpen,     setCreateOpen]     = useState(false);
+  const [createPrefill,  setCreatePrefill]  = useState(null); // {page, data} for cross-object creates
   const [searchPanel,    setSearchPanel]    = useState(false);
   const [menuOpenId,     setMenuOpenId]     = useState(null);
   const [defaultLoaded,  setDefaultLoaded]  = useState(false);
@@ -2305,6 +2307,21 @@ export default function RetailListPage({ page }) {
         />
       )}
       <RetailCreateModal page={page} open={createOpen} onClose={()=>{setCreateOpen(false);setPendingRecord(null);}} onCreated={()=>{fetchMap[page]?.();setPendingRecord(null);}} prefill={pendingRecord?.openCreate ? pendingRecord.prefill : null}/>
+      {/* Cross-object create modal — for Create Order/Invoice from customer list/360 */}
+      {createPrefill && (
+        <RetailCreateModal
+          page={createPrefill.page}
+          open={true}
+          onClose={()=>setCreatePrefill(null)}
+          onCreated={async()=>{
+            // Refresh whichever data type was created
+            const f = { retailOrders: fetchRetailOrders, retailInvoices: fetchRetailInvoices, retailActivities: fetchRetailActivities };
+            await f[createPrefill.page]?.();
+            setCreatePrefill(null);
+          }}
+          prefill={createPrefill.data}
+        />
+      )}
     </div>
   );
 }
