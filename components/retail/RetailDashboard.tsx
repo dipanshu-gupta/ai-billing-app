@@ -168,15 +168,15 @@ export default function RetailDashboard() {
       // Hourly breakdown for today
       const hours = Array.from({ length: 24 }, (_, h) => ({
         label: `${h}:00`,
-        sales: 0, orders: 0,
+        sales: 0, invoices: 0,
       }));
       const todayStr = toDateStr(new Date());
-      retailOrders
-        .filter(o => o.order_date === todayStr && o.status === 'Completed')
-        .forEach(o => {
-          const h = o.created_at ? new Date(o.created_at).getHours() : 0;
-          hours[h].sales  += safeNum(o.amount);
-          hours[h].orders += 1;
+      fInvoices
+        .filter(i => i.invoice_date === todayStr && i.status === 'Paid')
+        .forEach(inv => {
+          const h = inv.created_at ? new Date(inv.created_at).getHours() : 0;
+          hours[h].sales    += safeNum(inv.amount);
+          hours[h].invoices += 1;
         });
       return hours.filter((_, i) => i <= new Date().getHours());
     }
@@ -220,10 +220,10 @@ export default function RetailDashboard() {
   }, [retailOrders, dateRange, locale]);
 
   // ── Orders by status ───────────────────────────────────────────────────────
-  const ordersByStatus = useMemo(() => {
+  const invoicesByStatus = useMemo(() => {
     const counts: Record<string,number> = {};
-    fOrders.forEach(o => {
-      const s = o.status || 'Unknown';
+    fInvoices.forEach(inv => {
+      const s = inv.status || 'Unknown';
       counts[s] = (counts[s] || 0) + 1;
     });
     return Object.entries(counts)
@@ -232,28 +232,28 @@ export default function RetailDashboard() {
   }, [fOrders]);
 
   // ── Orders by channel ──────────────────────────────────────────────────────
-  const ordersByChannel = useMemo(() => {
-    const ch: Record<string,{count:number,sales:number}> = {};
-    fOrders.forEach(o => {
-      const k = o.channel || 'In-Store';
-      if (!ch[k]) ch[k] = { count: 0, sales: 0 };
+  const invoicesByChannel = useMemo(() => {
+    const ch: Record<string,{count:number,revenue:number}> = {};
+    fInvoices.forEach(inv => {
+      const k = inv.channel || inv.payment_method || 'Direct';
+      if (!ch[k]) ch[k] = { count: 0, revenue: 0 };
       ch[k].count += 1;
-      if (o.status === 'Completed') ch[k].sales += safeNum(o.amount);
+      if (inv.status === 'Paid') ch[k].revenue += safeNum(inv.amount);
     });
     return Object.entries(ch)
-      .map(([name, v]) => ({ name, orders: v.count, sales: Math.round(v.sales) }))
+      .map(([name, v]) => ({ name, invoices: v.count, sales: Math.round(v.sales) }))
       .sort((a, b) => b.sales - a.sales);
   }, [fOrders]);
 
   // ── Payment method breakdown ───────────────────────────────────────────────
   const paymentMethods = useMemo(() => {
     const pm: Record<string,number> = {};
-    fOrders.filter(o => o.status === 'Completed').forEach(o => {
-      const k = o.payment_method || 'Unknown';
-      pm[k] = (pm[k] || 0) + 1;
+    fInvoices.filter(i => i.status === 'Paid').forEach(inv => {
+      const k = inv.payment_method || 'Unknown';
+      pm[k] = (pm[k] || 0) + safeNum(inv.amount);
     });
     return Object.entries(pm).map(([name, value]) => ({ name, value }));
-  }, [fOrders]);
+  }, [fInvoices]);
 
   // ── Top products by revenue (from line items if available, else by price×stock) ─
   const topCategories = useMemo(() => {
@@ -443,7 +443,7 @@ export default function RetailDashboard() {
                 <Area type="monotone" dataKey="sales" stroke="#3B82F6" strokeWidth={2.5}
                   fill="url(#salesGrad)" name="Sales" dot={false}/>
                 <Line type="monotone" dataKey="orders" stroke="#10B981" strokeWidth={2}
-                  name="Orders" dot={false} yAxisId={0}/>
+                  name="Invoices" dot={false} yAxisId={0}/>
               </AreaChart>
             </ResponsiveContainer>
           )}
@@ -486,38 +486,38 @@ export default function RetailDashboard() {
       {/* ── Charts row 2 ── */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
 
-        {/* Orders by channel */}
-        <ChartCard title="Revenue by Channel">
-          {ordersByChannel.length === 0 ? <Empty/> : (
+        {/* Invoice revenue by payment method */}
+        <ChartCard title="Revenue by Payment Method">
+          {invoicesByChannel.length === 0 ? <Empty/> : (
             <ResponsiveContainer width="100%" height={220}>
-              <BarChart data={ordersByChannel}>
+              <BarChart data={invoicesByChannel}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9"/>
                 <XAxis dataKey="name" tick={{ fontSize: 11 }}/>
                 <YAxis tick={{ fontSize: 11 }} tickFormatter={v => fmtShort(v)} width={65}/>
-                <Tooltip formatter={(v, name) => [name === 'sales' ? fmt(v as number) : v, name === 'sales' ? 'Revenue' : 'Orders']}/>
+                <Tooltip formatter={(v: any, name: string) => [name === 'revenue' ? fmt(v) : v, name === 'revenue' ? 'Revenue' : 'Invoices']}/>
                 <Legend/>
-                <Bar dataKey="sales"  fill="#3B82F6" radius={[6,6,0,0]} name="Revenue"/>
-                <Bar dataKey="orders" fill="#10B981" radius={[6,6,0,0]} name="Orders"/>
+                <Bar dataKey="revenue"  fill="#3B82F6" radius={[6,6,0,0]} name="Revenue"/>
+                <Bar dataKey="invoices" fill="#10B981" radius={[6,6,0,0]} name="Count"/>
               </BarChart>
             </ResponsiveContainer>
           )}
         </ChartCard>
 
-        {/* Order status breakdown */}
-        <ChartCard title="Orders by Status">
-          {ordersByStatus.length === 0 ? <Empty/> : (
+        {/* Invoice status breakdown */}
+        <ChartCard title="Invoices by Status">
+          {invoicesByStatus.length === 0 ? <Empty/> : (
             <>
               <ResponsiveContainer width="100%" height={180}>
                 <PieChart>
-                  <Pie data={ordersByStatus} dataKey="value" nameKey="name"
+                  <Pie data={invoicesByStatus} dataKey="value" nameKey="name"
                     cx="50%" cy="50%" outerRadius={70} innerRadius={35}>
-                    {ordersByStatus.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]}/>)}
+                    {invoicesByStatus.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]}/>)}
                   </Pie>
-                  <Tooltip formatter={(v, name) => [`${v} orders`, name]}/>
+                  <Tooltip formatter={(v: any, name: string) => [`${v} invoices`, name]}/>
                 </PieChart>
               </ResponsiveContainer>
               <div className="space-y-1.5 mt-2">
-                {ordersByStatus.map((s, i) => (
+                {invoicesByStatus.map((s, i) => (
                   <div key={s.name} className="flex items-center justify-between text-xs">
                     <div className="flex items-center gap-2">
                       <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ background: COLORS[i % COLORS.length] }}/>
@@ -526,7 +526,7 @@ export default function RetailDashboard() {
                     <div className="flex gap-2">
                       <span className="font-bold text-[#0F172A]">{s.value}</span>
                       <span className="text-gray-400">
-                        ({fOrders.length > 0 ? Math.round(s.value / fOrders.length * 100) : 0}%)
+                        ({fInvoices.length > 0 ? Math.round(s.value / fInvoices.length * 100) : 0}%)
                       </span>
                     </div>
                   </div>
@@ -632,35 +632,34 @@ export default function RetailDashboard() {
       {/* ── Recent orders table ── */}
       <div className="bg-white rounded-[24px] border border-gray-100 shadow-sm overflow-hidden">
         <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
-          <h3 className="font-bold text-[#0F172A]">Recent Orders</h3>
-          <span className="text-xs text-gray-400">{recentOrders.length} most recent</span>
+          <h3 className="font-bold text-[#0F172A]">Recent Invoices</h3>
+          <span className="text-xs text-gray-400">{recentInvoices.length} most recent</span>
         </div>
-        {recentOrders.length === 0 ? (
-          <div className="py-12 text-center text-gray-400 text-sm">No orders yet</div>
+        {recentInvoices.length === 0 ? (
+          <div className="py-12 text-center text-gray-400 text-sm">No invoices yet</div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="bg-gray-50">
                 <tr>
-                  {['Order #','Customer','Channel','Payment','Date','Total','Status'].map(h => (
+                  {['Invoice #','Customer','Payment','Due Date','Amount','Status'].map(h => (
                     <th key={h} className="px-5 py-3 text-left text-xs font-bold uppercase tracking-wide text-gray-400">{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
-                {recentOrders.map(o => (
-                  <tr key={o.id} className="border-t border-gray-50 hover:bg-blue-50/40 transition-all">
-                    <td className="px-5 py-3 font-mono text-xs text-gray-400">{o.display_number || o.order_number || o.id}</td>
-                    <td className="px-5 py-3 font-semibold text-[#0F172A]">{o.customer || '—'}</td>
-                    <td className="px-5 py-3 text-gray-600">{o.channel || '—'}</td>
-                    <td className="px-5 py-3 text-gray-600">{o.payment_method || '—'}</td>
-                    <td className="px-5 py-3 text-gray-600">
-                      {o.order_date ? String(o.order_date).slice(0, 10) : '—'}
+                {recentInvoices.map(inv => (
+                  <tr key={inv.id} className="border-t border-gray-50 hover:bg-blue-50/40 transition-all">
+                    <td className="px-5 py-3 font-mono text-xs font-bold text-purple-600">
+                      {inv.display_number ? 'RINV-'+String(inv.display_number).padStart(5,'0') : inv.invoice_number || inv.id?.slice(0,8)}
                     </td>
-                    <td className="px-5 py-3 font-bold text-[#0F172A]">{fmt(safeNum(o.amount))}</td>
+                    <td className="px-5 py-3 font-semibold text-[#0F172A]">{inv.customer || '—'}</td>
+                    <td className="px-5 py-3 text-gray-600">{inv.payment_method || '—'}</td>
+                    <td className="px-5 py-3 text-gray-600">{inv.due_date ? String(inv.due_date).slice(0,10) : '—'}</td>
+                    <td className="px-5 py-3 font-bold text-[#0F172A]">{fmt(safeNum(inv.amount))}</td>
                     <td className="px-5 py-3">
-                      <span className={`px-2.5 py-0.5 rounded-full text-xs font-bold border ${getStatusColor(o.status)}`}>
-                        {o.status}
+                      <span className={`px-2.5 py-0.5 rounded-full text-xs font-bold border ${getStatusColor(inv.status)}`}>
+                        {inv.status}
                       </span>
                     </td>
                   </tr>
