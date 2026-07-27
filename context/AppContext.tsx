@@ -676,14 +676,31 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     if (!supabase) return;
     const { data, error } = await supabase.from('retail_orders').select('*').order('created_at', { ascending: false });
     if (error) { if (!String(error.message).includes('does not exist')) console.error('fetchRetailOrders:', error.message); return; }
-    if (data) setRetailOrders(applyDataSecurity(data).map((o: any) => ({ ...o, id: o.order_number, _uuid: o.id, displayNumber: o.display_number })));
+    if (data) {
+      const mapped = applyDataSecurity(data).map((o: any) => ({ ...o, id: o.order_number, _uuid: o.id, displayNumber: o.display_number }));
+      setRetailOrders(mapped);
+      // Cache for use by fetchRetailInvoices order_number enrichment
+      if (typeof window !== 'undefined') (window as any).__bp_retail_orders = mapped;
+    }
   };
 
   const fetchRetailInvoices = async () => {
     if (!supabase) return;
     const { data, error } = await supabase.from('retail_invoices').select('*').order('created_at', { ascending: false });
     if (error) { if (!String(error.message).includes('does not exist')) console.error('fetchRetailInvoices:', error.message); return; }
-    if (data) setRetailInvoices(applyDataSecurity(data).map((i: any) => ({ ...i, id: i.invoice_number, _uuid: i.id, displayNumber: i.display_number })));
+    if (data) {
+      // Try to enrich order_number with display format
+      const orders = (window as any).__bp_retail_orders || [];
+      setRetailInvoices(applyDataSecurity(data).map((i: any) => {
+        let orderNum = i.order_number;
+        if (orderNum && orderNum.length > 12) {
+          // Long timestamp ID — try to find the order's display number
+          const ord = orders.find((o: any) => o._uuid === orderNum || o.order_number === orderNum || o.id === orderNum);
+          if (ord?.displayNumber) orderNum = 'RORD-' + String(ord.displayNumber).padStart(5, '0');
+        }
+        return { ...i, id: i.invoice_number, _uuid: i.id, displayNumber: i.display_number, order_number: orderNum };
+      }));
+    }
   };
 
   // ─── Retail line items (orders / invoices) ────────────────────────────────
@@ -837,7 +854,10 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     const payload: any = {
       ...buildSystemFields(),
       invoice_number: invId,
-      order_number: order.id,
+      // Store the order's display number (e.g. RORD-00001) not the raw timestamp ID
+      order_number: order.displayNumber
+        ? 'RORD-' + String(order.displayNumber).padStart(5, '0')
+        : (order.order_number || order.id),
       customer: order.customer || '',
       customer_id: order.customer_id || null,
       customer_phone: order.customer_phone || '',
@@ -1442,7 +1462,10 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
       ...buildSystemFields(),
       invoice_number: id,
       name: order.name,
-      order_number: order.id,
+      // Store the order's display number (e.g. RORD-00001) not the raw timestamp ID
+      order_number: order.displayNumber
+        ? 'RORD-' + String(order.displayNumber).padStart(5, '0')
+        : (order.order_number || order.id),
       customer: order.customer,
       customer_id: order.customerId || (order as any).customer_id,
       contact: order.contact,

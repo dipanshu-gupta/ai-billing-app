@@ -283,11 +283,11 @@ export default function RetailDashboard() {
   }, [retailCustomers]);
 
   // ── Recent orders ──────────────────────────────────────────────────────────
-  const recentOrders = useMemo(() =>
-    [...retailOrders]
+  const recentInvoices = useMemo(() =>
+    [...retailInvoices]
       .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
       .slice(0, 8),
-    [retailOrders]);
+    [retailInvoices]);
 
   // ── Low stock alert list ───────────────────────────────────────────────────
   const lowStockList = useMemo(() =>
@@ -546,7 +546,7 @@ export default function RetailDashboard() {
                     cx="50%" cy="50%" outerRadius={70} innerRadius={35}>
                     {paymentMethods.map((_, i) => <Cell key={i} fill={COLORS[(i + 3) % COLORS.length]}/>)}
                   </Pie>
-                  <Tooltip formatter={(v, name) => [`${v} orders`, name]}/>
+                  <Tooltip formatter={(v: any) => [fmt(v), 'Revenue']}/>
                 </PieChart>
               </ResponsiveContainer>
               <div className="space-y-1.5 mt-2">

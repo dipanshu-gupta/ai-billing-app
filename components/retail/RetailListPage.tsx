@@ -249,7 +249,7 @@ const RETAIL_CONFIG = {
     listColumns: [
 
       { h: 'Customer', v: r => r.customer || '-' },
-      { h: 'Order #', v: r => r.order_number || '-', mono:true },
+      { h: 'Order #', v: r => r.order_number ? (r.order_number.length > 12 ? r.order_number.slice(0,12)+'…' : r.order_number) : '-', mono:true },
       { h: 'Date', v: r => r.invoice_date || '-' },
       { h: 'Total', v: r => formatCurrency(r.amount||0), align:'right' },
     ],
@@ -260,7 +260,7 @@ const RETAIL_CONFIG = {
         { key:'customer_phone', label:'Customer Phone', type:'tel' },
         { key:'invoice_date', label:'Invoice Date', type:'date' },
         { key:'due_date', label:'Due Date', type:'date' },
-        { key:'order_number', label:'Linked Order #', type:'text', readOnly:true },
+        { key:'order_number', label:'Linked Order #', type:'orderRef', readOnly:true },
         { key:'currency', label:'Currency', type:'select', opts:['INR','USD','GBP','EUR','AED','SGD'] },
         { key:'status', label:'Status', type:'status' },
         { key:'invoice_template_id', label:'Invoice Template', type:'retailInvoiceTemplate' },
@@ -615,6 +615,8 @@ function buildRetailPrintHTML(t, record, items) {
         ${t.show_invoice_number!==false ? `<div class="inv-date" style="font-weight:600;color:#374151">${invNum}</div>` : ''}
         ${t.show_date!==false ? `<div class="inv-date">${record.invoice_date ? new Date(record.invoice_date).toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric'}) : new Date().toLocaleDateString('en-IN')}</div>` : ''}
         ${t.show_cashier && (record.owner_name||record.owner) ? `<div class="inv-date">Cashier: ${record.owner_name||record.owner}</div>` : ''}
+        ${t.show_invoice_status && record.status ? `<div style="margin-top:4px"><span style="background:${record.status==='Paid'?'#DCFCE7':record.status==='Overdue'?'#FEE2E2':'#F3F4F6'};color:${record.status==='Paid'?'#166534':record.status==='Overdue'?'#991B1B':'#374151'};padding:2px 10px;border-radius:9px;font-size:${fs(8)}px;font-weight:700">${record.status}</span></div>` : ''}
+        ${t.show_payment_status && record.payment_status ? `<div style="margin-top:3px"><span style="background:${record.payment_status==='Paid'?'#DCFCE7':record.payment_status==='Pending'?'#DBEAFE':'#FEF9C3'};color:${record.payment_status==='Paid'?'#166534':record.payment_status==='Pending'?'#1E40AF':'#854D0E'};padding:2px 10px;border-radius:9px;font-size:${fs(8)}px;font-weight:700">Payment: ${record.payment_status}</span></div>` : ''}
         ${t.place_of_supply ? `<div class="inv-date">Place of Supply: ${t.place_of_supply}</div>` : ''}
       </div>
       <div style="text-align:right">
@@ -980,8 +982,8 @@ function RetailQuickCreateCustomer({ prefillName, onCreated, onClose }) {
 }
 
 // ─── Detail Panel ───────────────────────────────────────────────────────────
-function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo }) {
-  const { updateRetailRecord, deleteRetailRecord, retailCustomers, retailProducts, enterpriseUsers, currentUser,
+function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo, onC360Navigate, onC360Create }) {
+  const { updateRetailRecord, deleteRetailRecord, retailCustomers, retailProducts, retailOrders, enterpriseUsers, currentUser,
           fetchRetailLineItems, fetchRetailCustomers, createRetailRecord, appPreferences, setPendingReturnTo, createRetailInvoiceFromOrder,
           checkMatchingApprovalProcess, submitForApproval, currentUserPermissions, permissionsLoaded } = useApp();
   const { supabase } = useTenant();
@@ -1275,6 +1277,13 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo }) 
         </div>
       );
     }
+    if (field.type === 'orderRef') {
+      const order = retailOrders?.find(o => o._uuid === v || o.order_number === v);
+      const displayVal = order?.displayNumber
+        ? 'RORD-' + String(order.displayNumber).padStart(5, '0')
+        : (v && v.length > 16 ? v.slice(0, 16) + '...' : v || '—');
+      return <input type="text" value={displayVal} readOnly className={`${iCls} bg-gray-50 text-gray-500 font-mono`}/>;
+    }
     if (field.readOnly) return <input type="text" value={v||''} readOnly className={`${iCls} bg-gray-50 text-gray-500`}/>;
     // text / email / tel — with inline validation error
     const ferr = fieldErrors[field.key];
@@ -1421,16 +1430,8 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo }) 
           {page === 'retailCustomers' && activeTab === '360' ? (
             <RetailCustomer360
               customer={record}
-              onNavigate={(targetPage, rec) => {
-                // Open the record detail by setting it as selectedRecord AND switching page
-                // We store it in pendingRecord so when RetailListPage mounts for targetPage it opens
-                setPendingRecord({ page: targetPage, record: rec });
-                window.dispatchEvent(new CustomEvent('retail-navigate', { detail: { page: targetPage } }));
-              }}
-              onOpenCreate={(targetPage, prefill) => {
-                // Open a cross-page create modal directly (no page navigation needed)
-                setCreatePrefill({ page: targetPage, data: prefill });
-              }}
+              onNavigate={(targetPage, rec) => onC360Navigate?.(targetPage, rec)}
+              onOpenCreate={(targetPage, prefill) => onC360Create?.(targetPage, prefill)}
             />
           ) : (
             <div className="space-y-6">
@@ -1648,7 +1649,7 @@ function RetailCreateModal({ page, open, onClose, onCreated, prefill = null }) {
       .catch(()=>setCreateCustomFields([]));
   }, [open, page]);
 
-  useEffect(() => { if (open) { setForm(defaultForm()); setErrors({}); } }, [open, page]);
+  // NOTE: removed form-reset-on-open effect — it was wiping prefill data
 
   const s = (k,v) => setForm(p => ({ ...p, [k]: v }));
 
@@ -1724,8 +1725,8 @@ function RetailCreateModal({ page, open, onClose, onCreated, prefill = null }) {
     }
     if (field.type === 'retailCustomer') return <SearchableSelect
       value={form.customer_id||''}
-      onChange={cid=>{ const c=retailCustomers.find(x=>x.id===cid); s('customer_id',c?.id||''); s('customer',c?.name||''); s('customer_phone',c?.phone||''); }}
-      options={retailCustomers.map(c=>({value:c.id,label:c.name,sub:[c.phone,c.email].filter(Boolean).join(' · ')}))}
+      onChange={cid=>{ const c=retailCustomers.find(x=>(x._uuid||x.id)===cid); s('customer_id',c?._uuid||c?.id||''); s('customer',c?.name||''); s('customer_phone',c?.phone||''); }}
+      options={retailCustomers.map(c=>({value:c._uuid||c.id,label:c.name,sub:[c.phone,c.email].filter(Boolean).join(' · ')}))}
       onCreateNew={name=>setQuickCreateCustomer({prefillName:name, onCreated:(id,cname,cphone)=>{ s('customer_id',id); s('customer',cname); s('customer_phone',cphone||''); setQuickCreateCustomer(null); }})}
       placeholder="Search customers..." emptyLabel="No customers — type to create new"
     />;
@@ -1970,6 +1971,33 @@ export default function RetailListPage({ page }) {
   } = useApp();
 
   const cfg = RETAIL_CONFIG[page];
+
+  // Override Order # column for retailInvoices to show display number
+  // RETAIL_CONFIG is defined outside this component so can't access retailOrders there
+  const resolvedCfg = useMemo(() => {
+    if (page !== 'retailInvoices') return cfg;
+    return {
+      ...cfg,
+      listColumns: cfg.listColumns.map(col =>
+        col.h === 'Order #'
+          ? { ...col, v: (r) => {
+              if (!r.order_number) return '-';
+              // Find matching order by various ID fields
+              const ord = retailOrders.find(o =>
+                o._uuid === r.order_number ||
+                o.order_number === r.order_number ||
+                o.id === r.order_number
+              );
+              if (ord?.displayNumber) return 'RORD-' + String(ord.displayNumber).padStart(5, '0');
+              // Already looks like a display number
+              if (/^RORD-\d{5}$/.test(r.order_number)) return r.order_number;
+              // Long ID — truncate
+              return r.order_number.length > 14 ? r.order_number.slice(0,14)+'…' : r.order_number;
+            }}
+          : col
+      )
+    };
+  }, [page, cfg, retailOrders]);
   const dataMap = { retailCustomers, retailProducts, retailActivities, retailOrders, retailInvoices };
   const fetchMap = {
     retailCustomers: fetchRetailCustomers, retailProducts: fetchRetailProducts,
@@ -1989,6 +2017,7 @@ export default function RetailListPage({ page }) {
   const [selectedRecord, setSelectedRecord] = useState(null);
   const [createOpen,     setCreateOpen]     = useState(false);
   const [createPrefill,  setCreatePrefill]  = useState(null); // {page, data} for cross-object creates
+  const [c360Record,     setC360Record]     = useState(null); // {page, record} opened from customer 360
   const [searchPanel,    setSearchPanel]    = useState(false);
   const [menuOpenId,     setMenuOpenId]     = useState(null);
   const [defaultLoaded,  setDefaultLoaded]  = useState(false);
@@ -2213,7 +2242,7 @@ export default function RetailListPage({ page }) {
             <thead className="bg-gradient-to-r from-[#0F172A] to-blue-900 text-white">
               <tr>
                 <th className="px-5 py-3.5 text-left text-xs font-semibold uppercase tracking-wider">Record #</th>
-                {cfg.listColumns.map(c=>(
+                {resolvedCfg.listColumns.map(c=>(
                   <th key={c.h} className={`px-5 py-3.5 text-xs font-semibold uppercase tracking-wider ${c.align==='right'?'text-right':'text-left'}`}>{c.h}</th>
                 ))}
                 <th className="px-5 py-3.5 text-left text-xs font-semibold uppercase tracking-wider">Status</th>
@@ -2237,7 +2266,7 @@ export default function RetailListPage({ page }) {
                       </span>
                     </button>
                   </td>
-                  {cfg.listColumns.map((c,ci)=>(
+                  {resolvedCfg.listColumns.map((c,ci)=>(
                     <td key={c.h} className={`px-5 py-3.5 ${c.align==='right'?'text-right font-semibold text-[#0F172A]':'text-gray-700'} ${c.mono?'font-mono text-xs text-gray-400':''}`}>
                       {ci===0
                         ? <button onClick={()=>setSelectedRecord(r)} className="font-semibold text-[#0F172A] hover:text-blue-700 hover:underline text-left">{c.v(r)}</button>
@@ -2252,8 +2281,13 @@ export default function RetailListPage({ page }) {
                       <button onClick={()=>setMenuOpenId(menuOpenId===r.id?null:r.id)}
                         className="w-8 h-8 rounded-full bg-[#0F172A] text-white hover:bg-blue-800 flex items-center justify-center text-lg font-bold shadow transition-all">⋮</button>
                       {menuOpenId===r.id && (
-                        <div className="absolute right-0 top-9 bg-[#0F172A] border border-blue-800 shadow-2xl rounded-2xl p-2 z-[999] min-w-[200px]">
-                          <button onClick={()=>{setSelectedRecord(r);setMenuOpenId(null);}} className="w-full text-left px-4 py-3 rounded-xl text-sm font-medium hover:bg-blue-800 text-white">Open Details</button>
+                        <div className="absolute right-0 top-9 bg-[#0F172A] border border-blue-800 shadow-2xl rounded-2xl p-2 z-[999] min-w-[220px]">
+                          <button onClick={()=>{setSelectedRecord(r);setMenuOpenId(null);}} className="w-full text-left px-4 py-3 rounded-xl text-sm font-medium hover:bg-blue-800 text-white">📄 Open Details</button>
+                          {page==='retailCustomers' && (<>
+                            <div className="border-t border-blue-800 my-1"/>
+                            <button onClick={()=>{setMenuOpenId(null);setCreatePrefill({page:'retailOrders',data:{customer:r.name,customer_id:r._uuid||r.id,order_date:new Date().toISOString().slice(0,10),status:'Draft',channel:'In-Store',place_of_supply:'Tamil Nadu'}});}} className="w-full text-left px-4 py-3 rounded-xl text-sm font-medium hover:bg-blue-800 text-white">🛒 Create Order</button>
+                            <button onClick={()=>{setMenuOpenId(null);setCreatePrefill({page:'retailInvoices',data:{customer:r.name,customer_id:r._uuid||r.id,invoice_date:new Date().toISOString().slice(0,10),status:'Draft',payment_status:'Pending',place_of_supply:'Tamil Nadu'}});}} className="w-full text-left px-4 py-3 rounded-xl text-sm font-medium hover:bg-blue-800 text-white">🧾 Create Invoice</button>
+                          </>)}
                           {page==='retailOrders' && (
                             <button onClick={()=>{createRetailInvoiceFromOrder(r);setMenuOpenId(null);}} className="w-full text-left px-4 py-3 rounded-xl text-sm font-medium hover:bg-blue-800 text-white">🧾 Create Invoice</button>
                           )}
@@ -2303,10 +2337,23 @@ export default function RetailListPage({ page }) {
             if (pendingReturnTo) { const rt=pendingReturnTo; setPendingReturnTo(null); window.dispatchEvent(new CustomEvent('open-crm-record',{detail:rt})); }
           }}
           onSaved={()=>fetchMap[page]?.()}
+          onC360Navigate={(targetPage, rec) => setC360Record({ page: targetPage, record: rec })}
+          onC360Create={(targetPage, prefill) => setCreatePrefill({ page: targetPage, data: prefill })}
         />
       )}
       <RetailCreateModal page={page} open={createOpen} onClose={()=>{setCreateOpen(false);setPendingRecord(null);}} onCreated={()=>{fetchMap[page]?.();setPendingRecord(null);}} prefill={pendingRecord?.openCreate ? pendingRecord.prefill : null}/>
       {/* Cross-object create modal — for Create Order/Invoice from customer list/360 */}
+      {c360Record && (() => {
+        // Navigate to the target page and open the real RetailDetailPanel
+        const doNav = () => {
+          setPendingRecord({ page: c360Record.page, record: c360Record.record });
+          window.dispatchEvent(new CustomEvent('retail-navigate', { detail: { page: c360Record.page } }));
+          setC360Record(null);
+        };
+        setTimeout(doNav, 0);
+        return null;
+      })()}
+
       {createPrefill && (
         <RetailCreateModal
           page={createPrefill.page}
