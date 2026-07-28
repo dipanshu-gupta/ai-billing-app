@@ -158,8 +158,8 @@ function LivePreview({ t }) {
             {t.show_invoice_number && <div style={{fontSize:fs(10),color:TM,marginTop:1}}>#{SAMPLE.inv}</div>}
             {t.show_date && <div style={{fontSize:fs(9),color:TL}}>{SAMPLE.date} {SAMPLE.time}</div>}
             {t.show_cashier && <div style={{fontSize:fs(9),color:TL}}>Cashier: {SAMPLE.cashier}</div>}
-            {t.show_invoice_status && <div style={{fontSize:fs(9),marginTop:2}}><span style={{background:'#DCFCE7',color:'#166534',padding:'1px 8px',borderRadius:9,fontWeight:700,fontSize:fs(8)}}>Paid</span></div>}
-            {t.show_payment_status && <div style={{fontSize:fs(9),marginTop:2}}><span style={{background:'#DBEAFE',color:'#1E40AF',padding:'1px 8px',borderRadius:9,fontWeight:700,fontSize:fs(8)}}>Pending</span></div>}
+            {t.show_invoice_status && <div style={{marginTop:2}}><span style={{background:'#DCFCE7',color:'#166534',padding:'1px 8px',borderRadius:9,fontWeight:700,fontSize:fs(8)}}>Paid</span></div>}
+            {t.show_payment_status && <div style={{marginTop:2}}><span style={{background:'#DBEAFE',color:'#1E40AF',padding:'1px 8px',borderRadius:9,fontWeight:700,fontSize:fs(8)}}>Pending</span></div>}
           </div>
           {t.show_barcode && <div style={{color:'#9CA3AF',fontSize:th?18:24,letterSpacing:-2,lineHeight:1}}>▌▌▌▌▌▌</div>}
           {t.show_qr_code && <div style={{width:th?32:48,height:th?32:48,background:'#F3F4F6',border:'1px solid #E5E7EB',borderRadius:4,display:'flex',alignItems:'center',justifyContent:'center',fontSize:th?18:28}}>◼</div>}
@@ -631,8 +631,8 @@ export default function RetailInvoiceDesigner() {
               <Toggle label="Invoice Number"  checked={!!t.show_invoice_number} onChange={()=>upd('show_invoice_number',!t.show_invoice_number)}/>
               <Toggle label="Date & Time"     checked={!!t.show_date}           onChange={()=>upd('show_date',!t.show_date)}/>
               <Toggle label="Cashier Name"    checked={!!t.show_cashier}        onChange={()=>upd('show_cashier',!t.show_cashier)}/>
-              <Toggle label="Invoice Status"  sub="e.g. Draft / Paid / Overdue"   checked={!!t.show_invoice_status}  onChange={()=>upd('show_invoice_status',!t.show_invoice_status)}/>
-              <Toggle label="Payment Status" sub="e.g. Pending / Paid"           checked={!!t.show_payment_status} onChange={()=>upd('show_payment_status',!t.show_payment_status)}/>
+              <Toggle label="Invoice Status"  sub="e.g. Draft / Paid / Overdue" checked={!!t.show_invoice_status} onChange={()=>upd('show_invoice_status',!t.show_invoice_status)}/>
+              <Toggle label="Payment Status" sub="e.g. Pending / Paid"          checked={!!t.show_payment_status} onChange={()=>upd('show_payment_status',!t.show_payment_status)}/>
               <Toggle label="Barcode"         sub="Visual barcode placeholder"  checked={!!t.show_barcode}  onChange={()=>upd('show_barcode',!t.show_barcode)}/>
               <Toggle label="QR Code Box"     sub="UPI / scan box placeholder"  checked={!!t.show_qr_code}  onChange={()=>upd('show_qr_code',!t.show_qr_code)}/>
             </Card>

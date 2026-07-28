@@ -679,7 +679,6 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     if (data) {
       const mapped = applyDataSecurity(data).map((o: any) => ({ ...o, id: o.order_number, _uuid: o.id, displayNumber: o.display_number }));
       setRetailOrders(mapped);
-      // Cache for use by fetchRetailInvoices order_number enrichment
       if (typeof window !== 'undefined') (window as any).__bp_retail_orders = mapped;
     }
   };
@@ -689,12 +688,10 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     const { data, error } = await supabase.from('retail_invoices').select('*').order('created_at', { ascending: false });
     if (error) { if (!String(error.message).includes('does not exist')) console.error('fetchRetailInvoices:', error.message); return; }
     if (data) {
-      // Try to enrich order_number with display format
       const orders = (window as any).__bp_retail_orders || [];
       setRetailInvoices(applyDataSecurity(data).map((i: any) => {
         let orderNum = i.order_number;
-        if (orderNum && orderNum.length > 12) {
-          // Long timestamp ID — try to find the order's display number
+        if (orderNum && orderNum.length > 14) {
           const ord = orders.find((o: any) => o._uuid === orderNum || o.order_number === orderNum || o.id === orderNum);
           if (ord?.displayNumber) orderNum = 'RORD-' + String(ord.displayNumber).padStart(5, '0');
         }
@@ -848,13 +845,24 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
   // ─── Retail Order → Retail Invoice conversion ──────────────────────────────
   const createRetailInvoiceFromOrder = async (order: any) => {
     if (!supabase || !currentUser) return null;
+    // Check if invoice already exists for this order
+    const orderId = order._uuid || order.id;
+    const { data: existing } = await supabase
+      .from('retail_invoices')
+      .select('invoice_number')
+      .eq('order_number', orderId)
+      .limit(1)
+      .maybeSingle();
+    if (existing) {
+      alert(`An invoice already exists for this order (${existing.invoice_number}). Cannot create duplicate.`);
+      return null;
+    }
     const items = await fetchRetailLineItems('retail_order_line_items', 'order_number', order.id);
     const invId = generateId('RINV');
     const dueDate = new Date(); dueDate.setDate(dueDate.getDate() + 7);
     const payload: any = {
       ...buildSystemFields(),
       invoice_number: invId,
-      // Store the order's display number (e.g. RORD-00001) not the raw timestamp ID
       order_number: order.displayNumber
         ? 'RORD-' + String(order.displayNumber).padStart(5, '0')
         : (order.order_number || order.id),
@@ -1462,7 +1470,6 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
       ...buildSystemFields(),
       invoice_number: id,
       name: order.name,
-      // Store the order's display number (e.g. RORD-00001) not the raw timestamp ID
       order_number: order.displayNumber
         ? 'RORD-' + String(order.displayNumber).padStart(5, '0')
         : (order.order_number || order.id),
@@ -2294,7 +2301,7 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
       fetchWorkflowRules(), fetchAssignmentRules(), fetchSLAPolicies(),
       fetchApprovalProcesses(), fetchApprovalRequests(),
       fetchQuotations(), fetchReports(), fetchSavedSearches(), fetchInvoiceTemplates(),
-      fetchNotifications(), fetchAppPreferences(),
+      fetchNotifications(), fetchAppPreferences(), fetchAppearance(),
     ]);
     // Retail tables may not exist yet (SQL migration pending) — isolate so they never crash B2B init
     Promise.allSettled([
@@ -2304,6 +2311,10 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     ]).catch(() => {});
     fetchExchangeRates(appPreferences?.default_currency || 'INR');
   }, [session?.user?.id, supabase]);
+
+  useEffect(() => {
+    if (supabase && tenantId) fetchAppearance();
+  }, [tenantId]);
 
   useEffect(() => {
     if (!session?.user?.email) return;
@@ -2384,12 +2395,15 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     } catch(e) {}
     if (!supabase) return;
     try {
-      const effectiveTenantId = tenantId || (typeof window !== 'undefined' ? (window as any).__bp_tenant?.id : null) || null;
+      const fetchTenantId = tenantId
+        || (typeof window !== 'undefined' ? (window as any).__bp_tenant?.id : null)
+        || null;
       let aq = supabase.from('appearance').select('*').limit(1);
-      if (effectiveTenantId) aq = (aq as any).eq('tenant_id', effectiveTenantId);
-      const { data } = await aq.maybeSingle();
+      if (fetchTenantId) aq = (aq as any).eq('tenant_id', fetchTenantId);
+      const { data } = await (aq as any).maybeSingle();
       if (data) {
         const a = { ..._DEF_APP, ...data };
+        if (data.company_logo_url) a.company_logo_url = data.company_logo_url;
         const tc = THEME_COLORS[a.theme] || THEME_COLORS['navy'];
         a.themeColors = tc;
         setAppearance(a);
@@ -2412,25 +2426,27 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
       let q = supabase.from('appearance').select('id').limit(1);
       if (effectiveTenantId) q = (q as any).eq('tenant_id', effectiveTenantId);
       const { data:row } = await q.maybeSingle();
-      // Only save columns that exist in the appearance table
-      // Sending unknown columns (like themeColors) causes Supabase to reject the request
+      // Only save columns that exist in the appearance table — not themeColors etc.
       const savePayload: any = {
-        company_logo_url: clean.company_logo_url || '',
-        company_name:     clean.company_name     || 'Umbrella Suite',
-        theme:            clean.theme            || 'navy',
-        language:         clean.language         || 'en',
-        font:             clean.font             || 'geist',
-        updated_at:       new Date().toISOString(),
+        company_name: clean.company_name || 'Umbrella Suite',
+        theme:        clean.theme        || 'navy',
+        language:     clean.language     || 'en',
+        font:         clean.font         || 'geist',
+        updated_at:   new Date().toISOString(),
         ...(effectiveTenantId ? { tenant_id: effectiveTenantId } : {}),
       };
+      // Only update logo_url if explicitly provided
+      if (clean.company_logo_url) savePayload.company_logo_url = clean.company_logo_url;
       if (row?.id) {
-        const { error } = await supabase.from('appearance').update(savePayload).eq('id', row.id);
-        if (error) console.error('[saveAppearance] update error:', error.message);
+        await supabase.from('appearance').update(savePayload).eq('id', row.id);
       } else {
-        const { error } = await supabase.from('appearance').insert([savePayload]);
-        if (error) console.error('[saveAppearance] insert error:', error.message);
+        await supabase.from('appearance').insert([savePayload]);
       }
-    } catch(e) { console.warn('[saveAppearance] error:', e); }
+      // Sync logo to tenants table so mobile app can read it
+      if (clean.company_logo_url && effectiveTenantId) {
+        await supabase.from('tenants').update({ logo_url: clean.company_logo_url }).eq('id', effectiveTenantId);
+      }
+    } catch(e) { console.warn('saveAppearance Supabase error:', e); }
   };
 
   const RTL_LANGS = ['ar'];

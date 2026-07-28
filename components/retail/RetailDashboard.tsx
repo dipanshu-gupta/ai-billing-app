@@ -194,13 +194,13 @@ export default function RetailDashboard() {
       d.setDate(d.getDate() - i);
       const key   = toDateStr(d);
       const label = d.toLocaleDateString(locale, { day:'numeric', month:'short' });
-      const dayOrders = retailOrders.filter(o =>
-        String(o.order_date).slice(0, 10) === key && o.status === 'Completed'
+      const dayInvoices = fInvoices.filter(inv =>
+        String(inv.invoice_date).slice(0, 10) === key && inv.status === 'Paid'
       );
       result.push({
         label,
-        sales:  Math.round(dayOrders.reduce((s, o) => s + safeNum(o.amount), 0)),
-        orders: dayOrders.length,
+        sales:    Math.round(dayInvoices.reduce((s, inv) => s + safeNum(inv.amount), 0)),
+        invoices: dayInvoices.length,
       });
     }
     // For longer ranges, aggregate to weekly to avoid too many points
@@ -210,8 +210,8 @@ export default function RetailDashboard() {
         const chunk = result.slice(i, i + 7);
         weekly.push({
           label: chunk[0].label,
-          sales: chunk.reduce((s, d) => s + d.sales, 0),
-          orders: chunk.reduce((s, d) => s + d.orders, 0),
+          sales:    chunk.reduce((s, d) => s + d.sales, 0),
+          invoices: chunk.reduce((s, d) => s + (d.invoices||0), 0),
         });
       }
       return weekly;
@@ -437,12 +437,15 @@ export default function RetailDashboard() {
                   interval={salesTrend.length > 14 ? Math.floor(salesTrend.length/7) : 0}/>
                 <YAxis tick={{ fontSize: 11 }} tickFormatter={v => fmtShort(v)} width={70}/>
                 <Tooltip
-                  formatter={(v, name) => [name === 'sales' ? fmt(v as number) : v, name === 'sales' ? 'Sales' : 'Orders']}
+                  formatter={(v: any, name: string) => [
+                    name === 'sales' ? fmt(Number(v)) : String(v) + ' invoices',
+                    name === 'sales' ? 'Revenue' : 'Invoices'
+                  ]}
                   labelStyle={{ fontWeight: 'bold' }}/>
                 <Legend/>
                 <Area type="monotone" dataKey="sales" stroke="#3B82F6" strokeWidth={2.5}
                   fill="url(#salesGrad)" name="Sales" dot={false}/>
-                <Line type="monotone" dataKey="orders" stroke="#10B981" strokeWidth={2}
+                <Line type="monotone" dataKey="invoices" stroke="#10B981" strokeWidth={2}
                   name="Invoices" dot={false} yAxisId={0}/>
               </AreaChart>
             </ResponsiveContainer>

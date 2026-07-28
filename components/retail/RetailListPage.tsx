@@ -249,7 +249,7 @@ const RETAIL_CONFIG = {
     listColumns: [
 
       { h: 'Customer', v: r => r.customer || '-' },
-      { h: 'Order #', v: r => r.order_number ? (r.order_number.length > 12 ? r.order_number.slice(0,12)+'…' : r.order_number) : '-', mono:true },
+      { h: 'Order #', v: r => r.order_number || '-', mono:true },
       { h: 'Date', v: r => r.invoice_date || '-' },
       { h: 'Total', v: r => formatCurrency(r.amount||0), align:'right' },
     ],
@@ -852,7 +852,7 @@ function RetailCustomer360({ customer, onNavigate, onOpenCreate }) {
       customer:    custName,
       customer_id: custId,
       place_of_supply: 'Tamil Nadu',
-      ...(type === 'order'    ? { order_date:    new Date().toISOString().slice(0,10), status: 'Draft', channel: 'In-Store' } : {}),
+      ...(type === 'order'    ? { order_date:    new Date().toISOString().slice(0,10), status: 'Open',  channel: 'In-Store' } : {}),
       ...(type === 'invoice'  ? { invoice_date:  new Date().toISOString().slice(0,10), status: 'Draft', payment_status: 'Pending' } : {}),
       ...(type === 'activity' ? { activity_date: new Date().toISOString().slice(0,10), subject: 'Follow up with '+custName, activity_type: 'Call', status: 'Planned' } : {}),
     };
@@ -947,6 +947,14 @@ function RetailQuickCreateCustomer({ prefillName, onCreated, onClose }) {
 
   async function save() {
     if (!form.name.trim()) { alert('Name is required'); return; }
+    const duplicate = retailCustomers.find(c =>
+      c.name?.toLowerCase().trim() === form.name.toLowerCase().trim() ||
+      (form.phone && c.phone === form.phone.trim())
+    );
+    if (duplicate) {
+      const msg = `A customer named "${duplicate.name}" already exists${form.phone && duplicate.phone === form.phone ? ' with the same phone number' : ''}. Create anyway?`;
+      if (!window.confirm(msg)) return;
+    }
     setSaving(true);
     const rec = await createRetailRecord('retailCustomers', {
       ...form, status:'Active', loyalty_points:0, loyalty_tier:'Standard',
@@ -1281,7 +1289,7 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo, on
       const order = retailOrders?.find(o => o._uuid === v || o.order_number === v);
       const displayVal = order?.displayNumber
         ? 'RORD-' + String(order.displayNumber).padStart(5, '0')
-        : (v && v.length > 16 ? v.slice(0, 16) + '...' : v || '—');
+        : (v && v.length > 14 ? v.slice(0, 14) + '...' : v || '—');
       return <input type="text" value={displayVal} readOnly className={`${iCls} bg-gray-50 text-gray-500 font-mono`}/>;
     }
     if (field.readOnly) return <input type="text" value={v||''} readOnly className={`${iCls} bg-gray-50 text-gray-500`}/>;
@@ -1649,7 +1657,7 @@ function RetailCreateModal({ page, open, onClose, onCreated, prefill = null }) {
       .catch(()=>setCreateCustomFields([]));
   }, [open, page]);
 
-  // NOTE: removed form-reset-on-open effect — it was wiping prefill data
+  // form-reset-on-open removed — was wiping prefill data
 
   const s = (k,v) => setForm(p => ({ ...p, [k]: v }));
 
@@ -1725,8 +1733,8 @@ function RetailCreateModal({ page, open, onClose, onCreated, prefill = null }) {
     }
     if (field.type === 'retailCustomer') return <SearchableSelect
       value={form.customer_id||''}
-      onChange={cid=>{ const c=retailCustomers.find(x=>(x._uuid||x.id)===cid); s('customer_id',c?._uuid||c?.id||''); s('customer',c?.name||''); s('customer_phone',c?.phone||''); }}
-      options={retailCustomers.map(c=>({value:c._uuid||c.id,label:c.name,sub:[c.phone,c.email].filter(Boolean).join(' · ')}))}
+      onChange={cid=>{ const c=retailCustomers.find(x=>x.id===cid); s('customer_id',c?.id||''); s('customer',c?.name||''); s('customer_phone',c?.phone||''); }}
+      options={retailCustomers.map(c=>({value:c.id,label:c.name,sub:[c.phone,c.email].filter(Boolean).join(' · ')}))}
       onCreateNew={name=>setQuickCreateCustomer({prefillName:name, onCreated:(id,cname,cphone)=>{ s('customer_id',id); s('customer',cname); s('customer_phone',cphone||''); setQuickCreateCustomer(null); }})}
       placeholder="Search customers..." emptyLabel="No customers — type to create new"
     />;
@@ -1972,31 +1980,16 @@ export default function RetailListPage({ page }) {
 
   const cfg = RETAIL_CONFIG[page];
 
-  // Override Order # column for retailInvoices to show display number
-  // RETAIL_CONFIG is defined outside this component so can't access retailOrders there
   const resolvedCfg = useMemo(() => {
     if (page !== 'retailInvoices') return cfg;
-    return {
-      ...cfg,
-      listColumns: cfg.listColumns.map(col =>
-        col.h === 'Order #'
-          ? { ...col, v: (r) => {
-              if (!r.order_number) return '-';
-              // Find matching order by various ID fields
-              const ord = retailOrders.find(o =>
-                o._uuid === r.order_number ||
-                o.order_number === r.order_number ||
-                o.id === r.order_number
-              );
-              if (ord?.displayNumber) return 'RORD-' + String(ord.displayNumber).padStart(5, '0');
-              // Already looks like a display number
-              if (/^RORD-\d{5}$/.test(r.order_number)) return r.order_number;
-              // Long ID — truncate
-              return r.order_number.length > 14 ? r.order_number.slice(0,14)+'…' : r.order_number;
-            }}
-          : col
-      )
-    };
+    return { ...cfg, listColumns: cfg.listColumns.map(col =>
+      col.h === 'Order #' ? { ...col, v: (r) => {
+        if (!r.order_number) return '-';
+        const ord = retailOrders.find(o => o._uuid === r.order_number || o.order_number === r.order_number || o.id === r.order_number);
+        if (ord?.displayNumber) return 'RORD-' + String(ord.displayNumber).padStart(5, '0');
+        return r.order_number.length > 14 ? r.order_number.slice(0,14)+'...' : r.order_number;
+      }} : col
+    )};
   }, [page, cfg, retailOrders]);
   const dataMap = { retailCustomers, retailProducts, retailActivities, retailOrders, retailInvoices };
   const fetchMap = {
@@ -2016,8 +2009,8 @@ export default function RetailListPage({ page }) {
   const [currentPage,    setCurrentPage]    = useState(1);
   const [selectedRecord, setSelectedRecord] = useState(null);
   const [createOpen,     setCreateOpen]     = useState(false);
-  const [createPrefill,  setCreatePrefill]  = useState(null); // {page, data} for cross-object creates
-  const [c360Record,     setC360Record]     = useState(null); // {page, record} opened from customer 360
+  const [createPrefill,  setCreatePrefill]  = useState(null);
+  const [c360Record,     setC360Record]     = useState(null); // {page, data} for cross-object creates
   const [searchPanel,    setSearchPanel]    = useState(false);
   const [menuOpenId,     setMenuOpenId]     = useState(null);
   const [defaultLoaded,  setDefaultLoaded]  = useState(false);
@@ -2288,7 +2281,7 @@ export default function RetailListPage({ page }) {
                             <button onClick={()=>{setMenuOpenId(null);setCreatePrefill({page:'retailOrders',data:{customer:r.name,customer_id:r._uuid||r.id,order_date:new Date().toISOString().slice(0,10),status:'Draft',channel:'In-Store',place_of_supply:'Tamil Nadu'}});}} className="w-full text-left px-4 py-3 rounded-xl text-sm font-medium hover:bg-blue-800 text-white">🛒 Create Order</button>
                             <button onClick={()=>{setMenuOpenId(null);setCreatePrefill({page:'retailInvoices',data:{customer:r.name,customer_id:r._uuid||r.id,invoice_date:new Date().toISOString().slice(0,10),status:'Draft',payment_status:'Pending',place_of_supply:'Tamil Nadu'}});}} className="w-full text-left px-4 py-3 rounded-xl text-sm font-medium hover:bg-blue-800 text-white">🧾 Create Invoice</button>
                           </>)}
-                          {page==='retailOrders' && (
+                          {page==='retailOrders' && r.status==='Completed' && (
                             <button onClick={()=>{createRetailInvoiceFromOrder(r);setMenuOpenId(null);}} className="w-full text-left px-4 py-3 rounded-xl text-sm font-medium hover:bg-blue-800 text-white">🧾 Create Invoice</button>
                           )}
                         </div>
@@ -2344,7 +2337,6 @@ export default function RetailListPage({ page }) {
       <RetailCreateModal page={page} open={createOpen} onClose={()=>{setCreateOpen(false);setPendingRecord(null);}} onCreated={()=>{fetchMap[page]?.();setPendingRecord(null);}} prefill={pendingRecord?.openCreate ? pendingRecord.prefill : null}/>
       {/* Cross-object create modal — for Create Order/Invoice from customer list/360 */}
       {c360Record && (() => {
-        // Navigate to the target page and open the real RetailDetailPanel
         const doNav = () => {
           setPendingRecord({ page: c360Record.page, record: c360Record.record });
           window.dispatchEvent(new CustomEvent('retail-navigate', { detail: { page: c360Record.page } }));
