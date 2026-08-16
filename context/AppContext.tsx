@@ -442,6 +442,19 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
       data = d2;
     }
     if (data) {
+      // A deactivated user's Supabase auth session stays valid on its own —
+      // status is an app-level flag, not something Supabase Auth enforces.
+      // Without this check, deactivating a user had no effect on any session
+      // they already had open, and they'd keep full access until they
+      // happened to log out themselves.
+      if (data.status && data.status !== 'Active') {
+        console.warn('[fetchCurrentUser] User is deactivated — signing out');
+        showAlert('Your account has been deactivated. Please contact your administrator.', { variant:'danger', title:'Account Deactivated' });
+        await supabase.auth.signOut();
+        setCurrentUser(null);
+        setSession(null);
+        return;
+      }
       const scope = data.roles?.data_scope || data.data_scope || null;
       setCurrentUser({ ...data, data_scope: scope });
       if (scope) setUserDataScope(scope);
@@ -1278,6 +1291,24 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
         if (existing && existing.length) {
           showAlert(`A user with email "${data.email}" already exists in this workspace. Please use a different email.`);
           return;
+        }
+      }
+      // Changing a user's Organization doesn't orphan any records they own
+      // (leads/customers/etc. reference the user directly, not their org) —
+      // but under an org-scoped Data Security Policy it can immediately
+      // change what data they're able to see. Warn rather than silently
+      // proceed, so this is a deliberate admin choice, not a surprise.
+      const existingUser = enterpriseUsers.find(u => u.id === editingId);
+      if (existingUser && data.organization_id && existingUser.organization_id && data.organization_id !== existingUser.organization_id) {
+        const ownedCount =
+          customers.filter(c => c.owner_id === editingId).length +
+          leads.filter(l => l.owner_id === editingId).length +
+          opportunities.filter(o => o.owner_id === editingId).length +
+          orders.filter(o => o.owner_id === editingId).length +
+          invoices.filter(i => i.owner_id === editingId).length;
+        if (ownedCount > 0) {
+          const ok = await showConfirm(`This user owns ${ownedCount} record${ownedCount>1?'s':''} (leads, customers, orders, etc.). Their existing records will stay assigned to them, but moving them to a different organization may change what data they can see if roles use organization-scoped visibility. Continue?`, { title:'User Has Existing Data', variant:'warning', confirmLabel:'Continue Anyway' });
+          if (!ok) return;
         }
       }
       const updatePayload = { ...normaliseUser(data), ...(tenantId ? { tenant_id: tenantId } : {}) };
@@ -2602,6 +2633,17 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     const { data: listener } = supabase.auth.onAuthStateChange((_e, s) => setSession(s));
     return () => listener.subscription.unsubscribe();
   }, [supabase]);
+
+  // Periodically re-validate the current user's status. fetchCurrentUser()
+  // only runs on initial load / auth-state changes by default, so someone
+  // already using an open tab wouldn't be caught if an admin deactivates
+  // them mid-session — this closes that window down to a few minutes rather
+  // than "until they happen to refresh or log out".
+  useEffect(() => {
+    if (!session?.user?.id) return;
+    const interval = setInterval(() => { fetchCurrentUser(); }, 5 * 60 * 1000); // every 5 minutes
+    return () => clearInterval(interval);
+  }, [session?.user?.id]);
 
   useEffect(() => {
     if (!session?.user?.id) return;

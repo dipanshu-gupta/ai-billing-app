@@ -630,7 +630,7 @@ export default function SecurityConsole() {
               <div className="bg-white rounded-[20px] border border-purple-200 shadow-sm p-5 space-y-3">
                 <div>
                   <h4 className="font-bold text-[#0F172A] text-sm">🛡️ Data Security Policy</h4>
-                  <p className="text-xs text-gray-400 mt-0.5">Controls which records users with this role can see.</p>
+                  <p className="text-xs text-gray-400 mt-0.5">Controls which <em>existing</em> records users with this role can see. It does not grant any ability to create, edit, or delete — that's controlled entirely separately by the permission checkboxes below. A role set to "All Organizations & Business Units" with no permissions checked can see everything but change nothing.</p>
                 </div>
                 <div className="space-y-2">
                   {DATA_SCOPES.map(scope => (
