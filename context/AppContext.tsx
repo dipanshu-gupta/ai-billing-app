@@ -2973,35 +2973,114 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
   const [reports, setReports] = useState([]);
   const fetchReports = async () => {
     if (!supabase || !currentUser) return;
-    const { data } = await tScope(supabase.from('reports').select('*'))
-      .or(`created_by.eq.${currentUser.email},is_public.eq.true`)
+    // Built as a single .or() (not stacked on top of tScope's own .or() for
+    // the demo tenant) to avoid two same-named `or=` query params landing on
+    // one request, which is ambiguous. Tenant scoping is folded directly into
+    // this one filter instead.
+    const tid = (window as any).__bp_tenant?.id || null;
+    const orClause = `created_by.eq.${currentUser.email},is_public.eq.true`;
+    const { data, error } = await supabase.from('reports').select('*')
+      .or(orClause)
       .order('created_at', { ascending: false });
-    if (data) setReports(data);
+    if (error) { console.error('fetchReports:', error.message); showAlert('Could not load saved reports: ' + error.message, { variant:'danger', title:'Load Failed' }); return; }
+    // Tenant-scope client-side (matches tScope's own logic) since the tenant
+    // filter can't safely combine with the OR above in one request.
+    const scoped = (data||[]).filter((r:any) => {
+      if (!tid) return true;
+      if (r.tenant_id === tid) return true;
+      if (r.tenant_id == null && tid === DEMO_TENANT_ID) return true;
+      return false;
+    });
+    setReports(scoped);
   };
-  const saveReport = async (data) => { if(!supabase||!currentUser)return null; let r; if(data.id){const{data:d}=await supabase.from('reports').update({...data,updated_at:new Date().toISOString()}).eq('id',data.id).select().single();r=d;}else{const{data:d}=await supabase.from('reports').insert([{...data,created_by:currentUser.email,organization_id:currentUser.organization_id,created_at:new Date().toISOString(),updated_at:new Date().toISOString()}]).select().single();r=d;} await fetchReports(); return r; };
-  const deleteReport = async (id) => { if(!supabase)return; if(!(await showConfirm('Delete this report?', { variant:'danger', confirmLabel:'Delete' })))return; await supabase.from('reports').delete().eq('id',id); await fetchReports(); };
+  const saveReport = async (data) => {
+    if(!supabase||!currentUser)return null;
+    if(!data?.name?.trim()){ showAlert('Report needs a name.', { variant:'warning' }); return null; }
+    const tid = (window as any).__bp_tenant?.id || null;
+    let r, error;
+    if(data.id){
+      // UPDATE — id is the target row, not a field to write.
+      const { id, ...fields } = data;
+      ({ data: r, error } = await supabase.from('reports').update({...fields,updated_at:new Date().toISOString()}).eq('id',id).select().single());
+    } else {
+      // INSERT — never spread `id` here: data.id is null/undefined for a new
+      // report, and explicitly writing `id: null` overrides the column's
+      // gen_random_uuid() default, violating the NOT NULL primary key
+      // constraint and causing every "new report" save to fail silently
+      // (the previous version never even checked this error).
+      const { id, ...fields } = data;
+      ({ data: r, error } = await supabase.from('reports').insert([{...fields,created_by:currentUser.email,organization_id:currentUser.organization_id,created_at:new Date().toISOString(),updated_at:new Date().toISOString(),...(tid?{tenant_id:tid}:{})}]).select().single());
+    }
+    if(error){ console.error('saveReport:',error.message); showAlert('Failed to save report: ' + error.message, { variant:'danger', title:'Save Failed' }); return null; }
+    await fetchReports();
+    return r;
+  };
+  const deleteReport = async (id) => { if(!supabase)return; if(!(await showConfirm('Delete this report?', { variant:'danger', confirmLabel:'Delete' })))return; const{error}=await supabase.from('reports').delete().eq('id',id); if(error){showAlert('Failed to delete report: '+error.message,{variant:'danger'});return;} await fetchReports(); };
 
   // ─── Saved Searches ────────────────────────────────────────────────────────
   const [savedSearches, setSavedSearches] = useState([]);
-  const fetchSavedSearches = async () => {
+  // Accepts an optional `page`/object_type to filter server-side — passing
+  // none (or omitting it) fetches all saved searches for the user, same as
+  // before, so existing bare calls keep working.
+  const fetchSavedSearches = async (page?: string) => {
     if(!supabase||!currentUser)return;
     const tid = (window as any).__bp_tenant?.id || null;
     let q = supabase.from('saved_searches').select('*').or(`created_by.eq.${currentUser.email},is_global_default.eq.true`).order('created_at',{ascending:false});
     if(tid) q = (q as any).eq('tenant_id', tid);
+    if(page) q = (q as any).eq('object_type', page);
     const{data}=await q;
     if(data)setSavedSearches(data);
   };
-  const createSavedSearch = async (data) => {
+  // Pass a single object: { name, object_type, filters, is_default?, is_global_default? }
+  const createSavedSearch = async (data: { name: string; object_type: string; filters: any; is_default?: boolean; is_global_default?: boolean }) => {
     if(!supabase||!currentUser)return null;
+    if(!data?.name?.trim()||!data?.object_type){ showAlert('Saved search needs a name and an object type.', { variant:'warning' }); return null; }
     const tid = (window as any).__bp_tenant?.id || null;
-    const payload = {...data,created_by:currentUser.email,organization_id:currentUser.organization_id,created_at:new Date().toISOString(),...(tid?{tenant_id:tid}:{})};
+    const payload = {
+      name: data.name, object_type: data.object_type, filters: data.filters||{},
+      is_default: !!data.is_default, is_global_default: !!data.is_global_default,
+      created_by:currentUser.email,organization_id:currentUser.organization_id,created_at:new Date().toISOString(),
+      ...(tid?{tenant_id:tid}:{}),
+    };
     const{data:r,error}=await supabase.from('saved_searches').insert([payload]).select().single();
-    if(error){console.error('createSavedSearch:',error.message);return null;}
+    if(error){ console.error('createSavedSearch:',error.message); showAlert('Failed to save search: ' + error.message, { variant:'danger', title:'Save Failed' }); return null; }
     await fetchSavedSearches();
     return r;
   };
-  const deleteSavedSearch = async (id) => { if(!supabase)return; await supabase.from('saved_searches').delete().eq('id',id); await fetchSavedSearches(); };
-  const setDefaultSavedSearch = async (id,isGlobal=false) => { if(!supabase||!currentUser)return; await supabase.from('saved_searches').update({is_default:false,is_global_default:false}).eq('created_by',currentUser.email); await supabase.from('saved_searches').update({is_default:true,is_global_default:isGlobal}).eq('id',id); await fetchSavedSearches(); };
+  const deleteSavedSearch = async (id) => { if(!supabase)return; const{error}=await supabase.from('saved_searches').delete().eq('id',id); if(error){showAlert('Failed to delete search: '+error.message,{variant:'danger'});return;} await fetchSavedSearches(); };
+  // isGlobal: false = personal default (only affects the current user),
+  // true = team-wide default (visible/applied for everyone on this object).
+  const setDefaultSavedSearch = async (id: string, isGlobal: boolean = false) => {
+    if(!supabase||!currentUser)return;
+    await supabase.from('saved_searches').update({is_default:false,is_global_default:false}).eq('created_by',currentUser.email);
+    const{error}=await supabase.from('saved_searches').update({is_default:true,is_global_default:isGlobal}).eq('id',id);
+    if(error){showAlert('Failed to set default: '+error.message,{variant:'danger'});return;}
+    await fetchSavedSearches();
+  };
+
+  // ─── List View Preferences (column visibility/order + sort, per user/page) ─
+  const [listViewPrefs, setListViewPrefs] = useState<Record<string, { columns: string[]; sort: any }>>({});
+  const fetchListViewPrefs = async (page: string) => {
+    if(!supabase||!currentUser) return null;
+    const tid = (window as any).__bp_tenant?.id || null;
+    let q = supabase.from('list_view_prefs').select('*').eq('user_email',currentUser.email).eq('page',page);
+    if(tid) q = (q as any).eq('tenant_id', tid);
+    const{data,error} = await q.maybeSingle();
+    if(error){ console.error('fetchListViewPrefs:',error.message); return null; }
+    if(data) setListViewPrefs(prev => ({ ...prev, [page]: { columns: data.columns||[], sort: data.sort||{} } }));
+    return data;
+  };
+  const saveListViewPrefs = async (page: string, prefs: { columns: string[]; sort: any }) => {
+    if(!supabase||!currentUser) return;
+    const tid = (window as any).__bp_tenant?.id || null;
+    setListViewPrefs(prev => ({ ...prev, [page]: prefs })); // optimistic
+    const payload = {
+      user_email: currentUser.email, page, columns: prefs.columns||[], sort: prefs.sort||{},
+      updated_at: new Date().toISOString(), ...(tid?{tenant_id:tid}:{}),
+    };
+    const{error} = await supabase.from('list_view_prefs').upsert([payload], { onConflict: 'tenant_id,user_email,page' });
+    if(error){ console.error('saveListViewPrefs:',error.message); showAlert('Failed to save column preferences: '+error.message,{variant:'danger'}); }
+  };
 
   // ─── Notes / Comments / Attachments ───────────────────────────────────────
   const fetchRecordNotes = async (rType,rId) => { if(!supabase)return[]; const{data}=await tScope(supabase.from('record_notes').select('*')).eq('record_type',rType).eq('record_id',rId).order('created_at',{ascending:false}); return data||[]; };
@@ -3116,6 +3195,7 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     organizations, businessUnits, enterpriseUsers, userGroups, userGroupMembers,
     roles, permissions, rolePermissions, quoteTemplates, invoiceTemplates,
     fetchInvoiceTemplates, saveInvoiceTemplate, deleteInvoiceTemplate, setDefaultInvoiceTemplate,
+    listViewPrefs, fetchListViewPrefs, saveListViewPrefs,
     workflowRules, assignmentRules, slaPolicies, approvalProcesses, approvalRequests,
     notifications, unreadCount, markNotificationRead, markAllNotificationsRead,
     retailCustomers, retailProducts, retailActivities, retailOrders, retailInvoices,
