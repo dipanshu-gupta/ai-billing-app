@@ -369,7 +369,7 @@ export default function Header({ activePage, onNavigate }) {
               <div className="py-1">
                 <button onClick={() => { window.dispatchEvent(new CustomEvent('open-profile')); setProfileOpen(false); }}
                   className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 transition-colors">
-                  <span>👤</span> My Profile
+                  <span>👤</span> {t(appearance?.language||'en','myProfile')}
                 </button>
                 <button onClick={() => { setAboutOpen(true); setProfileOpen(false); }}
                   className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 transition-colors">
@@ -378,7 +378,7 @@ export default function Header({ activePage, onNavigate }) {
                 <hr className="my-1 border-gray-100"/>
                 <button onClick={() => { handleLogout(); setProfileOpen(false); }}
                   className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-red-600 hover:bg-red-50 transition-colors">
-                  <span>🚪</span> Sign Out
+                  <span>🚪</span> {t(appearance?.language||'en','signOut')}
                 </button>
               </div>
             </div>

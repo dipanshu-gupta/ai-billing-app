@@ -143,8 +143,8 @@ function OrganizationsPanel() {
       <Modal open={open} onClose={()=>setOpen(false)} title={editing?'Edit Organization':'New Organization'} size="md"
         footer={<><button onClick={()=>setOpen(false)} className="px-5 py-2.5 rounded-2xl border border-blue-200 text-sm font-semibold">Cancel</button><button onClick={async()=>{await saveOrganization(form,editing?.id);setOpen(false);}} className="px-5 py-2.5 bg-gradient-to-r from-[#0F172A] to-blue-800 text-white rounded-2xl text-sm font-semibold">Save</button></>}>
         <div className="grid grid-cols-2 gap-4">
-          {[['Organization Name','name'],['Org Code','organization_code'],['Industry','industry'],['Website','website'],['Country','country'],['Currency','currency']].map(([label,field])=>(
-            <div key={field}><L t={label}/><input value={form[field]||''} onChange={e=>s(field,e.target.value)} className={iCls}/></div>
+          {[['Organization Name','name',true],['Org Code','organization_code'],['Industry','industry'],['Website','website'],['Country','country'],['Currency','currency']].map(([label,field,required])=>(
+            <div key={field}><L t={required?`${label} *`:label}/><input value={form[field]||''} onChange={e=>s(field,e.target.value)} placeholder={field==='website'?'example.com':undefined} className={iCls}/></div>
           ))}
           <div><L t="Status"/><select value={form.status||'Active'} onChange={e=>s('status',e.target.value)} className={sCls}><option>Active</option><option>Inactive</option></select></div>
         </div>
@@ -189,9 +189,9 @@ function BusinessUnitsPanel() {
       <Modal open={open} onClose={()=>setOpen(false)} title={editing?'Edit Business Unit':'New Business Unit'} size="md"
         footer={<><button onClick={()=>setOpen(false)} className="px-5 py-2.5 rounded-2xl border border-blue-200 text-sm font-semibold">Cancel</button><button onClick={async()=>{await saveBusinessUnit(form,editing?.id);setOpen(false);}} className="px-5 py-2.5 bg-gradient-to-r from-[#0F172A] to-blue-800 text-white rounded-2xl text-sm font-semibold">Save</button></>}>
         <div className="grid grid-cols-2 gap-4">
-          <div className="col-span-2"><L t="Organization"/><select value={form.organization_id||''} onChange={e=>s('organization_id',e.target.value)} className={sCls}><option value="">Select Org</option>{organizations.map(o=><option key={o.id} value={o.id}>{o.name}</option>)}</select></div>
-          {[['BU Name','name'],['BU Code','business_unit_code'],['Description','description']].map(([label,field])=>(
-            <div key={field}><L t={label}/><input value={form[field]||''} onChange={e=>s(field,e.target.value)} className={iCls}/></div>
+          <div className="col-span-2"><L t="Organization"/><select value={form.organization_id||''} onChange={e=>s('organization_id',e.target.value)} className={sCls}><option value="">Select Org</option>{organizations.map(o=><option key={o.id} value={o.id}>{o.name}{o.status!=='Active'?' (Inactive)':''}</option>)}</select></div>
+          {[['BU Name','name',true],['BU Code','business_unit_code'],['Description','description']].map(([label,field,required])=>(
+            <div key={field}><L t={required?`${label} *`:label}/><input value={form[field]||''} onChange={e=>s(field,e.target.value)} className={iCls}/></div>
           ))}
           <div><L t="Status"/><select value={form.status||'Active'} onChange={e=>s('status',e.target.value)} className={sCls}><option>Active</option><option>Inactive</option></select></div>
         </div>
@@ -225,6 +225,11 @@ function UsersPanel() {
   const filtered = enterpriseUsers.filter(u=>[u.first_name,u.last_name,u.email,u.employee_code].some(v=>v?.toLowerCase().includes(search.toLowerCase())));
 
   const handleSave = async () => {
+    // Validate names — reject purely numeric or special-character-only values
+    if (!form.first_name?.trim()) { showAlert('First Name is required.', { variant:'warning' }); return; }
+    if (!form.last_name?.trim())  { showAlert('Last Name is required.', { variant:'warning' }); return; }
+    if (!/[a-zA-Z]/.test(form.first_name)) { showAlert('First Name must contain letters — numbers or symbols alone are not a valid name.', { variant:'warning' }); return; }
+    if (!/[a-zA-Z]/.test(form.last_name))  { showAlert('Last Name must contain letters — numbers or symbols alone are not a valid name.', { variant:'warning' }); return; }
     // Validate email
     if (!form.email?.trim()) { showAlert('Email is required.', { variant:'warning' }); return; }
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(form.email)) { showAlert('Invalid email format.', { variant:'warning' }); return; }
@@ -387,6 +392,7 @@ function UsersPanel() {
                   value={(form as any)[field]||''}
                   onChange={e=>s(field,e.target.value)}
                   type={type}
+                  autoComplete="off"
                   disabled={field==='email'&&!!editing}
                   maxLength={field==='phone'?20:field==='designation'?100:undefined}
                   className={`${iCls} ${field==='email'&&editing?'bg-gray-50 text-gray-400':''}`}
@@ -847,7 +853,7 @@ function WorkflowBuilderPanel({ objectList = ALL_OBJECTS, conditionFields = COND
   const { showAlert } = useAlert();
   const [open, setOpen]         = useState(false);
   const [editing, setEditing]   = useState(null);
-  const [form, setForm]         = useState({ name:'', object_type:'leads', trigger_event:'on_create', trigger_field:'', trigger_value:'', is_active:true });
+  const [form, setForm]         = useState({ name:'', object_type:objectList[0], trigger_event:'on_create', trigger_field:'', trigger_value:'', is_active:true });
   const [conditions, setCond]   = useState({ logic:'AND', conditions:[] });
   const [actions, setActions]   = useState([{ action_type:'send_notification', action_config:{} }]);
   const [saving, setSaving]     = useState(false);
@@ -858,7 +864,7 @@ function WorkflowBuilderPanel({ objectList = ALL_OBJECTS, conditionFields = COND
 
   const openNew = () => {
     setEditing(null);
-    setForm({name:'',object_type:'leads',trigger_event:'on_create',trigger_field:'',trigger_value:'',is_active:true});
+    setForm({name:'',object_type:objectList[0],trigger_event:'on_create',trigger_field:'',trigger_value:'',is_active:true});
     setCond({logic:'AND',conditions:[]});
     setActions([{action_type:'send_notification',action_config:{}}]);
     setOpen(true);
@@ -1059,7 +1065,7 @@ function AssignmentRulesPanel({ objectList = ALL_OBJECTS, conditionFields = COND
   const { showAlert } = useAlert();
   const [open, setOpen]       = useState(false);
   const [editing, setEditing] = useState(null);
-  const [form, setForm]       = useState({ name:'', object_type:'leads', condition_field:'', condition_operator:'equals', condition_value:'', assign_to_user_id:'', assign_to_group_id:'', priority:1, is_active:true });
+  const [form, setForm]       = useState({ name:'', object_type:objectList[0], condition_field:'', condition_operator:'equals', condition_value:'', assign_to_user_id:'', assign_to_group_id:'', priority:1, is_active:true });
   const [saving, setSaving]   = useState(false);
   const s = (k,v)=>setForm(f=>({...f,[k]:v}));
 
@@ -1069,7 +1075,7 @@ function AssignmentRulesPanel({ objectList = ALL_OBJECTS, conditionFields = COND
 
   const openNew = () => {
     setEditing(null);
-    setForm({name:'',object_type:'leads',condition_field:'',condition_operator:'equals',condition_value:'',assign_to_user_id:'',assign_to_group_id:'',priority:1,is_active:true});
+    setForm({name:'',object_type:objectList[0],condition_field:'',condition_operator:'equals',condition_value:'',assign_to_user_id:'',assign_to_group_id:'',priority:1,is_active:true});
     setOpen(true);
   };
 
@@ -1219,8 +1225,12 @@ function AssignmentRulesPanel({ objectList = ALL_OBJECTS, conditionFields = COND
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-xs font-bold uppercase tracking-wider text-gray-500 mb-1.5">Priority (lower = higher priority)</label>
-              <input type="number" min="1" max="999" value={form.priority} onChange={e=>s('priority',Number(e.target.value))}
+              <input type="number" min="1" max="999" value={form.priority} onChange={e=>{
+                  const n = Math.max(1, Math.min(999, Number(e.target.value)||1));
+                  s('priority', n);
+                }}
                 className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-blue-400"/>
+              <p className="text-[10px] text-gray-400 mt-1">1–999 · lower numbers are evaluated first</p>
             </div>
             <div className="flex items-end pb-1">
               <label className="flex items-center gap-2 cursor-pointer">
@@ -1241,7 +1251,7 @@ function SLAPanel({ objectList = ALL_OBJECTS, conditionFields = CONDITION_FIELDS
   const { showAlert } = useAlert();
   const [open, setOpen]       = useState(false);
   const [editing, setEditing] = useState(null);
-  const [form, setForm]       = useState({ name:'', object_type:'leads', condition_field:'status', condition_value:'', response_time_hours:24, resolution_time_hours:72, warning_threshold_pct:80, escalate_to_user_id:'', is_active:true });
+  const [form, setForm]       = useState({ name:'', object_type:objectList[0], condition_field:'status', condition_value:'', response_time_hours:24, resolution_time_hours:72, warning_threshold_pct:80, escalate_to_user_id:'', is_active:true });
   const [saving, setSaving]   = useState(false);
   const s = (k,v)=>setForm(f=>({...f,[k]:v}));
 
@@ -1251,7 +1261,7 @@ function SLAPanel({ objectList = ALL_OBJECTS, conditionFields = CONDITION_FIELDS
 
   const openNew = () => {
     setEditing(null);
-    setForm({name:'',object_type:'leads',condition_field:'status',condition_value:'',response_time_hours:24,resolution_time_hours:72,warning_threshold_pct:80,escalate_to_user_id:'',is_active:true});
+    setForm({name:'',object_type:objectList[0],condition_field:'status',condition_value:'',response_time_hours:24,resolution_time_hours:72,warning_threshold_pct:80,escalate_to_user_id:'',is_active:true});
     setOpen(true);
   };
 
@@ -1404,7 +1414,7 @@ function ApprovalProcessPanel({ objectList = ALL_OBJECTS, conditionFields = COND
   const { showAlert } = useAlert();
   const [open, setOpen]         = useState(false);
   const [editing, setEditing]   = useState(null);
-  const [form, setForm]         = useState({ name:'', object_type:'orders', is_active:true });
+  const [form, setForm]         = useState({ name:'', object_type:objectList[0], is_active:true });
   const [conditions, setCond]   = useState({ logic:'AND', conditions:[] });
   const [steps, setSteps]       = useState([{ step_number:1, step_name:'Manager Approval', approver_user_id:'', approver_group_id:'', approval_type:'any', on_approve_action:'proceed', on_reject_action:'reject' }]);
   const [saving, setSaving]     = useState(false);
@@ -1427,7 +1437,7 @@ function ApprovalProcessPanel({ objectList = ALL_OBJECTS, conditionFields = COND
 
   const openNew = () => {
     setEditing(null);
-    setForm({name:'',object_type:'orders',is_active:true});
+    setForm({name:'',object_type:objectList[0],is_active:true});
     setCond({logic:'AND',conditions:[]});
     setSteps([{step_number:1,step_name:'Manager Approval',approver_user_id:'',approver_group_id:'',approval_type:'any',on_approve_action:'proceed',on_reject_action:'reject'}]);
     setOpen(true);

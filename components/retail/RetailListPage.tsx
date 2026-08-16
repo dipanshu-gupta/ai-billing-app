@@ -3,7 +3,7 @@
 
 import { useState, useMemo, useEffect } from 'react';
 import { useApp } from '@/context/AppContext';
-import { getStatusColor, formatCurrency, formatDisplayNumber, PAGE_DISPLAY_PREFIX, tenantScope } from '@/lib/utils';
+import { getStatusColor, formatCurrency, formatDate, formatDisplayNumber, PAGE_DISPLAY_PREFIX, tenantScope } from '@/lib/utils';
 // useCustomFields hook used inline below
 import { useTenant } from '@/context/TenantContext';
 import { getTaxRegime } from '@/lib/taxConfig';
@@ -668,7 +668,7 @@ function buildRetailPrintHTML(t, record, items, products) {
     t.col_qty!==false && `<th style="padding:3px 4px;text-align:right;font-size:${fs(8)}px;color:#6B7280;text-transform:uppercase">Qty</th>`,
     t.col_price!==false && `<th style="padding:3px 4px;text-align:right;font-size:${fs(8)}px;color:#6B7280;text-transform:uppercase">Unit Price</th>`,
     t.col_discount && `<th style="padding:3px 4px;text-align:right;font-size:${fs(8)}px;color:#6B7280;text-transform:uppercase">Disc%</th>`,
-    t.col_tax_rate && `<th style="padding:3px 4px;text-align:right;font-size:${fs(8)}px;color:#6B7280;text-transform:uppercase">Tax%</th>`,
+    t.col_tax_rate && t.tax_regime!=='exempt' && `<th style="padding:3px 4px;text-align:right;font-size:${fs(8)}px;color:#6B7280;text-transform:uppercase">Tax%</th>`,
     t.col_hsn && `<th style="padding:3px 4px;text-align:right;font-size:${fs(8)}px;color:#6B7280;text-transform:uppercase">HSN</th>`,
     t.col_subtotal_line && `<th style="padding:3px 4px;text-align:right;font-size:${fs(8)}px;color:#6B7280;text-transform:uppercase">Subtotal</th>`,
     t.col_total!==false && `<th style="padding:3px 4px;text-align:right;font-size:${fs(8)}px;color:#6B7280;text-transform:uppercase">Total</th>`,
@@ -690,7 +690,7 @@ function buildRetailPrintHTML(t, record, items, products) {
       ${t.col_qty!==false ? `<td style="padding:3px 4px;text-align:right;font-size:${fs(11)}px">${qty}</td>` : ''}
       ${t.col_price!==false ? `<td style="padding:3px 4px;text-align:right;font-size:${fs(11)}px">${fmt(price)}</td>` : ''}
       ${t.col_discount ? `<td style="padding:3px 4px;text-align:right;font-size:${fs(10)}px;color:#6B7280">${disc}%</td>` : ''}
-      ${t.col_tax_rate ? `<td style="padding:3px 4px;text-align:right;font-size:${fs(9)}px;color:#6B7280">${tax}%</td>` : ''}
+      ${t.col_tax_rate && t.tax_regime!=='exempt' ? `<td style="padding:3px 4px;text-align:right;font-size:${fs(9)}px;color:#6B7280">${tax}%</td>` : ''}
       ${t.col_hsn ? `<td style="padding:3px 4px;text-align:right;font-size:${fs(8)}px;color:#6B7280">${item.hsn_code||item.hsn||''}</td>` : ''}
       ${t.col_subtotal_line ? `<td style="padding:3px 4px;text-align:right;font-size:${fs(10)}px;color:#4B5563">${fmt(net)}</td>` : ''}
       ${t.col_total!==false ? `<td style="padding:3px 4px;text-align:right;font-size:${fs(11)}px;font-weight:600">${fmt(total)}</td>` : ''}
@@ -754,7 +754,7 @@ function buildRetailPrintHTML(t, record, items, products) {
         <div class="inv-num">${t.headline||'INVOICE'}</div>
         ${t.sub_headline ? `<div style="font-size:${fs(9)}px;color:#6B7280;font-style:italic;margin-top:1px">${t.sub_headline}</div>` : ''}
         ${t.show_invoice_number!==false ? `<div class="inv-date" style="font-weight:600;color:#374151">${invNum}</div>` : ''}
-        ${t.show_date!==false ? `<div class="inv-date">${record.invoice_date ? new Date(record.invoice_date).toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric'}) : new Date().toLocaleDateString('en-IN')}</div>` : ''}
+        ${t.show_date!==false ? `<div class="inv-date">${record.invoice_date ? formatDate(record.invoice_date) : formatDate(new Date().toISOString())}</div>` : ''}
         ${t.show_cashier && (record.owner_name||record.owner) ? `<div class="inv-date">Cashier: ${record.owner_name||record.owner}</div>` : ''}
         ${t.show_invoice_status && record.status ? `<div style="margin-top:4px"><span style="background:${record.status==='Paid'?'#DCFCE7':record.status==='Overdue'?'#FEE2E2':'#F3F4F6'};color:${record.status==='Paid'?'#166534':record.status==='Overdue'?'#991B1B':'#374151'};padding:2px 10px;border-radius:9px;font-size:${fs(8)}px;font-weight:700">${record.status}</span></div>` : ''}
         ${t.show_payment_status && record.payment_status ? `<div style="margin-top:3px"><span style="background:${record.payment_status==='Paid'?'#DCFCE7':record.payment_status==='Pending'?'#DBEAFE':'#FEF9C3'};color:${record.payment_status==='Paid'?'#166534':record.payment_status==='Pending'?'#1E40AF':'#854D0E'};padding:2px 10px;border-radius:9px;font-size:${fs(8)}px;font-weight:700">Payment: ${record.payment_status}</span></div>` : ''}
@@ -777,8 +777,9 @@ function buildRetailPrintHTML(t, record, items, products) {
 
     ${t.show_subtotal!==false ? `<div class="tot-row"><span class="meta-l">Subtotal</span><span class="meta-v">${fmt(subtotal)}</span></div>` : ''}
     ${t.show_discount_total!==false && totalDisc>0 ? `<div class="tot-row"><span class="meta-l">Discount</span><span class="meta-v" style="color:#15803D">-${fmt(totalDisc)}</span></div>` : ''}
-    ${t.show_tax_total!==false && totalTax>0 ? `<div class="tot-row"><span class="meta-l">Tax</span><span class="meta-v">${fmt(totalTax)}</span></div>` : ''}
-    ${t.show_cgst_sgst && totalTax>0 ? `
+    ${t.show_tax_total!==false && totalTax>0 && t.tax_regime==='inclusive' ? `<div style="text-align:right;font-size:${fs(8)}px;color:#6B7280;font-style:italic;margin-bottom:2px">(Prices inclusive of GST)</div>` : ''}
+    ${t.show_tax_total!==false && totalTax>0 && t.tax_regime!=='exempt' && t.tax_regime!=='inclusive' ? `<div class="tot-row"><span class="meta-l">Tax</span><span class="meta-v">${fmt(totalTax)}</span></div>` : ''}
+    ${t.show_cgst_sgst && totalTax>0 && t.tax_regime!=='exempt' && t.tax_regime!=='inclusive' ? `
       <div style="display:flex;justify-content:space-between;margin-bottom:2px;font-size:${fs(9)}px;color:#6B7280"><span>CGST</span><span>${fmt(totalTax/2)}</span></div>
       <div style="display:flex;justify-content:space-between;margin-bottom:2px;font-size:${fs(9)}px;color:#6B7280"><span>SGST</span><span>${fmt(totalTax/2)}</span></div>
     ` : ''}
@@ -2384,7 +2385,7 @@ export default function RetailListPage({ page }) {
       if (ord?.displayNumber) return 'RORD-' + String(ord.displayNumber).padStart(5, '0');
       return String(v).length > 14 ? String(v).slice(0,14)+'...' : v;
     }
-    if (meta.type === 'date')    return v ? new Date(v).toLocaleDateString('en-IN') : '-';
+    if (meta.type === 'date')    return v ? formatDate(v) : '-';
     if (meta.type === 'boolean') return v ? 'Yes' : 'No';
     if (['amount','price','cost','mrp'].includes(meta.key)) return v!=null ? formatCurrency(Number(v)) : '-';
     return v!=null && v!=='' ? String(v) : '-';

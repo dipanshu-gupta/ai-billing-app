@@ -14,6 +14,16 @@ const FONT_OPTIONS = [
   { id:'poppins',   name:'Poppins',             sample:'Aa Bb Cc' },
   { id:'nunito',    name:'Nunito',              sample:'Aa Bb Cc' },
 ];
+const FONT_SIZE_OPTIONS = [
+  { id:'sm', name:'Compact',  sample:'Aa', scale:'87.5%' },
+  { id:'md', name:'Default',  sample:'Aa', scale:'100%' },
+  { id:'lg', name:'Large',    sample:'Aa', scale:'112.5%' },
+];
+const FONT_WEIGHT_OPTIONS = [
+  { id:'normal',   name:'Regular', sample:'Aa', weight:'400' },
+  { id:'medium',   name:'Medium',  sample:'Aa', weight:'500' },
+  { id:'semibold', name:'Bold',    sample:'Aa', weight:'600' },
+];
 
 export default function AppearancePanel() {
   const { appearance, saveAppearance, currentUser } = useApp();
@@ -25,6 +35,8 @@ export default function AppearancePanel() {
   const [theme,         setTheme]         = useState(appearance?.theme            || 'navy');
   const [language,      setLanguage]      = useState(appearance?.language         || 'en');
   const [font,          setFont]          = useState(appearance?.font             || 'geist');
+  const [fontSize,      setFontSize]      = useState(appearance?.font_size        || 'md');
+  const [fontWeight,    setFontWeight]    = useState(appearance?.font_weight      || 'normal');
   const [uploading,     setUploading]     = useState(false);
   const [saving,        setSaving]        = useState(false);
   const [saved,         setSaved]         = useState(false);
@@ -39,6 +51,8 @@ export default function AppearancePanel() {
       setTheme(appearance.theme || 'navy');
       setLanguage(appearance.language || 'en');
       setFont(appearance.font || 'geist');
+      setFontSize(appearance.font_size || 'md');
+      setFontWeight(appearance.font_weight || 'normal');
     }
   }, [JSON.stringify(appearance)]);
 
@@ -80,7 +94,7 @@ export default function AppearancePanel() {
 
   const handleSave = async () => {
     setSaving(true);
-    await saveAppearance({ company_logo_url: logoUrl, company_name: companyName, theme, language, font });
+    await saveAppearance({ company_logo_url: logoUrl, company_name: companyName, theme, language, font, font_size: fontSize, font_weight: fontWeight });
     setSaving(false);
     setSaved(true);
     setTimeout(() => setSaved(false), 3000);
@@ -128,8 +142,15 @@ export default function AppearancePanel() {
             <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleLogoUpload}/>
             <p className="text-xs text-gray-400 text-center">PNG, JPG, SVG · Max 2MB<br/>Recommended: 200×60px</p>
             {logoUrl && (
-              <button onClick={() => { setLogoUrl(''); setPreviewLogo(''); }}
-                className="text-xs text-red-400 hover:text-red-600 underline">
+              <button onClick={async () => {
+                  setLogoUrl(''); setPreviewLogo('');
+                  setSaving(true);
+                  await saveAppearance({ company_logo_url: '', company_name: companyName, theme, language, font, font_size: fontSize, font_weight: fontWeight });
+                  setSaving(false);
+                  setSaved(true); setTimeout(()=>setSaved(false), 2000);
+                }}
+                disabled={saving}
+                className="text-xs text-red-400 hover:text-red-600 underline disabled:opacity-50">
                 Remove logo
               </button>
             )}
@@ -247,17 +268,49 @@ export default function AppearancePanel() {
       <div className="bg-white rounded-[24px] border border-blue-100 shadow-lg overflow-hidden">
         <div className="px-6 py-4 bg-gradient-to-r from-slate-50 to-blue-50 border-b border-blue-100">
           <h3 className="font-bold text-[#0F172A] text-lg">✍️ Typography</h3>
-          <p className="text-sm text-gray-500 mt-0.5">Application-wide font family</p>
+          <p className="text-sm text-gray-500 mt-0.5">Application-wide font family, size, and weight</p>
         </div>
-        <div className="p-6 grid grid-cols-2 sm:grid-cols-5 gap-3">
-          {FONT_OPTIONS.map(fo => (
-            <button key={fo.id} onClick={() => setFont(fo.id)}
-              className={`flex flex-col items-center gap-1.5 px-3 py-4 rounded-2xl border-2 transition-all ${font===fo.id?'border-blue-500 bg-blue-50 shadow-md':'border-gray-200 hover:border-blue-300'}`}>
-              <span className="text-2xl font-bold text-[#0F172A]">{fo.sample}</span>
-              <span className="text-xs text-gray-500 text-center">{fo.name}</span>
-              {font===fo.id && <span className="text-blue-500 text-xs">✓ Active</span>}
-            </button>
-          ))}
+        <div className="p-6 space-y-6">
+          <div>
+            <label className="block text-xs font-bold uppercase tracking-wider text-gray-500 mb-3">Font Family</label>
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+              {FONT_OPTIONS.map(fo => (
+                <button key={fo.id} onClick={() => setFont(fo.id)}
+                  className={`flex flex-col items-center gap-1.5 px-3 py-4 rounded-2xl border-2 transition-all ${font===fo.id?'border-blue-500 bg-blue-50 shadow-md':'border-gray-200 hover:border-blue-300'}`}>
+                  <span className="text-2xl font-bold text-[#0F172A]">{fo.sample}</span>
+                  <span className="text-xs text-gray-500 text-center">{fo.name}</span>
+                  {font===fo.id && <span className="text-blue-500 text-xs">✓ Active</span>}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs font-bold uppercase tracking-wider text-gray-500 mb-3">Base Font Size</label>
+            <div className="grid grid-cols-3 gap-3">
+              {FONT_SIZE_OPTIONS.map(fo => (
+                <button key={fo.id} onClick={() => setFontSize(fo.id)}
+                  className={`flex flex-col items-center gap-1.5 px-3 py-4 rounded-2xl border-2 transition-all ${fontSize===fo.id?'border-blue-500 bg-blue-50 shadow-md':'border-gray-200 hover:border-blue-300'}`}>
+                  <span style={{fontSize: fo.id==='sm'?'16px':fo.id==='lg'?'26px':'21px'}} className="font-bold text-[#0F172A]">{fo.sample}</span>
+                  <span className="text-xs text-gray-500 text-center">{fo.name}</span>
+                  {fontSize===fo.id && <span className="text-blue-500 text-xs">✓ Active</span>}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs font-bold uppercase tracking-wider text-gray-500 mb-3">Base Font Weight</label>
+            <p className="text-xs text-gray-400 -mt-2 mb-3">Applies to regular body text only — headings and buttons keep their own weight.</p>
+            <div className="grid grid-cols-3 gap-3">
+              {FONT_WEIGHT_OPTIONS.map(fo => (
+                <button key={fo.id} onClick={() => setFontWeight(fo.id)}
+                  className={`flex flex-col items-center gap-1.5 px-3 py-4 rounded-2xl border-2 transition-all ${fontWeight===fo.id?'border-blue-500 bg-blue-50 shadow-md':'border-gray-200 hover:border-blue-300'}`}>
+                  <span style={{fontWeight: fo.weight}} className="text-2xl text-[#0F172A]">{fo.sample}</span>
+                  <span className="text-xs text-gray-500 text-center">{fo.name}</span>
+                  {fontWeight===fo.id && <span className="text-blue-500 text-xs">✓ Active</span>}
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
       </div>
 

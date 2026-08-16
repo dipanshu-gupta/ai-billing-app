@@ -3,13 +3,14 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { useApp } from '@/context/AppContext';
+import { formatCurrency, formatDate } from '@/lib/utils';
 
 // ─── Build rich context for each object type ──────────────────────────────────
 const buildContext = (page, record, data) => {
   const { customers, leads, opportunities, orders, invoices,
           contacts, activities, quotations, enterpriseUsers } = data;
 
-  const fmt = n => new Intl.NumberFormat('en-IN',{style:'currency',currency:'INR',maximumFractionDigits:0}).format(n||0);
+  const fmt = n => formatCurrency(n||0);
   const owner = enterpriseUsers.find(u => u.id === record.owner_id || u.email === record.owner);
   const ownerName = owner ? `${owner.first_name} ${owner.last_name}` : record.owner || 'Unassigned';
 
@@ -46,7 +47,7 @@ Customer: ${record.customer||'N/A'} | Contact: ${record.contact||'N/A'}
 Owner: ${ownerName}
 Customer status: ${customer?.status||'N/A'} | Industry: ${customer?.industry||'N/A'}
 Related activities: ${cAct.length} total, ${cAct.filter(a=>a.status==='Open').length} open
-Created: ${record.created_at ? new Date(record.created_at).toLocaleDateString() : 'N/A'}`;
+Created: ${record.created_at ? formatDate(record.created_at) : 'N/A'}`;
     }
 
     case 'opportunities': {

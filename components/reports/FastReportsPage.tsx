@@ -3,7 +3,7 @@
 
 import { useState, useMemo, useEffect, useCallback } from 'react';
 import { useApp } from '@/context/AppContext';
-import { formatDisplayNumber, PAGE_DISPLAY_PREFIX, formatCurrency } from '@/lib/utils';
+import { formatDisplayNumber, PAGE_DISPLAY_PREFIX, formatCurrency, formatDate } from '@/lib/utils';
 import { useAlert } from '@/components/shared/AlertProvider';
 import {
   BarChart, Bar, LineChart, Line, PieChart, Pie, Cell, AreaChart, Area,
@@ -266,7 +266,7 @@ const fmtCurrency = (v, currency = 'INR') => {
 const fmtVal = (val, fieldDef, currency = 'INR') => {
   if (val === null || val === undefined || val === '') return '-';
   if (fieldDef?.t === 'currency') return fmtCurrency(val, currency);
-  if (fieldDef?.t === 'date')     return val ? new Date(val).toLocaleDateString('en-IN', { day:'2-digit', month:'short', year:'numeric' }) : '-';
+  if (fieldDef?.t === 'date')     return val ? formatDate(val) : '-';
   if (fieldDef?.t === 'number')   return Number(val).toLocaleString('en-IN');
   return String(val);
 };
@@ -524,7 +524,7 @@ export default function FastReportsPage() {
   const handleSave = async () => {
     if (!reportName.trim()) { showAlert('Enter a report name.', { variant:'warning' }); return; }
     setSaving(true);
-    await saveReport({
+    const saved = await saveReport({
       id:          loadedId,
       name:        reportName,
       object_type: objType,
@@ -536,8 +536,10 @@ export default function FastReportsPage() {
       chart_field: chartMetric,
       is_public:   isPublic,
     });
-    await fetchReports();
     setSaving(false);
+    if (!saved) return; // saveReport already surfaced the error via showAlert
+    setLoadedId(saved.id); // subsequent saves now update this report instead of duplicating it
+    await fetchReports();
     showAlert('Report saved!', { variant:'success', title:'Saved' });
   };
 
@@ -547,7 +549,7 @@ export default function FastReportsPage() {
     const rows = sortedData.map(r => columns.map(k => {
       const fd = fields.find(f => f.k === k);
       const v  = r[k];
-      if (fd?.t === 'date') return v ? new Date(v).toLocaleDateString('en-IN') : '';
+      if (fd?.t === 'date') return v ? formatDate(v) : '';
       if (fd?.t === 'currency') return v ?? '';
       return v ?? '';
     }));
@@ -859,7 +861,7 @@ export default function FastReportsPage() {
                                   {fd?.t==='currency'
                                     ? <span className="font-semibold text-green-700">{v||v===0 ? fmtCurrency(v,currency) : '-'}</span>
                                     : fd?.t==='date'
-                                    ? <span className="text-gray-500 text-xs">{v?new Date(v).toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'}):'-'}</span>
+                                    ? <span className="text-gray-500 text-xs">{v?formatDate(v):'-'}</span>
                                     : fd?.t==='number'
                                     ? <span className="font-medium">{v!=null ? Number(v).toLocaleString('en-IN') : '-'}</span>
                                     : k==='status'

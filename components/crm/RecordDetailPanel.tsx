@@ -121,7 +121,7 @@ function LineItemsTable({ items, setItems, products }) {
   const sub   = items.reduce((s,r) => s + r.quantity * r.price, 0);
   const disc  = items.reduce((s,r) => s + r.quantity * r.price * (r.discount/100), 0);
   const grand = sub - disc;
-  const fmt   = n => new Intl.NumberFormat('en-IN',{style:'currency',currency:'INR',maximumFractionDigits:0}).format(n);
+  const fmt   = n => formatCurrency(n);
 
   return (
     <>
@@ -216,7 +216,7 @@ function Customer360({ customer, onSubRecordOpen, onCreateFor }) {
     (r.customerId && (r.customerId === customer._uuid || r.customerId === customer.id)) ||
     (r.customer_id && (r.customer_id === customer._uuid || r.customer_id === customer.id)) ||
     (r.customer && customer.name && r.customer.toLowerCase() === customer.name.toLowerCase());
-  const fmt = n => new Intl.NumberFormat('en-IN',{style:'currency',currency:'INR',maximumFractionDigits:0}).format(n||0);
+  const fmt = n => formatCurrency(n||0);
 
   const secs = {
     contacts:      { icon:'📇', label:'Contacts',      createLabel:'Contact',     data:contacts.filter(m),

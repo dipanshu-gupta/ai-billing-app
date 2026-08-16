@@ -3,11 +3,81 @@
 
 import { useState, useMemo, useEffect, useRef } from 'react';
 import { useApp } from '@/context/AppContext';
-import { getPageLabel, getStatusOptions, getStatusColor, formatCurrency, formatDisplayNumber, PAGE_DISPLAY_PREFIX } from '@/lib/utils';
+import { getPageLabel, getStatusOptions, getStatusColor, formatCurrency, formatDate, formatDisplayNumber, PAGE_DISPLAY_PREFIX, getObjectFields } from '@/lib/utils';
 import RecordDetailPanel from '@/components/crm/RecordDetailPanel';
 import CreateRecordModal from '@/components/crm/CreateRecordModal';
 import CPQRecordDetail from '@/components/crm/CPQRecordDetail';
 import { useAlert } from '@/components/shared/AlertProvider';
+
+const FIELD_LABELS = {
+  name:'Name', customer:'Customer', contact:'Contact', owner:'Owner', status:'Status',
+  amount:'Amount', price:'Price', cost:'Cost', stage:'Stage', source:'Source',
+  industry:'Industry', phone:'Phone', email:'Email', website:'Website', gstNumber:'GST Number',
+  billingAddress:'Billing Address', shippingAddress:'Shipping Address', city:'City', state:'State',
+  postalCode:'Postal Code', country:'Country', description:'Description', designation:'Designation',
+  department:'Department', mobile:'Mobile', isPrimary:'Primary Contact', linkedIn:'LinkedIn',
+  productFamily:'Product Family', category:'Category', sku:'SKU', unit:'Unit', taxRate:'Tax Rate (%)',
+  stock_quantity:'Stock on Hand', reorder_level:'Reorder Level', track_inventory:'Inventory Tracking',
+  expectedCloseDate:'Expected Close Date', closeDate:'Close Date', probability:'Probability (%)',
+  campaign:'Campaign', currency:'Currency', paymentTerms:'Payment Terms', deliveryDate:'Delivery Date',
+  dueDate:'Due Date', activityType:'Activity Type', activityDate:'Activity Date', priority:'Priority',
+  notes:'Notes', created_at:'Created Date', updated_at:'Updated Date',
+};
+const fieldLabel = (k) => FIELD_LABELS[k] || k.replace(/([A-Z])/g,' $1').replace(/_/g,' ').replace(/^./,c=>c.toUpperCase()).trim();
+
+// Every field on the object is filterable/sortable/addable-as-a-column —
+// derived from getObjectFields() (the same registry the detail-panel forms
+// use), plus id/created_at which every list needs but detail forms don't.
+const DATE_FIELDS   = new Set(['created_at','updated_at','closeDate','expectedCloseDate','dueDate','deliveryDate','activityDate']);
+const NUMBER_FIELDS = new Set(['amount','price','cost','probability','stock_quantity','reorder_level','taxRate']);
+const BOOL_FIELDS   = new Set(['isPrimary','track_inventory']);
+const fieldType = (page, k) => k==='status' ? 'select' : DATE_FIELDS.has(k) ? 'date' : NUMBER_FIELDS.has(k) ? 'number' : BOOL_FIELDS.has(k) ? 'boolean' : 'text';
+const getFieldMeta = (page) => {
+  const keys = Array.from(new Set(['id', ...getObjectFields(page), 'created_at']));
+  return keys.map(k => ({ key:k, label: k==='id' ? 'ID' : fieldLabel(k), type: fieldType(page,k) }));
+};
+
+const OPERATORS = {
+  text:    [{v:'contains',l:'contains'},{v:'equals',l:'is exactly'},{v:'not_equals',l:'is not'},{v:'is_empty',l:'is empty'},{v:'is_not_empty',l:'is not empty'}],
+  number:  [{v:'eq',l:'='},{v:'neq',l:'≠'},{v:'gt',l:'>'},{v:'gte',l:'≥'},{v:'lt',l:'<'},{v:'lte',l:'≤'},{v:'is_empty',l:'is empty'}],
+  date:    [{v:'on',l:'on'},{v:'before',l:'before'},{v:'after',l:'after'},{v:'is_empty',l:'is empty'}],
+  select:  [{v:'equals',l:'is'},{v:'not_equals',l:'is not'}],
+  boolean: [{v:'is_true',l:'is true'},{v:'is_false',l:'is false'}],
+};
+
+const matchesCondition = (record, cond) => {
+  const raw = record[cond.field];
+  switch (cond.type) {
+    case 'number': {
+      const n = Number(raw); const v = Number(cond.value);
+      if (cond.op==='is_empty') return raw===''||raw==null;
+      if (Number.isNaN(n)) return false;
+      if (cond.op==='eq') return n===v; if (cond.op==='neq') return n!==v;
+      if (cond.op==='gt') return n>v;   if (cond.op==='gte') return n>=v;
+      if (cond.op==='lt') return n<v;   if (cond.op==='lte') return n<=v;
+      return true;
+    }
+    case 'date': {
+      if (cond.op==='is_empty') return !raw;
+      if (!raw || !cond.value) return false;
+      const d = new Date(raw).setHours(0,0,0,0); const v = new Date(cond.value).setHours(0,0,0,0);
+      if (cond.op==='on') return d===v; if (cond.op==='before') return d<v; if (cond.op==='after') return d>v;
+      return true;
+    }
+    case 'boolean': {
+      const b = !!raw;
+      return cond.op==='is_true' ? b : !b;
+    }
+    default: {
+      const s = String(raw??'').toLowerCase(); const v = String(cond.value??'').toLowerCase();
+      if (cond.op==='is_empty') return s==='';
+      if (cond.op==='is_not_empty') return s!=='';
+      if (cond.op==='equals') return s===v;
+      if (cond.op==='not_equals') return s!==v;
+      return s.includes(v); // contains (default)
+    }
+  }
+};
 
 const TIME_PERIODS = [
   { v:'',           l:'All Time' },
@@ -20,17 +90,6 @@ const TIME_PERIODS = [
   { v:'last_month', l:'Last Month' },
   { v:'this_year',  l:'This Year' },
 ];
-
-const FIELD_FILTERS = {
-  customers:     [{v:'industry',l:'Industry'}],
-  leads:         [{v:'source',l:'Source'}],
-  opportunities: [{v:'stage',l:'Stage'}],
-  orders:        [],
-  invoices:      [{v:'paymentTerms',l:'Payment Terms'}],
-  contacts:      [{v:'designation',l:'Designation'}],
-  activities:    [{v:'activityType',l:'Activity Type'}],
-  products:      [{v:'category',l:'Category'},{v:'productFamily',l:'Product Family'}],
-};
 
 const applyTimePeriod = (records, period) => {
   if (!period) return records;
@@ -80,8 +139,9 @@ function SavedSearchPanel({ page, currentFilters, onApply, onClose }) {
     if (f.search)       parts.push(`Search: "${f.search}"`);
     if (f.status && f.status !== 'All') parts.push(`Status: ${f.status}`);
     if (f.timePeriod)   parts.push(TIME_PERIODS.find(t=>t.v===f.timePeriod)?.l || f.timePeriod);
-    if (f.fieldFilter?.value) parts.push(`${f.fieldFilter.field}: ${f.fieldFilter.value}`);
+    (f.advFilters||[]).forEach(c => { if (c.field && (c.value || c.op==='is_empty' || c.op==='is_not_empty' || c.op==='is_true' || c.op==='is_false')) parts.push(`${c.field} ${c.op} ${c.value||''}`.trim()); });
     if (f.owner)        parts.push(`Owner: ${f.owner}`);
+    if (f.sortField)    parts.push(`Sort: ${f.sortField} ${f.sortDir||'asc'}`);
     return parts.length ? parts.join(' · ') : 'All records';
   };
 
@@ -95,8 +155,8 @@ function SavedSearchPanel({ page, currentFilters, onApply, onClose }) {
       <div className="text-xs text-gray-400 mb-3">{describe(s.filters || {})}</div>
       <div className="flex gap-2 flex-wrap">
         <button onClick={()=>{onApply(s.filters||{});onClose();}} className="flex-1 bg-gradient-to-r from-[#0F172A] to-blue-800 text-white py-2 rounded-xl text-xs font-bold hover:opacity-90">Apply</button>
-        {!s.is_default && <button onClick={()=>setDefaultSavedSearch(s.id,page,false)} className="bg-blue-100 text-blue-700 px-3 py-2 rounded-xl text-xs font-semibold hover:bg-blue-200">Set Default</button>}
-        <button onClick={()=>deleteSavedSearch(s.id,page)} className="bg-red-100 text-red-500 px-3 py-2 rounded-xl text-xs font-semibold hover:bg-red-200">Delete</button>
+        {!s.is_default && <button onClick={()=>setDefaultSavedSearch(s.id,s.is_global_default)} className="bg-blue-100 text-blue-700 px-3 py-2 rounded-xl text-xs font-semibold hover:bg-blue-200">Set Default</button>}
+        <button onClick={()=>deleteSavedSearch(s.id)} className="bg-red-100 text-red-500 px-3 py-2 rounded-xl text-xs font-semibold hover:bg-red-200">Delete</button>
       </div>
     </div>
   );
@@ -116,7 +176,11 @@ function SavedSearchPanel({ page, currentFilters, onApply, onClose }) {
             <input type="checkbox" checked={saveDef} onChange={e=>setSaveDef(e.target.checked)} className="w-4 h-4 accent-blue-600"/>
             Set as my default
           </label>
-          <button onClick={async()=>{if(!saveName.trim()){showAlert('Enter a name.', { variant:'warning' });return;}setSaving(true);await createSavedSearch(saveName,page,currentFilters,saveDef,saveGlobal);setSaveName('');setSaveDef(false);setSaving(false);}} disabled={saving} className="w-full bg-gradient-to-r from-[#0F172A] to-blue-800 text-white py-2.5 rounded-xl font-bold text-sm disabled:opacity-50">
+          <label className="flex items-center gap-2 text-sm text-[#0F172A] cursor-pointer">
+            <input type="checkbox" checked={saveGlobal} onChange={e=>setSaveGlobal(e.target.checked)} className="w-4 h-4 accent-purple-600"/>
+            Make this the team default for everyone
+          </label>
+          <button onClick={async()=>{if(!saveName.trim()){showAlert('Enter a name.', { variant:'warning' });return;}setSaving(true);await createSavedSearch({name:saveName,object_type:page,filters:currentFilters,is_default:saveDef,is_global_default:saveGlobal});setSaveName('');setSaveDef(false);setSaveGlobal(false);setSaving(false);}} disabled={saving} className="w-full bg-gradient-to-r from-[#0F172A] to-blue-800 text-white py-2.5 rounded-xl font-bold text-sm disabled:opacity-50">
             {saving ? 'Saving...' : 'Save Search'}
           </button>
         </div>
@@ -146,7 +210,7 @@ export default function CRMListPage({ page }) {
     createQuotationFromOpportunity, fetchQuotations,
     currentUserPermissions, permissionsLoaded, appPreferences, hasPermission,
     fetchOrders, pendingReturnTo, setPendingReturnTo, pendingRecord, setPendingRecord,
-    fetchListCount,
+    fetchListCount, listViewPrefs, fetchListViewPrefs, saveListViewPrefs,
   } = useApp();
   const { showAlert, showConfirm } = useAlert();
 
@@ -196,8 +260,33 @@ export default function CRMListPage({ page }) {
   const [currentPage,  setCurrentPage]  = useState(1);
   const [statusFilter, setStatusFilter] = useState('All');
   const [timePeriod,   setTimePeriod]   = useState('');
-  const [fieldFilter,  setFieldFilter]  = useState({ field:'', value:'' });
+  const [advFilters,   setAdvFilters]   = useState([]); // [{field, op, value, type}]
   const [ownerFilter,  setOwnerFilter]  = useState('');
+  const [sortField,    setSortField]    = useState('');
+  const [sortDir,      setSortDir]      = useState('asc'); // 'asc' | 'desc'
+  const [columnsOpen,  setColumnsOpen]  = useState(false);
+  const fieldMeta = useMemo(() => getFieldMeta(page), [page]);
+  const DEFAULT_COLUMNS = useMemo(() => {
+    const base = ['id','name'];
+    if (page !== 'products' && page !== 'customers' && fieldMeta.some(f=>f.key==='customer')) base.push('customer');
+    base.push('owner','status');
+    if (fieldMeta.some(f=>f.key==='amount')) base.push('amount');
+    if (fieldMeta.some(f=>f.key==='price'))  base.push('price');
+    return base;
+  }, [page, fieldMeta]);
+  const [visibleColumns, setVisibleColumns] = useState(DEFAULT_COLUMNS);
+
+  // Load persisted column/sort prefs whenever the page changes.
+  useEffect(() => {
+    let cancelled = false;
+    setVisibleColumns(DEFAULT_COLUMNS); setSortField(''); setSortDir('asc');
+    if (fetchListViewPrefs) fetchListViewPrefs(page).then(saved => {
+      if (cancelled || !saved) return;
+      if (saved.columns?.length) setVisibleColumns(saved.columns);
+      if (saved.sort?.field) { setSortField(saved.sort.field); setSortDir(saved.sort.direction||'asc'); }
+    });
+    return () => { cancelled = true; };
+  }, [page]);
   const [selectedRecord, setSelectedRecord] = useState(null);
   const [createOpen,   setCreateOpen]   = useState(false);
   const [searchPanelOpen, setSearchPanelOpen] = useState(false);
@@ -257,11 +346,12 @@ export default function CRMListPage({ page }) {
     if (f.search      !== undefined) setSearch(f.search || '');
     if (f.status      !== undefined) setStatusFilter(f.status || 'All');
     if (f.timePeriod  !== undefined) setTimePeriod(f.timePeriod || '');
-    if (f.fieldFilter !== undefined) setFieldFilter(f.fieldFilter || {field:'',value:''});
+    if (f.advFilters  !== undefined) setAdvFilters(f.advFilters || []);
     if (f.owner       !== undefined) setOwnerFilter(f.owner || '');
+    if (f.sortField   !== undefined) { setSortField(f.sortField||''); setSortDir(f.sortDir||'asc'); }
   };
 
-  const currentFilters = { search, status: statusFilter, timePeriod, fieldFilter, owner: ownerFilter };
+  const currentFilters = { search, status: statusFilter, timePeriod, advFilters, owner: ownerFilter, sortField, sortDir };
 
   const getData = () => {
     switch (page) {
@@ -286,26 +376,64 @@ export default function CRMListPage({ page }) {
     }
     if (statusFilter !== 'All') data = data.filter(r => r.status === statusFilter);
     data = applyTimePeriod(data, timePeriod);
-    if (fieldFilter.field && fieldFilter.value) {
-      data = data.filter(r => String(r[fieldFilter.field]||'').toLowerCase() === fieldFilter.value.toLowerCase());
-    }
+    // Advanced filters — every condition must match (AND), covering any field
+    // on the object (not a single hardcoded field like before).
+    advFilters.forEach(cond => {
+      if (!cond.field) return;
+      const needsValue = !['is_empty','is_not_empty','is_true','is_false'].includes(cond.op);
+      if (needsValue && (cond.value===undefined || cond.value==='')) return;
+      data = data.filter(r => matchesCondition(r, cond));
+    });
     if (ownerFilter) data = data.filter(r => r.owner === ownerFilter || r.owner_id === ownerFilter);
     return data;
-  }, [page, customers, products, leads, opportunities, orders, invoices, contacts, activities, debouncedSearch, statusFilter, timePeriod, fieldFilter, ownerFilter]);
+  }, [page, customers, products, leads, opportunities, orders, invoices, contacts, activities, debouncedSearch, statusFilter, timePeriod, advFilters, ownerFilter]);
+
+  // Sorting — applied after filtering, before pagination.
+  const sorted = useMemo(() => {
+    if (!sortField) return filtered;
+    const meta = fieldMeta.find(f => f.key === sortField);
+    const dir = sortDir === 'desc' ? -1 : 1;
+    return [...filtered].sort((a, b) => {
+      const av = a[sortField], bv = b[sortField];
+      if (av == null && bv == null) return 0;
+      if (av == null) return 1; if (bv == null) return -1;
+      if (meta?.type === 'number') return (Number(av) - Number(bv)) * dir;
+      if (meta?.type === 'date')   return (new Date(av).getTime() - new Date(bv).getTime()) * dir;
+      return String(av).localeCompare(String(bv)) * dir;
+    });
+  }, [filtered, sortField, sortDir, fieldMeta]);
+
+  const toggleSort = (key) => {
+    if (sortField !== key) { setSortField(key); setSortDir('asc'); }
+    else if (sortDir === 'asc') setSortDir('desc');
+    else { setSortField(''); setSortDir('asc'); }
+  };
 
   // Pagination
-  const totalRecords = filtered.length;
+  const totalRecords = sorted.length;
   const totalPages   = Math.max(1, Math.ceil(totalRecords / pageSize));
   const safePage     = Math.min(currentPage, totalPages);
-  const pagedRecords = filtered.slice((safePage - 1) * pageSize, safePage * pageSize);
+  const pagedRecords = sorted.slice((safePage - 1) * pageSize, safePage * pageSize);
 
   const pageLabel    = getPageLabel(page);
-  const hasAmount    = ['leads','opportunities','orders','invoices'].includes(page);
-  const hasPrice     = page === 'products';
-  const objFieldDefs = FIELD_FILTERS[page] || [];
-  const activeCount  = [search, statusFilter!=='All', timePeriod, fieldFilter.value, ownerFilter].filter(Boolean).length;
-  const clearFilters = () => { setSearch(''); setStatusFilter('All'); setTimePeriod(''); setFieldFilter({field:'',value:''}); setOwnerFilter(''); };
+  const activeCount  = [search, statusFilter!=='All', timePeriod, advFilters.some(c=>c.field), ownerFilter].filter(Boolean).length;
+  const clearFilters = () => { setSearch(''); setStatusFilter('All'); setTimePeriod(''); setAdvFilters([]); setOwnerFilter(''); };
   const getSecondary = (r) => r.customer || r.company || r.category || r.email || '';
+  const addFilterRow = () => { const f = fieldMeta.find(f=>f.key!=='id')||fieldMeta[0]; setAdvFilters(p=>[...p,{field:f.key,type:f.type,op:OPERATORS[f.type][0].v,value:''}]); };
+  const updateFilterRow = (idx, patch) => setAdvFilters(p => p.map((c,i) => i===idx ? {...c,...patch} : c));
+  const removeFilterRow = (idx) => setAdvFilters(p => p.filter((_,i) => i!==idx));
+  const persistColumns = (cols, sf=sortField, sd=sortDir) => { setVisibleColumns(cols); if (saveListViewPrefs) saveListViewPrefs(page, { columns: cols, sort: { field: sf, direction: sd } }); };
+  const toggleColumn = (key) => persistColumns(visibleColumns.includes(key) ? visibleColumns.filter(c=>c!==key) : [...visibleColumns, key]);
+  const moveColumn = (idx, dir) => { const cols=[...visibleColumns]; const j=idx+dir; if (j<0||j>=cols.length) return; [cols[idx],cols[j]]=[cols[j],cols[idx]]; persistColumns(cols); };
+  const fmtCell = (r, meta) => {
+    const v = r[meta.key];
+    if (meta.key==='id') return r.displayNumber ? formatDisplayNumber(PAGE_DISPLAY_PREFIX[page]||'REC', r.displayNumber) : (r.id||'');
+    if (meta.type==='date')    return v ? formatDate(v) : '—';
+    if (meta.type==='boolean') return v ? 'Yes' : 'No';
+    if (['amount','price','cost'].includes(meta.key)) return v!=null ? formatCurrency(Number(v), appPreferences?.default_currency) : '—';
+    if (meta.key==='status') return <StatusBadge status={v}/>;
+    return v!=null && v!=='' ? String(v) : '—';
+  };
 
   return (
     <div className="space-y-4">
@@ -331,7 +459,7 @@ export default function CRMListPage({ page }) {
 
       {/* Filters */}
       <div className="bg-white rounded-2xl border border-blue-100 p-4 shadow-sm">
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
           <input value={search} onChange={e=>setSearch(e.target.value)} placeholder={`Search ${page}…`}
             className="border border-blue-200 rounded-xl px-4 py-2.5 text-sm text-[#0F172A] focus:outline-none focus:ring-2 focus:ring-blue-300 placeholder:text-gray-400"/>
           <select value={statusFilter} onChange={e=>{setStatusFilter(e.target.value);setCurrentPage(1);}} className="border border-blue-200 rounded-xl px-4 py-2.5 text-sm text-[#0F172A] bg-white focus:outline-none focus:ring-2 focus:ring-blue-300">
@@ -341,30 +469,95 @@ export default function CRMListPage({ page }) {
           <select value={timePeriod} onChange={e=>setTimePeriod(e.target.value)} className="border border-blue-200 rounded-xl px-4 py-2.5 text-sm text-[#0F172A] bg-white focus:outline-none focus:ring-2 focus:ring-blue-300">
             {TIME_PERIODS.map(t=><option key={t.v} value={t.v}>{t.l}</option>)}
           </select>
-          {objFieldDefs.length > 0 && (
-            <div className="flex gap-2">
-              <select value={fieldFilter.field} onChange={e=>setFieldFilter(f=>({...f,field:e.target.value,value:''}))} className="flex-1 border border-blue-200 rounded-xl px-3 py-2.5 text-sm text-[#0F172A] bg-white focus:outline-none focus:ring-2 focus:ring-blue-300">
-                <option value="">All Fields</option>
-                {objFieldDefs.map(f=><option key={f.v} value={f.v}>{f.l}</option>)}
-              </select>
-              {fieldFilter.field && <input value={fieldFilter.value} onChange={e=>setFieldFilter(f=>({...f,value:e.target.value}))} placeholder="Value" className="flex-1 border border-blue-200 rounded-xl px-3 py-2.5 text-sm text-[#0F172A] focus:outline-none focus:ring-2 focus:ring-blue-300 placeholder:text-gray-400"/>}
-            </div>
-          )}
           <select value={ownerFilter} onChange={e=>setOwnerFilter(e.target.value)} className="border border-blue-200 rounded-xl px-4 py-2.5 text-sm text-[#0F172A] bg-white focus:outline-none focus:ring-2 focus:ring-blue-300">
             <option value="">All Owners</option>
             {enterpriseUsers.map(u=><option key={u.id} value={u.email}>{u.first_name} {u.last_name}</option>)}
           </select>
         </div>
+
+        {/* Advanced filters — any field on the object, AND-combined */}
+        {advFilters.length > 0 && (
+          <div className="mt-3 pt-3 border-t border-blue-50 space-y-2">
+            {advFilters.map((cond, idx) => {
+              const meta = fieldMeta.find(f=>f.key===cond.field) || fieldMeta[0];
+              const needsValue = !['is_empty','is_not_empty','is_true','is_false'].includes(cond.op);
+              return (
+                <div key={idx} className="flex flex-wrap gap-2 items-center bg-blue-50/50 rounded-xl p-2">
+                  <select value={cond.field} onChange={e=>{const m=fieldMeta.find(f=>f.key===e.target.value);updateFilterRow(idx,{field:e.target.value,type:m.type,op:OPERATORS[m.type][0].v,value:''});}}
+                    className="border border-blue-200 rounded-lg px-2 py-1.5 text-xs text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-blue-400">
+                    {fieldMeta.filter(f=>f.key!=='id').map(f=><option key={f.key} value={f.key}>{f.label}</option>)}
+                  </select>
+                  <select value={cond.op} onChange={e=>updateFilterRow(idx,{op:e.target.value})}
+                    className="border border-blue-200 rounded-lg px-2 py-1.5 text-xs text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-blue-400">
+                    {OPERATORS[meta.type].map(o=><option key={o.v} value={o.v}>{o.l}</option>)}
+                  </select>
+                  {needsValue && (
+                    meta.type==='select'
+                      ? <select value={cond.value} onChange={e=>updateFilterRow(idx,{value:e.target.value})} className="flex-1 min-w-[100px] border border-blue-200 rounded-lg px-2 py-1.5 text-xs text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-blue-400">
+                          <option value="">Select…</option>
+                          {getStatusOptions(page).map(s=><option key={s} value={s}>{s}</option>)}
+                        </select>
+                      : <input type={meta.type==='date'?'date':meta.type==='number'?'number':'text'} value={cond.value} onChange={e=>updateFilterRow(idx,{value:e.target.value})} placeholder="Value"
+                          className="flex-1 min-w-[100px] border border-blue-200 rounded-lg px-2 py-1.5 text-xs text-[#0F172A] focus:outline-none focus:ring-1 focus:ring-blue-400 placeholder:text-gray-400"/>
+                  )}
+                  <button onClick={()=>removeFilterRow(idx)} className="w-6 h-6 rounded-full bg-red-100 hover:bg-red-200 text-red-500 text-xs font-bold flex items-center justify-center flex-shrink-0">✕</button>
+                </div>
+              );
+            })}
+          </div>
+        )}
+        <div className="flex items-center justify-between mt-3 pt-3 border-t border-blue-50">
+          <button onClick={addFilterRow} className="text-xs font-semibold text-blue-600 hover:underline flex items-center gap-1">+ Add Filter</button>
+        </div>
         <div className="flex items-center justify-between mt-3 pt-3 border-t border-blue-50">
           <div className="text-xs text-blue-600 font-medium">{activeCount > 0 ? `${activeCount} filter${activeCount>1?'s':''} active` : ''}</div>
-          <div className="relative">
-            <button onClick={()=>setSearchPanelOpen(!searchPanelOpen)} className={`flex items-center gap-2 text-sm font-semibold px-4 py-2 rounded-xl transition-all ${searchPanelOpen?'bg-[#0F172A] text-white':'bg-blue-100 text-blue-700 hover:bg-blue-200'}`}>
-              🔖 Saved Searches
-              {savedSearches.filter(s=>s.object_type===page).length > 0 && (
-                <span className={`text-xs font-bold px-1.5 py-0.5 rounded-full ${searchPanelOpen?'bg-white/20 text-white':'bg-blue-200 text-blue-700'}`}>{savedSearches.filter(s=>s.object_type===page).length}</span>
+          <div className="flex items-center gap-2">
+            <div className="relative">
+              <button onClick={()=>setColumnsOpen(!columnsOpen)} className={`flex items-center gap-2 text-sm font-semibold px-4 py-2 rounded-xl transition-all ${columnsOpen?'bg-[#0F172A] text-white':'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>
+                ⚙️ Columns <span className={`text-xs font-bold px-1.5 py-0.5 rounded-full ${columnsOpen?'bg-white/20 text-white':'bg-gray-200 text-gray-600'}`}>{visibleColumns.length}</span>
+              </button>
+              {columnsOpen && (
+                <div className="absolute right-0 top-12 w-80 bg-white rounded-[24px] shadow-2xl border border-blue-100 z-50 overflow-hidden" style={{maxHeight:'70vh',overflowY:'auto'}}>
+                  <div className="bg-gradient-to-r from-[#0F172A] to-blue-900 px-5 py-3 flex items-center justify-between">
+                    <h3 className="text-white font-bold text-sm">Customize Columns</h3>
+                    <button onClick={()=>setColumnsOpen(false)} className="text-white/70 hover:text-white">✕</button>
+                  </div>
+                  <div className="p-3">
+                    <p className="text-xs text-gray-400 px-2 pb-2">Shown, in order — use ↑↓ to reorder.</p>
+                    {visibleColumns.map((key, idx) => {
+                      const meta = fieldMeta.find(f=>f.key===key);
+                      if (!meta) return null;
+                      return (
+                        <div key={key} className="flex items-center gap-2 px-2 py-1.5 hover:bg-blue-50 rounded-xl">
+                          <span className="flex-1 text-sm text-[#0F172A]">{meta.label}</span>
+                          <button onClick={()=>moveColumn(idx,-1)} disabled={idx===0} className="w-6 h-6 rounded text-gray-400 hover:text-[#0F172A] disabled:opacity-20 text-xs">▲</button>
+                          <button onClick={()=>moveColumn(idx,1)} disabled={idx===visibleColumns.length-1} className="w-6 h-6 rounded text-gray-400 hover:text-[#0F172A] disabled:opacity-20 text-xs">▼</button>
+                          <button onClick={()=>toggleColumn(key)} className="w-6 h-6 rounded-full bg-red-100 hover:bg-red-200 text-red-500 text-xs font-bold flex items-center justify-center">✕</button>
+                        </div>
+                      );
+                    })}
+                    <div className="border-t border-gray-100 mt-2 pt-2">
+                      <p className="text-xs text-gray-400 px-2 pb-1">Add a column</p>
+                      {fieldMeta.filter(f=>!visibleColumns.includes(f.key)).map(f => (
+                        <button key={f.key} onClick={()=>toggleColumn(f.key)} className="w-full text-left px-2 py-1.5 text-sm text-blue-600 hover:bg-blue-50 rounded-xl">+ {f.label}</button>
+                      ))}
+                    </div>
+                    <div className="border-t border-gray-100 mt-2 pt-2 px-2">
+                      <button onClick={()=>persistColumns(DEFAULT_COLUMNS)} className="text-xs text-gray-400 hover:text-[#0F172A]">Reset to default</button>
+                    </div>
+                  </div>
+                </div>
               )}
-            </button>
-            {searchPanelOpen && <SavedSearchPanel page={page} currentFilters={currentFilters} onApply={applyFilters} onClose={()=>setSearchPanelOpen(false)}/>}
+            </div>
+            <div className="relative">
+              <button onClick={()=>setSearchPanelOpen(!searchPanelOpen)} className={`flex items-center gap-2 text-sm font-semibold px-4 py-2 rounded-xl transition-all ${searchPanelOpen?'bg-[#0F172A] text-white':'bg-blue-100 text-blue-700 hover:bg-blue-200'}`}>
+                🔖 Saved Searches
+                {savedSearches.filter(s=>s.object_type===page).length > 0 && (
+                  <span className={`text-xs font-bold px-1.5 py-0.5 rounded-full ${searchPanelOpen?'bg-white/20 text-white':'bg-blue-200 text-blue-700'}`}>{savedSearches.filter(s=>s.object_type===page).length}</span>
+                )}
+              </button>
+              {searchPanelOpen && <SavedSearchPanel page={page} currentFilters={currentFilters} onApply={applyFilters} onClose={()=>setSearchPanelOpen(false)}/>}
+            </div>
           </div>
         </div>
       </div>
@@ -375,20 +568,23 @@ export default function CRMListPage({ page }) {
           <table className="w-full">
             <thead className="bg-gradient-to-r from-[#0F172A] to-blue-900 text-white">
               <tr>
-                <th className="px-5 py-3.5 text-left text-sm font-semibold">ID</th>
-                <th className="px-5 py-3.5 text-left text-sm font-semibold">Name</th>
-                {page !== 'products' && page !== 'customers' && <th className="px-5 py-3.5 text-left text-sm font-semibold">Customer</th>}
-                <th className="px-5 py-3.5 text-left text-sm font-semibold">Owner</th>
-                <th className="px-5 py-3.5 text-left text-sm font-semibold">Status</th>
-                {hasAmount && <th className="px-5 py-3.5 text-right text-sm font-semibold">Amount</th>}
-                {hasPrice  && <th className="px-5 py-3.5 text-right text-sm font-semibold">Price</th>}
+                {visibleColumns.map(key => {
+                  const meta = fieldMeta.find(f=>f.key===key);
+                  if (!meta) return null;
+                  const align = ['amount','price','cost'].includes(key) ? 'text-right' : 'text-left';
+                  return (
+                    <th key={key} onClick={()=>toggleSort(key)} className={`px-5 py-3.5 ${align} text-sm font-semibold cursor-pointer select-none hover:bg-white/10 whitespace-nowrap`}>
+                      {meta.label} {sortField===key && (sortDir==='asc' ? '▲' : '▼')}
+                    </th>
+                  );
+                })}
                 <th className="px-5 py-3.5 text-center text-sm font-semibold w-28">Actions</th>
               </tr>
             </thead>
             <tbody>
               {filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="px-5 py-16 text-center">
+                  <td colSpan={visibleColumns.length+1} className="px-5 py-16 text-center">
                     <div className="text-5xl mb-3">🔍</div>
                     <div className="font-bold text-[#0F172A] text-lg">{activeCount > 0 ? 'No matching records' : `No ${page} yet`}</div>
                     <div className="text-gray-400 text-sm mt-1">{activeCount > 0 ? 'Try adjusting your filters.' : `Create your first ${pageLabel.toLowerCase()}.`}</div>
@@ -399,30 +595,39 @@ export default function CRMListPage({ page }) {
                 const ownerUser = enterpriseUsers.find(u => u.email === record.owner || u.id === record.owner_id);
                 return (
                   <tr key={record.id} className="border-t border-blue-50 hover:bg-blue-50/40 transition-all">
-                    <td className="px-5 py-3.5">
-                      <span className="text-xs font-mono font-bold text-blue-700 bg-blue-50 px-2.5 py-1 rounded-full border border-blue-100">
-                        {record.displayNumber ? formatDisplayNumber(PAGE_DISPLAY_PREFIX[page]||'REC', record.displayNumber) : record.id}
-                      </span>
-                    </td>
-                    <td className="px-5 py-3.5">
-                      {canDo('view')
-                        ? <button onClick={()=>setSelectedRecord(record)} className="font-semibold text-[#0F172A] hover:text-blue-700 hover:underline text-sm text-left">{record.name||record.subject||'—'}</button>
-                        : <span className="font-semibold text-[#0F172A] text-sm">{record.name||record.subject||'—'}</span>
-                      }
-                    </td>
-                    {page !== 'products' && page !== 'customers' && <td className="px-5 py-3.5 text-sm text-gray-600">{record.customer||record.email||'—'}</td>}
-                    <td className="px-5 py-3.5">
-                      {ownerUser
-                        ? <div className="flex items-center gap-2">
-                            <div className="w-7 h-7 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center text-xs font-bold flex-shrink-0">{ownerUser.first_name?.charAt(0)}{ownerUser.last_name?.charAt(0)}</div>
-                            <span className="text-sm text-[#0F172A] font-medium">{ownerUser.first_name} {ownerUser.last_name}</span>
-                          </div>
-                        : record.owner ? <span className="text-sm text-gray-600">{record.owner}</span> : <span className="text-gray-300 text-sm">—</span>
-                      }
-                    </td>
-                    <td className="px-5 py-3.5"><StatusBadge status={record.status}/></td>
-                    {hasAmount && <td className="px-5 py-3.5 text-right text-sm font-semibold text-[#0F172A]">{formatCurrency(record.amount||0)}</td>}
-                    {hasPrice  && <td className="px-5 py-3.5 text-right text-sm font-semibold text-[#0F172A]">{formatCurrency(record.price||0)}</td>}
+                    {visibleColumns.map(key => {
+                      const meta = fieldMeta.find(f=>f.key===key);
+                      if (!meta) return null;
+                      if (key === 'id') return (
+                        <td key={key} className="px-5 py-3.5">
+                          <span className="text-xs font-mono font-bold text-blue-700 bg-blue-50 px-2.5 py-1 rounded-full border border-blue-100">
+                            {record.displayNumber ? formatDisplayNumber(PAGE_DISPLAY_PREFIX[page]||'REC', record.displayNumber) : record.id}
+                          </span>
+                        </td>
+                      );
+                      if (key === 'name') return (
+                        <td key={key} className="px-5 py-3.5">
+                          {canDo('view')
+                            ? <button onClick={()=>setSelectedRecord(record)} className="font-semibold text-[#0F172A] hover:text-blue-700 hover:underline text-sm text-left">{record.name||record.subject||'—'}</button>
+                            : <span className="font-semibold text-[#0F172A] text-sm">{record.name||record.subject||'—'}</span>
+                          }
+                        </td>
+                      );
+                      if (key === 'owner') return (
+                        <td key={key} className="px-5 py-3.5">
+                          {ownerUser
+                            ? <div className="flex items-center gap-2">
+                                <div className="w-7 h-7 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center text-xs font-bold flex-shrink-0">{ownerUser.first_name?.charAt(0)}{ownerUser.last_name?.charAt(0)}</div>
+                                <span className="text-sm text-[#0F172A] font-medium">{ownerUser.first_name} {ownerUser.last_name}</span>
+                              </div>
+                            : record.owner ? <span className="text-sm text-gray-600">{record.owner}</span> : <span className="text-gray-300 text-sm">—</span>
+                          }
+                        </td>
+                      );
+                      const align = ['amount','price','cost'].includes(key) ? 'text-right' : 'text-left';
+                      const weight = ['amount','price','cost'].includes(key) ? 'font-semibold text-[#0F172A]' : 'text-gray-600';
+                      return <td key={key} className={`px-5 py-3.5 text-sm ${align} ${weight}`}>{fmtCell(record, meta)}</td>;
+                    })}
                     <td className="px-5 py-3.5">
                       <div className="relative flex justify-center" data-menu-container>
                         <button onClick={()=>setMenuOpenId(menuOpenId===record.id?null:record.id)} className="w-9 h-9 rounded-full bg-[#0F172A] text-white hover:bg-blue-800 flex items-center justify-center text-lg font-bold shadow transition-all">⋮</button>
@@ -467,7 +672,7 @@ export default function CRMListPage({ page }) {
             <div className="flex items-center gap-3">
               <span className="text-xs text-gray-400">
                 Showing <strong className="text-[#0F172A]">{(safePage-1)*pageSize+1}–{Math.min(safePage*pageSize,totalRecords)}</strong> of <strong className="text-[#0F172A]">{totalRecords}</strong> {pageLabel.toLowerCase()}s
-                {serverTotal !== null && !debouncedSearch.trim() && statusFilter==='All' && !timePeriod && !fieldFilter.field && !ownerFilter && serverTotal !== totalRecords && (
+                {serverTotal !== null && !debouncedSearch.trim() && statusFilter==='All' && !timePeriod && !advFilters.some(c=>c.field) && !ownerFilter && serverTotal !== totalRecords && (
                   <span className="text-gray-300"> ({serverTotal.toLocaleString()} total)</span>
                 )}
               </span>

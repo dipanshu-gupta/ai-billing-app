@@ -132,39 +132,40 @@ export default function SecurityConsole() {
 
   useEffect(() => { fetchRoles(); fetchPermissions(); }, []);
 
+  const loadAllPerms = async () => {
+    if (!roles.length || !supabase) return;
+    // Batch load ALL role_permissions in 2 queries (not N+1)
+    const allIds = roles.map(r => r.id);
+    const { data: rpAll } = await supabase
+      .from('role_permissions')
+      .select('role_id, permission_id')
+      .in('role_id', allIds);
+    if (!rpAll?.length) {
+      const empty: Record<string,string[]> = {};
+      allIds.forEach(id => { empty[id] = []; });
+      setRolePermsMap(empty);
+      return;
+    }
+    const permIds = [...new Set(rpAll.map(x => x.permission_id))];
+    const { data: permData } = await supabase
+      .from('permissions').select('id, permission_code').in('id', permIds);
+    const permCodeMap: Record<string,string> = {};
+    (permData || []).forEach((p: any) => { permCodeMap[p.id] = p.permission_code; });
+
+    // Build roleId → permission codes map
+    const map: Record<string, string[]> = {};
+    allIds.forEach(id => { map[id] = []; });
+    rpAll.forEach((rp: any) => {
+      const code = permCodeMap[rp.permission_id];
+      if (code && map[rp.role_id]) map[rp.role_id].push(code);
+    });
+    setRolePermsMap(map);
+  };
+
   // Load permissions for all roles for display
   // Use role IDs as stable dependency instead of full roles array
   const roleIds = roles.map(r => r.id).join(',');
   useEffect(() => {
-    if (!roles.length || !supabase) return;
-    const loadAllPerms = async () => {
-      // Batch load ALL role_permissions in 2 queries (not N+1)
-      const allIds = roles.map(r => r.id);
-      const { data: rpAll } = await supabase
-        .from('role_permissions')
-        .select('role_id, permission_id')
-        .in('role_id', allIds);
-      if (!rpAll?.length) {
-        const empty: Record<string,string[]> = {};
-        allIds.forEach(id => { empty[id] = []; });
-        setRolePermsMap(empty);
-        return;
-      }
-      const permIds = [...new Set(rpAll.map(x => x.permission_id))];
-      const { data: permData } = await supabase
-        .from('permissions').select('id, permission_code').in('id', permIds);
-      const permCodeMap: Record<string,string> = {};
-      (permData || []).forEach((p: any) => { permCodeMap[p.id] = p.permission_code; });
-
-      // Build roleId → permission codes map
-      const map: Record<string, string[]> = {};
-      allIds.forEach(id => { map[id] = []; });
-      rpAll.forEach((rp: any) => {
-        const code = permCodeMap[rp.permission_id];
-        if (code && map[rp.role_id]) map[rp.role_id].push(code);
-      });
-      setRolePermsMap(map);
-    };
     loadAllPerms();
   }, [roleIds]);
 
@@ -269,6 +270,7 @@ export default function SecurityConsole() {
       }
 
       await fetchRoles();
+      await loadAllPerms();
       showToast(editingRole ? '✓ Role updated' : '✓ Role created');
       setTab('roles');
     } catch(e) {
@@ -342,11 +344,36 @@ export default function SecurityConsole() {
   };
 
   // Permission selection helpers
-  const togglePerm = (code) => setSelectedPerms(p => p.includes(code) ? p.filter(x=>x!==code) : [...p, code]);
+  const togglePerm = (code) => {
+    if (code === '__admin__') {
+      // Super Admin (All Access) should mean exactly that — select or
+      // deselect every permission together, not just this one flag. This is
+      // deliberate defense-in-depth: some permission checks elsewhere in the
+      // app may check a specific code directly rather than going through the
+      // centralized __admin__-aware hasPermission() helper, so a role that
+      // only carries the bare __admin__ flag could still be missing access
+      // to those specific paths. It also makes "this role has full access"
+      // self-evident when browsing the permission list later, rather than
+      // depending on one easy-to-miss checkbox.
+      setSelectedPerms(p => {
+        const willEnable = !p.includes('__admin__');
+        return willEnable ? FULL_PERMISSIONS.map(x => x.code) : [];
+      });
+      return;
+    }
+    setSelectedPerms(p => p.includes(code) ? p.filter(x=>x!==code) : [...p, code]);
+  };
 
   const selectAllInGroup = (groupName) => {
     const groupCodes = FULL_PERMISSIONS.filter(p => p.group === groupName).map(p => p.code);
     const allSelected = groupCodes.every(c => selectedPerms.includes(c));
+    // If this group includes the Super Admin flag, route through the same
+    // "select everything" behavior as the individual checkbox (see togglePerm)
+    // rather than only selecting this group's own codes.
+    if (groupCodes.includes('__admin__')) {
+      setSelectedPerms(allSelected ? [] : FULL_PERMISSIONS.map(x => x.code));
+      return;
+    }
     if (allSelected) {
       setSelectedPerms(p => p.filter(c => !groupCodes.includes(c)));
     } else {

@@ -3,6 +3,7 @@
 
 import { useState, useMemo } from 'react';
 import { useApp } from '@/context/AppContext';
+import { formatCurrency } from '@/lib/utils';
 import {
   BarChart, Bar, LineChart, Line, PieChart, Pie, Cell,
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip,
@@ -32,8 +33,19 @@ const filterByRange = (items, range) => {
   return items.filter(r => r.created_at && new Date(r.created_at) >= start);
 };
 
-const fmt = n => new Intl.NumberFormat('en-IN',{style:'currency',currency:'INR',maximumFractionDigits:0}).format(n||0);
-const fmtShort = n => n >= 10000000 ? `₹${(n/10000000).toFixed(1)}Cr` : n >= 100000 ? `₹${(n/100000).toFixed(1)}L` : fmt(n);
+const fmt = n => formatCurrency(n||0);
+// Lakhs/Crores abbreviation only makes sense for INR — for any other tenant
+// currency, use a generic K/M abbreviation with the correct currency symbol
+// instead of hardcoding ₹ (which was wrong for every non-INR tenant).
+const fmtShort = n => {
+  const currency = (typeof window !== 'undefined' && (window as any).__bp_prefs?.default_currency) || 'INR';
+  if (currency === 'INR') {
+    return n >= 10000000 ? `₹${(n/10000000).toFixed(1)}Cr` : n >= 100000 ? `₹${(n/100000).toFixed(1)}L` : fmt(n);
+  }
+  if (n >= 1000000) return formatCurrency(0).replace(/[\d.,]+/, '').trim() + (n/1000000).toFixed(1) + 'M';
+  if (n >= 1000)    return formatCurrency(0).replace(/[\d.,]+/, '').trim() + (n/1000).toFixed(1) + 'K';
+  return fmt(n);
+};
 
 export default function DashboardPage() {
   const { leads, opportunities, customers, orders, invoices, activities, quotations, contacts, currentUser, appPreferences , appearance } = useApp();

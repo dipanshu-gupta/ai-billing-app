@@ -3,11 +3,10 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useApp } from '@/context/AppContext';
 import { useTenant } from '@/context/TenantContext';
-import { getStatusColor } from '@/lib/utils';
+import { getStatusColor, formatCurrency } from '@/lib/utils';
 
 // ─── Shared helpers ────────────────────────────────────────────────────────────
-const fmt = (n: any) =>
-  new Intl.NumberFormat('en-IN', { style:'currency', currency:'INR', maximumFractionDigits:0 }).format(n||0);
+const fmt = (n: any) => formatCurrency(n||0);
 
 const Pill = ({ status }: { status: string }) => (
   <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold border ${getStatusColor(status)}`}>

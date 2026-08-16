@@ -1210,7 +1210,17 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
 
   const saveOrganization = async (data: any, editingId?: string) => {
     if (!supabase) return;
-    const payload = { ...data, ...(tenantId ? { tenant_id: tenantId } : {}) };
+    const name = (data.name||'').trim();
+    if (!name) { showAlert('Organization Name is required.', { variant:'warning' }); return; }
+    if (!/[a-zA-Z0-9]/.test(name)) { showAlert('Organization Name must contain at least one letter or number — special characters alone are not a valid name.', { variant:'warning' }); return; }
+    if (data.website && data.website.trim()) {
+      const site = data.website.trim();
+      // Accept bare domains (example.com) and full URLs (https://example.com) —
+      // reject obvious junk like "asdf" or "@#$%" with no domain shape at all.
+      const domainLike = /^(https?:\/\/)?([a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}(\/.*)?$/;
+      if (!domainLike.test(site)) { showAlert('Website doesn\'t look like a valid domain or URL (e.g. example.com or https://example.com).', { variant:'warning' }); return; }
+    }
+    const payload = { ...data, name, ...(tenantId ? { tenant_id: tenantId } : {}) };
     if (editingId) {
       const { error } = await supabase.from('organizations').update(payload).eq('id', editingId);
       if (error) { showAlert('Failed to update: ' + error.message); return; }
@@ -1223,7 +1233,20 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
 
   const saveBusinessUnit = async (data: any, editingId?: string) => {
     if (!supabase) return;
-    const payload = { ...data, ...(tenantId ? { tenant_id: tenantId } : {}) };
+    const name = (data.name||'').trim();
+    if (!name) { showAlert('Business Unit Name is required.', { variant:'warning' }); return; }
+    if (!/[a-zA-Z0-9]/.test(name)) { showAlert('Business Unit Name must contain at least one letter or number — special characters alone are not a valid name.', { variant:'warning' }); return; }
+    // Warn (don't silently allow) if the selected parent org is deactivated —
+    // the record can still be created if the admin confirms, but this makes
+    // an otherwise-invisible state an explicit, deliberate choice.
+    if (data.organization_id) {
+      const parentOrg = organizations.find(o => o.id === data.organization_id);
+      if (parentOrg && parentOrg.status !== 'Active') {
+        const ok = await showConfirm(`"${parentOrg.name}" is currently Inactive. Business units are usually only added to active organizations. Continue anyway?`, { title:'Inactive Organization', variant:'warning', confirmLabel:'Continue Anyway' });
+        if (!ok) return;
+      }
+    }
+    const payload = { ...data, name, ...(tenantId ? { tenant_id: tenantId } : {}) };
     if (editingId) {
       const { error } = await supabase.from('business_units').update(payload).eq('id', editingId);
       if (error) { showAlert('Failed to update: ' + error.message); return; }
@@ -1246,6 +1269,17 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
       return out;
     };
     if (editingId) {
+      // Duplicate email guard on edit too — changing an existing user's email
+      // to one already used by someone else was previously unguarded (only
+      // new-user creation checked this), and would otherwise surface as a
+      // cryptic DB constraint error rather than a clear message.
+      if (data.email) {
+        const { data: existing } = await tScope(supabase.from('enterprise_users').select('id,email')).ilike('email', data.email).neq('id', editingId).limit(1);
+        if (existing && existing.length) {
+          showAlert(`A user with email "${data.email}" already exists in this workspace. Please use a different email.`);
+          return;
+        }
+      }
       const updatePayload = { ...normaliseUser(data), ...(tenantId ? { tenant_id: tenantId } : {}) };
       const { error } = await supabase.from('enterprise_users').update(updatePayload).eq('id', editingId);
       if (error) { showAlert('Failed to update user: ' + error.message); return; }
@@ -1366,6 +1400,28 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
 
   const deleteAdminRecord = async (table: string, id: string): Promise<boolean> => {
     if (!supabase) return false;
+    // Referential-integrity guard: block deletion (rather than silently
+    // orphaning dependent records) when other records still point at this
+    // one. Deactivating (status → Inactive) remains available as the
+    // non-destructive alternative when a record is still referenced.
+    if (table === 'organizations') {
+      const buCount = businessUnits.filter(b => b.organization_id === id).length;
+      const userCount = enterpriseUsers.filter(u => u.organization_id === id).length;
+      if (buCount > 0 || userCount > 0) {
+        const parts = [];
+        if (buCount) parts.push(`${buCount} business unit${buCount>1?'s':''}`);
+        if (userCount) parts.push(`${userCount} user${userCount>1?'s':''}`);
+        showAlert(`Can't delete this organization — it still has ${parts.join(' and ')} assigned to it. Reassign or remove those first, or deactivate the organization instead.`, { variant:'danger', title:'Organization In Use' });
+        return false;
+      }
+    }
+    if (table === 'business_units') {
+      const userCount = enterpriseUsers.filter(u => u.business_unit_id === id).length;
+      if (userCount > 0) {
+        showAlert(`Can't delete this business unit — it still has ${userCount} user${userCount>1?'s':''} assigned to it. Reassign those users first, or deactivate the business unit instead.`, { variant:'danger', title:'Business Unit In Use' });
+        return false;
+      }
+    }
     if (!(await showConfirm('Are you sure you want to delete this record?', { variant:'danger', confirmLabel:'Delete' }))) return false;
     const { error } = await supabase.from(table).delete().eq('id', id);
     if (error) { showAlert(error.message); return false; }
@@ -2224,20 +2280,27 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
         : null;
 
       if (assignee) {
-        // Actually update owner on the record
-        const table   = getObjectTable(objectType);
-        const idField = getObjectIdField(objectType);
-        await supabase.from(table)
-          .update({ owner: assignee.email, owner_id: assignee.id })
-          .eq(idField, recordId);
+        // Only act if this is a genuine reassignment — without this guard,
+        // running assignment rules on every edit (not just create) would
+        // re-send an "assigned to you" notification on every single save
+        // for as long as the rule's condition stays true, even for edits
+        // that have nothing to do with the assignment.
+        const alreadyAssigned = recordData.owner_id === assignee.id || recordData.owner === assignee.email;
+        if (!alreadyAssigned) {
+          const table   = getObjectTable(objectType);
+          const idField = getObjectIdField(objectType);
+          await supabase.from(table)
+            .update({ owner: assignee.email, owner_id: assignee.id })
+            .eq(idField, recordId);
 
-        await createNotification({
-          recipientEmail: assignee.email,
-          type: 'assignment',
-          title: `New ${objectType} Assigned to You`,
-          body: `Record "${recordData.name || recordId}" has been auto-assigned to you.`,
-          recordType: objectType, recordId,
-        });
+          await createNotification({
+            recipientEmail: assignee.email,
+            type: 'assignment',
+            title: `New ${objectType} Assigned to You`,
+            body: `Record "${recordData.name || recordId}" has been auto-assigned to you.`,
+            recordType: objectType, recordId,
+          });
+        }
       }
       if (group) {
         // Notify all group members
@@ -2509,7 +2572,14 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     try {
       await Promise.all([
         runWorkflowRules(objectType, recordId, recordData, event),
-        event === 'on_create' ? runAssignmentRules(objectType, recordId, recordData) : Promise.resolve(),
+        // Assignment rules now fire on update too (e.g. reassign owner when
+        // status changes to "Discontinued"), not just on create — the
+        // alreadyAssigned guard in runAssignmentRules prevents this from
+        // re-sending a notification on every unrelated edit.
+        event !== 'on_delete' ? runAssignmentRules(objectType, recordId, recordData) : Promise.resolve(),
+        // SLA policies intentionally stay create-only — they track time
+        // elapsed since the record was first created, so re-running them on
+        // every edit would incorrectly reset the response/resolution clock.
         event === 'on_create' ? runSLAPolicies(objectType, recordId, recordData) : Promise.resolve(),
       ]);
     } catch(e: any) {
@@ -2597,7 +2667,7 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
   const _cp = (p) => ({ crm_enabled:p?.crm_enabled??true, cpq_enabled:p?.cpq_enabled??true, b2c_mode:p?.b2c_mode??false, default_currency:p?.default_currency||'INR', date_format:p?.date_format||'DD/MM/YYYY', fiscal_year_start:p?.fiscal_year_start||'April', global_search_enabled:p?.global_search_enabled??false, business_mode:(p?.b2c_mode??false)?'B2C':'B2B' });
   // ─── Appearance ───────────────────────────────────────────────────────────
   const _APP_KEY = tenantId ? `bp_appearance_${tenantId}` : 'bp_appearance';
-  const _DEF_APP = { company_logo_url:'', company_name:'Umbrella Suite', theme:'navy', language:'en', font:'geist' };
+  const _DEF_APP = { company_logo_url:'', company_name:'Umbrella Suite', theme:'navy', language:'en', font:'geist', font_size:'md', font_weight:'normal' };
 
   const THEME_COLORS: Record<string,any> = {
     navy:    { sidebar:'#0F172A', accent:'#3B82F6', to:'#1e3a8a' },
@@ -2674,19 +2744,26 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
         theme:        clean.theme        || 'navy',
         language:     clean.language     || 'en',
         font:         clean.font         || 'geist',
+        font_size:    clean.font_size    || 'md',
+        font_weight:  clean.font_weight  || 'normal',
         updated_at:   new Date().toISOString(),
         ...(effectiveTenantId ? { tenant_id: effectiveTenantId } : {}),
       };
-      // Only update logo_url if explicitly provided
-      if (clean.company_logo_url) savePayload.company_logo_url = clean.company_logo_url;
+      // Only touch logo_url if the caller explicitly included it in this save
+      // call — but an explicit empty string (removal) must still be saved,
+      // not silently dropped. Checking the raw `data` param (not `clean`,
+      // which always has a value after the _DEF_APP spread) is what lets us
+      // tell "omitted" apart from "explicitly cleared".
+      if ('company_logo_url' in data) savePayload.company_logo_url = clean.company_logo_url;
       if (row?.id) {
         await supabase.from('appearance').update(savePayload).eq('id', row.id);
       } else {
         await supabase.from('appearance').insert([savePayload]);
       }
-      // Sync logo to tenants table so mobile app can read it
-      if (clean.company_logo_url && effectiveTenantId) {
-        await supabase.from('tenants').update({ logo_url: clean.company_logo_url }).eq('id', effectiveTenantId);
+      // Sync logo to tenants table so the pre-login page and mobile app can
+      // read it — same fix: an explicit removal must propagate here too.
+      if ('company_logo_url' in data && effectiveTenantId) {
+        await supabase.from('tenants').update({ logo_url: clean.company_logo_url || null }).eq('id', effectiveTenantId);
       }
     } catch(e) { console.warn('saveAppearance Supabase error:', e); }
   };
@@ -2737,10 +2814,24 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
       `[class*="bg-gradient-to-r"][class*="from-blue-900"] {`,
       `  background-image: linear-gradient(to right, ${tc.sidebar}, ${tc.to}) !important;`,
       `}`,
+      // Base font weight — a plain `body` selector has low specificity, so
+      // any element with an explicit Tailwind weight class (font-bold,
+      // font-semibold, headings, buttons, etc.) still correctly overrides
+      // this via normal cascade rules. Only applies to otherwise-unweighted
+      // regular body text, by design.
+      app.font_weight && app.font_weight !== 'normal'
+        ? `body { font-weight: ${{medium:'500',semibold:'600'}[app.font_weight] || '400'}; }`
+        : '',
     ].join("\n");
 
     // RTL for Arabic
     document.body.dir = RTL_LANGS.includes(app.language) ? 'rtl' : 'ltr';
+
+    // Base font size — scales the root element so every rem-based Tailwind
+    // text utility (text-sm, text-base, text-lg, ...) scales proportionally,
+    // without needing to touch individual components.
+    const FONT_SIZE_SCALE = { sm: '87.5%', md: '100%', lg: '112.5%' };
+    document.documentElement.style.fontSize = FONT_SIZE_SCALE[app.font_size] || '100%';
 
     // Font
     if (app.font && app.font !== 'geist') {

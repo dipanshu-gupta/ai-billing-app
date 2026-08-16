@@ -102,7 +102,15 @@ function LivePreview({ t }) {
   const brand  = t.brand_color || '#0F172A';
   const accent = t.accent_color || '#2563EB';
   const bg     = t.bg_color     || '#FFFFFF';
-  const fs     = n => th ? Math.max(8, n - 2) : n;
+  // Scales every text size by the Font Size slider (t.font_size, 8-14, default
+  // 11) relative to that 11px baseline, so the slider actually changes the
+  // preview — it was previously completely ignored here, only the thermal-vs-
+  // full-page mode affected size. Thermal printers still get their small
+  // reduction on top, same as before.
+  const fs     = n => {
+    const scaled = Math.round(n * ((t.font_size || 11) / 11));
+    return Math.max(6, th ? scaled - 2 : scaled);
+  };
 
   const div = t.show_dividers
     ? <div style={{borderTop: t.border_style==='solid'?`1px solid ${brand}40`:t.border_style==='none'?'none':'1px dashed #D1D5DB', margin:`${th?5:8}px 0`}}/>
@@ -185,12 +193,12 @@ function LivePreview({ t }) {
           <div style={{display:'flex',borderBottom:`1px solid ${brand}30`,paddingBottom:3,marginBottom:4}}>
             {t.col_sno    && <span style={{width:20,fontSize:fs(8),color:TL,fontWeight:700}}>#</span>}
             {t.show_product_images && !th && <span style={{width:28,fontSize:fs(8),color:TL,fontWeight:700}}>Img</span>}
-            <span style={{flex:1,fontSize:fs(8),color:TL,fontWeight:700,textTransform:'uppercase'}}>Item</span>
+            {t.col_item!==false && <span style={{flex:1,fontSize:fs(8),color:TL,fontWeight:700,textTransform:'uppercase'}}>Item</span>}
             {t.col_unit   && <span style={{width:th?28:36,fontSize:fs(8),color:TL,fontWeight:700,textAlign:'center'}}>Unit</span>}
             {t.col_qty    && <span style={{width:th?24:32,fontSize:fs(8),color:TL,fontWeight:700,textAlign:'right'}}>Qty</span>}
             {t.col_price  && <span style={{width:th?44:56,fontSize:fs(8),color:TL,fontWeight:700,textAlign:'right'}}>Unit Price</span>}
             {t.col_discount && <span style={{width:th?28:36,fontSize:fs(8),color:TL,fontWeight:700,textAlign:'right'}}>Disc</span>}
-            {t.col_tax_rate && <span style={{width:th?32:40,fontSize:fs(8),color:TL,fontWeight:700,textAlign:'right'}}>GST%</span>}
+            {t.col_tax_rate && t.tax_regime !== 'exempt' && <span style={{width:th?32:40,fontSize:fs(8),color:TL,fontWeight:700,textAlign:'right'}}>GST%</span>}
             {t.col_hsn    && <span style={{width:th?36:44,fontSize:fs(8),color:TL,fontWeight:700,textAlign:'right'}}>HSN</span>}
             {t.col_subtotal_line && <span style={{width:th?48:60,fontSize:fs(8),color:TL,fontWeight:700,textAlign:'right'}}>Subtotal</span>}
             {t.col_total  && <span style={{width:th?48:60,fontSize:fs(8),color:TL,fontWeight:700,textAlign:'right'}}>Total</span>}
@@ -200,12 +208,12 @@ function LivePreview({ t }) {
             <div key={i} style={{display:'flex',alignItems:'center',marginBottom:th?2:4,padding:th?'1px 0':'2px 0',background:t.alt_row&&i%2===1?t.alt_row_color:'transparent',borderRadius:3}}>
               {t.col_sno    && <span style={{width:20,fontSize:fs(10),color:TL}}>{item.sno}</span>}
               {t.show_product_images && !th && <span style={{width:28}}><span style={{display:'inline-block',width:20,height:20,borderRadius:4,background:`${brand}20`,border:`1px solid ${brand}40`}}/></span>}
-              <span style={{flex:1,fontSize:fs(11),color:T,paddingRight:4}}>{item.name}</span>
+              {t.col_item!==false && <span style={{flex:1,fontSize:fs(11),color:T,paddingRight:4}}>{item.name}</span>}
               {t.col_unit   && <span style={{width:th?28:36,fontSize:fs(9),color:TM,textAlign:'center'}}>{item.unit}</span>}
               {t.col_qty    && <span style={{width:th?24:32,fontSize:fs(11),color:TM,textAlign:'right'}}>{item.qty}</span>}
               {t.col_price  && <span style={{width:th?44:56,fontSize:fs(11),color:TM,textAlign:'right'}}>₹{item.price}</span>}
               {t.col_discount && <span style={{width:th?28:36,fontSize:fs(9),color:'#16A34A',textAlign:'right'}}>{item.disc}%</span>}
-              {t.col_tax_rate && <span style={{width:th?32:40,fontSize:fs(9),color:TL,textAlign:'right'}}>{item.taxRate}%</span>}
+              {t.col_tax_rate && t.tax_regime !== 'exempt' && <span style={{width:th?32:40,fontSize:fs(9),color:TL,textAlign:'right'}}>{item.taxRate}%</span>}
               {t.col_hsn    && <span style={{width:th?36:44,fontSize:fs(8),color:TL,textAlign:'right'}}>{item.hsn}</span>}
               {t.col_subtotal_line && <span style={{width:th?48:60,fontSize:fs(10),color:TL,textAlign:'right'}}>₹{(item.total-item.taxAmt).toFixed(2)}</span>}
               {t.col_total  && <span style={{width:th?48:60,fontSize:fs(11),color:T,fontWeight:600,textAlign:'right'}}>₹{item.total}</span>}
@@ -219,13 +227,24 @@ function LivePreview({ t }) {
         <div style={{marginBottom:th?4:8}}>
           {t.show_subtotal         && <Row l="Subtotal"   v={`₹${SAMPLE.subtotal}`}/>}
           {t.show_discount_total   && <Row l="Discount"   v={`-₹${SAMPLE.discount}`}/>}
-          {t.show_tax_total && !t.show_cgst_sgst && <Row l="GST"  v={`₹${SAMPLE.totalTax}`}/>}
-          {t.show_tax_total && t.show_cgst_sgst && (
+          {/* Tax Regime actually changes what shows here: 'exempt' hides tax
+              rows entirely (there's no tax to show); 'inclusive' shows a
+              clarifying note instead of an additive GST/CGST/SGST line, since
+              the tax is already folded into the item prices, not added on top. */}
+          {t.tax_regime !== 'exempt' && t.show_tax_total && t.tax_regime === 'inclusive' && (
+            <div style={{fontSize:fs(8),color:TL,fontStyle:'italic',textAlign:'right',marginTop:2}}>(Prices inclusive of GST)</div>
+          )}
+          {t.tax_regime !== 'exempt' && t.tax_regime !== 'inclusive' && t.show_tax_total && !t.show_cgst_sgst && <Row l="GST"  v={`₹${SAMPLE.totalTax}`}/>}
+          {t.tax_regime !== 'exempt' && t.tax_regime !== 'inclusive' && t.show_tax_total && t.show_cgst_sgst && (
             <>
               <Row l="CGST" v={`₹${SAMPLE.cgst}`}/>
               <Row l="SGST" v={`₹${SAMPLE.sgst}`}/>
             </>
           )}
+          {/* Round Off — the toggle existed and the real print engine already
+              honored it, but this live preview never rendered a Round Off row
+              at all, so the toggle appeared to do nothing here. */}
+          {t.show_round_off && <Row l="Round Off" v="-₹0.35"/>}
           <div style={{display:'flex',justifyContent:'space-between',fontWeight:800,fontSize:fs(15),marginTop:th?5:8,paddingTop:th?5:8,borderTop:`2px solid ${brand}`}}>
             <span style={{color:T}}>TOTAL</span>
             <span style={{color:T}}>₹{SAMPLE.total}</span>

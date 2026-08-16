@@ -123,14 +123,14 @@ const OBJECT_FIELDS = {
 
 export default function CreateRecordModal({ page, open, prefillCustomer, onClose, onCreated }) {
   const {
-    createRecord, customers, contacts, enterpriseUsers, currentUser,
+    createRecord, customers, contacts, enterpriseUsers, currentUser, appPreferences,
   } = useApp();
 
   const fields     = OBJECT_FIELDS[page] || [];
   const statusOpts = STATUS_OPTS[page]   || ['Active','Inactive'];
 
   const defaultForm = () => {
-    const base: any = { status: statusOpts[0], currency:'INR', priority:'Medium' };
+    const base: any = { status: statusOpts[0], currency: appPreferences?.default_currency || 'INR', priority:'Medium' };
     if (prefillCustomer) {
       base.customerId = prefillCustomer.id;
       base.customer   = prefillCustomer.name;
