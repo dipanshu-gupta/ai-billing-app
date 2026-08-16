@@ -2,6 +2,7 @@
 'use client';
 import { useState, useEffect } from 'react';
 import { useTenant } from '@/context/TenantContext';
+import { useAlert } from '@/components/shared/AlertProvider';
 
 const FIELD_TYPES = [
   { v:'text',          l:'Text',          icon:'✏️' },
@@ -18,6 +19,7 @@ const emptyQ = () => ({ _key:Date.now(), question_text:'', field_type:'text', op
 export default function ProductConfigurator({ product }) {
   const [questions,   setQuestions]   = useState([]);
   const { supabase } = useTenant();
+  const { showAlert } = useAlert();
   const [saving,      setSaving]      = useState(false);
   const [loading,     setLoading]     = useState(true);
   const [saved,       setSaved]       = useState(false);
@@ -83,7 +85,7 @@ export default function ProductConfigurator({ product }) {
     const pid  = await resolveProductId();
     const pnum = String(product?.id || product?.product_number || '');
     if (!pid) {
-      alert('Could not resolve product UUID. Please reload and try again.');
+      showAlert('Could not resolve product UUID. Please reload and try again.', { variant:'danger' });
       setSaving(false);
       return;
     }
@@ -110,7 +112,7 @@ export default function ProductConfigurator({ product }) {
       }));
     if (rows.length) {
       const { error } = await supabase.from('product_config_questions').insert(rows);
-      if (error) { alert('Save failed: ' + error.message); setSaving(false); return; }
+      if (error) { showAlert('Save failed: ' + error.message, { variant:'danger', title:'Save Failed' }); setSaving(false); return; }
     }
     setSaving(false);
     setSaved(true);

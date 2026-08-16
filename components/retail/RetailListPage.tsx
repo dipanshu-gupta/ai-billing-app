@@ -3,11 +3,13 @@
 
 import { useState, useMemo, useEffect } from 'react';
 import { useApp } from '@/context/AppContext';
-import { getStatusColor, formatCurrency, formatDisplayNumber, PAGE_DISPLAY_PREFIX } from '@/lib/utils';
+import { getStatusColor, formatCurrency, formatDisplayNumber, PAGE_DISPLAY_PREFIX, tenantScope } from '@/lib/utils';
 // useCustomFields hook used inline below
 import { useTenant } from '@/context/TenantContext';
 import { getTaxRegime } from '@/lib/taxConfig';
 import SearchableSelect from '@/components/shared/SearchableSelect';
+import ProductImages from '@/components/products/ProductImages';
+import { useAlert } from '@/components/shared/AlertProvider';
 
 const iCls = 'w-full border border-blue-200 rounded-xl px-3 py-2.5 text-[#0F172A] bg-white focus:outline-none focus:ring-2 focus:ring-blue-400 text-sm placeholder:text-gray-400';
 const sCls = iCls;
@@ -58,6 +60,26 @@ const VALIDATORS = {
     if (new Date(v) > new Date()) return 'Date cannot be in the future';
     return null;
   },
+  date_of_birth: (v) => {
+    if (!v) return null;
+    const d = new Date(v);
+    if (d > new Date()) return 'Date of birth cannot be in the future';
+    if (d.getFullYear() < 1900) return 'Please enter a valid date of birth';
+    return null;
+  },
+  date_reasonable: (v) => {
+    if (!v) return null;
+    const d = new Date(v);
+    const max = new Date(); max.setFullYear(max.getFullYear() + 2);
+    if (d > max) return 'Date is too far in the future (max 2 years ahead)';
+    if (d.getFullYear() < 2000) return 'Please enter a valid date';
+    return null;
+  },
+  name_text: (v) => {
+    if (!v) return null;
+    if (/^[\d\s.,-]+$/.test(String(v).trim())) return 'Cannot be only numbers';
+    return null;
+  },
   percent: (v) => {
     if (v === '' || v === null || v === undefined) return null;
     const n = Number(v);
@@ -68,6 +90,18 @@ const VALIDATORS = {
 
 // Map field keys to their validator
 const FIELD_VALIDATORS: Record<string, (v:any)=>string|null> = {
+  name:             VALIDATORS.name_text,
+  customer:         VALIDATORS.name_text,
+  brand:            VALIDATORS.name_text,
+  category:         VALIDATORS.name_text,
+  city:             VALIDATORS.name_text,
+  state:            VALIDATORS.name_text,
+  date_of_birth:    VALIDATORS.date_of_birth,
+  order_date:       VALIDATORS.date_reasonable,
+  invoice_date:     VALIDATORS.date_reasonable,
+  activity_date:    VALIDATORS.date_reasonable,
+  due_date:         VALIDATORS.date_reasonable,
+  delivery_date:    VALIDATORS.date_reasonable,
   phone:            VALIDATORS.tel,
   customer_phone:   VALIDATORS.tel,
   mobile:           VALIDATORS.tel,
@@ -279,6 +313,99 @@ const RETAIL_CONFIG = {
     ],
   },
 };
+
+const DEFAULT_PLACE_OF_SUPPLY = 'Tamil Nadu';
+
+// Every field defined in a page's form sections is filterable/sortable/
+// addable as a list column — this reuses the same registry the detail-panel
+// forms already use (RETAIL_CONFIG[page].sections), so it's always in sync
+// with what's actually on the record, not a separately-maintained subset.
+const mapRetailFieldType = (f) => {
+  if (f.type === 'number')   return 'number';
+  if (f.type === 'date')     return 'date';
+  if (f.type === 'status')   return 'select';
+  if (f.type === 'select' && f.opts?.length) return 'select';
+  if (f.type === 'checkbox') return 'boolean';
+  return 'text';
+};
+const getRetailFieldMeta = (page) => {
+  const cfg = RETAIL_CONFIG[page]; if (!cfg) return [];
+  const seen = new Set();
+  const fields = [{ key:'id', label:'Record #', type:'text' }];
+  cfg.sections.forEach(sec => sec.fields.forEach(f => {
+    if (seen.has(f.key)) return; seen.add(f.key);
+    fields.push({ key:f.key, label:f.label, type: mapRetailFieldType(f), opts: f.opts });
+  }));
+  // Orders/Invoices totals are computed from line items on save, not a form
+  // field, but they're a genuinely useful filter/sort/column — add synthetically.
+  if (['retailOrders','retailInvoices'].includes(page) && !seen.has('amount')) {
+    fields.push({ key:'amount', label:'Total', type:'number' });
+  }
+  fields.push({ key:'created_at', label:'Created Date', type:'date' });
+  return fields;
+};
+// Default visible columns per page — matches each page's original listColumns
+// (as field keys) so the out-of-the-box view looks the same as before.
+const RETAIL_DEFAULT_COLUMNS = {
+  retailCustomers:  ['id','name','phone','email','loyalty_tier','loyalty_points','status'],
+  retailProducts:   ['id','name','category','sku','price','stock_quantity','status'],
+  retailActivities: ['id','subject','activity_type','customer','activity_date','priority','status'],
+  retailOrders:     ['id','customer','channel','order_date','amount','status'],
+  retailInvoices:   ['id','customer','order_number','invoice_date','amount','status'],
+};
+const RETAIL_OPERATORS = {
+  text:    [{v:'contains',l:'contains'},{v:'equals',l:'is exactly'},{v:'not_equals',l:'is not'},{v:'is_empty',l:'is empty'},{v:'is_not_empty',l:'is not empty'}],
+  number:  [{v:'eq',l:'='},{v:'neq',l:'≠'},{v:'gt',l:'>'},{v:'gte',l:'≥'},{v:'lt',l:'<'},{v:'lte',l:'≤'},{v:'is_empty',l:'is empty'}],
+  date:    [{v:'on',l:'on'},{v:'before',l:'before'},{v:'after',l:'after'},{v:'is_empty',l:'is empty'}],
+  select:  [{v:'equals',l:'is'},{v:'not_equals',l:'is not'}],
+  boolean: [{v:'is_true',l:'is true'},{v:'is_false',l:'is false'}],
+};
+const retailMatchesCondition = (record, cond) => {
+  const raw = record[cond.field];
+  switch (cond.type) {
+    case 'number': {
+      const n = Number(raw); const v = Number(cond.value);
+      if (cond.op==='is_empty') return raw===''||raw==null;
+      if (Number.isNaN(n)) return false;
+      if (cond.op==='eq') return n===v; if (cond.op==='neq') return n!==v;
+      if (cond.op==='gt') return n>v;   if (cond.op==='gte') return n>=v;
+      if (cond.op==='lt') return n<v;   if (cond.op==='lte') return n<=v;
+      return true;
+    }
+    case 'date': {
+      if (cond.op==='is_empty') return !raw;
+      if (!raw || !cond.value) return false;
+      const d = new Date(String(raw).slice(0,10)).setHours(0,0,0,0); const v = new Date(cond.value).setHours(0,0,0,0);
+      if (cond.op==='on') return d===v; if (cond.op==='before') return d<v; if (cond.op==='after') return d>v;
+      return true;
+    }
+    case 'boolean': { const b = !!raw; return cond.op==='is_true' ? b : !b; }
+    default: {
+      const s = String(raw??'').toLowerCase(); const v = String(cond.value??'').toLowerCase();
+      if (cond.op==='is_empty') return s==='';
+      if (cond.op==='is_not_empty') return s!=='';
+      if (cond.op==='equals') return s===v;
+      if (cond.op==='not_equals') return s!==v;
+      return s.includes(v);
+    }
+  }
+};
+
+// Build the customer-derived portion of an order/invoice prefill from a customer record.
+// Only fills fields that actually have data on the customer — fields with nothing to
+// prefill are left out entirely so they stay blank/editable rather than forced to ''.
+function buildCustomerPrefill(customer) {
+  const prefill = {
+    customer: customer?.name || '',
+    customer_id: customer?._uuid || customer?.id || '',
+  };
+  if (customer?.phone) prefill.customer_phone = customer.phone;
+  const addressParts = [customer?.address_line1, customer?.address_line2, customer?.city, customer?.state, customer?.postal_code]
+    .filter(Boolean);
+  if (addressParts.length) prefill.delivery_address = addressParts.join(', ');
+  prefill.place_of_supply = customer?.state || DEFAULT_PLACE_OF_SUPPLY;
+  return prefill;
+}
 
 // ─── Line items table (Orders / Invoices) ──────────────────────────────────
 function RetailLineItems({ items, setItems, products, taxRegime }) {
@@ -509,7 +636,7 @@ function RetailLineItems({ items, setItems, products, taxRegime }) {
 }
 
 // ─── Print HTML Builder ──────────────────────────────────────────────────────
-function buildRetailPrintHTML(t, record, items) {
+function buildRetailPrintHTML(t, record, items, products) {
   const isTh = t.paper_size?.startsWith('thermal');
   const widthMM = t.paper_size==='thermal_58'||t.paper_size==='thermal_57' ? 58 : t.paper_size==='thermal_80' ? 80 : t.paper_size==='A5' ? 148 : 210;
   const font   = t.font_family || 'Arial, sans-serif';
@@ -518,11 +645,24 @@ function buildRetailPrintHTML(t, record, items) {
   const accent = t.accent_color || '#2563EB';
   const bg     = t.bg_color     || '#FFFFFF';
   const fs     = (n) => isTh ? Math.max(7, n-2) : Math.max(8, Math.round(n * fsize / 11));
-  const fmt    = (n) => String.fromCharCode(8377) + Number(n||0).toLocaleString('en-IN', {minimumFractionDigits:2});
+  const _cur   = ((typeof window !== 'undefined' ? (window as any).__bp_prefs : null) || {}).default_currency || 'INR';
+  const _sym   = _cur === 'INR' ? String.fromCharCode(8377) : _cur === 'USD' ? '$' : _cur === 'GBP' ? String.fromCharCode(163) : _cur === 'EUR' ? String.fromCharCode(8364) : _cur + ' ';
+  const fmt    = (n) => _sym + Number(n||0).toLocaleString(_cur === 'INR' ? 'en-IN' : 'en-US', {minimumFractionDigits:2});
   const div    = t.show_dividers !== false ? `<hr style="border:none;border-top:1px ${t.border_style||'dashed'} #ccc;margin:6px 0;"/>` : '';
+
+  // Product image lookup for the optional thumbnail column (skip for thermal printers — text-only)
+  const showImages = !!t.show_product_images && !isTh;
+  const productByCode = new Map((products||[]).map(p => [p.sku, p]).filter(([k]) => k));
+  const productByName = new Map((products||[]).map(p => [p.name, p]).filter(([k]) => k));
+  const findProductImage = (item) => {
+    const p = (item.product_code && productByCode.get(item.product_code))
+      || (item.product_name && productByName.get(item.product_name));
+    return p?.image_url || '';
+  };
 
   const colHeaders = [
     t.col_sno && `<th style="padding:3px 4px;text-align:left;font-size:${fs(8)}px;color:#6B7280;text-transform:uppercase">#</th>`,
+    showImages && `<th style="padding:3px 4px;text-align:left;font-size:${fs(8)}px;color:#6B7280;text-transform:uppercase">Img</th>`,
     t.col_item!==false && `<th style="padding:3px 4px;text-align:left;font-size:${fs(8)}px;color:#6B7280;text-transform:uppercase">Item</th>`,
     t.col_unit && `<th style="padding:3px 4px;text-align:center;font-size:${fs(8)}px;color:#6B7280;text-transform:uppercase">Unit</th>`,
     t.col_qty!==false && `<th style="padding:3px 4px;text-align:right;font-size:${fs(8)}px;color:#6B7280;text-transform:uppercase">Qty</th>`,
@@ -544,6 +684,7 @@ function buildRetailPrintHTML(t, record, items) {
     const total = Number(item.extended_price ?? item.total ?? (net * (1 + tax/100)));
     return `<tr style="background:${rowBg}">
       ${t.col_sno ? `<td style="padding:3px 4px;font-size:${fs(10)}px">${i+1}</td>` : ''}
+      ${showImages ? `<td style="padding:3px 4px">${findProductImage(item) ? `<img src="${findProductImage(item)}" style="width:28px;height:28px;object-fit:cover;border-radius:4px;border:1px solid #E5E7EB"/>` : ''}</td>` : ''}
       ${t.col_item!==false ? `<td style="padding:3px 4px;font-size:${fs(11)}px">${item.product_name||item.product||''}</td>` : ''}
       ${t.col_unit ? `<td style="padding:3px 4px;text-align:center;font-size:${fs(10)}px">${item.unit||''}</td>` : ''}
       ${t.col_qty!==false ? `<td style="padding:3px 4px;text-align:right;font-size:${fs(11)}px">${qty}</td>` : ''}
@@ -662,7 +803,7 @@ function buildRetailPrintHTML(t, record, items) {
 }
 
 
-function RetailInvoicePrintModal({ template, record, items, onClose, onPrint }) {
+function RetailInvoicePrintModal({ template, record, items, products, onClose, onPrint }) {
   if (!template) return (
     <div className="fixed inset-0 bg-black/60 z-[200] flex items-center justify-center p-4" onClick={onClose}>
       <div className="bg-white rounded-[20px] p-8 max-w-md text-center shadow-2xl" onClick={e=>e.stopPropagation()}>
@@ -674,7 +815,7 @@ function RetailInvoicePrintModal({ template, record, items, onClose, onPrint }) 
     </div>
   );
 
-  const html = buildRetailPrintHTML(template, record, items);
+  const html = buildRetailPrintHTML(template, record, items, products);
   const ps   = template.paper_size;
   const isTh = ps?.startsWith('thermal');
   const previewW = ps==='thermal_58'||ps==='thermal_57' ? 219 : ps==='thermal_80' ? 303 : ps==='A5' ? 480 : 595;
@@ -769,9 +910,9 @@ function RetailCustomer360({ customer, onNavigate, onOpenCreate }) {
     // Try matching by _uuid first, fall back to customer_number
     const custId = customer._uuid || customer.id;
     Promise.all([
-      supabase.from('retail_orders')    .select('*').or(`customer_id.eq.${custId},customer.eq.${customer.name||''}`).order('created_at', { ascending: false }),
-      supabase.from('retail_invoices')  .select('*').or(`customer_id.eq.${custId},customer.eq.${customer.name||''}`).order('created_at', { ascending: false }),
-      supabase.from('retail_activities').select('*').or(`customer_id.eq.${custId},customer.eq.${customer.name||''}`).order('created_at', { ascending: false }),
+      tenantScope(supabase.from('retail_orders')    .select('*')).or(`customer_id.eq.${custId},customer.eq.${customer.name||''}`).order('created_at', { ascending: false }),
+      tenantScope(supabase.from('retail_invoices')  .select('*')).or(`customer_id.eq.${custId},customer.eq.${customer.name||''}`).order('created_at', { ascending: false }),
+      tenantScope(supabase.from('retail_activities').select('*')).or(`customer_id.eq.${custId},customer.eq.${customer.name||''}`).order('created_at', { ascending: false }),
     ]).then(([{ data: orders }, { data: invoices }, { data: activities }]) => {
       setData({ orders: orders || [], invoices: invoices || [], activities: activities || [] });
       setLoading(false);
@@ -845,13 +986,10 @@ function RetailCustomer360({ customer, onNavigate, onOpenCreate }) {
 
   // Open create modal for the given type, pre-filled with this customer
   const handleCreateFor = (type) => {
-    const custId   = customer._uuid || customer.id;
-    const custName = customer.name  || '';
+    const custName = customer.name || '';
     const pageMap  = { order: 'retailOrders', invoice: 'retailInvoices', activity: 'retailActivities' };
     const prefill  = {
-      customer:    custName,
-      customer_id: custId,
-      place_of_supply: 'Tamil Nadu',
+      ...(type !== 'activity' ? buildCustomerPrefill(customer) : { customer: custName, customer_id: customer._uuid || customer.id || '' }),
       ...(type === 'order'    ? { order_date:    new Date().toISOString().slice(0,10), status: 'Open',  channel: 'In-Store' } : {}),
       ...(type === 'invoice'  ? { invoice_date:  new Date().toISOString().slice(0,10), status: 'Draft', payment_status: 'Pending' } : {}),
       ...(type === 'activity' ? { activity_date: new Date().toISOString().slice(0,10), subject: 'Follow up with '+custName, activity_type: 'Call', status: 'Planned' } : {}),
@@ -941,26 +1079,27 @@ function RetailCustomer360({ customer, onNavigate, onOpenCreate }) {
 
 // ─── Retail Quick Create Customer ────────────────────────────────────────────
 function RetailQuickCreateCustomer({ prefillName, onCreated, onClose }) {
-  const { createRetailRecord } = useApp();
+  const { createRetailRecord, retailCustomers } = useApp();
+  const { showAlert, showConfirm } = useAlert();
   const [form, setForm] = useState({ name: prefillName||'', phone:'', email:'' });
   const [saving, setSaving] = useState(false);
 
   async function save() {
-    if (!form.name.trim()) { alert('Name is required'); return; }
-    const duplicate = retailCustomers.find(c =>
+    if (!form.name.trim()) { showAlert('Name is required', { variant:'warning' }); return; }
+    const duplicate = (retailCustomers || []).find(c =>
       c.name?.toLowerCase().trim() === form.name.toLowerCase().trim() ||
       (form.phone && c.phone === form.phone.trim())
     );
     if (duplicate) {
       const msg = `A customer named "${duplicate.name}" already exists${form.phone && duplicate.phone === form.phone ? ' with the same phone number' : ''}. Create anyway?`;
-      if (!window.confirm(msg)) return;
+      if (!(await showConfirm(msg, { title:'Possible Duplicate', variant:'warning', confirmLabel:'Create Anyway' }))) return;
     }
     setSaving(true);
     const rec = await createRetailRecord('retailCustomers', {
       ...form, status:'Active', loyalty_points:0, loyalty_tier:'Standard',
     }, []);
     setSaving(false);
-    if (rec) onCreated(rec.id, rec.name);
+    if (rec) onCreated(rec._uuid || rec.id, rec.name, rec.phone || form.phone || '');
   }
 
   const iCls = 'w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm text-[#0F172A] focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white';
@@ -995,6 +1134,7 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo, on
           fetchRetailLineItems, fetchRetailCustomers, createRetailRecord, appPreferences, setPendingReturnTo, createRetailInvoiceFromOrder,
           checkMatchingApprovalProcess, submitForApproval, currentUserPermissions, permissionsLoaded } = useApp();
   const { supabase } = useTenant();
+  const { showAlert, showConfirm } = useAlert();
   const cfg = RETAIL_CONFIG[page];
   const taxRegime = getTaxRegime(appPreferences?.default_currency);
 
@@ -1008,7 +1148,7 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo, on
 
   useEffect(() => {
     if (page !== 'retailInvoices' || !supabase) return;
-    supabase.from('retail_invoice_templates').select('*').order('created_at')
+    tenantScope(supabase.from('retail_invoice_templates').select('*')).order('created_at')
       .then(({ data }) => {
         if (!data) return;
         setInvoiceTemplates(data);
@@ -1119,7 +1259,7 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo, on
   const handleSave = async (andClose=false) => {
     // Fix 11a: Retail invoice status 'Paid' requires payment_status = 'Paid'
     if (page==='retailInvoices' && edited.status==='Paid' && edited.payment_status!=='Paid') {
-      alert('Cannot mark invoice as Paid until Payment Status is set to Paid.');
+      showAlert('Cannot mark invoice as Paid until Payment Status is set to Paid.', { variant:'warning' });
       return;
     }
     // Validate required fields
@@ -1130,9 +1270,9 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo, on
       if (f.required) {
         const empty = v === undefined || v === null || v === '' || (typeof v === 'string' && !v.trim());
         if (f.type === 'retailCustomer') {
-          if (!edited.customer_id) { alert(`"Customer" is required.`); return; }
+          if (!edited.customer_id) { showAlert(`"Customer" is required.`, { variant:'warning' }); return; }
         } else if (empty) {
-          alert(`"${f.label.replace(' *','')}" is required and cannot be blank.`);
+          showAlert(`"${f.label.replace(' *','')}" is required and cannot be blank.`, { variant:'warning' });
           return;
         }
       }
@@ -1140,13 +1280,13 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo, on
       const validator = FIELD_VALIDATORS[f.key];
       if (validator && v) {
         const err = validator(v);
-        if (err) { alert(`${f.label.replace(' *','')}: ${err}`); return; }
+        if (err) { showAlert(`${f.label.replace(' *','')}: ${err}`, { variant:'warning' }); return; }
       }
     }
     // Check any inline field errors
     const activeErrors = Object.entries(fieldErrors);
     if (activeErrors.length > 0) {
-      alert(`Please fix the following: ${activeErrors.map(([,e])=>e).join(', ')}`);
+      showAlert(`Please fix the following: ${activeErrors.map(([,e])=>e).join(', ')}`, { variant:'warning', title:'Fix Required' });
       return;
     }
     setSaving(true);
@@ -1154,9 +1294,13 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo, on
     // Strip client-side computed fields — keep custom_data as it's a real DB column
     const { displayNumber, _uuid, ...editedClean } = edited;
     let payload = { ...editedClean, custom_data: edited.custom_data || {} };
+    // Clamp non-negative numeric fields at save time (belt-and-braces vs UI clamps)
+    for (const nk of ['stock_quantity','reorder_level','loyalty_points','price','mrp','cost','shipping_cost','quantity']) {
+      if (payload[nk] !== undefined && payload[nk] !== null && Number(payload[nk]) < 0) payload[nk] = 0;
+    }
     if (cfg.hasLineItems) {
-      const subtotal  = items.reduce((s,i) => s + i.quantity*i.unit_price, 0);
-      const totalDisc = items.reduce((s,i) => s + i.quantity*i.unit_price*i.discount_pct/100, 0);
+      const subtotal  = items.reduce((s,i) => s + Number(i.quantity||0)*Number(i.unit_price||0), 0);
+      const totalDisc = items.reduce((s,i) => s + Number(i.quantity||0)*Number(i.unit_price||0)*Number(i.discount_pct||0)/100, 0);
       const totalTax  = items.reduce((s,i) => s + taxRegime.computeLineTax(i).totalTax, 0);
       const computed  = { subtotal, total_discount: totalDisc, total_tax: totalTax, amount: subtotal-totalDisc+totalTax };
       payload = { ...payload, ...computed };
@@ -1185,7 +1329,7 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo, on
     setCreatingInvoice(true);
     const inv = await createRetailInvoiceFromOrder(edited);
     setCreatingInvoice(false);
-    if (inv) { alert(`Invoice ${inv.invoice_number} created from this order.`); onSaved?.(); handleClose(); }
+    if (inv) { showAlert(`Invoice ${inv.invoice_number} created from this order.`, { variant:'success', title:'Invoice Created' }); onSaved?.(); handleClose(); }
   };
 
   // Resolve TAX_PRODUCT / TAX_DOCUMENT placeholder field sets dynamically
@@ -1202,7 +1346,12 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo, on
         ? <div className={`${sCls} bg-gray-50 cursor-not-allowed flex items-center`}>
             <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold border ${getStatusColor(v)}`}>{v}</span>
           </div>
-        : <select value={v||cfg.statusOptions[0]} onChange={e=>set(field.key,e.target.value)} className={sCls}>
+        : <select value={v||cfg.statusOptions[0]} onChange={async e=>{
+            const newStatus = e.target.value;
+            if (newStatus === v) return;
+            const ok = await showConfirm(`Change status from "${v||cfg.statusOptions[0]}" to "${newStatus}"?`, { title:'Confirm Status Change', variant:'warning', confirmLabel:'Change Status' });
+            if (ok) set(field.key, newStatus);
+          }} className={sCls}>
             {cfg.statusOptions.map(o=><option key={o}>{o}</option>)}
           </select>
     );
@@ -1216,13 +1365,20 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo, on
         placeholder="Select owner" emptyLabel="Unassigned"
       />;
     }
-    if (field.type === 'retailCustomer') return <SearchableSelect
-      value={edited.customer_id||''}
-      onChange={cid=>{ const c=retailCustomers.find(x=>(x._uuid||x.id)===cid); set('customer_id',c?._uuid||c?.id||''); set('customer',c?.name||''); set('customer_phone',c?.phone||''); }}
-      options={retailCustomers.map(c=>({value:c._uuid||c.id,label:c.name,sub:[c.phone,c.email].filter(Boolean).join(' · ')}))}
-      onCreateNew={name=>setQuickCreateCustomer({prefillName:name, onCreated:(id,cname)=>{ set('customer_id',id); set('customer',cname); }})}
-      placeholder="Search customers..." emptyLabel="No customer"
-    />;
+    if (field.type === 'retailCustomer') {
+      // Resolve the selected customer: exact _uuid/id match first, then fall back to
+      // matching by name when customer_id is empty/stale but a customer name string is present
+      // (handles legacy records where customer_id holds a format not in the current retailCustomers list).
+      const resolvedCustomer = retailCustomers.find(x => (x._uuid||x.id) === edited.customer_id)
+        || (!edited.customer_id && edited.customer ? retailCustomers.find(x => x.name === edited.customer) : null);
+      return <SearchableSelect
+        value={resolvedCustomer?._uuid || resolvedCustomer?.id || edited.customer_id || ''}
+        onChange={cid=>{ const c=retailCustomers.find(x=>(x._uuid||x.id)===cid); set('customer_id',c?._uuid||c?.id||''); set('customer',c?.name||''); set('customer_phone',c?.phone||''); }}
+        options={retailCustomers.map(c=>({value:c._uuid||c.id,label:c.name,sub:[c.phone,c.email].filter(Boolean).join(' · ')}))}
+        onCreateNew={name=>setQuickCreateCustomer({prefillName:name, onCreated:(id,cname,cphone)=>{ set('customer_id',id); set('customer',cname); if(cphone) set('customer_phone',cphone); }})}
+        placeholder="Search customers..." emptyLabel="No customer"
+      />;
+    }
     if (field.type === 'retailInvoiceTemplate') {
       // Only available in detail panel context where these vars are defined
       if (typeof selectedTemplateId === 'undefined' || typeof invoiceTemplates === 'undefined') return null;
@@ -1313,10 +1469,10 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo, on
 
   // ── Print engine ──────────────────────────────────────────────────────────
   function handleDirectPrint(template, record, lineItems) {
-    if (!template) { alert('Please select an invoice template first.'); return; }
-    const html = buildRetailPrintHTML(template, record, lineItems);
+    if (!template) { showAlert('Please select an invoice template first.', { variant:'warning' }); return; }
+    const html = buildRetailPrintHTML(template, record, lineItems, retailProducts);
     const win = window.open('', '_blank', 'width=800,height=900');
-    if (!win) { alert('Pop-up blocked. Please allow pop-ups for this site.'); return; }
+    if (!win) { showAlert('Pop-up blocked. Please allow pop-ups for this site.', { variant:'warning' }); return; }
     win.document.write(html);
     win.document.close();
     win.focus();
@@ -1325,7 +1481,7 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo, on
 
   return (
     <>
-    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[110] overflow-y-auto">
+    <div className="fixed inset-0 bg-black/50 z-[110] overflow-y-auto">
       <div className="bg-white rounded-[28px] shadow-2xl w-[98vw] my-4 mx-auto flex flex-col" style={{minHeight:'95vh'}}>
         {/* Header */}
         <div className="bg-gradient-to-r from-[#0F172A] to-blue-900 px-6 py-5 rounded-t-[28px] flex items-center justify-between flex-shrink-0">
@@ -1443,6 +1599,16 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo, on
             />
           ) : (
             <div className="space-y-6">
+          {page === 'retailProducts' && (
+            <ProductImages
+              recordType="retailProducts"
+              recordId={record.id}
+              productTable="retail_products"
+              productUuid={record._uuid}
+              imageUrl={edited.image_url}
+              onImageUrlChange={(url) => set('image_url', url)}
+            />
+          )}
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
             {cfg.sections.map(section => {
               const fields = resolveFields(section.fields);
@@ -1572,7 +1738,7 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo, on
           <h3 className="font-bold text-[#0F172A] text-lg mb-4">👤 New Retail Customer</h3>
           <RetailQuickCreateCustomer
             prefillName={quickCreateCustomer.prefillName}
-            onCreated={async(id,name)=>{ quickCreateCustomer.onCreated(id,name); setQuickCreateCustomer(null); await fetchRetailCustomers(); }}
+            onCreated={async(id,name,phone)=>{ quickCreateCustomer.onCreated(id,name,phone); setQuickCreateCustomer(null); await fetchRetailCustomers(); }}
             onClose={()=>setQuickCreateCustomer(null)}
           />
         </div>
@@ -1590,6 +1756,7 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo, on
           return { ...edited, owner_name: ownerName };
         })()}
         items={items}
+        products={retailProducts}
         onClose={()=>setShowPrintPreview(false)}
         onPrint={()=>{
           const allUsers = enterpriseUsers?.length > 0 ? enterpriseUsers : (currentUser ? [currentUser] : []);
@@ -1607,6 +1774,7 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo, on
 function RetailCreateModal({ page, open, onClose, onCreated, prefill = null }) {
   const { createRetailRecord, retailCustomers, enterpriseUsers, currentUser, appPreferences } = useApp();
   const { supabase } = useTenant();
+  const { showAlert } = useAlert();
   const cfg = RETAIL_CONFIG[page];
   const taxRegime = getTaxRegime(appPreferences?.default_currency);
   const [quickCreateCustomer, setQuickCreateCustomer] = useState(null);
@@ -1620,9 +1788,7 @@ function RetailCreateModal({ page, open, onClose, onCreated, prefill = null }) {
     created_at: new Date().toISOString(),
     invoice_date: new Date().toISOString().slice(0,10),
     order_date: new Date().toISOString().slice(0,10),
-    activity_date: new Date().toISOString().slice(0,10).split('T')[0],
-    invoice_date: new Date().toISOString().split('T')[0],
-    activity_date: new Date().toISOString().split('T')[0],
+    activity_date: new Date().toISOString().slice(0,10),
     loyalty_points: 0, loyalty_tier: 'Standard', preferred_contact: 'Phone',
     country: 'India', unit: 'pc', price: 0, mrp: 0, cost: 0, stock_quantity: 0, reorder_level: 10,
     quantity: 1, payment_method: 'Cash', payment_status: 'Pending', channel: 'In-Store', delivery_method: 'Pickup', place_of_supply: 'Tamil Nadu',
@@ -1702,7 +1868,7 @@ function RetailCreateModal({ page, open, onClose, onCreated, prefill = null }) {
     if (Object.keys(errs).length > 0) {
       const firstErrKey = Object.keys(errs)[0];
       const firstField = createFields.find(f => f.key === firstErrKey);
-      if (firstField) alert(`${firstField.label.replace(' *','')}: ${errs[firstErrKey]}`);
+      if (firstField) showAlert(`${firstField.label.replace(' *','')}: ${errs[firstErrKey]}`, { variant:'warning' });
     }
     return Object.keys(errs).length === 0;
   };
@@ -1733,8 +1899,8 @@ function RetailCreateModal({ page, open, onClose, onCreated, prefill = null }) {
     }
     if (field.type === 'retailCustomer') return <SearchableSelect
       value={form.customer_id||''}
-      onChange={cid=>{ const c=retailCustomers.find(x=>x.id===cid); s('customer_id',c?.id||''); s('customer',c?.name||''); s('customer_phone',c?.phone||''); }}
-      options={retailCustomers.map(c=>({value:c.id,label:c.name,sub:[c.phone,c.email].filter(Boolean).join(' · ')}))}
+      onChange={cid=>{ const c=retailCustomers.find(x=>(x._uuid||x.id)===cid); s('customer_id',c?._uuid||c?.id||''); s('customer',c?.name||''); s('customer_phone',c?.phone||''); }}
+      options={retailCustomers.map(c=>({value:c._uuid||c.id,label:c.name,sub:[c.phone,c.email].filter(Boolean).join(' · ')}))}
       onCreateNew={name=>setQuickCreateCustomer({prefillName:name, onCreated:(id,cname,cphone)=>{ s('customer_id',id); s('customer',cname); s('customer_phone',cphone||''); setQuickCreateCustomer(null); }})}
       placeholder="Search customers..." emptyLabel="No customers — type to create new"
     />;
@@ -1796,7 +1962,7 @@ function RetailCreateModal({ page, open, onClose, onCreated, prefill = null }) {
   return (
     <>
     <div className="fixed inset-0 z-[500] flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose}/>
+      <div className="absolute inset-0 bg-black/50" onClick={onClose}/>
       <div className="relative bg-white rounded-[28px] shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden">
         <div className="bg-gradient-to-r from-[#0F172A] to-blue-900 px-6 py-5 flex items-center justify-between flex-shrink-0">
           <h2 className="text-white text-xl font-bold">{cfg.icon} Create {cfg.singular}</h2>
@@ -1855,11 +2021,16 @@ function RetailCreateModal({ page, open, onClose, onCreated, prefill = null }) {
       </div>
     </div>
     {quickCreateCustomer && (
-      <RetailQuickCreateCustomer
-        prefillName={quickCreateCustomer.prefillName}
-        onCreated={quickCreateCustomer.onCreated}
-        onClose={()=>setQuickCreateCustomer(null)}
-      />
+      <div className="fixed inset-0 bg-black/60 z-[9999] flex items-center justify-center p-4" onClick={()=>setQuickCreateCustomer(null)}>
+        <div className="bg-white rounded-[24px] shadow-2xl p-6 w-full max-w-md" onClick={e=>e.stopPropagation()}>
+          <h3 className="font-bold text-[#0F172A] text-lg mb-4">👤 New Retail Customer</h3>
+          <RetailQuickCreateCustomer
+            prefillName={quickCreateCustomer.prefillName}
+            onCreated={quickCreateCustomer.onCreated}
+            onClose={()=>setQuickCreateCustomer(null)}
+          />
+        </div>
+      </div>
     )}
     </>
   );
@@ -1870,8 +2041,10 @@ function RetailCreateModal({ page, open, onClose, onCreated, prefill = null }) {
 // ─── Retail Saved Search Panel ────────────────────────────────────────────────
 function RetailSavedSearchPanel({ page, currentFilters, onApply, onClose }) {
   const { currentUser, savedSearches, fetchSavedSearches, createSavedSearch, deleteSavedSearch, setDefaultSavedSearch } = useApp();
+  const { showAlert } = useAlert();
   const [saveName, setSaveName] = useState('');
   const [saveDef,  setSaveDef]  = useState(false);
+  const [saveGlobal, setSaveGlobal] = useState(false);
   const [saving,   setSaving]   = useState(false);
 
   useEffect(() => { if (fetchSavedSearches) fetchSavedSearches(page); }, [page]);
@@ -1884,8 +2057,9 @@ function RetailSavedSearchPanel({ page, currentFilters, onApply, onClose }) {
     if (f.search)            parts.push(`Search: "${f.search}"`);
     if (f.status && f.status !== 'All') parts.push(`Status: ${f.status}`);
     if (f.timePeriod)        parts.push(f.timePeriod.replace(/_/g,' '));
-    if (f.fieldFilter?.value) parts.push(`${f.fieldFilter.field}: ${f.fieldFilter.value}`);
+    (f.advFilters||[]).forEach(c => { if (c.field && (c.value || c.op==='is_empty' || c.op==='is_not_empty' || c.op==='is_true' || c.op==='is_false')) parts.push(`${c.field} ${c.op} ${c.value||''}`.trim()); });
     if (f.owner)             parts.push(`Owner: ${f.owner}`);
+    if (f.sortField)         parts.push(`Sort: ${f.sortField} ${f.sortDir||'asc'}`);
     return parts.length ? parts.join(' · ') : 'All records';
   };
 
@@ -1903,13 +2077,13 @@ function RetailSavedSearchPanel({ page, currentFilters, onApply, onClose }) {
           Apply
         </button>
         {!s.is_default && setDefaultSavedSearch && (
-          <button onClick={() => setDefaultSavedSearch(s.id, page, false)}
+          <button onClick={() => setDefaultSavedSearch(s.id, s.is_global_default)}
             className="bg-blue-100 text-blue-700 px-3 py-2 rounded-xl text-xs font-semibold hover:bg-blue-200">
             Set Default
           </button>
         )}
         {deleteSavedSearch && (
-          <button onClick={() => deleteSavedSearch(s.id, page)}
+          <button onClick={() => deleteSavedSearch(s.id)}
             className="bg-red-100 text-red-500 px-3 py-2 rounded-xl text-xs font-semibold hover:bg-red-200">
             Delete
           </button>
@@ -1936,12 +2110,16 @@ function RetailSavedSearchPanel({ page, currentFilters, onApply, onClose }) {
             <input type="checkbox" checked={saveDef} onChange={e => setSaveDef(e.target.checked)} className="w-4 h-4 accent-blue-600"/>
             Set as my default
           </label>
+          <label className="flex items-center gap-2 text-sm text-[#0F172A] cursor-pointer">
+            <input type="checkbox" checked={saveGlobal} onChange={e => setSaveGlobal(e.target.checked)} className="w-4 h-4 accent-purple-600"/>
+            Make this the team default for everyone
+          </label>
           <button
             onClick={async () => {
-              if (!saveName.trim()) { alert('Enter a name.'); return; }
+              if (!saveName.trim()) { showAlert('Enter a name.', { variant:'warning' }); return; }
               setSaving(true);
-              await createSavedSearch(saveName, page, currentFilters, saveDef, false);
-              setSaveName(''); setSaveDef(false); setSaving(false);
+              await createSavedSearch({ name:saveName, object_type:page, filters:currentFilters, is_default:saveDef, is_global_default:saveGlobal });
+              setSaveName(''); setSaveDef(false); setSaveGlobal(false); setSaving(false);
             }}
             disabled={saving}
             className="w-full bg-gradient-to-r from-[#0F172A] to-blue-800 text-white py-2.5 rounded-xl font-bold text-sm disabled:opacity-50">
@@ -1976,21 +2154,11 @@ export default function RetailListPage({ page }) {
     enterpriseUsers, savedSearches, fetchSavedSearches, createSavedSearch,
     deleteSavedSearch, setDefaultSavedSearch, currentUser, appPreferences,
     createRetailInvoiceFromOrder, currentUserPermissions, permissionsLoaded,
+    fetchListCount, listViewPrefs, fetchListViewPrefs, saveListViewPrefs,
   } = useApp();
 
   const cfg = RETAIL_CONFIG[page];
 
-  const resolvedCfg = useMemo(() => {
-    if (page !== 'retailInvoices') return cfg;
-    return { ...cfg, listColumns: cfg.listColumns.map(col =>
-      col.h === 'Order #' ? { ...col, v: (r) => {
-        if (!r.order_number) return '-';
-        const ord = retailOrders.find(o => o._uuid === r.order_number || o.order_number === r.order_number || o.id === r.order_number);
-        if (ord?.displayNumber) return 'RORD-' + String(ord.displayNumber).padStart(5, '0');
-        return r.order_number.length > 14 ? r.order_number.slice(0,14)+'...' : r.order_number;
-      }} : col
-    )};
-  }, [page, cfg, retailOrders]);
   const dataMap = { retailCustomers, retailProducts, retailActivities, retailOrders, retailInvoices };
   const fetchMap = {
     retailCustomers: fetchRetailCustomers, retailProducts: fetchRetailProducts,
@@ -2001,10 +2169,18 @@ export default function RetailListPage({ page }) {
 
   // ── Filter state ───────────────────────────────────────────────────────────
   const [search,         setSearch]         = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [serverTotal,    setServerTotal]    = useState(null);
   const [statusFilter,   setStatusFilter]   = useState('All');
   const [timePeriod,     setTimePeriod]     = useState('');
-  const [fieldFilter,    setFieldFilter]    = useState({ field: '', value: '' });
+  const [advFilters,     setAdvFilters]     = useState([]); // [{field, op, value, type}]
   const [ownerFilter,    setOwnerFilter]    = useState('');
+  const [sortField,      setSortField]      = useState('');
+  const [sortDir,        setSortDir]        = useState('asc');
+  const [columnsOpen,    setColumnsOpen]    = useState(false);
+  const fieldMeta = useMemo(() => getRetailFieldMeta(page), [page]);
+  const DEFAULT_COLUMNS = RETAIL_DEFAULT_COLUMNS[page] || ['id','name'];
+  const [visibleColumns, setVisibleColumns] = useState(DEFAULT_COLUMNS);
   const [pageSize,       setPageSize]       = useState(25);
   const [currentPage,    setCurrentPage]    = useState(1);
   const [selectedRecord, setSelectedRecord] = useState(null);
@@ -2014,14 +2190,6 @@ export default function RetailListPage({ page }) {
   const [searchPanel,    setSearchPanel]    = useState(false);
   const [menuOpenId,     setMenuOpenId]     = useState(null);
   const [defaultLoaded,  setDefaultLoaded]  = useState(false);
-
-  const RETAIL_FIELD_FILTERS = {
-    retailCustomers:  [{ v:'loyalty_tier', l:'Loyalty Tier' }, { v:'city', l:'City' }, { v:'country', l:'Country' }],
-    retailProducts:   [{ v:'category', l:'Category' }, { v:'brand', l:'Brand' }],
-    retailActivities: [{ v:'activity_type', l:'Activity Type' }, { v:'priority', l:'Priority' }],
-    retailOrders:     [{ v:'channel', l:'Channel' }, { v:'payment_method', l:'Payment Method' }, { v:'payment_status', l:'Payment Status' }],
-    retailInvoices:   [{ v:'payment_method', l:'Payment Method' }, { v:'payment_status', l:'Payment Status' }],
-  };
 
   const TIME_PERIODS_R = [
     { v:'',           l:'All Time' },
@@ -2070,6 +2238,14 @@ export default function RetailListPage({ page }) {
     return (currentUserPermissions||[]).includes(PCODE[page] || `${page}_${action}`);
   };
 
+  // Cross-object navigation from Customer 360 — runs as an effect, never during render
+  useEffect(() => {
+    if (!c360Record) return;
+    setPendingRecord({ page: c360Record.page, record: c360Record.record });
+    window.dispatchEvent(new CustomEvent('retail-navigate', { detail: { page: c360Record.page } }));
+    setC360Record(null);
+  }, [c360Record]);
+
   useEffect(() => {
     const h = (e) => { if (!e.target.closest('[data-menu-container]')) setMenuOpenId(null); };
     document.addEventListener('mousedown', h);
@@ -2079,9 +2255,30 @@ export default function RetailListPage({ page }) {
   useEffect(() => {
     if (fetchSavedSearches) fetchSavedSearches(page);
     setSearch(''); setStatusFilter('All'); setTimePeriod('');
-    setFieldFilter({ field:'', value:'' }); setOwnerFilter('');
+    setAdvFilters([]); setOwnerFilter('');
     setCurrentPage(1); setDefaultLoaded(false);
+    setVisibleColumns(RETAIL_DEFAULT_COLUMNS[page] || ['id','name']); setSortField(''); setSortDir('asc');
+    if (fetchListViewPrefs) fetchListViewPrefs(page).then(saved => {
+      if (!saved) return;
+      if (saved.columns?.length) setVisibleColumns(saved.columns);
+      if (saved.sort?.field) { setSortField(saved.sort.field); setSortDir(saved.sort.direction||'asc'); }
+    });
     setTimeout(() => setDefaultLoaded(true), 300);
+  }, [page]);
+
+  // Debounce search input (300ms) so filtering doesn't recompute on every
+  // keystroke against a potentially large in-memory array.
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(search), 300);
+    return () => clearTimeout(t);
+  }, [search]);
+
+  // Server-side exact row count — accurate even though only LIST_FETCH_LIMIT
+  // rows are loaded into retailCustomers/retailOrders/etc. client-side.
+  useEffect(() => {
+    let cancelled = false;
+    fetchListCount(page).then(c => { if (!cancelled) setServerTotal(c); });
+    return () => { cancelled = true; };
   }, [page]);
 
   useEffect(() => {
@@ -2089,7 +2286,7 @@ export default function RetailListPage({ page }) {
     const def = savedSearches.find(s => s.object_type===page && s.is_default)
              || savedSearches.find(s => s.object_type===page && s.is_global_default);
     if (def?.filters) applyFilters(def.filters);
-  }, [defaultLoaded]);
+  }, [defaultLoaded, savedSearches]);
 
   useEffect(() => {
     if (!pendingRecord) return;
@@ -2109,17 +2306,18 @@ export default function RetailListPage({ page }) {
     if (f.search      !== undefined) setSearch(f.search || '');
     if (f.status      !== undefined) setStatusFilter(f.status || 'All');
     if (f.timePeriod  !== undefined) setTimePeriod(f.timePeriod || '');
-    if (f.fieldFilter !== undefined) setFieldFilter(f.fieldFilter || { field:'', value:'' });
+    if (f.advFilters  !== undefined) setAdvFilters(f.advFilters || []);
     if (f.owner       !== undefined) setOwnerFilter(f.owner || '');
+    if (f.sortField   !== undefined) { setSortField(f.sortField||''); setSortDir(f.sortDir||'asc'); }
     setCurrentPage(1);
   };
 
-  const currentFilters = { search, status: statusFilter, timePeriod, fieldFilter, owner: ownerFilter };
+  const currentFilters = { search, status: statusFilter, timePeriod, advFilters, owner: ownerFilter, sortField, sortDir };
 
   const filtered = useMemo(() => {
     let rows = data;
-    if (search.trim()) {
-      const q = search.toLowerCase();
+    if (debouncedSearch.trim()) {
+      const q = debouncedSearch.trim().toLowerCase();
       const fmtDisplayNum = r => r.displayNumber
         ? formatDisplayNumber(PAGE_DISPLAY_PREFIX[page]||'REC', r.displayNumber)
         : (r.display_number ? formatDisplayNumber(PAGE_DISPLAY_PREFIX[page]||'REC', r.display_number) : '');
@@ -2132,20 +2330,65 @@ export default function RetailListPage({ page }) {
     }
     if (statusFilter !== 'All') rows = rows.filter(r => r.status === statusFilter);
     rows = applyTimePeriodFilter(rows);
-    if (fieldFilter.field && fieldFilter.value) {
-      rows = rows.filter(r => String(r[fieldFilter.field]||'').toLowerCase().includes(fieldFilter.value.toLowerCase()));
-    }
+    // Advanced filters — every condition must match (AND), covering any field
+    // on the object (not a small hardcoded subset like before).
+    advFilters.forEach(cond => {
+      if (!cond.field) return;
+      const needsValue = !['is_empty','is_not_empty','is_true','is_false'].includes(cond.op);
+      if (needsValue && (cond.value===undefined || cond.value==='')) return;
+      rows = rows.filter(r => retailMatchesCondition(r, cond));
+    });
     if (ownerFilter) rows = rows.filter(r => r.owner === ownerFilter || r.owner_id === ownerFilter);
     return rows;
-  }, [data, search, statusFilter, timePeriod, fieldFilter, ownerFilter]);
+  }, [data, debouncedSearch, statusFilter, timePeriod, advFilters, ownerFilter]);
 
-  const totalRecords = filtered.length;
+  // Sorting — applied after filtering, before pagination.
+  const sorted = useMemo(() => {
+    if (!sortField) return filtered;
+    const meta = fieldMeta.find(f => f.key === sortField);
+    const dir = sortDir === 'desc' ? -1 : 1;
+    return [...filtered].sort((a, b) => {
+      const av = a[sortField], bv = b[sortField];
+      if (av == null && bv == null) return 0;
+      if (av == null) return 1; if (bv == null) return -1;
+      if (meta?.type === 'number') return (Number(av) - Number(bv)) * dir;
+      if (meta?.type === 'date')   return (new Date(av).getTime() - new Date(bv).getTime()) * dir;
+      return String(av).localeCompare(String(bv)) * dir;
+    });
+  }, [filtered, sortField, sortDir, fieldMeta]);
+
+  const toggleSort = (key) => {
+    if (sortField !== key) { setSortField(key); setSortDir('asc'); }
+    else if (sortDir === 'asc') setSortDir('desc');
+    else { setSortField(''); setSortDir('asc'); }
+  };
+
+  const totalRecords = sorted.length;
   const totalPages   = Math.max(1, Math.ceil(totalRecords / pageSize));
   const safePage     = Math.min(currentPage, totalPages);
-  const pagedRows    = filtered.slice((safePage-1)*pageSize, safePage*pageSize);
-  const activeCount  = [search, statusFilter!=='All', timePeriod, fieldFilter.value, ownerFilter].filter(Boolean).length;
-  const clearFilters = () => { setSearch(''); setStatusFilter('All'); setTimePeriod(''); setFieldFilter({field:'',value:''}); setOwnerFilter(''); setCurrentPage(1); };
-  const objFieldDefs = RETAIL_FIELD_FILTERS[page] || [];
+  const pagedRows    = sorted.slice((safePage-1)*pageSize, safePage*pageSize);
+  const activeCount  = [debouncedSearch, statusFilter!=='All', timePeriod, advFilters.some(c=>c.field), ownerFilter].filter(Boolean).length;
+  const clearFilters = () => { setSearch(''); setStatusFilter('All'); setTimePeriod(''); setAdvFilters([]); setOwnerFilter(''); setCurrentPage(1); };
+  const addFilterRow = () => { const f = fieldMeta.find(f=>f.key!=='id')||fieldMeta[0]; setAdvFilters(p=>[...p,{field:f.key,type:f.type,op:RETAIL_OPERATORS[f.type][0].v,value:''}]); };
+  const updateFilterRow = (idx, patch) => setAdvFilters(p => p.map((c,i) => i===idx ? {...c,...patch} : c));
+  const removeFilterRow = (idx) => setAdvFilters(p => p.filter((_,i) => i!==idx));
+  const persistColumns = (cols, sf=sortField, sd=sortDir) => { setVisibleColumns(cols); if (saveListViewPrefs) saveListViewPrefs(page, { columns: cols, sort: { field: sf, direction: sd } }); };
+  const toggleColumn = (key) => persistColumns(visibleColumns.includes(key) ? visibleColumns.filter(c=>c!==key) : [...visibleColumns, key]);
+  const moveColumn = (idx, dir) => { const cols=[...visibleColumns]; const j=idx+dir; if (j<0||j>=cols.length) return; [cols[idx],cols[j]]=[cols[j],cols[idx]]; persistColumns(cols); };
+  const fmtRetailCell = (r, meta) => {
+    const v = r[meta.key];
+    if (meta.key === 'id') return r.displayNumber ? formatDisplayNumber(PAGE_DISPLAY_PREFIX[page]||'REC', r.displayNumber) : (r[cfg.idField] || r.id);
+    if (meta.key === 'order_number' && page === 'retailInvoices') {
+      if (!v) return '-';
+      const ord = retailOrders.find(o => o._uuid === v || o.order_number === v || o.id === v);
+      if (ord?.displayNumber) return 'RORD-' + String(ord.displayNumber).padStart(5, '0');
+      return String(v).length > 14 ? String(v).slice(0,14)+'...' : v;
+    }
+    if (meta.type === 'date')    return v ? new Date(v).toLocaleDateString('en-IN') : '-';
+    if (meta.type === 'boolean') return v ? 'Yes' : 'No';
+    if (['amount','price','cost','mrp'].includes(meta.key)) return v!=null ? formatCurrency(Number(v)) : '-';
+    return v!=null && v!=='' ? String(v) : '-';
+  };
 
   if (!cfg) return <div className="p-6 text-gray-400">Unknown retail page: {page}</div>;
 
@@ -2157,7 +2400,10 @@ export default function RetailListPage({ page }) {
         <div>
           <h1 className="text-2xl font-bold text-[#0F172A]">{cfg.icon} {cfg.title}</h1>
           <p className="text-gray-400 text-sm mt-0.5">
-            {totalRecords} of {data.length} record{data.length!==1?'s':''}
+            {totalRecords} of {(serverTotal !== null ? serverTotal : data.length).toLocaleString()} record{data.length!==1?'s':''}
+            {serverTotal !== null && data.length >= 500 && serverTotal > data.length && (
+              <span className="text-amber-600 font-semibold"> · showing {data.length.toLocaleString()} most recent (search covers loaded records only)</span>
+            )}
             {activeCount > 0 && <span className="text-blue-600 font-semibold"> · {activeCount} filter{activeCount>1?'s':''} active</span>}
           </p>
         </div>
@@ -2177,10 +2423,10 @@ export default function RetailListPage({ page }) {
 
       {/* Filters */}
       <div className="bg-white rounded-2xl border border-blue-100 p-4 shadow-sm space-y-3">
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
           <input value={search} onChange={e=>{setSearch(e.target.value);setCurrentPage(1);}}
             placeholder="Search by name, record #, email, phone, SKU…"
-            className="border border-blue-200 rounded-xl px-4 py-2.5 text-sm text-[#0F172A] focus:outline-none focus:ring-2 focus:ring-blue-300 placeholder:text-gray-400 xl:col-span-2"/>
+            className="border border-blue-200 rounded-xl px-4 py-2.5 text-sm text-[#0F172A] focus:outline-none focus:ring-2 focus:ring-blue-300 placeholder:text-gray-400"/>
           <select value={statusFilter} onChange={e=>{setStatusFilter(e.target.value);setCurrentPage(1);}}
             className="border border-blue-200 rounded-xl px-4 py-2.5 text-sm text-[#0F172A] bg-white focus:outline-none focus:ring-2 focus:ring-blue-300">
             <option value="All">All Statuses</option>
@@ -2190,40 +2436,102 @@ export default function RetailListPage({ page }) {
             className="border border-blue-200 rounded-xl px-4 py-2.5 text-sm text-[#0F172A] bg-white focus:outline-none focus:ring-2 focus:ring-blue-300">
             {TIME_PERIODS_R.map(t=><option key={t.v} value={t.v}>{t.l}</option>)}
           </select>
-          {objFieldDefs.length > 0 && (
-            <div className="flex gap-2">
-              <select value={fieldFilter.field} onChange={e=>{setFieldFilter({field:e.target.value,value:''});setCurrentPage(1);}}
-                className="flex-1 border border-blue-200 rounded-xl px-3 py-2.5 text-sm text-[#0F172A] bg-white focus:outline-none focus:ring-2 focus:ring-blue-300">
-                <option value="">All Fields</option>
-                {objFieldDefs.map(f=><option key={f.v} value={f.v}>{f.l}</option>)}
-              </select>
-              {fieldFilter.field && (
-                <input value={fieldFilter.value} onChange={e=>{setFieldFilter(p=>({...p,value:e.target.value}));setCurrentPage(1);}}
-                  placeholder="Value"
-                  className="flex-1 border border-blue-200 rounded-xl px-3 py-2.5 text-sm text-[#0F172A] focus:outline-none focus:ring-2 focus:ring-blue-300"/>
-              )}
-            </div>
-          )}
-        </div>
-        <div className="flex items-center justify-between gap-3 pt-2 border-t border-blue-50 flex-wrap">
           <select value={ownerFilter} onChange={e=>{setOwnerFilter(e.target.value);setCurrentPage(1);}}
             className="border border-blue-200 rounded-xl px-4 py-2 text-sm text-[#0F172A] bg-white focus:outline-none focus:ring-2 focus:ring-blue-300">
             <option value="">All Owners</option>
             {enterpriseUsers.map(u=><option key={u.id} value={u.email}>{u.first_name} {u.last_name}</option>)}
           </select>
-          <div className="relative">
-            <button onClick={()=>setSearchPanel(!searchPanel)}
-              className={`flex items-center gap-2 text-sm font-semibold px-4 py-2 rounded-xl transition-all ${searchPanel?'bg-[#0F172A] text-white':'bg-blue-100 text-blue-700 hover:bg-blue-200'}`}>
-              🔖 Saved Searches
-              {(savedSearches||[]).filter(s=>s.object_type===page).length > 0 && (
-                <span className={`text-xs font-bold px-1.5 py-0.5 rounded-full ${searchPanel?'bg-white/20 text-white':'bg-blue-200 text-blue-700'}`}>
-                  {(savedSearches||[]).filter(s=>s.object_type===page).length}
-                </span>
+        </div>
+
+        {/* Advanced filters — any field on the object, AND-combined */}
+        {advFilters.length > 0 && (
+          <div className="space-y-2 pt-2 border-t border-blue-50">
+            {advFilters.map((cond, idx) => {
+              const meta = fieldMeta.find(f=>f.key===cond.field) || fieldMeta[0];
+              const needsValue = !['is_empty','is_not_empty','is_true','is_false'].includes(cond.op);
+              return (
+                <div key={idx} className="flex flex-wrap gap-2 items-center bg-blue-50/50 rounded-xl p-2">
+                  <select value={cond.field} onChange={e=>{const m=fieldMeta.find(f=>f.key===e.target.value);updateFilterRow(idx,{field:e.target.value,type:m.type,op:RETAIL_OPERATORS[m.type][0].v,value:''});}}
+                    className="border border-blue-200 rounded-lg px-2 py-1.5 text-xs text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-blue-400">
+                    {fieldMeta.filter(f=>f.key!=='id').map(f=><option key={f.key} value={f.key}>{f.label}</option>)}
+                  </select>
+                  <select value={cond.op} onChange={e=>{setCurrentPage(1);updateFilterRow(idx,{op:e.target.value});}}
+                    className="border border-blue-200 rounded-lg px-2 py-1.5 text-xs text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-blue-400">
+                    {RETAIL_OPERATORS[meta.type].map(o=><option key={o.v} value={o.v}>{o.l}</option>)}
+                  </select>
+                  {needsValue && (
+                    meta.type==='select' && meta.opts?.length
+                      ? <select value={cond.value} onChange={e=>{setCurrentPage(1);updateFilterRow(idx,{value:e.target.value});}} className="flex-1 min-w-[100px] border border-blue-200 rounded-lg px-2 py-1.5 text-xs text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-blue-400">
+                          <option value="">Select…</option>
+                          {meta.opts.map(o=><option key={o} value={o}>{o}</option>)}
+                        </select>
+                      : <input type={meta.type==='date'?'date':meta.type==='number'?'number':'text'} value={cond.value} onChange={e=>{setCurrentPage(1);updateFilterRow(idx,{value:e.target.value});}} placeholder="Value"
+                          className="flex-1 min-w-[100px] border border-blue-200 rounded-lg px-2 py-1.5 text-xs text-[#0F172A] focus:outline-none focus:ring-1 focus:ring-blue-400 placeholder:text-gray-400"/>
+                  )}
+                  <button onClick={()=>removeFilterRow(idx)} className="w-6 h-6 rounded-full bg-red-100 hover:bg-red-200 text-red-500 text-xs font-bold flex items-center justify-center flex-shrink-0">✕</button>
+                </div>
+              );
+            })}
+          </div>
+        )}
+        <div className="pt-2 border-t border-blue-50">
+          <button onClick={addFilterRow} className="text-xs font-semibold text-blue-600 hover:underline">+ Add Filter</button>
+        </div>
+
+        <div className="flex items-center justify-between gap-3 pt-2 border-t border-blue-50 flex-wrap">
+          <div className="text-xs text-blue-600 font-medium">{activeCount > 0 ? `${activeCount} filter${activeCount>1?'s':''} active` : ''}</div>
+          <div className="flex items-center gap-2">
+            <div className="relative">
+              <button onClick={()=>setColumnsOpen(!columnsOpen)} className={`flex items-center gap-2 text-sm font-semibold px-4 py-2 rounded-xl transition-all ${columnsOpen?'bg-[#0F172A] text-white':'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>
+                ⚙️ Columns <span className={`text-xs font-bold px-1.5 py-0.5 rounded-full ${columnsOpen?'bg-white/20 text-white':'bg-gray-200 text-gray-600'}`}>{visibleColumns.length}</span>
+              </button>
+              {columnsOpen && (
+                <div className="absolute right-0 top-12 w-80 bg-white rounded-[24px] shadow-2xl border border-blue-100 z-50 overflow-hidden" style={{maxHeight:'70vh',overflowY:'auto'}}>
+                  <div className="bg-gradient-to-r from-[#0F172A] to-blue-900 px-5 py-3 flex items-center justify-between">
+                    <h3 className="text-white font-bold text-sm">Customize Columns</h3>
+                    <button onClick={()=>setColumnsOpen(false)} className="text-white/70 hover:text-white">✕</button>
+                  </div>
+                  <div className="p-3">
+                    <p className="text-xs text-gray-400 px-2 pb-2">Shown, in order — use ↑↓ to reorder.</p>
+                    {visibleColumns.map((key, idx) => {
+                      const meta = fieldMeta.find(f=>f.key===key);
+                      if (!meta) return null;
+                      return (
+                        <div key={key} className="flex items-center gap-2 px-2 py-1.5 hover:bg-blue-50 rounded-xl">
+                          <span className="flex-1 text-sm text-[#0F172A]">{meta.label}</span>
+                          <button onClick={()=>moveColumn(idx,-1)} disabled={idx===0} className="w-6 h-6 rounded text-gray-400 hover:text-[#0F172A] disabled:opacity-20 text-xs">▲</button>
+                          <button onClick={()=>moveColumn(idx,1)} disabled={idx===visibleColumns.length-1} className="w-6 h-6 rounded text-gray-400 hover:text-[#0F172A] disabled:opacity-20 text-xs">▼</button>
+                          <button onClick={()=>toggleColumn(key)} className="w-6 h-6 rounded-full bg-red-100 hover:bg-red-200 text-red-500 text-xs font-bold flex items-center justify-center">✕</button>
+                        </div>
+                      );
+                    })}
+                    <div className="border-t border-gray-100 mt-2 pt-2">
+                      <p className="text-xs text-gray-400 px-2 pb-1">Add a column</p>
+                      {fieldMeta.filter(f=>!visibleColumns.includes(f.key)).map(f => (
+                        <button key={f.key} onClick={()=>toggleColumn(f.key)} className="w-full text-left px-2 py-1.5 text-sm text-blue-600 hover:bg-blue-50 rounded-xl">+ {f.label}</button>
+                      ))}
+                    </div>
+                    <div className="border-t border-gray-100 mt-2 pt-2 px-2">
+                      <button onClick={()=>persistColumns(DEFAULT_COLUMNS)} className="text-xs text-gray-400 hover:text-[#0F172A]">Reset to default</button>
+                    </div>
+                  </div>
+                </div>
               )}
-            </button>
-            {searchPanel && (
-              <RetailSavedSearchPanel page={page} currentFilters={currentFilters} onApply={applyFilters} onClose={()=>setSearchPanel(false)}/>
-            )}
+            </div>
+            <div className="relative">
+              <button onClick={()=>setSearchPanel(!searchPanel)}
+                className={`flex items-center gap-2 text-sm font-semibold px-4 py-2 rounded-xl transition-all ${searchPanel?'bg-[#0F172A] text-white':'bg-blue-100 text-blue-700 hover:bg-blue-200'}`}>
+                🔖 Saved Searches
+                {(savedSearches||[]).filter(s=>s.object_type===page).length > 0 && (
+                  <span className={`text-xs font-bold px-1.5 py-0.5 rounded-full ${searchPanel?'bg-white/20 text-white':'bg-blue-200 text-blue-700'}`}>
+                    {(savedSearches||[]).filter(s=>s.object_type===page).length}
+                  </span>
+                )}
+              </button>
+              {searchPanel && (
+                <RetailSavedSearchPanel page={page} currentFilters={currentFilters} onApply={applyFilters} onClose={()=>setSearchPanel(false)}/>
+              )}
+            </div>
           </div>
         </div>
       </div>
@@ -2234,17 +2542,22 @@ export default function RetailListPage({ page }) {
           <table className="w-full text-sm">
             <thead className="bg-gradient-to-r from-[#0F172A] to-blue-900 text-white">
               <tr>
-                <th className="px-5 py-3.5 text-left text-xs font-semibold uppercase tracking-wider">Record #</th>
-                {resolvedCfg.listColumns.map(c=>(
-                  <th key={c.h} className={`px-5 py-3.5 text-xs font-semibold uppercase tracking-wider ${c.align==='right'?'text-right':'text-left'}`}>{c.h}</th>
-                ))}
-                <th className="px-5 py-3.5 text-left text-xs font-semibold uppercase tracking-wider">Status</th>
+                {visibleColumns.map(key => {
+                  const meta = fieldMeta.find(f=>f.key===key);
+                  if (!meta) return null;
+                  const align = ['amount','price','cost','mrp','stock_quantity','loyalty_points'].includes(key) ? 'text-right' : 'text-left';
+                  return (
+                    <th key={key} onClick={()=>toggleSort(key)} className={`px-5 py-3.5 ${align} text-xs font-semibold uppercase tracking-wider cursor-pointer select-none hover:bg-white/10 whitespace-nowrap`}>
+                      {meta.label} {sortField===key && (sortDir==='asc' ? '▲' : '▼')}
+                    </th>
+                  );
+                })}
                 <th className="px-5 py-3.5 text-center text-xs font-semibold uppercase tracking-wider w-24">Actions</th>
               </tr>
             </thead>
             <tbody>
               {pagedRows.length === 0 ? (
-                <tr><td colSpan={cfg.listColumns.length+3} className="px-5 py-16 text-center">
+                <tr><td colSpan={visibleColumns.length+1} className="px-5 py-16 text-center">
                   <div className="text-5xl mb-3">{activeCount>0?'🔍':cfg.icon}</div>
                   <div className="font-bold text-[#0F172A] text-lg mb-1">{activeCount>0?'No matching records':`No ${cfg.title.toLowerCase()} yet`}</div>
                   <p className="text-gray-400 text-sm">{activeCount>0?'Try adjusting your filters.':`Click "+ Create ${cfg.singular}" to add your first record.`}</p>
@@ -2252,23 +2565,33 @@ export default function RetailListPage({ page }) {
                 </td></tr>
               ) : pagedRows.map(r => (
                 <tr key={r.id} className="border-t border-blue-50 hover:bg-blue-50/40 transition-all">
-                  <td className="px-5 py-3.5">
-                    <button onClick={()=>setSelectedRecord(r)}>
-                      <span className="text-xs font-mono font-bold text-blue-700 bg-blue-50 hover:bg-blue-100 px-2.5 py-1 rounded-full border border-blue-100 cursor-pointer transition-all">
-                        {r.displayNumber ? formatDisplayNumber(PAGE_DISPLAY_PREFIX[page]||'REC', r.displayNumber) : (r[cfg.idField] || r.id)}
-                      </span>
-                    </button>
-                  </td>
-                  {resolvedCfg.listColumns.map((c,ci)=>(
-                    <td key={c.h} className={`px-5 py-3.5 ${c.align==='right'?'text-right font-semibold text-[#0F172A]':'text-gray-700'} ${c.mono?'font-mono text-xs text-gray-400':''}`}>
-                      {ci===0
-                        ? <button onClick={()=>setSelectedRecord(r)} className="font-semibold text-[#0F172A] hover:text-blue-700 hover:underline text-left">{c.v(r)}</button>
-                        : c.v(r)}
-                    </td>
-                  ))}
-                  <td className="px-5 py-3.5">
-                    <span className={`px-2.5 py-0.5 rounded-full text-xs font-bold border ${getStatusColor(r.status)}`}>{r.status}</span>
-                  </td>
+                  {visibleColumns.map((key, ci) => {
+                    const meta = fieldMeta.find(f=>f.key===key);
+                    if (!meta) return null;
+                    if (key === 'id') return (
+                      <td key={key} className="px-5 py-3.5">
+                        <button onClick={()=>setSelectedRecord(r)}>
+                          <span className="text-xs font-mono font-bold text-blue-700 bg-blue-50 hover:bg-blue-100 px-2.5 py-1 rounded-full border border-blue-100 cursor-pointer transition-all">
+                            {fmtRetailCell(r, meta)}
+                          </span>
+                        </button>
+                      </td>
+                    );
+                    if (key === 'status') return (
+                      <td key={key} className="px-5 py-3.5">
+                        <span className={`px-2.5 py-0.5 rounded-full text-xs font-bold border ${getStatusColor(r.status)}`}>{r.status}</span>
+                      </td>
+                    );
+                    const align = ['amount','price','cost','mrp','stock_quantity','loyalty_points'].includes(key) ? 'text-right font-semibold text-[#0F172A]' : 'text-gray-700';
+                    const isFirstTextCol = ci === visibleColumns.findIndex(k=>k!=='id');
+                    return (
+                      <td key={key} className={`px-5 py-3.5 ${align}`}>
+                        {isFirstTextCol
+                          ? <button onClick={()=>setSelectedRecord(r)} className="font-semibold text-[#0F172A] hover:text-blue-700 hover:underline text-left">{fmtRetailCell(r, meta)}</button>
+                          : fmtRetailCell(r, meta)}
+                      </td>
+                    );
+                  })}
                   <td className="px-5 py-3.5">
                     <div className="relative flex justify-center" data-menu-container>
                       <button onClick={()=>setMenuOpenId(menuOpenId===r.id?null:r.id)}
@@ -2278,8 +2601,8 @@ export default function RetailListPage({ page }) {
                           <button onClick={()=>{setSelectedRecord(r);setMenuOpenId(null);}} className="w-full text-left px-4 py-3 rounded-xl text-sm font-medium hover:bg-blue-800 text-white">📄 Open Details</button>
                           {page==='retailCustomers' && (<>
                             <div className="border-t border-blue-800 my-1"/>
-                            <button onClick={()=>{setMenuOpenId(null);setCreatePrefill({page:'retailOrders',data:{customer:r.name,customer_id:r._uuid||r.id,order_date:new Date().toISOString().slice(0,10),status:'Draft',channel:'In-Store',place_of_supply:'Tamil Nadu'}});}} className="w-full text-left px-4 py-3 rounded-xl text-sm font-medium hover:bg-blue-800 text-white">🛒 Create Order</button>
-                            <button onClick={()=>{setMenuOpenId(null);setCreatePrefill({page:'retailInvoices',data:{customer:r.name,customer_id:r._uuid||r.id,invoice_date:new Date().toISOString().slice(0,10),status:'Draft',payment_status:'Pending',place_of_supply:'Tamil Nadu'}});}} className="w-full text-left px-4 py-3 rounded-xl text-sm font-medium hover:bg-blue-800 text-white">🧾 Create Invoice</button>
+                            <button onClick={()=>{setMenuOpenId(null);setCreatePrefill({page:'retailOrders',data:{...buildCustomerPrefill(r),order_date:new Date().toISOString().slice(0,10),status:'Draft',channel:'In-Store'}});}} className="w-full text-left px-4 py-3 rounded-xl text-sm font-medium hover:bg-blue-800 text-white">🛒 Create Order</button>
+                            <button onClick={()=>{setMenuOpenId(null);setCreatePrefill({page:'retailInvoices',data:{...buildCustomerPrefill(r),invoice_date:new Date().toISOString().slice(0,10),status:'Draft',payment_status:'Pending'}});}} className="w-full text-left px-4 py-3 rounded-xl text-sm font-medium hover:bg-blue-800 text-white">🧾 Create Invoice</button>
                           </>)}
                           {page==='retailOrders' && r.status==='Completed' && (
                             <button onClick={()=>{createRetailInvoiceFromOrder(r);setMenuOpenId(null);}} className="w-full text-left px-4 py-3 rounded-xl text-sm font-medium hover:bg-blue-800 text-white">🧾 Create Invoice</button>
@@ -2336,15 +2659,7 @@ export default function RetailListPage({ page }) {
       )}
       <RetailCreateModal page={page} open={createOpen} onClose={()=>{setCreateOpen(false);setPendingRecord(null);}} onCreated={()=>{fetchMap[page]?.();setPendingRecord(null);}} prefill={pendingRecord?.openCreate ? pendingRecord.prefill : null}/>
       {/* Cross-object create modal — for Create Order/Invoice from customer list/360 */}
-      {c360Record && (() => {
-        const doNav = () => {
-          setPendingRecord({ page: c360Record.page, record: c360Record.record });
-          window.dispatchEvent(new CustomEvent('retail-navigate', { detail: { page: c360Record.page } }));
-          setC360Record(null);
-        };
-        setTimeout(doNav, 0);
-        return null;
-      })()}
+      {/* c360 navigation handled by effect below (was an in-render setTimeout) */}
 
       {createPrefill && (
         <RetailCreateModal

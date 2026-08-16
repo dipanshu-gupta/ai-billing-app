@@ -212,7 +212,7 @@ function NotificationBell() {
 // ─── About Dialog ────────────────────────────────────────────────────────────
 function AboutDialog({ onClose }) {
   return (
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[300] p-4" onClick={onClose}>
+    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[300] p-4" onClick={onClose}>
       <div className="bg-white rounded-[28px] shadow-2xl w-full max-w-sm overflow-hidden" onClick={e=>e.stopPropagation()}>
         {/* Header */}
         <div className="bg-gradient-to-r from-[#0F172A] to-blue-800 px-6 py-8 text-center">

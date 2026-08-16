@@ -4,6 +4,7 @@ import React from 'react';
 
 import { useState, useRef, useCallback } from 'react';
 import { useApp } from '@/context/AppContext';
+import { useAlert } from '@/components/shared/AlertProvider';
 
 // ─── Shared constants ─────────────────────────────────────────────────────────
 const FONTS = [
@@ -108,7 +109,7 @@ const INVOICE_SECTIONS = [
 ];
 
 const ALL_COLUMNS = {
-  sno:'#', name:'Product/Service', description:'Description', hsn:'HSN/SAC', sku:'SKU',
+  sno:'#', image:'Image', name:'Product/Service', description:'Description', hsn:'HSN/SAC', sku:'SKU',
   qty:'Qty', unit:'Unit', unit_price:'Unit Price', discount:'Disc %', tax:'Tax %',
   cgst:'CGST', sgst:'SGST', igst:'IGST',
   net_amount:'Amount (excl. tax)', amount:'Amount (incl. tax)',
@@ -546,7 +547,7 @@ function LivePreview({ sections, pageSettings, globalSettings, docType }) {
                     <tr style={{background:s.altRowColor&&idx%2===1?s.altRowColor:'#FFF'}}>
                       {cols.map(c=>(
                         <td key={c} style={{...cellStyle,textAlign:c==='sno'?'center':['unit_price','discount','tax','cgst','sgst','igst','qty','amount','net_amount'].includes(c)?'right':'left',color:c==='sno'?'#94A3B8':c==='amount'?'#0F172A':'inherit',fontWeight:(c==='amount'||c==='net_amount')?600:400,borderRight:s.showColumnBorders?`1px solid ${s.borderColor||'#E2E8F0'}`:'none'}}>
-                          {c==='amount'||c==='net_amount'||c==='unit_price'?fmt(ROWVALS[c]):c==='description'?<span style={{fontSize:(s.fontSize||11)-1,color:'#64748B'}}>{item.n+' — '+ROWVALS[c]}</span>:String(ROWVALS[c]||'')}
+                          {c==='image'?<span style={{display:'inline-block',width:24,height:24,borderRadius:4,background:`${s.headerBgColor||'#0F172A'}20`,border:`1px solid ${s.borderColor||'#E2E8F0'}`}}/>:c==='amount'||c==='net_amount'||c==='unit_price'?fmt(ROWVALS[c]):c==='description'?<span style={{fontSize:(s.fontSize||11)-1,color:'#64748B'}}>{item.n+' — '+ROWVALS[c]}</span>:String(ROWVALS[c]||'')}
                         </td>
                       ))}
                     </tr>
@@ -684,6 +685,7 @@ export default function DocumentTemplateDesigner({ docType = 'quote' }) {
     invoiceTemplates, saveInvoiceTemplate, deleteInvoiceTemplate, setDefaultInvoiceTemplate,
     appearance, appPreferences,
   } = useApp();
+  const { showAlert, showConfirm } = useAlert();
 
   const isInvoice  = docType === 'invoice';
   const templates  = isInvoice ? (invoiceTemplates||[]) : (quoteTemplates||[]);
@@ -762,18 +764,18 @@ export default function DocumentTemplateDesigner({ docType = 'quote' }) {
     setExpandedSec(id);
   };
 
-  const removeSection = (idx) => {
-    if (!confirm('Remove this section?')) return;
+  const removeSection = async (idx) => {
+    if (!(await showConfirm('Remove this section?', { variant:'danger', confirmLabel:'Remove', title:'Remove Section' }))) return;
     setSections(p => p.filter((_,i)=>i!==idx).map((s,i)=>({...s,order:i+1})));
   };
 
   const handleSave = async () => {
-    if (!form.name?.trim()) { alert('Template name is required.'); return; }
+    if (!form.name?.trim()) { showAlert('Template name is required.', { variant:'warning' }); return; }
     setSaving(true);
     await saveFn({ name:form.name, sections, page_settings:pageSettings, global_settings:globalSettings }, selected?.dbId||selected?.id||null);
     setSaving(false);
     setCreating(false);
-    alert('Template saved!');
+    showAlert('Template saved!', { variant:'success', title:'Saved' });
   };
 
   const applyBrandColor = () => {

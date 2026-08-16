@@ -7,6 +7,7 @@ import { getPageLabel, getStatusOptions, getStatusColor, formatCurrency, formatD
 import RecordDetailPanel from '@/components/crm/RecordDetailPanel';
 import CreateRecordModal from '@/components/crm/CreateRecordModal';
 import CPQRecordDetail from '@/components/crm/CPQRecordDetail';
+import { useAlert } from '@/components/shared/AlertProvider';
 
 const TIME_PERIODS = [
   { v:'',           l:'All Time' },
@@ -63,6 +64,7 @@ function SavedSearchPanel({ page, currentFilters, onApply, onClose }) {
   const { currentUser, savedSearches, fetchSavedSearches, createSavedSearch, deleteSavedSearch, setDefaultSavedSearch,
     appPreferences, createOrderFromOpportunity, fetchOrders, pendingRecord, setPendingRecord,
   } = useApp();
+  const { showAlert } = useAlert();
   const [saveName,   setSaveName]   = useState('');
   const [saveDef,    setSaveDef]    = useState(false);
   const [saveGlobal, setSaveGlobal] = useState(false);
@@ -114,7 +116,7 @@ function SavedSearchPanel({ page, currentFilters, onApply, onClose }) {
             <input type="checkbox" checked={saveDef} onChange={e=>setSaveDef(e.target.checked)} className="w-4 h-4 accent-blue-600"/>
             Set as my default
           </label>
-          <button onClick={async()=>{if(!saveName.trim()){alert('Enter a name.');return;}setSaving(true);await createSavedSearch(saveName,page,currentFilters,saveDef,saveGlobal);setSaveName('');setSaveDef(false);setSaving(false);}} disabled={saving} className="w-full bg-gradient-to-r from-[#0F172A] to-blue-800 text-white py-2.5 rounded-xl font-bold text-sm disabled:opacity-50">
+          <button onClick={async()=>{if(!saveName.trim()){showAlert('Enter a name.', { variant:'warning' });return;}setSaving(true);await createSavedSearch(saveName,page,currentFilters,saveDef,saveGlobal);setSaveName('');setSaveDef(false);setSaving(false);}} disabled={saving} className="w-full bg-gradient-to-r from-[#0F172A] to-blue-800 text-white py-2.5 rounded-xl font-bold text-sm disabled:opacity-50">
             {saving ? 'Saving...' : 'Save Search'}
           </button>
         </div>
@@ -144,7 +146,9 @@ export default function CRMListPage({ page }) {
     createQuotationFromOpportunity, fetchQuotations,
     currentUserPermissions, permissionsLoaded, appPreferences, hasPermission,
     fetchOrders, pendingReturnTo, setPendingReturnTo, pendingRecord, setPendingRecord,
+    fetchListCount,
   } = useApp();
+  const { showAlert, showConfirm } = useAlert();
 
   const [successDialog, setSuccessDialog] = useState(null); // { title, message }
 
@@ -185,6 +189,8 @@ export default function CRMListPage({ page }) {
     }
   }, [pendingRecord, page]);
   const [search,       setSearch]       = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [serverTotal,  setServerTotal]  = useState(null);
   const [initialTab,   setInitialTab]   = useState(null);
   const [pageSize,     setPageSize]     = useState(25);
   const [currentPage,  setCurrentPage]  = useState(1);
@@ -224,6 +230,22 @@ export default function CRMListPage({ page }) {
     setTimeout(() => setDefaultLoaded(true), 300);
   }, [page]);
 
+  // Debounce search input (300ms) so filtering doesn't recompute on every
+  // keystroke against a potentially large in-memory array.
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(search), 300);
+    return () => clearTimeout(t);
+  }, [search]);
+
+  // Server-side exact row count — accurate even though only LIST_FETCH_LIMIT
+  // rows are loaded into `customers`/`orders`/etc. client-side (see the
+  // pagination TODO in AppContext.tsx).
+  useEffect(() => {
+    let cancelled = false;
+    fetchListCount(page).then(c => { if (!cancelled) setServerTotal(c); });
+    return () => { cancelled = true; };
+  }, [page]);
+
   useEffect(() => {
     if (!defaultLoaded || !savedSearches.length) return;
     const def = savedSearches.find(s => s.object_type === page && s.is_default)
@@ -257,8 +279,8 @@ export default function CRMListPage({ page }) {
 
   const filtered = useMemo(() => {
     let data = getData();
-    if (search.trim()) {
-      const q = search.toLowerCase();
+    if (debouncedSearch.trim()) {
+      const q = debouncedSearch.toLowerCase();
       const fmtNum = r => r.displayNumber ? formatDisplayNumber(PAGE_DISPLAY_PREFIX[page]||'REC', r.displayNumber) : '';
       data = data.filter(r => [r.name, r.id, r.customer, r.email, r.subject, r.phone, fmtNum(r)].some(v => String(v||'').toLowerCase().includes(q)));
     }
@@ -269,7 +291,7 @@ export default function CRMListPage({ page }) {
     }
     if (ownerFilter) data = data.filter(r => r.owner === ownerFilter || r.owner_id === ownerFilter);
     return data;
-  }, [page, customers, products, leads, opportunities, orders, invoices, contacts, activities, search, statusFilter, timePeriod, fieldFilter, ownerFilter]);
+  }, [page, customers, products, leads, opportunities, orders, invoices, contacts, activities, debouncedSearch, statusFilter, timePeriod, fieldFilter, ownerFilter]);
 
   // Pagination
   const totalRecords = filtered.length;
@@ -414,7 +436,7 @@ export default function CRMListPage({ page }) {
                               {appPreferences?.cpq_enabled !== false ? (
                                 <button onClick={async()=>{setMenuOpenId(null);const q=await createQuotationFromOpportunity(record);await fetchQuotations();if(q)setSuccessDialog({ title: '✅ Quotation Created', message: `Quotation ${q.quote_number} has been created successfully. You can view and edit it in the Quotations page.` });}} className="w-full text-left px-4 py-3 rounded-xl text-sm font-medium hover:bg-blue-800 text-white">📄 Create Quotation</button>
                               ) : (
-                                <button onClick={async()=>{setMenuOpenId(null);await createOrderFromOpportunity(record);await fetchOrders();alert('Order created successfully!');}} className="w-full text-left px-4 py-3 rounded-xl text-sm font-medium hover:bg-blue-800 text-white">🛒 Create Order</button>
+                                <button onClick={async()=>{setMenuOpenId(null);await createOrderFromOpportunity(record);await fetchOrders();showAlert('Order created successfully!', { variant:'success', title:'Order Created' });}} className="w-full text-left px-4 py-3 rounded-xl text-sm font-medium hover:bg-blue-800 text-white">🛒 Create Order</button>
                               )}
                             </>)}
                             {page==='orders' && (
@@ -431,12 +453,23 @@ export default function CRMListPage({ page }) {
           </table>
         </div>
 
+        {/* Truncation warning — loaded rows capped at LIST_FETCH_LIMIT but the table has more */}
+        {serverTotal !== null && getData().length >= 500 && serverTotal > getData().length && (
+          <div className="px-6 py-2.5 bg-amber-50 border-t border-amber-100 flex items-center gap-2 text-xs text-amber-700">
+            <span>⚠️</span>
+            <span>Showing the {getData().length.toLocaleString()} most recent {pageLabel.toLowerCase()}s of <strong>{serverTotal.toLocaleString()}</strong> total — search and filters only apply to loaded records. Use search to find specific older records.</span>
+          </div>
+        )}
+
         {/* Pagination footer */}
         {totalRecords > 0 && (
           <div className="px-6 py-3 border-t border-blue-50 bg-white flex items-center justify-between flex-wrap gap-3">
             <div className="flex items-center gap-3">
               <span className="text-xs text-gray-400">
                 Showing <strong className="text-[#0F172A]">{(safePage-1)*pageSize+1}–{Math.min(safePage*pageSize,totalRecords)}</strong> of <strong className="text-[#0F172A]">{totalRecords}</strong> {pageLabel.toLowerCase()}s
+                {serverTotal !== null && !debouncedSearch.trim() && statusFilter==='All' && !timePeriod && !fieldFilter.field && !ownerFilter && serverTotal !== totalRecords && (
+                  <span className="text-gray-300"> ({serverTotal.toLocaleString()} total)</span>
+                )}
               </span>
               <select value={pageSize} onChange={e=>{setPageSize(Number(e.target.value));setCurrentPage(1);}}
                 className="border border-blue-200 rounded-lg px-2 py-1 text-xs text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-blue-400">
@@ -488,7 +521,7 @@ export default function CRMListPage({ page }) {
       })()}
       {successDialog && (
         <div className="fixed inset-0 z-[600] flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={()=>setSuccessDialog(null)}/>
+          <div className="absolute inset-0 bg-black/40" onClick={()=>setSuccessDialog(null)}/>
           <div className="relative bg-white rounded-[24px] shadow-2xl max-w-md w-full p-6 text-center">
             <div className="text-5xl mb-3">🎉</div>
             <h3 className="text-lg font-bold text-[#0F172A] mb-2">{successDialog.title}</h3>

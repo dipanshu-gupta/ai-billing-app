@@ -3,6 +3,7 @@
 
 import { useState, useEffect } from 'react';
 import { useTenant } from '@/context/TenantContext';
+import { tenantScope } from '@/lib/utils';
 
 interface AddressSelectorProps {
   customerId?: string;
@@ -20,7 +21,7 @@ export default function AddressSelector({ customerId, value, onChange, placehold
 
   useEffect(() => {
     if (!supabase || !customerId) return;
-    supabase.from('addresses').select('*')
+    tenantScope(supabase.from('addresses').select('*'))
       .eq('owner_type', 'customer').eq('owner_id', customerId)
       .order('is_default', { ascending: false }).order('created_at')
       .then(({ data }) => setAddresses(data || []));

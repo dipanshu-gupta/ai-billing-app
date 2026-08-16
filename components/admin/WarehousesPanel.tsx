@@ -2,6 +2,7 @@
 'use client';
 import { useState } from 'react';
 import { useApp } from '@/context/AppContext';
+import { useAlert } from '@/components/shared/AlertProvider';
 
 const iCls = 'w-full border border-blue-200 rounded-xl px-3 py-2.5 text-[#0F172A] bg-white focus:outline-none focus:ring-2 focus:ring-blue-400 text-sm';
 const sCls = iCls;
@@ -13,6 +14,7 @@ const STATUS_OPTS = ['Active','Inactive','Under Maintenance'];
 
 export default function WarehousesPanel() {
   const { warehouses, saveWarehouse, deleteWarehouse, organizations, businessUnits } = useApp();
+  const { showAlert } = useAlert();
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState({ status:'Active', type:'Main Warehouse' });
@@ -28,7 +30,7 @@ export default function WarehousesPanel() {
   const openEdit = (w) => { setEditing(w); setForm({...w}); setOpen(true); };
 
   const handleSave = async () => {
-    if (!form.name?.trim()) { alert('Warehouse name is required.'); return; }
+    if (!form.name?.trim()) { showAlert('Warehouse name is required.', { variant:'warning' }); return; }
     setSaving(true);
     await saveWarehouse(form, editing?.id);
     setSaving(false);
@@ -112,7 +114,7 @@ export default function WarehousesPanel() {
       {/* Modal */}
       {open && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={()=>setOpen(false)}/>
+          <div className="absolute inset-0 bg-black/40" onClick={()=>setOpen(false)}/>
           <div className="relative bg-white rounded-[28px] shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
             <div className="bg-gradient-to-r from-[#0F172A] to-blue-900 px-6 py-5 flex items-center justify-between">
               <div>

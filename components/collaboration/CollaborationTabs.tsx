@@ -6,8 +6,9 @@
 import { useState, useEffect, useRef } from 'react';
 import { useTenant } from '@/context/TenantContext';
 import { useApp } from '@/context/AppContext';
-import { formatDateTime, timeAgo, formatFileSize } from '@/lib/utils';
+import { formatDateTime, timeAgo, formatFileSize, tenantScope } from '@/lib/utils';
 import { EmptyState, inputClass, textareaClass, Button } from '@/components/shared';
+import { useAlert } from '@/components/shared/AlertProvider';
 
 interface CollabProps {
   recordType: string;
@@ -20,6 +21,7 @@ interface CollabProps {
 function NotesTab({ recordType, recordId, recordName }: CollabProps) {
   const { currentUser, buildSystemFields } = useApp();
   const { supabase } = useTenant();
+  const { showConfirm } = useAlert();
   const [notes, setNotes] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
@@ -30,7 +32,7 @@ function NotesTab({ recordType, recordId, recordName }: CollabProps) {
   const fetch = async () => {
     if (!supabase) return;
     setLoading(true);
-    const { data } = await supabase.from('record_notes').select('*')
+    const { data } = await tenantScope(supabase.from('record_notes').select('*'))
       .eq('record_type', recordType).eq('record_id', recordId)
       .order('is_pinned', { ascending: false }).order('created_at', { ascending: false });
     setNotes(data || []);
@@ -64,7 +66,8 @@ function NotesTab({ recordType, recordId, recordName }: CollabProps) {
   };
 
   const deleteNote = async (id: string) => {
-    if (!supabase || !window.confirm('Delete this note?')) return;
+    if (!supabase) return;
+    if (!(await showConfirm('Delete this note?', { variant:'danger', confirmLabel:'Delete' }))) return;
     await supabase.from('record_notes').delete().eq('id', id);
     await fetch();
   };
@@ -128,6 +131,7 @@ function NotesTab({ recordType, recordId, recordName }: CollabProps) {
 
 function CommentsTab({ recordType, recordId }: CollabProps) {
   const { currentUser, enterpriseUsers, createNotification } = useApp();
+  const { supabase } = useTenant();
   const [comments, setComments] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [body, setBody] = useState('');
@@ -137,7 +141,7 @@ function CommentsTab({ recordType, recordId }: CollabProps) {
   const fetch = async () => {
     if (!supabase) return;
     setLoading(true);
-    const { data } = await supabase.from('record_comments').select('*')
+    const { data } = await tenantScope(supabase.from('record_comments').select('*'))
       .eq('record_type', recordType).eq('record_id', recordId)
       .order('created_at', { ascending: true });
     setComments(data || []);
@@ -223,6 +227,8 @@ function CommentsTab({ recordType, recordId }: CollabProps) {
 
 function AttachmentsTab({ recordType, recordId }: CollabProps) {
   const { currentUser } = useApp();
+  const { supabase } = useTenant();
+  const { showAlert, showConfirm } = useAlert();
   const [attachments, setAttachments] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
@@ -231,7 +237,7 @@ function AttachmentsTab({ recordType, recordId }: CollabProps) {
   const fetch = async () => {
     if (!supabase) return;
     setLoading(true);
-    const { data } = await supabase.from('record_attachments').select('*')
+    const { data } = await tenantScope(supabase.from('record_attachments').select('*'))
       .eq('record_type', recordType).eq('record_id', recordId)
       .order('uploaded_at', { ascending: false });
     setAttachments(data || []);
@@ -246,7 +252,7 @@ function AttachmentsTab({ recordType, recordId }: CollabProps) {
     for (const file of Array.from(files)) {
       const path = `${recordType}/${recordId}/${Date.now()}_${file.name}`;
       const { error: storageError } = await supabase.storage.from('record-attachments').upload(path, file);
-      if (storageError) { alert(`Upload failed: ${storageError.message}`); continue; }
+      if (storageError) { showAlert(`Upload failed: ${storageError.message}`, { variant:'danger', title:'Upload Failed' }); continue; }
       await supabase.from('record_attachments').insert([{
         record_type: recordType, record_id: recordId,
         file_name: file.name, file_size: file.size, file_type: file.type,
@@ -265,7 +271,8 @@ function AttachmentsTab({ recordType, recordId }: CollabProps) {
   };
 
   const deleteAttachment = async (id: string, path: string) => {
-    if (!supabase || !window.confirm('Delete this attachment?')) return;
+    if (!supabase) return;
+    if (!(await showConfirm('Delete this attachment?', { variant:'danger', confirmLabel:'Delete' }))) return;
     await supabase.storage.from('record-attachments').remove([path]);
     await supabase.from('record_attachments').delete().eq('id', id);
     await fetch();
@@ -326,13 +333,14 @@ function AttachmentsTab({ recordType, recordId }: CollabProps) {
 // ─── History Tab ──────────────────────────────────────────────────────────────
 
 function HistoryTab({ recordType, recordId }: CollabProps) {
+  const { supabase } = useTenant();
   const [logs, setLogs] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     if (!supabase) return;
     setLoading(true);
-    supabase.from('audit_log').select('*')
+    tenantScope(supabase.from('audit_log').select('*'))
       .eq('record_type', recordType).eq('record_id', recordId)
       .order('performed_at', { ascending: false })
       .then(({ data }) => { setLogs(data || []); setLoading(false); });

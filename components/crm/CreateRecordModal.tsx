@@ -310,7 +310,7 @@ export default function CreateRecordModal({ page, open, prefillCustomer, onClose
     <>
     <div className="fixed inset-0 z-[500] flex items-center justify-center p-4">
       {/* Backdrop */}
-      <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose}/>
+      <div className="absolute inset-0 bg-black/50" onClick={onClose}/>
 
       {/* Modal */}
       <div className="relative bg-white rounded-[28px] shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden">

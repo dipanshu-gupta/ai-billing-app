@@ -8,6 +8,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useApp } from '@/context/AppContext';
 import { useTenant } from '@/context/TenantContext';
+import { useAlert } from '@/components/shared/AlertProvider';
 
 // ─── Permission definitions ───────────────────────────────────────────────────
 const MODULE_GROUPS = [
@@ -114,6 +115,7 @@ export default function SecurityConsole() {
   const { roles, permissions: dbPermissions, saveRole, deleteAdminRecord,
           fetchRolePermissions, fetchRoles, fetchPermissions, enterpriseUsers } = useApp();
   const { supabase } = useTenant();
+  const { showConfirm } = useAlert();
 
   const [tab,          setTab]          = useState('roles'); // 'roles' | 'seed'
   const [editingRole,  setEditingRole]  = useState(null);
@@ -276,7 +278,8 @@ export default function SecurityConsole() {
   };
 
   const handleDelete = async (roleId) => {
-    if (!supabase || !confirm('Delete this role? Users with this role will lose access.')) return;
+    if (!supabase) return;
+    if (!(await showConfirm('Delete this role? Users with this role will lose access.', { variant:'danger', confirmLabel:'Delete', title:'Delete Role' }))) return;
     await supabase.from('role_permissions').delete().eq('role_id', roleId);
     await supabase.from('roles').delete().eq('id', roleId);
     await fetchRoles();
@@ -285,7 +288,7 @@ export default function SecurityConsole() {
 
   const handleSeedRoles = async () => {
     if (!supabase) { showToast('No database connection', true); return; }
-    if (!confirm('This will create/update 4 standard roles with full permissions. Existing roles with matching codes will be updated. Continue?')) return;
+    if (!(await showConfirm('This will create/update 4 standard roles with full permissions. Existing roles with matching codes will be updated. Continue?', { variant:'warning', confirmLabel:'Continue', title:'Seed Standard Roles' }))) return;
     setSeeding(true);
     try {
       // Step 1: Batch upsert all permission definitions

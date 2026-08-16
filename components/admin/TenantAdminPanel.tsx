@@ -578,7 +578,7 @@ export default function TenantAdminPanel() {
 
     {/* Provisioning Modal */}
     {provisioning && (
-      <div className="fixed inset-0 z-[600] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+      <div className="fixed inset-0 z-[600] flex items-center justify-center p-4 bg-black/50">
         <div className="bg-white rounded-[28px] shadow-2xl w-full max-w-lg">
           {/* Header */}
           <div className="bg-gradient-to-r from-purple-900 to-purple-700 px-6 py-5 rounded-t-[28px] text-white">

@@ -23,7 +23,7 @@ const filterByRange = (items, range) => {
   if (range === 'all') return items;
   const now = new Date(); const sod = new Date(now.getFullYear(),now.getMonth(),now.getDate());
   const starts = {
-    week:    new Date(sod - sod.getDay()*86400000),
+    week:    new Date(now.getFullYear(),now.getMonth(),now.getDate() - ((sod.getDay()+6)%7)), // Monday start
     month:   new Date(now.getFullYear(),now.getMonth(),1),
     quarter: new Date(now.getFullYear(), Math.floor(now.getMonth()/3)*3, 1),
     year:    new Date(now.getFullYear(),0,1),
@@ -45,6 +45,7 @@ export default function DashboardPage() {
   const fOrders = useMemo(()=>filterByRange(orders, dateRange),[orders, dateRange]);
   const fInv    = useMemo(()=>filterByRange(invoices,dateRange),[invoices,dateRange]);
   const fQuotes = useMemo(()=>filterByRange(quotations,dateRange),[quotations,dateRange]);
+  const fActivities = useMemo(()=>filterByRange(activities,dateRange),[activities,dateRange]);
 
   // KPI calculations
   const kpis = useMemo(()=>({
@@ -52,8 +53,13 @@ export default function DashboardPage() {
     wonValue:        fOpps.filter(o=>o.stage==='Closed Won').reduce((s,o)=>s+Number(o.amount||0),0),
     openLeads:       fLeads.filter(l=>!['Converted','Disqualified','Closed'].includes(l.status)).length,
     convRate:        fLeads.length ? Math.round(fLeads.filter(l=>l.status==='Converted').length/fLeads.length*100) : 0,
+    // Overdue invoices is deliberately NOT date-range filtered — it's a live AR
+    // exposure metric ("what's overdue right now"), not a "created in this period"
+    // metric. Filtering it by creation date would understate current risk.
     overdueInv:      invoices.filter(i=>i.status==='Overdue').reduce((s,i)=>s+Number(i.amount||0),0),
     ordersValue:     fOrders.reduce((s,o)=>s+Number(o.amount||0),0),
+    invoicedValue:   fInv.reduce((s,i)=>s+Number(i.amount||0),0),
+    // Total Customers is also deliberately a live roster size, not period-scoped.
     totalCustomers:  customers.length,
     quotesOut:       fQuotes.filter(q=>q.status==='Sent to Customer').length,
     wonCount:        fOpps.filter(o=>o.stage==='Closed Won').length,
@@ -64,21 +70,21 @@ export default function DashboardPage() {
   const winRate = (kpis.wonCount + kpis.lostCount) > 0
     ? Math.round(kpis.wonCount / (kpis.wonCount + kpis.lostCount) * 100) : 0;
 
-  // Pipeline by stage
+  // Pipeline by stage — respects the selected date range (fOpps), not all-time
   const pipelineData = useMemo(()=>{
     const stages = {};
-    opportunities.filter(o=>!['Closed Won','Closed Lost'].includes(o.stage)).forEach(o=>{
+    fOpps.filter(o=>!['Closed Won','Closed Lost'].includes(o.stage)).forEach(o=>{
       stages[o.stage] = (stages[o.stage]||0) + Number(o.amount||0);
     });
-    return Object.entries(stages).map(([stage,value])=>({ stage, value, count: opportunities.filter(o=>o.stage===stage).length }));
-  },[opportunities]);
+    return Object.entries(stages).map(([stage,value])=>({ stage, value, count: fOpps.filter(o=>o.stage===stage).length }));
+  },[fOpps]);
 
-  // Leads by source
+  // Leads by source — respects the selected date range (fLeads), not all-time
   const leadsBySource = useMemo(()=>{
     const src = {};
-    leads.forEach(l=>{ src[l.source||'Unknown'] = (src[l.source||'Unknown']||0)+1; });
+    fLeads.forEach(l=>{ src[l.source||'Unknown'] = (src[l.source||'Unknown']||0)+1; });
     return Object.entries(src).map(([name,value])=>({ name, value })).sort((a,b)=>b.value-a.value).slice(0,6);
-  },[leads]);
+  },[fLeads]);
 
   // Monthly revenue (last 6 months)
   const monthlyRevenue = useMemo(()=>{
@@ -94,22 +100,22 @@ export default function DashboardPage() {
     return Object.values(months);
   },[orders,invoices]);
 
-  // Activity breakdown
+  // Activity breakdown — respects the selected date range (fActivities), not all-time
   const activityData = useMemo(()=>{
     const types = {};
-    activities.forEach(a=>{ types[a.activityType||'Other']=(types[a.activityType||'Other']||0)+1; });
+    fActivities.forEach(a=>{ types[a.activityType||'Other']=(types[a.activityType||'Other']||0)+1; });
     return Object.entries(types).map(([name,value])=>({ name, value }));
-  },[activities]);
+  },[fActivities]);
 
-  // Quote status funnel
+  // Quote status funnel — respects the selected date range (fQuotes), not all-time
   const quoteFunnel = useMemo(()=>{
-    const stages = ['Draft','Submitted','Approved','Sent to Customer','Accepted','Ordered'];
-    return stages.map(s=>({ name:s, value: quotations.filter(q=>q.status===s).length })).filter(s=>s.value>0);
-  },[quotations]);
+    const stages = ['Draft','Submitted','Approved','Sent to Customer','Accepted','Partially Ordered','Ordered'];
+    return stages.map(s=>({ name:s, value: fQuotes.filter(q=>q.status===s).length })).filter(s=>s.value>0);
+  },[fQuotes]);
 
-  // Recent records
-  const recentLeads = [...leads].sort((a,b)=>new Date(b.created_at)-new Date(a.created_at)).slice(0,5);
-  const recentOpps  = [...opportunities].sort((a,b)=>new Date(b.created_at)-new Date(a.created_at)).slice(0,5);
+  // Recent records — respects the selected date range for consistency with the rest of the page
+  const recentLeads = [...fLeads].sort((a,b)=>new Date(b.created_at)-new Date(a.created_at)).slice(0,5);
+  const recentOpps  = [...fOpps].sort((a,b)=>new Date(b.created_at)-new Date(a.created_at)).slice(0,5);
 
   const buildPalette = (tc, prefs) => {
     // Use brand color from app preferences, fall back to appearance theme, then default
@@ -196,14 +202,18 @@ export default function DashboardPage() {
         <div className="col-span-2"><StatCard label="Pipeline Value" paletteIdx={0} value={fmtShort(kpis.pipelineValue)} sub={`${fOpps.filter(o=>!['Closed Won','Closed Lost'].includes(o.stage)).length} active deals`} icon="💼"/></div>
         <div className="col-span-2"><StatCard label="Won Revenue" paletteIdx={1} value={fmtShort(kpis.wonValue)} sub={`${kpis.wonCount} deals closed`} icon="🏆"/></div>
         <div className="col-span-2"><StatCard label="Orders Value" paletteIdx={2} value={fmtShort(kpis.ordersValue)} sub={`${fOrders.length} orders`} icon="🛒"/></div>
-        <div className="col-span-2"><StatCard label="Overdue Invoices" paletteIdx={4} value={fmtShort(kpis.overdueInv)} sub={`${invoices.filter(i=>i.status==='Overdue').length} invoices`} icon="⚠️"/></div>
+        <div className="col-span-2"><StatCard label="Overdue Invoices" paletteIdx={4} value={fmtShort(kpis.overdueInv)} sub={`${invoices.filter(i=>i.status==='Overdue').length} invoices · all time`} icon="⚠️"/></div>
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-8 gap-4">
         <div className="col-span-2"><StatCard label="Open Leads" paletteIdx={3} value={kpis.openLeads} sub={`${fLeads.length} total this period`} icon="🎯"/></div>
         <div className="col-span-2"><StatCard label="Win Rate" paletteIdx={5} value={`${winRate}%`} sub={`${kpis.wonCount}W / ${kpis.lostCount}L`} icon="📈"/></div>
-        <div className="col-span-2"><StatCard label="Customers" paletteIdx={6} value={kpis.totalCustomers} sub={`${customers.filter(c=>c.status==='Active').length} active`} icon="👥"/></div>
+        <div className="col-span-2"><StatCard label="Customers" paletteIdx={6} value={kpis.totalCustomers} sub={`${customers.filter(c=>c.status==='Active').length} active · all time`} icon="👥"/></div>
         <div className="col-span-2"><StatCard label="Quotes Sent" paletteIdx={7} value={kpis.quotesOut} sub={`${fQuotes.length} total quotes`} icon="📄"/></div>
+      </div>
+
+      <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-8 gap-4">
+        <div className="col-span-2"><StatCard label="Invoiced This Period" paletteIdx={2} value={fmtShort(kpis.invoicedValue)} sub={`${fInv.length} invoices raised`} icon="🧾"/></div>
       </div>
 
       {/* Main Charts */}
@@ -272,13 +282,13 @@ export default function DashboardPage() {
               <div>
                 <p className="text-sm text-gray-400 mb-4">Lead status breakdown</p>
                 <ResponsiveContainer width="100%" height={300}>
-                  <BarChart data={Object.entries(leads.reduce((a,l)=>{a[l.status||'Unknown']=(a[l.status||'Unknown']||0)+1;return a},{})).map(([name,value])=>({name,value}))}>
+                  <BarChart data={Object.entries(fLeads.reduce((a,l)=>{a[l.status||'Unknown']=(a[l.status||'Unknown']||0)+1;return a},{})).map(([name,value])=>({name,value}))}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#F1F5F9"/>
                     <XAxis dataKey="name" tick={{fontSize:11}}/>
                     <YAxis tick={{fontSize:11}}/>
                     <Tooltip/>
                     <Bar dataKey="value" name="Count" radius={[6,6,0,0]}>
-                      {leads.map((_,i)=><Cell key={i} fill={COLORS[i%COLORS.length]}/>)}
+                      {fLeads.map((_,i)=><Cell key={i} fill={COLORS[i%COLORS.length]}/>)}
                     </Bar>
                   </BarChart>
                 </ResponsiveContainer>
@@ -369,10 +379,10 @@ export default function DashboardPage() {
           <div className="p-5 space-y-4">
             {[
               { l:'Avg Deal Size', v: fOpps.length ? fmt(fOpps.reduce((s,o)=>s+Number(o.amount||0),0)/fOpps.length) : '—', icon:'📐' },
-              { l:'Invoice Collection', v: invoices.length ? `${Math.round(invoices.filter(i=>i.status==='Paid').length/invoices.length*100)}%` : '—', icon:'💳' },
+              { l:'Invoice Collection (All Time)', v: invoices.length ? `${Math.round(invoices.filter(i=>i.status==='Paid').length/invoices.length*100)}%` : '—', icon:'💳' },
               { l:'Lead Conversion', v: `${kpis.convRate}%`, icon:'🔄' },
-              { l:'Open Activities', v: activities.filter(a=>a.status==='Open').length, icon:'📅' },
-              { l:'Active Contacts', v: contacts.filter(c=>c.status==='Active').length, icon:'📇' },
+              { l:'Open Activities (Live)', v: activities.filter(a=>a.status==='Open').length, icon:'📅' },
+              { l:'Active Contacts (Live)', v: contacts.filter(c=>c.status==='Active').length, icon:'📇' },
             ].map(m=>(
               <div key={m.l} className="flex items-center justify-between p-3 bg-blue-50 rounded-2xl">
                 <div className="flex items-center gap-2">

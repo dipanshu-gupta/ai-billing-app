@@ -4,6 +4,7 @@
 import React, { useEffect, useState } from 'react';
 import { AppProvider, useApp } from '@/context/AppContext';
 import { TenantProvider, useTenant } from '@/context/TenantContext';
+import { AlertProvider, useAlert } from '@/components/shared/AlertProvider';
 import Sidebar from '@/components/layout/Sidebar';
 import Header from '@/components/layout/Header';
 import DashboardPage from '@/components/dashboard/DashboardPage';
@@ -171,6 +172,7 @@ function LoginPage() {
 
 function ProfileModal({ open, onClose }) {
   const { currentUser, saveMyProfile, resetMyPassword } = useApp();
+  const { showAlert } = useAlert();
   const [form, setForm] = useState({
     first_name: currentUser?.first_name || '',
     last_name:  currentUser?.last_name  || '',
@@ -234,8 +236,8 @@ function ProfileModal({ open, onClose }) {
             </div>
             <Button
               onClick={async () => {
-                if (!newPassword) { alert('Please enter a new password.'); return; }
-                if (newPassword.length < 6) { alert('Password must be at least 6 characters.'); return; }
+                if (!newPassword) { showAlert('Please enter a new password.', { variant:'warning' }); return; }
+                if (newPassword.length < 6) { showAlert('Password must be at least 6 characters.', { variant:'warning' }); return; }
                 await resetMyPassword(newPassword);
                 setNewPassword('');
               }}
@@ -376,8 +378,10 @@ function AppWithTenant() {
 
 export default function RootPage() {
   return (
-    <TenantProvider>
-      <AppWithTenant />
-    </TenantProvider>
+    <AlertProvider>
+      <TenantProvider>
+        <AppWithTenant />
+      </TenantProvider>
+    </AlertProvider>
   );
 }

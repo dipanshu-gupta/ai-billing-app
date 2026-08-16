@@ -8,8 +8,7 @@ import { useApp } from '@/context/AppContext';
 import {
   getObjectFields, getStatusOptions, getPageLabel,
   formatCurrency, formatDateTime, getStatusColor,
-  formatDisplayNumber, PAGE_DISPLAY_PREFIX,
-} from '@/lib/utils';
+  formatDisplayNumber, PAGE_DISPLAY_PREFIX, tenantScope } from '@/lib/utils';
 import { useTenant } from '@/context/TenantContext';
 import ApprovalBanner from '@/components/crm/ApprovalBanner';
 import ProductConfigurator from '@/components/products/ProductConfigurator';
@@ -17,9 +16,12 @@ import ConfigureLineItemModal from '@/components/shared/ConfigureLineItemModal';
 import QuickCreateModal from '@/components/shared/QuickCreateModal';
 import CreateRecordModal from '@/components/crm/CreateRecordModal';
 import AISummary from '@/components/ai/AISummary';
+import ProductImages from '@/components/products/ProductImages';
+import { buildInvoiceHTML } from '@/lib/buildInvoiceHTML';
 import SearchableSelect from '@/components/shared/SearchableSelect';
 import AddressManager from '@/components/shared/AddressManager';
 import AddressSelector from '@/components/shared/AddressSelector';
+import { useAlert } from '@/components/shared/AlertProvider';
 
 const iCls = 'w-full border border-blue-200 rounded-xl px-3 py-2.5 text-[#0F172A] bg-white focus:outline-none focus:ring-2 focus:ring-blue-400 text-sm placeholder:text-gray-400';
 const sCls = 'w-full border border-blue-200 rounded-xl px-3 py-2.5 text-[#0F172A] bg-white focus:outline-none focus:ring-2 focus:ring-blue-400 text-sm';
@@ -42,11 +44,12 @@ function Pill({ status }) {
 //     if none, the currently logged-in user. ─────────────────────────────────────
 function OwnerField({ record, edited, onPick }) {
   const { enterpriseUsers, currentUser } = useApp();
+  const { supabase } = useTenant();
   const [backup, setBackup] = useState([]);
 
   useEffect(() => {
     if (enterpriseUsers.length > 0 || !supabase) return;
-    supabase.from('enterprise_users').select('*').then(({ data, error }) => {
+    tenantScope(supabase.from('enterprise_users').select('*')).then(({ data, error }) => {
       if (error) console.error('OwnerField backup fetch:', error.message);
       setBackup(data || []);
     });
@@ -294,6 +297,8 @@ function Customer360({ customer, onSubRecordOpen, onCreateFor }) {
 
 // ─── Main RecordDetailPanel ───────────────────────────────────────────────────
 export default function RecordDetailPanel({ page, record, onClose, prefillCustomer, initialTab = null }) {
+  const { supabase } = useTenant();
+  const { showAlert, showConfirm } = useAlert();
   const { fields: customFields } = useCustomFields(page);
 
   // Always re-fetch custom fields when panel opens (picks up newly published fields)
@@ -304,6 +309,7 @@ export default function RecordDetailPanel({ page, record, onClose, prefillCustom
     convertLeadToOpportunity, createInvoiceFromOrder, createOrderFromOpportunity,
     createQuotationFromOpportunity, fetchLineItems, fetchEnterpriseUsers,
     currentUserPermissions, permissionsLoaded, appPreferences, currentUser,
+    invoiceTemplates,
   } = useApp();
 
   // Local permission helper (mirrors CRMListPage canDo)
@@ -329,6 +335,7 @@ export default function RecordDetailPanel({ page, record, onClose, prefillCustom
   const [lineItems,       setLineItems]       = useState([]);
   const [loadingLI,       setLoadingLI]       = useState(false);
   const [saving,          setSaving]          = useState(false);
+  const [printingInvoice, setPrintingInvoice] = useState(false);
   const [submitting,      setSubmitting]      = useState(false);
   const [tab,             setTab]             = useState(initialTab || 'details');
   const [matchingProcess, setMatchingProcess] = useState(null);
@@ -410,7 +417,7 @@ export default function RecordDetailPanel({ page, record, onClose, prefillCustom
     orders:       [{icon:'🛒',title:'Order Info',fields:['name','currency','paymentTerms','deliveryDate']},{icon:'🏢',title:'Relationship',fields:['customer','contact']},{icon:'👤',title:'Ownership',fields:['owner','status']},{icon:'💬',title:'Comments',fields:['comments']}],
     invoices:     [{icon:'🧾',title:'Invoice Info',fields:['name','dueDate','paymentTerms']},{icon:'🏢',title:'Relationship',fields:['customer','contact']},{icon:'👤',title:'Ownership',fields:['owner','status']},{icon:'💬',title:'Comments',fields:['comments']}],
     activities:   [{icon:'📅',title:'Activity Info',fields:['name','activityType','activityDate','dueDate','priority']},{icon:'🏢',title:'Relationship',fields:['customer','contact']},{icon:'👤',title:'Ownership',fields:['owner','status']},{icon:'💬',title:'Comments',fields:['comments']}],
-    products:     [{icon:'📦',title:'Product Info',fields:['name','productFamily','category','sku','unit']},{icon:'💰',title:'Pricing',fields:['price','cost','taxRate']},{icon:'📊',title:'Status',fields:['status']},{icon:'💬',title:'Comments',fields:['comments']}],
+    products:     [{icon:'📦',title:'Product Info',fields:['name','productFamily','category','sku','unit']},{icon:'💰',title:'Pricing',fields:['price','cost','taxRate']},{icon:'📊',title:'Status',fields:['status']},{icon:'📥',title:'Availability',fields:['stock_quantity','reorder_level','track_inventory']},{icon:'💬',title:'Comments',fields:['comments']}],
   };
 
   const sections = PAGE_SECTIONS[page] || [{icon:'📋',title:'Details',fields:fields}];
@@ -428,6 +435,7 @@ export default function RecordDetailPanel({ page, record, onClose, prefillCustom
     notes:'Notes', source:'Lead Source', productFamily:'Product Family', category:'Category',
     sku:'SKU / Code', price:'Unit Price', cost:'Cost Price', taxRate:'Tax Rate (%)',
     unit:'Unit of Measure', comments:'Comments',
+    stock_quantity:'Stock on Hand', reorder_level:'Reorder Level', track_inventory:'Inventory Tracking',
   };
 
   const PRIORITY_OPTS = ['Low','Medium','High','Critical'];
@@ -441,7 +449,12 @@ export default function RecordDetailPanel({ page, record, onClose, prefillCustom
   const renderField = (field) => {
     const v = edited[field];
     if (field==='status') return (
-      <select value={v||''} onChange={e=>set('status',e.target.value)} className={sCls}>
+      <select value={v||''} onChange={async e=>{
+        const newStatus = e.target.value;
+        if (newStatus === v) return;
+        const ok = await showConfirm(`Change status from "${v||'—'}" to "${newStatus}"?`, { title:'Confirm Status Change', variant:'warning', confirmLabel:'Change Status' });
+        if (ok) set('status', newStatus);
+      }} className={sCls}>
         {statusOpts.map(s=><option key={s}>{s}</option>)}
       </select>
     );
@@ -472,6 +485,7 @@ export default function RecordDetailPanel({ page, record, onClose, prefillCustom
     if (field==='activityType') return <select value={v||''} onChange={e=>set(field,e.target.value)} className={sCls}><option value=''>Select type</option>{ACTIVITY_TYPES.map(s=><option key={s}>{s}</option>)}</select>;
     if (field==='paymentTerms') return <select value={v||''} onChange={e=>set(field,e.target.value)} className={sCls}><option value=''>Select terms</option>{PAYMENT_TERMS_OPTS.map(s=><option key={s}>{s}</option>)}</select>;
     if (field==='isPrimary')    return <label className='flex items-center gap-2 cursor-pointer pt-1'><input type='checkbox' checked={!!v} onChange={e=>set(field,e.target.checked)} className='w-4 h-4 accent-blue-600'/><span className='text-sm text-[#0F172A]'>Yes, mark as primary contact</span></label>;
+    if (field==='track_inventory') return <label className='flex items-center gap-2 cursor-pointer pt-1'><input type='checkbox' checked={v!==false} onChange={e=>set(field,e.target.checked)} className='w-4 h-4 accent-blue-600'/><span className='text-sm text-[#0F172A]'>Track stock for this product</span></label>;
     if (field==='category')     return <select value={v||''} onChange={e=>set(field,e.target.value)} className={sCls}><option value="">Select</option>{['Software','Hardware','Service','Subscription','Consulting','Other'].map(s=><option key={s}>{s}</option>)}</select>;
     if (field==='productFamily') return <select value={v||''} onChange={e=>set(field,e.target.value)} className={sCls}><option value="">Select Family</option>{['Software Products','Hardware Products','Professional Services','Managed Services','Subscriptions','Other'].map(s=><option key={s}>{s}</option>)}</select>;
     if (field==='industry')
@@ -494,7 +508,7 @@ export default function RecordDetailPanel({ page, record, onClose, prefillCustom
     { // Default field with type-aware validation
       const isEmail = ['email'].includes(field);
       const isPhone = ['phone','mobile','fax'].includes(field);
-      const inputType = ['amount','price','overall_discount','shipping_cost'].includes(field)?'number':isEmail?'email':'text';
+      const inputType = ['amount','price','overall_discount','shipping_cost','cost','taxRate','stock_quantity','reorder_level'].includes(field)?'number':isEmail?'email':'text';
       const handleChange = (e) => {
         let val = e.target.value;
         if (isPhone) val = val.replace(/[^0-9+\-() ]/g,''); // strip non-phone chars
@@ -548,6 +562,28 @@ export default function RecordDetailPanel({ page, record, onClose, prefillCustom
               {page==='leads'&&record.status==='Qualified'&&<button onClick={()=>{convertLeadToOpportunity(record);onClose();}} className="bg-white/20 hover:bg-white/30 text-white px-4 py-2 rounded-xl text-sm font-semibold">🔀 Convert</button>}
 
               {page==='orders'&&<button onClick={()=>{createInvoiceFromOrder(record);onClose();}} className="bg-white/20 hover:bg-white/30 text-white px-4 py-2 rounded-xl text-sm font-semibold">🧾 Create Invoice</button>}
+              {page==='invoices'&&<button onClick={async()=>{
+                setPrintingInvoice(true);
+                try {
+                  const template = (invoiceTemplates||[]).find(t=>t.isDefault) || (invoiceTemplates||[])[0];
+                  if (!template) { showAlert('No invoice template found. Create one in Admin Tools → B2B Enterprise → Invoice Templates.', { variant:'warning' }); return; }
+                  if (!supabase) return;
+                  const { data: liData } = await supabase.from('invoice_line_items').select('*').eq('invoice_number', record.id).order('sort_order');
+                  const oUser = enterpriseUsers.find(u=>u.id===edited.owner_id||u.email===edited.owner);
+                  const rec = { ...edited, owner_display: oUser?`${oUser.first_name} ${oUser.last_name}`:(edited.owner||'') };
+                  const html = buildInvoiceHTML(rec, liData||[], template, products);
+                  let iframe = document.getElementById('pdf-preview-frame');
+                  if (!iframe) { iframe=document.createElement('iframe'); iframe.id='pdf-preview-frame'; iframe.style.cssText='position:fixed;top:0;left:0;width:100%;height:100%;border:none;z-index:9999;background:white;'; document.body.appendChild(iframe); }
+                  iframe.srcdoc=html; iframe.style.display='block';
+                  ['pdf-close-btn','pdf-print-btn'].forEach(id=>{ let el=document.getElementById(id); if(el){el.style.display='block';}});
+                  if (!document.getElementById('pdf-close-btn')) {
+                    const cb=document.createElement('button'); cb.id='pdf-close-btn'; cb.textContent='✕ Close Preview'; cb.style.cssText='position:fixed;top:16px;right:16px;z-index:10000;background:#0F172A;color:white;border:none;padding:10px 20px;border-radius:12px;font-size:14px;font-weight:bold;cursor:pointer;'; cb.onclick=()=>{iframe.style.display='none';cb.style.display='none';pb.style.display='none';}; document.body.appendChild(cb);
+                    const pb=document.createElement('button'); pb.id='pdf-print-btn'; pb.textContent='🖨️ Print / Save PDF'; pb.style.cssText='position:fixed;top:16px;right:180px;z-index:10000;background:#16A34A;color:white;border:none;padding:10px 20px;border-radius:12px;font-size:14px;font-weight:bold;cursor:pointer;'; pb.onclick=()=>{iframe.contentWindow?.focus();iframe.contentWindow?.print();}; document.body.appendChild(pb);
+                  }
+                } catch(e){showAlert('PDF error: '+e.message, { variant:'danger', title:'PDF Generation Failed' });} finally{setPrintingInvoice(false);}
+              }} disabled={printingInvoice} className="bg-white/20 hover:bg-white/30 text-white px-4 py-2 rounded-xl text-sm font-semibold flex items-center gap-2">
+                {printingInvoice?'⏳':'🖨️'} {printingInvoice?'Generating...':'PDF Preview'}
+              </button>}
               <button onClick={onClose} className="w-9 h-9 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-lg">✕</button>
             </div>
           </div>
@@ -559,7 +595,7 @@ export default function RecordDetailPanel({ page, record, onClose, prefillCustom
             </button>
             {/* CPQ-off: Create Order directly from Opportunity */}
             {page === 'opportunities' && appPreferences?.cpq_enabled === false && (
-              <button onClick={async () => { await createOrderFromOpportunity(record); alert('Order created! View in Orders.'); onClose(); }}
+              <button onClick={async () => { await createOrderFromOpportunity(record); showAlert('Order created! View in Orders.', { variant:'success', title:'Order Created' }); onClose(); }}
                 className="flex items-center gap-2 bg-gradient-to-r from-[#0F172A] to-blue-800 text-white px-4 py-2 rounded-xl text-sm font-bold hover:opacity-90 shadow-md">
                 🛒 Create Order
               </button>
@@ -735,6 +771,18 @@ export default function RecordDetailPanel({ page, record, onClose, prefillCustom
 
                 {/* AI Summary */}
                 <AISummary page={page} record={record}/>
+
+                {/* Product Images (B2B products only) */}
+                {page === 'products' && (
+                  <ProductImages
+                    recordType="products"
+                    recordId={record.id}
+                    productTable="products"
+                    productUuid={record._uuid}
+                    imageUrl={edited.image_url}
+                    onImageUrlChange={(url) => set('image_url', url)}
+                  />
+                )}
 
                 {/* Field sections */}
                 <div className="space-y-5">

@@ -4,6 +4,7 @@
 import { useState, useMemo, useEffect, useCallback } from 'react';
 import { useApp } from '@/context/AppContext';
 import { formatDisplayNumber, PAGE_DISPLAY_PREFIX, formatCurrency } from '@/lib/utils';
+import { useAlert } from '@/components/shared/AlertProvider';
 import {
   BarChart, Bar, LineChart, Line, PieChart, Pie, Cell, AreaChart, Area,
   XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
@@ -326,6 +327,7 @@ export default function FastReportsPage() {
     reports, saveReport, deleteReport, fetchReports,
     currentUser, appPreferences, enterpriseUsers,
   } = useApp();
+  const { showAlert } = useAlert();
 
   const currency = appPreferences?.default_currency || 'INR';
   const isB2C    = appPreferences?.b2c_mode === true;
@@ -520,7 +522,7 @@ export default function FastReportsPage() {
 
   // ── Save report ────────────────────────────────────────────────────────────
   const handleSave = async () => {
-    if (!reportName.trim()) { alert('Enter a report name.'); return; }
+    if (!reportName.trim()) { showAlert('Enter a report name.', { variant:'warning' }); return; }
     setSaving(true);
     await saveReport({
       id:          loadedId,
@@ -536,7 +538,7 @@ export default function FastReportsPage() {
     });
     await fetchReports();
     setSaving(false);
-    alert('Report saved!');
+    showAlert('Report saved!', { variant:'success', title:'Saved' });
   };
 
   // ── CSV Export ─────────────────────────────────────────────────────────────

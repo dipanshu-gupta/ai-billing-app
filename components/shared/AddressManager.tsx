@@ -130,6 +130,7 @@ function AddressForm({ initial, onSave, onCancel }) {
 }
 
 export default function AddressManager({ ownerType, ownerId, disabled = false }) {
+  const { supabase } = useTenant();
   const [addresses, setAddresses] = useState([]);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(null);

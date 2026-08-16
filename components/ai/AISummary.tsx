@@ -163,9 +163,14 @@ export default function AISummary({ page, record }) {
     setSummary('');
     try {
       const context = buildContext(page, record, appData);
+      const sb = (window as any).__bp_supabase;
+      const session = sb ? (await sb.auth.getSession()).data.session : null;
       const res = await fetch('/api/ai', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(session?.access_token ? { 'Authorization': `Bearer ${session.access_token}` } : {}),
+        },
         body: JSON.stringify({
           system: `You are a senior business analyst and CRM expert. Write a concise executive summary (2-3 sentences max) for the CRM record provided. Be specific and data-driven — mention key figures, current status, notable associations, and any urgent attention items. End with one actionable insight or recommended next step. Keep it professional and brief.`,
           messages: [{ role: 'user', content: context }],

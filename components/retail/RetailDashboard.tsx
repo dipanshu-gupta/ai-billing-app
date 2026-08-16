@@ -1,7 +1,7 @@
 // @ts-nocheck
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { useApp } from '@/context/AppContext';
 import { getStatusColor } from '@/lib/utils';
 import {
@@ -23,14 +23,15 @@ const DATE_RANGES = [
 ];
 
 // ─── Date helpers ─────────────────────────────────────────────────────────────
-const toDateStr = (d: Date) => d.toISOString().split('T')[0]; // YYYY-MM-DD
+const toDateStr = (d: Date) =>
+  `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; // LOCAL YYYY-MM-DD
 
 const getRangeStart = (range: string): Date | null => {
   const now = new Date();
   const y = now.getFullYear(), m = now.getMonth(), d = now.getDate();
   switch (range) {
     case 'today':   return new Date(y, m, d);
-    case 'week':    return new Date(y, m, d - now.getDay());
+    case 'week':    return new Date(y, m, d - ((now.getDay() + 6) % 7)); // Monday start
     case 'month':   return new Date(y, m, 1);
     case 'quarter': return new Date(y, Math.floor(m / 3) * 3, 1);
     case 'year':    return new Date(y, 0, 1);
@@ -76,6 +77,8 @@ export default function RetailDashboard() {
   } = useApp();
 
   const [dateRange, setDateRange] = useState('month');
+  // Bumped on tab focus/visibility so date-anchored memos recompute (stale-"Today" fix)
+  const [dayTick, setDayTick] = useState(0);
 
   const currency = appPreferences?.default_currency || 'INR';
   const locale   = currency === 'INR' ? 'en-IN' : 'en-US';
@@ -84,35 +87,55 @@ export default function RetailDashboard() {
     new Intl.NumberFormat(locale, { style:'currency', currency, maximumFractionDigits: 0 })
       .format(Math.round(n) || 0);
 
+  const trim2 = (x: number) => x.toFixed(2).replace(/\.?0+$/, '');
+  const curSym = currency === 'INR' ? '₹' : currency === 'USD' ? '$' : currency === 'GBP' ? '£' : currency === 'EUR' ? '€' : currency + ' ';
   const fmtShort = (n: number) => {
     n = Math.round(n);
     if (currency === 'INR') {
-      if (n >= 10000000) return `₹${(n / 10000000).toFixed(1)}Cr`;
-      if (n >= 100000)   return `₹${(n / 100000).toFixed(1)}L`;
-      if (n >= 1000)     return `₹${(n / 1000).toFixed(1)}K`;
+      if (n >= 10000000) return `${curSym}${trim2(n / 10000000)}Cr`;
+      if (n >= 100000)   return `${curSym}${trim2(n / 100000)}L`;
+      if (n >= 1000)     return `${curSym}${trim2(n / 1000)}K`;
     } else {
-      if (n >= 1000000) return `$${(n / 1000000).toFixed(1)}M`;
-      if (n >= 1000)    return `$${(n / 1000).toFixed(1)}K`;
+      if (n >= 1000000) return `${curSym}${trim2(n / 1000000)}M`;
+      if (n >= 1000)    return `${curSym}${trim2(n / 1000)}K`;
     }
-    return fmt(n);
+    return `${curSym}${n.toLocaleString(locale)}`;
   };
+
+  useEffect(() => {
+    let last = Date.now();
+    const bump = () => {
+      if (document.visibilityState !== 'visible') return;
+      // Throttle: recompute at most once per 30s of refocus
+      if (Date.now() - last < 30000) return;
+      last = Date.now();
+      setDayTick(t => t + 1);
+    };
+    window.addEventListener('focus', bump);
+    document.addEventListener('visibilitychange', bump);
+    return () => { window.removeEventListener('focus', bump); document.removeEventListener('visibilitychange', bump); };
+  }, []);
 
   // ── Filtered datasets (all use YYYY-MM-DD date fields from the DB) ─────────
   const fOrders = useMemo(() =>
     filterByRange(retailOrders, dateRange, 'order_date', 'created_at'),
-    [retailOrders, dateRange]);
+    [retailOrders, dateRange, dayTick]);
 
   const fInvoices = useMemo(() =>
     filterByRange(retailInvoices, dateRange, 'invoice_date', 'created_at'),
-    [retailInvoices, dateRange]);
+    [retailInvoices, dateRange, dayTick]);
 
   const fCustomersNew = useMemo(() =>
     filterByRange(retailCustomers, dateRange, 'created_at'),
-    [retailCustomers, dateRange]);
+    [retailCustomers, dateRange, dayTick]);
 
   const fActivities = useMemo(() =>
     filterByRange(retailActivities, dateRange, 'created_at'),
-    [retailActivities, dateRange]);
+    [retailActivities, dateRange, dayTick]);
+
+  const fProducts = useMemo(() =>
+    filterByRange(retailProducts, dateRange, 'created_at'),
+    [retailProducts, dateRange, dayTick]);
 
   // ── KPIs ──────────────────────────────────────────────────────────────────
   const kpis = useMemo(() => {
@@ -124,7 +147,7 @@ export default function RetailDashboard() {
     const paidInvoices    = fInvoices.filter(i => i.status === 'Paid');
     const totalRevenue    = paidInvoices.reduce((s, i) => s + safeNum(i.amount), 0);
 
-    const unpaidInvoices  = retailInvoices.filter(i => ['Sent','Overdue'].includes(i.status));
+    const unpaidInvoices  = retailInvoices.filter(i => ['Sent','Overdue','Pending'].includes(i.status) || (i.payment_status === 'Pending' && !['Cancelled','Refunded'].includes(i.status)));
     const pendingAmount   = unpaidInvoices.reduce((s, i) => s + safeNum(i.amount), 0);
 
     const overdueCount    = retailInvoices.filter(i => i.status === 'Overdue').length;
@@ -133,10 +156,13 @@ export default function RetailDashboard() {
     const refundAmount    = refundedOrders.reduce((s, o) => s + safeNum(o.amount), 0);
 
     const lowStock        = retailProducts.filter(p =>
+      p.status === 'Active' &&
       safeNum(p.stock_quantity) <= safeNum(p.reorder_level || 10)
     );
 
-    const vipCustomers    = retailCustomers.filter(c => c.status === 'VIP');
+    const vipCustomers    = retailCustomers.filter(c =>
+      c.status === 'VIP' || c.loyalty_tier === 'Platinum' || safeNum(c.loyalty_points) >= 1000
+    );
 
     return {
       totalSales,
@@ -154,13 +180,14 @@ export default function RetailDashboard() {
       openActivities: fActivities.filter(a => ['Open','In Progress'].includes(a.status)).length,
       lowStockCount: lowStock.length,
       activeProducts: retailProducts.filter(p => p.status === 'Active').length,
-      totalProducts: retailProducts.length,
+      totalProducts: dateRange === 'all' ? retailProducts.length : fProducts.length,
+      newProducts: fProducts.length,
       cancelledOrders: fOrders.filter(o => o.status === 'Cancelled').length,
       conversionRate: fOrders.length > 0
         ? Math.round((ordersCount / fOrders.length) * 100)
         : 0,
     };
-  }, [fOrders, fInvoices, fCustomersNew, fActivities, retailCustomers, retailProducts, retailInvoices]);
+  }, [fOrders, fInvoices, fCustomersNew, fActivities, fProducts, retailCustomers, retailProducts, retailInvoices, dateRange]);
 
   // ── Sales trend — last 14 days or by period ────────────────────────────────
   const salesTrend = useMemo(() => {
@@ -217,7 +244,7 @@ export default function RetailDashboard() {
       return weekly;
     }
     return result;
-  }, [retailOrders, dateRange, locale]);
+  }, [fInvoices, dateRange, locale]);
 
   // ── Orders by status ───────────────────────────────────────────────────────
   const invoicesByStatus = useMemo(() => {
@@ -229,8 +256,7 @@ export default function RetailDashboard() {
     return Object.entries(counts)
       .map(([name, value]) => ({ name, value }))
       .sort((a, b) => b.value - a.value);
-  }, [fOrders]);
-
+  }, [fInvoices]);
   // ── Orders by channel ──────────────────────────────────────────────────────
   const invoicesByChannel = useMemo(() => {
     const ch: Record<string,{count:number,revenue:number}> = {};
@@ -241,9 +267,9 @@ export default function RetailDashboard() {
       if (inv.status === 'Paid') ch[k].revenue += safeNum(inv.amount);
     });
     return Object.entries(ch)
-      .map(([name, v]) => ({ name, invoices: v.count, sales: Math.round(v.sales) }))
-      .sort((a, b) => b.sales - a.sales);
-  }, [fOrders]);
+      .map(([name, v]) => ({ name, invoices: v.count, revenue: Math.round(v.revenue) }))
+      .sort((a, b) => b.revenue - a.revenue);
+  }, [fInvoices]);
 
   // ── Payment method breakdown ───────────────────────────────────────────────
   const paymentMethods = useMemo(() => {
@@ -255,7 +281,9 @@ export default function RetailDashboard() {
     return Object.entries(pm).map(([name, value]) => ({ name, value }));
   }, [fInvoices]);
 
-  // ── Top products by revenue (from line items if available, else by price×stock) ─
+  // ── Products by category (count + inventory value; NOT sales revenue — ─────
+  // a true sales-by-category view would need to sum retail_invoice_line_items
+  // for the period, which isn't fetched on this dashboard today) ─────────────
   const topCategories = useMemo(() => {
     const cats: Record<string,{count:number,value:number}> = {};
     retailProducts.forEach(p => {
@@ -282,12 +310,12 @@ export default function RetailDashboard() {
       .map(([name, value]) => ({ name, value }));
   }, [retailCustomers]);
 
-  // ── Recent orders ──────────────────────────────────────────────────────────
+  // ── Recent invoices — respects the selected date range for consistency ──────
   const recentInvoices = useMemo(() =>
-    [...retailInvoices]
+    [...fInvoices]
       .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
       .slice(0, 8),
-    [retailInvoices]);
+    [fInvoices]);
 
   // ── Low stock alert list ───────────────────────────────────────────────────
   const lowStockList = useMemo(() =>
@@ -583,7 +611,7 @@ export default function RetailDashboard() {
             <ResponsiveContainer width="100%" height={220}>
               <BarChart data={topCategories} layout="vertical">
                 <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9"/>
-                <XAxis type="number" tick={{ fontSize: 11 }}/>
+                <XAxis type="number" tick={{ fontSize: 11 }} allowDecimals={false}/>
                 <YAxis type="category" dataKey="name" tick={{ fontSize: 11 }} width={110}/>
                 <Tooltip/>
                 <Bar dataKey="products" fill="#8B5CF6" radius={[0,6,6,0]} name="Products"/>

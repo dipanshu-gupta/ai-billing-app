@@ -4,6 +4,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { useApp } from '@/context/AppContext';
 import { formatCurrency } from '@/lib/utils';
+import { useAlert } from '@/components/shared/AlertProvider';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 type Message = {
@@ -130,7 +131,8 @@ const parseResponse = (text) => {
 
 // ─── Mini Chart Component ─────────────────────────────────────────────────────
 function MiniChart({ chart }) {
-  if (!chart) return null;
+  if (!chart || !Array.isArray(chart.data) || !Array.isArray(chart.labels)) return null;
+  chart = { ...chart, data: chart.data.map(v => Number(v) || 0) };
   const max = Math.max(...chart.data, 1);
   const colors = ['#0F172A','#1e40af','#0369a1','#0e7490','#065f46','#1d4ed8'];
 
@@ -185,7 +187,10 @@ function MessageBubble({ msg, onActionExecuted }) {
     retailOrders:'Order', retailInvoices:'Invoice', retailActivities:'Activity',
   };
 
-  const formatText = (text) => text
+  const escapeHtml = (t) => t
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  const formatText = (text) => escapeHtml(text)
     .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
     .replace(/\*(.*?)\*/g, '<em>$1</em>');
 
@@ -201,11 +206,9 @@ function MessageBubble({ msg, onActionExecuted }) {
         setActionMsg(`✅ ${OBJECT_LABELS[action.object]||'Record'} created successfully!`);
         if (onActionExecuted) onActionExecuted(action);
       } else if (action.type === 'update_record') {
-        // Find existing record and update
-        if (isRetail) await createRetailRecord(action.object, action.data, []); // update path
+        // Updates via chat are not supported yet — never silently create a duplicate
+        setActionMsg('ℹ️ Updating records from chat isn\'t supported yet — please open the record to edit it.');
         setExecuted(true);
-        setActionMsg(`✅ Record updated successfully!`);
-        if (onActionExecuted) onActionExecuted(action);
       }
     } catch(e) {
       setActionMsg(`⚠️ Action failed: ${e.message}`);
@@ -292,12 +295,13 @@ const B2C_PROMPTS = [
 
 // ─── Voice Input Hook ─────────────────────────────────────────────────────────
 function useVoiceInput(onTranscript) {
+  const { showAlert } = useAlert();
   const [listening, setListening] = useState(false);
   const recognitionRef = useRef(null);
 
   const startListening = useCallback(() => {
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (!SpeechRecognition) { alert('Voice input is not supported in your browser. Please use Chrome.'); return; }
+    if (!SpeechRecognition) { showAlert('Voice input is not supported in your browser. Please use Chrome.', { variant:'warning' }); return; }
 
     const recognition = new SpeechRecognition();
     recognition.lang = 'en-IN';
@@ -402,6 +406,38 @@ export default function AIAdvisorChat() {
     setInput(transcript);
   });
 
+  // Find records relevant to the user's question so the model can answer about
+  // REAL data instead of hallucinating (it only ever sees what we send it)
+  const findRelevantRecords = (query) => {
+    const tokens = String(query).toLowerCase().split(/[^a-z0-9@.+-]+/).filter(t => t.length >= 3);
+    if (!tokens.length) return '';
+    const collections = isB2C
+      ? [['retailCustomers', enrichedRetailCustomers], ['retailProducts', retailProducts], ['retailOrders', retailOrders], ['retailInvoices', retailInvoices], ['retailActivities', retailActivities]]
+      : [['customers', enrichedCustomers], ['leads', leads], ['opportunities', opportunities], ['orders', orders], ['invoices', invoices], ['contacts', contacts], ['quotations', quotations], ['products', products]];
+    const matches = [];
+    for (const [label, rows] of collections) {
+      for (const r of (rows || [])) {
+        const hay = [r.name, r.customer, r.subject, r.email, r.phone, r.customer_phone, r.id, r.sku, r.barcode,
+          r.displayNumber != null ? String(r.displayNumber) : '', r.company, r.category, r.brand]
+          .filter(Boolean).join(' ').toLowerCase();
+        const hits = tokens.filter(t => hay.includes(t)).length;
+        if (hits > 0) matches.push({ hits, label, r });
+        if (matches.length > 400) break;
+      }
+    }
+    matches.sort((a, b) => b.hits - a.hits);
+    const top = matches.slice(0, 10);
+    if (!top.length) return '';
+    const compact = top.map(({ label, r }) => {
+      const o = { type: label, id: r.id, name: r.name || r.customer || r.subject || '', status: r.status || '', amount: r.amount ?? r.price ?? undefined,
+        phone: r.phone || r.customer_phone || undefined, email: r.email || undefined, date: r.order_date || r.invoice_date || r.activity_date || (r.created_at ? String(r.created_at).slice(0,10) : undefined),
+        stock: r.stock_quantity, loyalty_points: r.loyalty_points, total_invoiced: r.total_invoiced, total_orders: r.total_orders };
+      Object.keys(o).forEach(k => (o[k] === undefined || o[k] === '') && delete o[k]);
+      return JSON.stringify(o);
+    }).join('\n');
+    return `\n\nMATCHED RECORDS (real data relevant to the user's latest question — answer from these, never invent records):\n${compact}`;
+  };
+
   const sendMessage = async (text?: string) => {
     const userText = (text || input).trim();
     if (!userText || loading) return;
@@ -413,14 +449,23 @@ export default function AIAdvisorChat() {
     setLoading(true);
 
     try {
-      const systemPrompt = buildSystemPrompt(userWithRole, crmData, appPreferences, isB2C);
+      const systemPrompt = buildSystemPrompt(userWithRole, crmData, appPreferences, isB2C)
+        + findRelevantRecords(userText);
+      // Cap history to the last 12 turns — keeps the model sharp and within context
       const apiMessages = newMessages
         .filter((m,i) => !(m.role==='assistant' && i===0))
-        .map(m => ({ role:m.role, content:m.content }));
+        .map(m => ({ role:m.role, content:m.content }))
+        .slice(-12);
 
+      // Authenticated call — the API route rejects anonymous requests
+      const sb = (window as any).__bp_supabase;
+      const session = sb ? (await sb.auth.getSession()).data.session : null;
       const res = await fetch('/api/ai', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(session?.access_token ? { 'Authorization': `Bearer ${session.access_token}` } : {}),
+        },
         body: JSON.stringify({ system:systemPrompt, messages:apiMessages, max_tokens:1200 }),
       });
 

@@ -14,6 +14,7 @@
 import { useState, useEffect } from 'react';
 import { useTenant } from '@/context/TenantContext';
 import { invalidateCustomFieldCache } from '@/lib/useCustomFields';
+import { useAlert } from '@/components/shared/AlertProvider';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const MAX_FIELDS = 10;
@@ -59,6 +60,7 @@ function emptyField() {
 // ─── Component ───────────────────────────────────────────────────────────────
 export default function AppComposer() {
   const { supabase, tenant } = useTenant();
+  const { showAlert } = useAlert();
   const [selectedObj,   setSelectedObj]   = useState('retailCustomers');
   const [fields,        setFields]        = useState([]);
   const [loading,       setLoading]       = useState(false);
@@ -113,7 +115,7 @@ export default function AppComposer() {
 
   function addField() {
     if (fields.length >= MAX_FIELDS) {
-      alert(`Maximum ${MAX_FIELDS} custom fields per object.`);
+      showAlert(`Maximum ${MAX_FIELDS} custom fields per object.`, { variant:'warning' });
       return;
     }
     setFields(p => [...p, emptyField()]);
@@ -137,11 +139,11 @@ export default function AppComposer() {
   async function saveDraft() {
     if (!supabase || !tableExists) return;
     const invalid = fields.filter(f => !f.label?.trim());
-    if (invalid.length) { alert('All fields must have a label.'); return; }
+    if (invalid.length) { showAlert('All fields must have a label.', { variant:'warning' }); return; }
     // Check for duplicate api_names
     const apiNames = fields.map(f => f.api_name || slugify(f.label));
     const dupes = apiNames.filter((n, i) => apiNames.indexOf(n) !== i);
-    if (dupes.length) { alert(`Duplicate field names: ${dupes.join(', ')}. Each field must have a unique name.`); return; }
+    if (dupes.length) { showAlert(`Duplicate field names: ${dupes.join(', ')}. Each field must have a unique name.`, { variant:'warning' }); return; }
 
     setSaving(true);
 

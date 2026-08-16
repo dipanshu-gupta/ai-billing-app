@@ -16,6 +16,7 @@ import { useApp } from '@/context/AppContext';
 import { useTenant } from '@/context/TenantContext';
 import { formatDate, getStatusOptions } from '@/lib/utils';
 import Modal from '@/components/shared/Modal';
+import { useAlert } from '@/components/shared/AlertProvider';
 
 // ─── Shared styles ────────────────────────────────────────────────────────────
 const iCls = 'w-full border border-blue-200 rounded-xl px-3 py-2.5 text-[#0F172A] bg-white focus:outline-none focus:ring-2 focus:ring-blue-400 text-sm placeholder:text-gray-400';
@@ -203,6 +204,7 @@ function BusinessUnitsPanel() {
 function UsersPanel() {
   const { enterpriseUsers, organizations, businessUnits, roles, saveEnterpriseUser, adminResetPassword, updateAdminStatus, fetchEnterpriseUsers } = useApp();
   const { supabase } = useTenant();
+  const { showAlert } = useAlert();
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState({ status:'Active', designation:'', username:'', first_name:'', last_name:'', email:'', phone:'', employee_code:'', organization_id:'', business_unit_id:'', role_id:'' });
@@ -224,18 +226,18 @@ function UsersPanel() {
 
   const handleSave = async () => {
     // Validate email
-    if (!form.email?.trim()) { alert('Email is required.'); return; }
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(form.email)) { alert('Invalid email format.'); return; }
+    if (!form.email?.trim()) { showAlert('Email is required.', { variant:'warning' }); return; }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(form.email)) { showAlert('Invalid email format.', { variant:'warning' }); return; }
     // Validate phone
     if (form.phone) {
       const digits = (form.phone as string).replace(/[\s\-\+\(\)]/g,'');
-      if (!/^\d+$/.test(digits)) { alert('Phone must contain digits only.'); return; }
-      if (digits.length < 7 || digits.length > 15) { alert('Phone must be 7-15 digits.'); return; }
+      if (!/^\d+$/.test(digits)) { showAlert('Phone must contain digits only.', { variant:'warning' }); return; }
+      if (digits.length < 7 || digits.length > 15) { showAlert('Phone must be 7-15 digits.', { variant:'warning' }); return; }
     }
     if (!editing) {
-      if (!password) { alert('Password is required for new users.'); return; }
-      if (password !== confirmPassword) { alert('Passwords do not match.'); return; }
-      if (password.length < 6) { alert('Password must be at least 6 characters.'); return; }
+      if (!password) { showAlert('Password is required for new users.', { variant:'warning' }); return; }
+      if (password !== confirmPassword) { showAlert('Passwords do not match.', { variant:'warning' }); return; }
+      if (password.length < 6) { showAlert('Password must be at least 6 characters.', { variant:'warning' }); return; }
     }
     setSaving(true);
     if (editing) {
@@ -267,9 +269,9 @@ function UsersPanel() {
             setSaving(false); setOpen(false); setPassword(''); setConfirmPassword('');
             return;
           } else {
-            alert('Failed to create auth: ' + (json.error || 'Unknown'));
+            showAlert('Failed to create auth: ' + (json.error || 'Unknown'), { variant:'danger', title:'Error' });
           }
-        } catch(e: any) { alert('Error: ' + e.message); }
+        } catch(e: any) { showAlert('Error: ' + e.message, { variant:'danger', title:'Error' }); }
       }
       // Normal update
       await saveEnterpriseUser(form, editing.id, undefined);
@@ -300,7 +302,7 @@ function UsersPanel() {
   };
 
   const handleResetPassword = async () => {
-    if (!resetPwValue || resetPwValue.length < 6) { alert('Password must be at least 6 characters.'); return; }
+    if (!resetPwValue || resetPwValue.length < 6) { showAlert('Password must be at least 6 characters.', { variant:'warning' }); return; }
     const user = enterpriseUsers.find(u => u.id === resetPwUserId);
     await adminResetPassword(user?.auth_user_id, resetPwValue);
     setResetPwUserId(null);
@@ -461,11 +463,11 @@ function UsersPanel() {
                           placeholder="New password (leave blank to keep current)"
                           className="flex-1 border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-blue-400"/>
                         <button onClick={async()=>{
-                          if(!password){alert('Enter a new password');return;}
-                          if(password.length<6){alert('Min 6 characters');return;}
+                          if(!password){showAlert('Enter a new password', { variant:'warning' });return;}
+                          if(password.length<6){showAlert('Min 6 characters', { variant:'warning' });return;}
                           await adminResetPassword(editing.auth_user_id, password);
                           setPassword('');
-                          alert('✓ Password reset successfully');
+                          showAlert('Password reset successfully', { variant:'success', title:'Password Reset' });
                         }} className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-sm font-bold whitespace-nowrap">
                           Reset PW
                         </button>
@@ -842,6 +844,7 @@ function ActionBuilder({ action, idx, users, fields, objectType, onChange, onRem
 // ── Workflow Builder Panel ────────────────────────────────────────────────────
 function WorkflowBuilderPanel({ objectList = ALL_OBJECTS, conditionFields = CONDITION_FIELDS, objectLabels = null }) {
   const { workflowRules, enterpriseUsers, saveWorkflowRule, deleteWorkflowRule } = useApp();
+  const { showAlert } = useAlert();
   const [open, setOpen]         = useState(false);
   const [editing, setEditing]   = useState(null);
   const [form, setForm]         = useState({ name:'', object_type:'leads', trigger_event:'on_create', trigger_field:'', trigger_value:'', is_active:true });
@@ -893,15 +896,15 @@ function WorkflowBuilderPanel({ objectList = ALL_OBJECTS, conditionFields = COND
   };
 
   const handleSave = async () => {
-    if (!form.name?.trim()) { alert('Rule name is required.'); return; }
-    if (!actions.length)    { alert('At least one action is required.'); return; }
+    if (!form.name?.trim()) { showAlert('Rule name is required.', { variant:'warning' }); return; }
+    if (!actions.length)    { showAlert('At least one action is required.', { variant:'warning' }); return; }
     const actionError = validateActions();
-    if (actionError) { alert(actionError); return; }
+    if (actionError) { showAlert(actionError, { variant:'warning' }); return; }
     setSaving(true);
     try {
       await saveWorkflowRule({ ...form, conditions }, actions, editing?.id);
       setOpen(false);
-    } catch(e: any) { alert('Save failed: ' + e.message); }
+    } catch(e: any) { showAlert('Save failed: ' + e.message, { variant:'danger', title:'Save Failed' }); }
     setSaving(false);
   };
 
@@ -1053,6 +1056,7 @@ function WorkflowBuilderPanel({ objectList = ALL_OBJECTS, conditionFields = COND
 // ── Assignment Rules Panel ─────────────────────────────────────────────────
 function AssignmentRulesPanel({ objectList = ALL_OBJECTS, conditionFields = CONDITION_FIELDS, objectLabels = null }) {
   const { assignmentRules, enterpriseUsers, userGroups, saveAssignmentRule, deleteAssignmentRule } = useApp();
+  const { showAlert } = useAlert();
   const [open, setOpen]       = useState(false);
   const [editing, setEditing] = useState(null);
   const [form, setForm]       = useState({ name:'', object_type:'leads', condition_field:'', condition_operator:'equals', condition_value:'', assign_to_user_id:'', assign_to_group_id:'', priority:1, is_active:true });
@@ -1070,12 +1074,12 @@ function AssignmentRulesPanel({ objectList = ALL_OBJECTS, conditionFields = COND
   };
 
   const handleSave = async () => {
-    if (!form.name?.trim())        { alert('Rule name is required.'); return; }
-    if (!form.condition_field)     { alert('Condition field is required.'); return; }
-    if (!form.assign_to_user_id && !form.assign_to_group_id) { alert('Select a user or group to assign to.'); return; }
+    if (!form.name?.trim())        { showAlert('Rule name is required.', { variant:'warning' }); return; }
+    if (!form.condition_field)     { showAlert('Condition field is required.', { variant:'warning' }); return; }
+    if (!form.assign_to_user_id && !form.assign_to_group_id) { showAlert('Select a user or group to assign to.', { variant:'warning' }); return; }
     setSaving(true);
     try { await saveAssignmentRule(form, editing?.id); setOpen(false); }
-    catch(e: any) { alert('Save failed: ' + e.message); }
+    catch(e: any) { showAlert('Save failed: ' + e.message, { variant:'danger', title:'Save Failed' }); }
     setSaving(false);
   };
 
@@ -1234,6 +1238,7 @@ function AssignmentRulesPanel({ objectList = ALL_OBJECTS, conditionFields = COND
 // ── SLA Panel ──────────────────────────────────────────────────────────────
 function SLAPanel({ objectList = ALL_OBJECTS, conditionFields = CONDITION_FIELDS, objectLabels = null }) {
   const { slaPolicies, enterpriseUsers, userGroups, saveSLAPolicy, deleteSLAPolicy } = useApp();
+  const { showAlert } = useAlert();
   const [open, setOpen]       = useState(false);
   const [editing, setEditing] = useState(null);
   const [form, setForm]       = useState({ name:'', object_type:'leads', condition_field:'status', condition_value:'', response_time_hours:24, resolution_time_hours:72, warning_threshold_pct:80, escalate_to_user_id:'', is_active:true });
@@ -1302,9 +1307,9 @@ function SLAPanel({ objectList = ALL_OBJECTS, conditionFields = CONDITION_FIELDS
         footer={<>
           <button onClick={()=>setOpen(false)} className="px-5 py-2.5 rounded-2xl border border-gray-200 text-gray-600 hover:bg-gray-50 text-sm font-semibold">Cancel</button>
           <button onClick={async()=>{
-            if(!form.name?.trim()){alert('Name required');return;}
+            if(!form.name?.trim()){showAlert('Name required', { variant:'warning' });return;}
             setSaving(true);
-            try{await saveSLAPolicy(form,editing?.id);setOpen(false);}catch(e:any){alert(e.message);}
+            try{await saveSLAPolicy(form,editing?.id);setOpen(false);}catch(e:any){showAlert(e.message, { variant:'danger', title:'Save Failed' });}
             setSaving(false);
           }} disabled={saving} className="px-5 py-2.5 rounded-2xl bg-gradient-to-r from-[#0F172A] to-blue-800 text-white text-sm font-bold shadow disabled:opacity-50">
             {saving?'Saving…':(editing?'Update Policy':'Create Policy')}
@@ -1396,6 +1401,7 @@ function SLAPanel({ objectList = ALL_OBJECTS, conditionFields = CONDITION_FIELDS
 // ── Approval Process Panel ─────────────────────────────────────────────────
 function ApprovalProcessPanel({ objectList = ALL_OBJECTS, conditionFields = CONDITION_FIELDS, objectLabels = null }) {
   const { approvalProcesses, approvalRequests, enterpriseUsers, userGroups, saveApprovalProcess, deleteApprovalProcess, fetchApprovalProcesses } = useApp();
+  const { showAlert } = useAlert();
   const [open, setOpen]         = useState(false);
   const [editing, setEditing]   = useState(null);
   const [form, setForm]         = useState({ name:'', object_type:'orders', is_active:true });
@@ -1409,13 +1415,13 @@ function ApprovalProcessPanel({ objectList = ALL_OBJECTS, conditionFields = COND
   const addStep = () => setSteps(p=>[...p,{step_number:p.length+1,step_name:'',approver_user_id:'',approver_group_id:'',approval_type:'any',on_approve_action:'proceed',on_reject_action:'reject'}]);
 
   const handleSave = async () => {
-    if (!form.name?.trim()) { alert('Process name is required.'); return; }
-    if (!steps.every(s=>s.approver_user_id||s.approver_group_id)) { alert('Each step needs an approver.'); return; }
+    if (!form.name?.trim()) { showAlert('Process name is required.', { variant:'warning' }); return; }
+    if (!steps.every(s=>s.approver_user_id||s.approver_group_id)) { showAlert('Each step needs an approver.', { variant:'warning' }); return; }
     setSaving(true);
     try {
       await saveApprovalProcess({ ...form, conditions }, steps.map((s,i)=>({...s,step_number:i+1})), editing?.id);
       setOpen(false);
-    } catch(e: any) { alert('Save failed: ' + e.message); }
+    } catch(e: any) { showAlert('Save failed: ' + e.message, { variant:'danger', title:'Save Failed' }); }
     setSaving(false);
   };
 

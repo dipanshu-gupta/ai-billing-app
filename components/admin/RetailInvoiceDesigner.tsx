@@ -1,6 +1,7 @@
 // @ts-nocheck
 'use client';
 import React, { useState, useEffect, useRef } from 'react';
+import { tenantScope } from '@/lib/utils';
 import { useApp } from '@/context/AppContext';
 import { useTenant } from '@/context/TenantContext';
 
@@ -55,6 +56,7 @@ const defaultTpl = () => ({
   // Line items
   col_sno: false, col_item: true, col_qty: true, col_unit: false,
   col_price: true, col_discount: false, col_tax_rate: true, col_hsn: false, col_subtotal_line: false, col_total: true,
+  show_product_images: false,
   alt_row: false,
   // Tax & totals
   show_subtotal: true, show_discount_total: true, show_tax_total: true,
@@ -182,6 +184,7 @@ function LivePreview({ t }) {
           {/* Header row */}
           <div style={{display:'flex',borderBottom:`1px solid ${brand}30`,paddingBottom:3,marginBottom:4}}>
             {t.col_sno    && <span style={{width:20,fontSize:fs(8),color:TL,fontWeight:700}}>#</span>}
+            {t.show_product_images && !th && <span style={{width:28,fontSize:fs(8),color:TL,fontWeight:700}}>Img</span>}
             <span style={{flex:1,fontSize:fs(8),color:TL,fontWeight:700,textTransform:'uppercase'}}>Item</span>
             {t.col_unit   && <span style={{width:th?28:36,fontSize:fs(8),color:TL,fontWeight:700,textAlign:'center'}}>Unit</span>}
             {t.col_qty    && <span style={{width:th?24:32,fontSize:fs(8),color:TL,fontWeight:700,textAlign:'right'}}>Qty</span>}
@@ -196,6 +199,7 @@ function LivePreview({ t }) {
           {SAMPLE.items.map((item,i) => (
             <div key={i} style={{display:'flex',alignItems:'center',marginBottom:th?2:4,padding:th?'1px 0':'2px 0',background:t.alt_row&&i%2===1?t.alt_row_color:'transparent',borderRadius:3}}>
               {t.col_sno    && <span style={{width:20,fontSize:fs(10),color:TL}}>{item.sno}</span>}
+              {t.show_product_images && !th && <span style={{width:28}}><span style={{display:'inline-block',width:20,height:20,borderRadius:4,background:`${brand}20`,border:`1px solid ${brand}40`}}/></span>}
               <span style={{flex:1,fontSize:fs(11),color:T,paddingRight:4}}>{item.name}</span>
               {t.col_unit   && <span style={{width:th?28:36,fontSize:fs(9),color:TM,textAlign:'center'}}>{item.unit}</span>}
               {t.col_qty    && <span style={{width:th?24:32,fontSize:fs(11),color:TM,textAlign:'right'}}>{item.qty}</span>}
@@ -365,7 +369,7 @@ export default function RetailInvoiceDesigner() {
 
   async function load() {
     if(!supabase) return;
-    const {data} = await supabase.from('retail_invoice_templates').select('*').order('created_at');
+    const {data} = await tenantScope(supabase.from('retail_invoice_templates').select('*')).order('created_at');
     if(data) setTemplates(data);
   }
 
@@ -379,7 +383,7 @@ export default function RetailInvoiceDesigner() {
       'header_align','show_store_info','show_gst_header',
       'show_invoice_number','show_date','show_cashier','show_invoice_status','show_payment_status','show_barcode','show_qr_code',
       'show_customer','show_customer_phone','show_customer_gstin',
-      'col_sno','col_item','col_qty','col_unit','col_price','col_discount','col_hsn','col_subtotal_line','col_total',
+      'col_sno','col_item','col_qty','col_unit','col_price','col_discount','col_hsn','col_subtotal_line','col_total','show_product_images',
       'alt_row','alt_row_color','show_subtotal','show_discount_total','show_tax_total','show_cgst_sgst','show_round_off',
       'tax_regime','default_gst_rate','place_of_supply',
       'show_payment','show_payment_mode','show_amount_paid','show_change','show_upi_id','upi_id',
@@ -662,6 +666,7 @@ export default function RetailInvoiceDesigner() {
             <Card title="Line Item Columns" icon="📊">
               <p className="text-xs text-gray-400 -mt-1">Choose which columns appear in the items table.</p>
               <Toggle label="Sr. No."       checked={!!t.col_sno}      onChange={()=>upd('col_sno',!t.col_sno)}/>
+              <Toggle label="Show Product Images" sub="Thumbnail next to item name (skipped for thermal printers)" checked={!!t.show_product_images} onChange={()=>upd('show_product_images',!t.show_product_images)}/>
               <Toggle label="Item Name"     checked={t.col_item!==false} onChange={()=>upd('col_item',!(t.col_item!==false))}/>
               <Toggle label="Unit"          checked={!!t.col_unit}     onChange={()=>upd('col_unit',!t.col_unit)}/>
               <Toggle label="Quantity"      checked={t.col_qty!==false} onChange={()=>upd('col_qty',!(t.col_qty!==false))}/>

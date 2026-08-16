@@ -2,16 +2,31 @@
 
 // ─── Currency ──────────────────────────────────────────────────────────────────
 
-export const formatCurrency = (value: number): string =>
-  new Intl.NumberFormat('en-IN', {
-    style: 'currency', currency: 'INR', maximumFractionDigits: 0,
-  }).format(value || 0);
+// Reads the tenant's regional settings, published to window by AppContext
+const _prefs = () => (typeof window !== 'undefined' ? (window as any).__bp_prefs : null) || {};
+
+export const formatCurrency = (value: number): string => {
+  const currency = _prefs().default_currency || 'INR';
+  const locale = currency === 'INR' ? 'en-IN' : currency === 'GBP' ? 'en-GB' : currency === 'EUR' ? 'de-DE' : 'en-US';
+  try {
+    return new Intl.NumberFormat(locale, { style: 'currency', currency, maximumFractionDigits: 0 }).format(value || 0);
+  } catch {
+    return new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(value || 0);
+  }
+};
 
 // ─── Dates ─────────────────────────────────────────────────────────────────────
 
 export const formatDate = (d: string): string => {
   if (!d) return '-';
-  return new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+  const dt = new Date(d);
+  if (isNaN(dt.getTime())) return '-';
+  const df = _prefs().date_format || 'DD/MM/YYYY';
+  const dd = String(dt.getDate()).padStart(2,'0'), mm = String(dt.getMonth()+1).padStart(2,'0'), yyyy = dt.getFullYear();
+  if (df === 'MM/DD/YYYY') return `${mm}/${dd}/${yyyy}`;
+  if (df === 'YYYY-MM-DD') return `${yyyy}-${mm}-${dd}`;
+  if (df === 'DD/MM/YYYY') return `${dd}/${mm}/${yyyy}`;
+  return dt.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
 };
 
 export const formatDateTime = (d: string): string => {
@@ -92,7 +107,7 @@ export const getStatusOptions = (page: string, hasApproval = false): string[] =>
         ? ['Prospecting','Qualification','Needs Analysis','Value Proposition','Proposal Sent','Pending Approval','Negotiation','Closed Won','Closed Lost','On Hold']
         : ['Prospecting','Qualification','Needs Analysis','Value Proposition','Proposal Sent','Negotiation','Closed Won','Closed Lost','On Hold'];
     case 'orders':
-      return ['Draft','Confirmed','Processing','Partially Shipped','Shipped','Delivered','Invoiced','On Hold','Cancelled'];
+      return ['Draft','Confirmed','Processing','Partially Shipped','Shipped','Delivered','Partially Invoiced','Invoiced','On Hold','Cancelled'];
     case 'invoices':
       return ['Draft','Pending','Sent','Partially Paid','Paid','Overdue','Disputed','Write Off','Cancelled'];
     case 'contacts':
@@ -103,8 +118,8 @@ export const getStatusOptions = (page: string, hasApproval = false): string[] =>
       return ['Active','Draft','Under Review','Discontinued','Out of Stock'];
     case 'quotations':
       return hasApproval
-        ? ['Draft','Submitted','Pending Approval','Approved','Sent to Customer','Accepted','Ordered','Rejected','Expired','Cancelled']
-        : ['Draft','Submitted','Approved','Sent to Customer','Accepted','Ordered','Rejected','Expired','Cancelled'];
+        ? ['Draft','Submitted','Pending Approval','Approved','Sent to Customer','Accepted','Partially Ordered','Ordered','Rejected','Expired','Cancelled']
+        : ['Draft','Submitted','Approved','Sent to Customer','Accepted','Partially Ordered','Ordered','Rejected','Expired','Cancelled'];
     case 'retailCustomers':
       return ['Active','Inactive','VIP','Blocked'];
     case 'retailProducts':
@@ -140,6 +155,10 @@ export const getStatusColor = (status: string): string => {
     Negotiation:        'bg-yellow-100 text-yellow-700',
     Processing:         'bg-yellow-100 text-yellow-700',
     Delivered:          'bg-green-100 text-green-700',
+    Invoiced:           'bg-teal-100 text-teal-700',
+    'Partially Invoiced':'bg-teal-50 text-teal-600',
+    'Partially Ordered':'bg-teal-50 text-teal-600',
+    Ordered:            'bg-teal-100 text-teal-700',
     Shipped:            'bg-blue-100 text-blue-700',
     Pending:            'bg-yellow-100 text-yellow-700',
     Paid:               'bg-green-100 text-green-700',
@@ -172,7 +191,7 @@ export const getObjectFields = (page: string): string[] => {
               'customer','isPrimary','linkedIn','owner','status','description'];
     case 'products':
       return ['name','productFamily','category','sku','price','cost',
-              'unit','taxRate','status','description'];
+              'unit','taxRate','status','description','stock_quantity','reorder_level','track_inventory'];
     case 'leads':
       return ['name','customer','contact','email','phone',
               'source','amount','expectedCloseDate','billingAddress','shippingAddress','owner','status','description'];
@@ -210,3 +229,15 @@ export const navigationItems = [
   { key: 'approvals',     label: 'My Approvals',  icon: '✅', permission: null },
   { key: 'adminTools',    label: 'Admin Tools',   icon: '⚙️', permission: 'admin_tools_view' },
 ];
+
+// ─── Tenant scoping (shared-plan isolation for component-level queries) ─────
+// Display numbers (CUST-00001, QUO-..., record_id values, etc.) COLLIDE across
+// tenants on the shared DB, so every direct component query must be scoped.
+export const DEMO_TENANT_ID = '00000000-0000-0000-0000-000000000001';
+export function tenantScope(q: any) {
+  const t = (typeof window !== 'undefined' ? (window as any).__bp_tenant : null) || {};
+  const tid = t.id || null;
+  if (!tid || t.db_url) return q; // dedicated DB or unresolved — no filter needed
+  if (tid === DEMO_TENANT_ID) return q.or(`tenant_id.eq.${tid},tenant_id.is.null`);
+  return q.eq('tenant_id', tid);
+}

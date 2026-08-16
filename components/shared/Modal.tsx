@@ -13,7 +13,7 @@ export default function Modal({ open, onClose, title, subtitle, children, footer
   }[size] || 'max-w-2xl';
 
   return (
-    <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 p-4 overflow-auto">
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4 overflow-auto">
       <div className={`bg-white rounded-[32px] shadow-2xl border border-blue-100 w-full ${sizeClass} max-h-[95vh] flex flex-col`}>
         <div className="px-8 py-6 border-b border-blue-100 flex items-center justify-between flex-shrink-0">
           <div>

@@ -11,6 +11,26 @@ import type {
   Notification, AuditLog,
 } from '@/lib/types';
 import { generateId } from '@/lib/utils';
+import { useAlert } from '@/components/shared/AlertProvider';
+
+// ─── Enterprise-scale hardening ──────────────────────────────────────────────
+// TODO(pagination): The main list-fetch functions below (fetchCustomers,
+// fetchProducts, fetchLeads, fetchOpportunities, fetchOrders, fetchInvoices,
+// fetchActivities, fetchContacts, fetchQuotations, fetchRetailCustomers,
+// fetchRetailProducts, fetchRetailActivities, fetchRetailOrders,
+// fetchRetailInvoices) previously did an unbounded `.select('*')` against the
+// whole table on every load — for a large tenant this pulls the entire table
+// into the browser. As an interim fix (full cursor/keyset pagination + a
+// "load more" UI is a larger change, tracked separately) each of these now
+// caps at LIST_FETCH_LIMIT rows ordered by created_at desc, so the most
+// recent records always load. This is NOT a substitute for real pagination —
+// tenants with more than LIST_FETCH_LIMIT rows in one of these tables will
+// not see older records in list views until keyset pagination ships. List
+// page header counts use a separate server-side `{ count: 'exact', head: true }`
+// query (see CRMListPage.tsx / RetailListPage.tsx) so the displayed total is
+// accurate even though only LIST_FETCH_LIMIT rows are loaded client-side.
+const LIST_FETCH_LIMIT = 500;
+
 
 // \u2500\u2500\u2500 Context Shape \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 
@@ -48,6 +68,11 @@ interface AppContextValue {
   permissions: Permission[];
   rolePermissions: RolePermission[];
   quoteTemplates: QuoteTemplate[];
+  invoiceTemplates: any[];
+  fetchInvoiceTemplates: () => Promise<void>;
+  saveInvoiceTemplate: (data: any, editingId?: string | null) => Promise<void>;
+  deleteInvoiceTemplate: (templateId: string) => Promise<void>;
+  setDefaultInvoiceTemplate: (templateId: string) => Promise<void>;
 
   // Workflow / Automation
   workflowRules: WorkflowRule[];
@@ -155,6 +180,9 @@ export const useApp = (): AppContextValue => {
 // \u2500\u2500\u2500 Provider \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 
 export function AppProvider({ children, supabase = null, tenant = null }: { children: React.ReactNode }) {
+  // Custom alert/confirm dialogs (replaces window.alert()/window.confirm()) —
+  // used throughout the functions below via closure.
+  const { showAlert, showConfirm } = useAlert();
   // Tenant isolation — tenantId injected into all DB inserts for shared-plan tenants
   // Use useState so it persists even if tenant prop arrives late
   const [tenantId, setTenantId] = useState<string | null>(
@@ -172,6 +200,22 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     }
   }, [tenant?.id]);
   const isSharedPlan = !tenant?.db_url && !(typeof window !== 'undefined' && (window as any).__bp_tenant?.db_url);
+  // ─── Tenant scoping helpers (shared-plan isolation) ───────────────────────
+  const DEMO_TENANT_ID = '00000000-0000-0000-0000-000000000001';
+  const getScopeTenantId = () => {
+    if (!isSharedPlan) return null; // dedicated DB — inherently isolated
+    return tenantId
+      || (typeof window !== 'undefined' ? (window as any).__bp_tenant?.id : null)
+      || null;
+  };
+  // Applies a tenant_id filter to any select/query builder (shared plan only).
+  // Demo tenant also includes legacy rows whose tenant_id is still NULL.
+  const tScope = (q: any) => {
+    const tid = getScopeTenantId();
+    if (!tid) return q;
+    if (tid === DEMO_TENANT_ID) return q.or(`tenant_id.eq.${tid},tenant_id.is.null`);
+    return q.eq('tenant_id', tid);
+  };
   // Auth
   const [session, setSession] = useState<any>(null);
   const [authLoading, setAuthLoading] = useState(true);
@@ -216,12 +260,14 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
   // \u2500\u2500\u2500 System Helpers \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 
   const buildSystemFields = useCallback((isUpdate = false) => {
-    if (!currentUser) return {};
     const now = new Date().toISOString();
     // Always read freshest tenantId
     const effectiveTenantId = tenantId
       || (typeof window !== 'undefined' ? (window as any).__bp_tenant?.id : null)
       || null;
+    // tenant_id must be stamped even if currentUser hasn't resolved yet,
+    // otherwise inserts violate the shared-DB RLS WITH CHECK policy
+    if (!currentUser) return effectiveTenantId ? { tenant_id: effectiveTenantId } : {};
     if (isUpdate) return { updated_by: currentUser.email, updated_at: now };
     return {
       created_by: currentUser.email, created_at: now,
@@ -234,7 +280,7 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
 
   const applyDataSecurity = useCallback((records: any[]) => {
     // If currentUser not loaded yet, return empty array to prevent flash of all data
-    if (!currentUser || !permissionsLoaded) return records;
+    if (!currentUser || !permissionsLoaded) return [];
     const isAdmin    = currentUserPermissions.includes('__admin__') || (currentUser as any)?.is_admin === true;
     // Use dedicated userDataScope state (most reliable) then fall back to currentUser.data_scope
     const dataScope  = userDataScope || (currentUser as any)?.data_scope || (isAdmin ? 'all' : 'own');
@@ -288,10 +334,46 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
 
   // \u2500\u2500\u2500 Auth \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 
+  // Verifies that an authenticated Supabase user actually belongs to THIS tenant.
+  // On shared-plan tenants every workspace shares one Supabase Auth pool, so a
+  // valid password alone must NEVER grant access to a workspace.
+  const verifyTenantMembership = async (user: any): Promise<boolean> => {
+    if (!supabase || !user) return false;
+    const tid = tenantId
+      || (typeof window !== 'undefined' ? (window as any).__bp_tenant?.id : null)
+      || null;
+    if (!isSharedPlan || !tid) return true; // dedicated DB — auth pool is tenant's own
+    try {
+      let q: any = supabase.from('enterprise_users').select('id, status, tenant_id');
+      q = (tid === DEMO_TENANT_ID)
+        ? q.or(`tenant_id.eq.${tid},tenant_id.is.null`)
+        : q.eq('tenant_id', tid);
+      const emailSafe = String(user.email || '').replace(/[,()"']/g, '');
+      const { data, error } = await q
+        .or(`auth_user_id.eq.${user.id},email.ilike.${emailSafe}`)
+        .limit(1);
+      if (error) { console.error('[verifyTenantMembership]', error.message); return false; }
+      const row = data && data[0];
+      if (!row) return false;
+      if (String(row.status || '').toLowerCase() === 'inactive') return false;
+      return true;
+    } catch (e) {
+      console.error('[verifyTenantMembership]', e);
+      return false;
+    }
+  };
+
   const handleLogin = async (email: string, password: string) => {
     if (!supabase) return;
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
-    if (error) alert(error.message);
+    const { data: authData, error } = await supabase.auth.signInWithPassword({ email, password });
+    if (error) { showAlert(error.message); return; }
+    // Cross-tenant guard: password is valid platform-wide, membership is not.
+    const ok = await verifyTenantMembership(authData?.user);
+    if (!ok) {
+      await supabase.auth.signOut();
+      setSession(null);
+      showAlert('This account does not have access to this workspace. Please check your workspace URL or contact your administrator.');
+    }
   };
 
   const handleLogout = async () => {
@@ -305,14 +387,14 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
   const resetMyPassword = async (newPassword: string) => {
     if (!supabase) return;
     if (!newPassword || newPassword.length < 6) {
-      alert('Password must be at least 6 characters.');
+      showAlert('Password must be at least 6 characters.');
       return;
     }
     // Use admin API via server route to bypass "current password required" Supabase restriction
     // This occurs when user was provisioned with a temp password via admin
     try {
       const session = (await supabase.auth.getSession()).data.session;
-      if (!session?.user?.id) { alert('Session expired. Please log in again.'); return; }
+      if (!session?.user?.id) { showAlert('Session expired. Please log in again.'); return; }
 
       const tenant = (window as any).__bp_tenant || {};
       const res = await fetch('/api/admin/reset-password', {
@@ -326,13 +408,13 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
       });
       const json = await res.json();
       if (res.ok) {
-        alert('Password updated successfully. You may need to log in again.');
+        showAlert('Password updated successfully. You may need to log in again.');
         await supabase.auth.signOut();
       } else {
-        alert('Failed to update password: ' + (json.error || res.status));
+        showAlert('Failed to update password: ' + (json.error || res.status));
       }
     } catch(e: any) {
-      alert('Error updating password: ' + e.message);
+      showAlert('Error updating password: ' + e.message);
     }
   };
 
@@ -342,20 +424,20 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
       .from('enterprise_users')
       .update({ first_name: data.first_name, last_name: data.last_name, phone: data.phone })
       .eq('id', currentUser.id);
-    if (!error) { await fetchCurrentUser(); await fetchEnterpriseUsers(); alert('Profile Updated'); }
-    else alert(error.message);
+    if (!error) { await fetchCurrentUser(); await fetchEnterpriseUsers(); showAlert('Profile Updated'); }
+    else showAlert(error.message);
   };
 
   const fetchCurrentUser = async () => {
     if (!supabase || !session?.user) return;
     // Join roles to get data_scope immediately so applyDataSecurity works on first fetch
-    let { data } = await supabase
-      .from('enterprise_users').select('*, roles(id, role_name, role_code, data_scope)')
+    let { data } = await tScope(supabase
+      .from('enterprise_users').select('*, roles(id, role_name, role_code, data_scope)'))
       .eq('auth_user_id', session.user.id).maybeSingle();
     // Fallback: email match
     if (!data && session.user.email) {
-      const { data: d2 } = await supabase
-        .from('enterprise_users').select('*, roles(id, role_name, role_code, data_scope)')
+      const { data: d2 } = await tScope(supabase
+        .from('enterprise_users').select('*, roles(id, role_name, role_code, data_scope)'))
         .ilike('email', session.user.email).maybeSingle();
       data = d2;
     }
@@ -369,6 +451,13 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
           .update({ auth_user_id: session.user.id })
           .eq('id', data.id);
       }
+    } else if (getScopeTenantId()) {
+      // Authenticated platform-wide but no membership row in THIS tenant —
+      // never allow the session to remain active in a foreign workspace.
+      console.warn('[fetchCurrentUser] No enterprise_users row for this tenant — signing out');
+      await supabase.auth.signOut();
+      setCurrentUser(null);
+      setSession(null);
     }
   };
 
@@ -376,12 +465,12 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     if (!supabase || !session?.user) return;
     setPermissionsLoaded(false);
     // Try by auth_user_id first (most reliable), then email
-    let { data: userData } = await supabase
-      .from('enterprise_users').select('*, roles(id, role_name, role_code, data_scope)')
+    let { data: userData } = await tScope(supabase
+      .from('enterprise_users').select('*, roles(id, role_name, role_code, data_scope)'))
       .eq('auth_user_id', session.user.id).maybeSingle();
     if (!userData) {
-      const { data: d2 } = await supabase
-        .from('enterprise_users').select('*, roles(id, role_name, role_code, data_scope)')
+      const { data: d2 } = await tScope(supabase
+        .from('enterprise_users').select('*, roles(id, role_name, role_code, data_scope)'))
         .ilike('email', session.user.email || '').maybeSingle();
       userData = d2;
     }
@@ -461,7 +550,7 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
 
   const fetchCustomers = async () => {
     if (!supabase) return;
-    const { data, error } = await supabase.from('customers').select('*').order('created_at', { ascending: false });
+    const { data, error } = await tScope(supabase.from('customers').select('*')).order('created_at', { ascending: false }).limit(LIST_FETCH_LIMIT);
     if (error) console.error(error);
     if (data) {
       const secured = applyDataSecurity(data);
@@ -482,7 +571,7 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
 
   const fetchContacts = async () => {
     if (!supabase) return;
-    const { data, error } = await supabase.from('contacts').select('*').order('created_at', { ascending: false });
+    const { data, error } = await tScope(supabase.from('contacts').select('*')).order('created_at', { ascending: false }).limit(LIST_FETCH_LIMIT);
     if (error) console.error(error);
     if (data) {
       setContacts(applyDataSecurity(data).map((c: any) => ({
@@ -498,13 +587,15 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
 
   const fetchProducts = async () => {
     if (!supabase) return;
-    const { data, error } = await supabase.from('products').select('*').order('created_at', { ascending: false });
+    const { data, error } = await tScope(supabase.from('products').select('*')).order('created_at', { ascending: false }).limit(LIST_FETCH_LIMIT);
     if (error) console.error(error);
     if (data) {
       setProducts(applyDataSecurity(data).map((p: any) => ({
         ...p,
         id: p.product_number || p.id, displayNumber: p.display_number, _uuid: p.id, name: p.name, category: p.category,
         price: Number(p.price || 0), status: p.status,
+        stock_quantity: Number(p.stock_quantity || 0), reorder_level: Number(p.reorder_level ?? 10),
+        track_inventory: p.track_inventory !== false,
         created_by: p.created_by, created_at: p.created_at, updated_by: p.updated_by, updated_at: p.updated_at,
         organization_id: p.organization_id, business_unit_id: p.business_unit_id,
       })));
@@ -513,7 +604,7 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
 
   const fetchLeads = async () => {
     if (!supabase) return;
-    const { data, error } = await supabase.from('leads').select('*').order('created_at', { ascending: false });
+    const { data, error } = await tScope(supabase.from('leads').select('*')).order('created_at', { ascending: false }).limit(LIST_FETCH_LIMIT);
     if (error) console.error(error);
     if (data) {
       setLeads(applyDataSecurity(data).map((l: any) => ({
@@ -529,7 +620,7 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
 
   const fetchOpportunities = async () => {
     if (!supabase) return;
-    const { data, error } = await supabase.from('opportunities').select('*').order('created_at', { ascending: false });
+    const { data, error } = await tScope(supabase.from('opportunities').select('*')).order('created_at', { ascending: false }).limit(LIST_FETCH_LIMIT);
     if (error) console.error(error);
     if (data) {
       setOpportunities(applyDataSecurity(data).map((o: any) => ({
@@ -545,7 +636,7 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
 
   const fetchOrders = async () => {
     if (!supabase) return;
-    const { data, error } = await supabase.from('orders').select('*').order('created_at', { ascending: false });
+    const { data, error } = await tScope(supabase.from('orders').select('*')).order('created_at', { ascending: false }).limit(LIST_FETCH_LIMIT);
     if (error) console.error(error);
     if (data) {
       setOrders(applyDataSecurity(data).map((o: any) => ({
@@ -561,7 +652,7 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
 
   const fetchInvoices = async () => {
     if (!supabase) return;
-    const { data, error } = await supabase.from('invoices').select('*').order('created_at', { ascending: false });
+    const { data, error } = await tScope(supabase.from('invoices').select('*')).order('created_at', { ascending: false }).limit(LIST_FETCH_LIMIT);
     if (error) console.error(error);
     if (data) {
       setInvoices(applyDataSecurity(data).map((inv: any) => ({
@@ -578,7 +669,7 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
 
   const fetchActivities = async () => {
     if (!supabase) return;
-    const { data, error } = await supabase.from('activities').select('*').order('created_at', { ascending: false });
+    const { data, error } = await tScope(supabase.from('activities').select('*')).order('created_at', { ascending: false }).limit(LIST_FETCH_LIMIT);
     if (error) console.error(error);
     if (data) {
       setActivities(applyDataSecurity(data).map((a: any) => ({
@@ -592,9 +683,29 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     }
   };
 
+  // Server-side exact row count for a list page's underlying table — used by
+  // CRMListPage.tsx / RetailListPage.tsx to show an accurate total even when
+  // only LIST_FETCH_LIMIT rows are loaded client-side (see the pagination
+  // TODO near the top of this file). `{ count:'exact', head:true }` asks
+  // PostgREST for just the count, not the rows, so this is cheap to call.
+  const LIST_PAGE_TABLE: Record<string, string> = {
+    customers: 'customers', products: 'products', leads: 'leads', opportunities: 'opportunities',
+    orders: 'orders', invoices: 'invoices', contacts: 'contacts', activities: 'activities',
+    quotations: 'quotations',
+    retailCustomers: 'retail_customers', retailProducts: 'retail_products',
+    retailActivities: 'retail_activities', retailOrders: 'retail_orders', retailInvoices: 'retail_invoices',
+  };
+  const fetchListCount = async (page: string): Promise<number> => {
+    const table = LIST_PAGE_TABLE[page];
+    if (!supabase || !table) return 0;
+    const { count, error } = await tScope(supabase.from(table).select('*', { count: 'exact', head: true }));
+    if (error) { console.error(error); return 0; }
+    return count || 0;
+  };
+
   const fetchLineItems = async (table: string, field: string, id: string): Promise<LineItem[]> => {
     if (!supabase) return [];
-    const { data } = await supabase.from(table).select('*').eq(field, id);
+    const { data } = await tScope(supabase.from(table).select('*')).eq(field, id);
     return (data || []).map((item: any) => ({
       id: item.id, product: item.product_name,
       quantity: Number(item.quantity || 1), price: Number(item.price || 0),
@@ -653,28 +764,28 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
 
   const fetchRetailCustomers = async () => {
     if (!supabase) return;
-    const { data, error } = await supabase.from('retail_customers').select('*').order('created_at', { ascending: false });
+    const { data, error } = await tScope(supabase.from('retail_customers').select('*')).order('created_at', { ascending: false }).limit(LIST_FETCH_LIMIT);
     if (error) { if (!String(error.message).includes('does not exist')) console.error('fetchRetailCustomers:', error.message); return; }
     if (data) setRetailCustomers(applyDataSecurity(data).map((c: any) => ({ ...c, id: c.customer_number, _uuid: c.id, displayNumber: c.display_number })));
   };
 
   const fetchRetailProducts = async () => {
     if (!supabase) return;
-    const { data, error } = await supabase.from('retail_products').select('*').order('created_at', { ascending: false });
+    const { data, error } = await tScope(supabase.from('retail_products').select('*')).order('created_at', { ascending: false }).limit(LIST_FETCH_LIMIT);
     if (error) { if (!String(error.message).includes('does not exist')) console.error('fetchRetailProducts:', error.message); return; }
     if (data) setRetailProducts(applyDataSecurity(data).map((p: any) => ({ ...p, id: p.product_number, _uuid: p.id, displayNumber: p.display_number })));
   };
 
   const fetchRetailActivities = async () => {
     if (!supabase) return;
-    const { data, error } = await supabase.from('retail_activities').select('*').order('created_at', { ascending: false });
+    const { data, error } = await tScope(supabase.from('retail_activities').select('*')).order('created_at', { ascending: false }).limit(LIST_FETCH_LIMIT);
     if (error) { if (!String(error.message).includes('does not exist')) console.error('fetchRetailActivities:', error.message); return; }
     if (data) setRetailActivities(applyDataSecurity(data).map((a: any) => ({ ...a, id: a.activity_number, _uuid: a.id, displayNumber: a.display_number })));
   };
 
   const fetchRetailOrders = async () => {
     if (!supabase) return;
-    const { data, error } = await supabase.from('retail_orders').select('*').order('created_at', { ascending: false });
+    const { data, error } = await tScope(supabase.from('retail_orders').select('*')).order('created_at', { ascending: false }).limit(LIST_FETCH_LIMIT);
     if (error) { if (!String(error.message).includes('does not exist')) console.error('fetchRetailOrders:', error.message); return; }
     if (data) {
       const mapped = applyDataSecurity(data).map((o: any) => ({ ...o, id: o.order_number, _uuid: o.id, displayNumber: o.display_number }));
@@ -685,9 +796,14 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
 
   const fetchRetailInvoices = async () => {
     if (!supabase) return;
-    const { data, error } = await supabase.from('retail_invoices').select('*').order('created_at', { ascending: false });
+    const { data, error } = await tScope(supabase.from('retail_invoices').select('*')).order('created_at', { ascending: false }).limit(LIST_FETCH_LIMIT);
     if (error) { if (!String(error.message).includes('does not exist')) console.error('fetchRetailInvoices:', error.message); return; }
     if (data) {
+      // Order # enrichment needs the orders cache — on first load both fetches race,
+      // so populate it here if it's still empty
+      if (!((window as any).__bp_retail_orders || []).length) {
+        try { await fetchRetailOrders(); } catch {}
+      }
       const orders = (window as any).__bp_retail_orders || [];
       setRetailInvoices(applyDataSecurity(data).map((i: any) => {
         let orderNum = i.order_number;
@@ -703,7 +819,7 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
   // ─── Retail line items (orders / invoices) ────────────────────────────────
   const fetchRetailLineItems = async (table: 'retail_order_line_items'|'retail_invoice_line_items', fkField: string, id: string) => {
     if (!supabase || !id) return [];
-    const { data, error } = await supabase.from(table).select('*').eq(fkField, id).order('sort_order');
+    const { data, error } = await tScope(supabase.from(table).select('*')).eq(fkField, id).order('sort_order');
     if (error) { console.error(`fetchRetailLineItems(${table}):`, error.message); return []; }
     return data || [];
   };
@@ -779,6 +895,16 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     if (!supabase || !currentUser) return null;
     const cfg = RETAIL_TABLE_MAP[page];
     if (!cfg) return null;
+    // Mandatory-field guard — final gate regardless of which UI called this
+    if ((page === 'retailCustomers' || page === 'retailProducts') && !String(data.name || '').trim()) {
+      showAlert('Name is required.'); return null;
+    }
+    if ((page === 'retailOrders' || page === 'retailInvoices') && !data.customer_id) {
+      showAlert('Please select a customer before creating this record.'); return null;
+    }
+    if (page === 'retailActivities' && !String(data.subject || '').trim()) {
+      showAlert('Subject is required.'); return null;
+    }
     const newId = generateId(cfg.prefix);
     const allowed = RETAIL_ALLOWED_COLS[cfg.table] || [];
     const filtered: any = {};
@@ -793,7 +919,7 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     };
     delete payload.id; delete payload._uuid;
     const { data: inserted, error } = await supabase.from(cfg.table).insert([payload]).select().single();
-    if (error) { alert('Save failed: ' + error.message); return null; }
+    if (error) { showAlert('Save failed: ' + error.message); return null; }
     if (cfg.lineItemTable && items.length) {
       await upsertRetailLineItems(cfg.lineItemTable as any, cfg.lineFK!, newId, items);
     }
@@ -819,10 +945,21 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     delete payload.display_number;
     delete payload.customerId;
     delete payload.primaryContactId;
+    // Invoices: order_number is enriched to display format on fetch — never write it back
+    if (page === 'retailInvoices') delete payload.order_number;
+    // Terminal statuses can never be reverted (checked against the DB, not stale UI state)
+    const TERMINAL = ['Completed','Paid','Cancelled','Refunded'];
+    if (payload.status && !TERMINAL.includes(payload.status)) {
+      const { data: cur } = await supabase.from(cfg.table).select('status').eq(cfg.idField, record.id).maybeSingle();
+      if (cur && TERMINAL.includes(cur.status) && cur.status !== payload.status) {
+        showAlert(`This record is ${cur.status} and its status can no longer be changed to ${payload.status}.`);
+        return;
+      }
+    }
     payload.customer    = record.customer;    // keep customer name
     payload.custom_data = record.custom_data || {}; // keep JSONB custom fields
     const { error } = await supabase.from(cfg.table).update(payload).eq(cfg.idField, record.id);
-    if (error) { console.error(`update ${cfg.table}:`, error.message); alert('Save failed: ' + error.message); return; }
+    if (error) { console.error(`update ${cfg.table}:`, error.message); showAlert('Save failed: ' + error.message); return; }
     if (cfg.lineItemTable) {
       await upsertRetailLineItems(cfg.lineItemTable as any, cfg.lineFK!, record.id, items);
     }
@@ -834,7 +971,8 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
   };
 
   const deleteRetailRecord = async (page: keyof typeof RETAIL_TABLE_MAP, recordId: string) => {
-    if (!supabase || !window.confirm('Delete this record?')) return;
+    if (!supabase) return;
+    if (!(await showConfirm('Delete this record?', { variant:'danger', confirmLabel:'Delete' }))) return;
     const cfg = RETAIL_TABLE_MAP[page];
     if (!cfg) return;
     if (cfg.lineItemTable) await supabase.from(cfg.lineItemTable).delete().eq(cfg.lineFK!, recordId);
@@ -845,16 +983,24 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
   // ─── Retail Order → Retail Invoice conversion ──────────────────────────────
   const createRetailInvoiceFromOrder = async (order: any) => {
     if (!supabase || !currentUser) return null;
-    // Check if invoice already exists for this order
-    const orderId = order._uuid || order.id;
-    const { data: existing } = await supabase
+    // Check if invoice already exists for this order.
+    // Invoices may have been created against the order's UUID, its raw order_number,
+    // or its display format (RORD-#####) depending on when they were created —
+    // so check ALL candidate formats in a single query rather than just one.
+    const orderCandidates = Array.from(new Set([
+      order._uuid,
+      order.id,
+      order.order_number,
+      order.displayNumber ? 'RORD-' + String(order.displayNumber).padStart(5, '0') : null,
+    ].filter(Boolean)));
+    const { data: existingList } = await supabase
       .from('retail_invoices')
       .select('invoice_number')
-      .eq('order_number', orderId)
-      .limit(1)
-      .maybeSingle();
+      .in('order_number', orderCandidates)
+      .limit(1);
+    const existing = existingList?.[0];
     if (existing) {
-      alert(`An invoice already exists for this order (${existing.invoice_number}). Cannot create duplicate.`);
+      showAlert(`An invoice already exists for this order (${existing.invoice_number}). Cannot create duplicate.`);
       return null;
     }
     const items = await fetchRetailLineItems('retail_order_line_items', 'order_number', order.id);
@@ -893,7 +1039,7 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
       owner_id: order.owner_id || currentUser.id,
     };
     const { data: inserted, error } = await supabase.from('retail_invoices').insert([payload]).select().single();
-    if (error) { alert('Failed to create invoice: ' + error.message); return null; }
+    if (error) { showAlert('Failed to create invoice: ' + error.message); return null; }
     if (items.length) await upsertRetailLineItems('retail_invoice_line_items', 'invoice_number', invId, items);
     await autoSetRetailCustomerStatus(order.customer_id, 'Active');
     await fetchRetailInvoices();
@@ -905,25 +1051,25 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
 
   const fetchOrganizations = async () => {
     if (!supabase) return;
-    const { data } = await supabase.from('organizations').select('*').order('created_at', { ascending: false });
+    const { data } = await tScope(supabase.from('organizations').select('*')).order('created_at', { ascending: false });
     if (data) setOrganizations(data);
   };
 
   const fetchBusinessUnits = async () => {
     if (!supabase) return;
-    const { data } = await supabase.from('business_units').select('*').order('created_at', { ascending: false });
+    const { data } = await tScope(supabase.from('business_units').select('*')).order('created_at', { ascending: false });
     if (data) setBusinessUnits(data);
   };
 
   const fetchEnterpriseUsers = async () => {
     if (!supabase) return;
-    const { data } = await supabase.from('enterprise_users').select('*').order('created_at', { ascending: false });
+    const { data } = await tScope(supabase.from('enterprise_users').select('*')).order('created_at', { ascending: false });
     if (data) setEnterpriseUsers(data);
   };
 
   const fetchUserGroups = async () => {
     if (!supabase) return;
-    const { data } = await supabase.from('user_groups').select('*').order('created_at', { ascending: false });
+    const { data } = await tScope(supabase.from('user_groups').select('*')).order('created_at', { ascending: false });
     if (data) setUserGroups(data);
   };
 
@@ -960,7 +1106,7 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
 
   const fetchQuoteTemplates = async () => {
     if (!supabase) return;
-    const { data } = await supabase.from('quote_templates').select('*').order('created_at', { ascending: false });
+    const { data } = await tScope(supabase.from('quote_templates').select('*')).order('created_at', { ascending: false });
     if (data) {
       setQuoteTemplates(data.map((t: any) => ({
         ...t,
@@ -976,31 +1122,31 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
 
   const fetchWorkflowRules = async () => {
     if (!supabase) return;
-    const { data } = await supabase.from('workflow_rules').select('*').order('created_at', { ascending: false });
+    const { data } = await tScope(supabase.from('workflow_rules').select('*')).order('created_at', { ascending: false });
     if (data) setWorkflowRules(data);
   };
 
   const fetchAssignmentRules = async () => {
     if (!supabase) return;
-    const { data } = await supabase.from('assignment_rules').select('*').order('priority');
+    const { data } = await tScope(supabase.from('assignment_rules').select('*')).order('priority');
     if (data) setAssignmentRules(data);
   };
 
   const fetchSLAPolicies = async () => {
     if (!supabase) return;
-    const { data } = await supabase.from('sla_policies').select('*').order('created_at', { ascending: false });
+    const { data } = await tScope(supabase.from('sla_policies').select('*')).order('created_at', { ascending: false });
     if (data) setSlaPolicies(data);
   };
 
   const fetchApprovalProcesses = async () => {
     if (!supabase) return;
-    const { data } = await supabase.from('approval_processes').select('*').order('created_at', { ascending: false });
+    const { data } = await tScope(supabase.from('approval_processes').select('*')).order('created_at', { ascending: false });
     if (data) setApprovalProcesses(data);
   };
 
   const fetchApprovalRequests = async () => {
     if (!supabase) return;
-    const { data } = await supabase.from('approval_requests').select('*').order('submitted_at', { ascending: false });
+    const { data } = await tScope(supabase.from('approval_requests').select('*')).order('submitted_at', { ascending: false });
     if (data) setApprovalRequests(data);
   };
 
@@ -1008,8 +1154,8 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
 
   const fetchNotifications = async () => {
     if (!supabase || !currentUser?.email) return;
-    const { data } = await supabase
-      .from('notifications').select('*')
+    const { data } = await tScope(supabase
+      .from('notifications').select('*'))
       .eq('recipient_email', currentUser.email)
       .order('created_at', { ascending: false }).limit(50);
     if (data) setNotifications(data);
@@ -1067,10 +1213,10 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     const payload = { ...data, ...(tenantId ? { tenant_id: tenantId } : {}) };
     if (editingId) {
       const { error } = await supabase.from('organizations').update(payload).eq('id', editingId);
-      if (error) { alert('Failed to update: ' + error.message); return; }
+      if (error) { showAlert('Failed to update: ' + error.message); return; }
     } else {
       const { error } = await supabase.from('organizations').insert([payload]);
-      if (error) { alert('Failed to create: ' + error.message); return; }
+      if (error) { showAlert('Failed to create: ' + error.message); return; }
     }
     await fetchOrganizations();
   };
@@ -1080,22 +1226,39 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     const payload = { ...data, ...(tenantId ? { tenant_id: tenantId } : {}) };
     if (editingId) {
       const { error } = await supabase.from('business_units').update(payload).eq('id', editingId);
-      if (error) { alert('Failed to update: ' + error.message); return; }
+      if (error) { showAlert('Failed to update: ' + error.message); return; }
     } else {
       const { error } = await supabase.from('business_units').insert([payload]);
-      if (error) { alert('Failed to create: ' + error.message); return; }
+      if (error) { showAlert('Failed to create: ' + error.message); return; }
     }
     await fetchBusinessUnits();
   };
 
   const saveEnterpriseUser = async (data: any, editingId?: string, password?: string) => {
     if (!supabase) return;
+    // Normalise UUID columns: empty string is invalid uuid input in Postgres
+    const normaliseUser = (d: any) => {
+      const out = { ...d };
+      delete out.roles; // joined object from select — not a real column
+      for (const k of ['organization_id','business_unit_id','role_id','user_group_id','auth_user_id','owner_id']) {
+        if (out[k] === '') out[k] = null;
+      }
+      return out;
+    };
     if (editingId) {
-      const updatePayload = { ...data, ...(tenantId ? { tenant_id: tenantId } : {}) };
+      const updatePayload = { ...normaliseUser(data), ...(tenantId ? { tenant_id: tenantId } : {}) };
       const { error } = await supabase.from('enterprise_users').update(updatePayload).eq('id', editingId);
-      if (error) { alert('Failed to update user: ' + error.message); return; }
+      if (error) { showAlert('Failed to update user: ' + error.message); return; }
       await fetchEnterpriseUsers();
       return;
+    }
+    // Duplicate email guard — reject clearly instead of a cryptic constraint error
+    if (data.email) {
+      const { data: existing } = await tScope(supabase.from('enterprise_users').select('id,email')).ilike('email', data.email).limit(1);
+      if (existing && existing.length) {
+        showAlert(`A user with email "${data.email}" already exists in this workspace. Please use a different email.`);
+        return;
+      }
     }
     // New user — create auth account via API
     if (password && data.email) {
@@ -1132,8 +1295,8 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
         console.log('[saveEnterpriseUser] status:', res.status, 'body:', text.slice(0,500));
         let json: any = {};
         try { json = JSON.parse(text); } catch(e) {
-          alert('API error (status ' + res.status + '): ' + text.slice(0,200));
-          await supabase.from('enterprise_users').insert([data]);
+          showAlert('API error (status ' + res.status + '): ' + text.slice(0,200));
+          await supabase.from('enterprise_users').insert([{ ...normaliseUser(data), ...(tenantId ? { tenant_id: tenantId } : {}) }]);
           await fetchEnterpriseUsers();
           return;
         }
@@ -1141,11 +1304,12 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
           await fetchEnterpriseUsers();
           return;
         }
-        alert('Could not create auth account: ' + (json?.error || json?.hint || text.slice(0,200)));
+        showAlert('Could not create auth account: ' + (json?.error || json?.hint || text.slice(0,200)));
       }
     }
     // Fallback: insert enterprise_user only (no auth)
-    await supabase.from('enterprise_users').insert([{ ...data, ...(tenantId ? { tenant_id: tenantId } : {}) }]);
+    const { error: insErr } = await supabase.from('enterprise_users').insert([{ ...normaliseUser(data), ...(tenantId ? { tenant_id: tenantId } : {}) }]);
+    if (insErr) { showAlert('Failed to create user: ' + insErr.message); return; }
     await fetchEnterpriseUsers();
   };
 
@@ -1154,10 +1318,10 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     const payload = { ...data, ...(tenantId ? { tenant_id: tenantId } : {}) };
     if (editingId) {
       const { error } = await supabase.from('user_groups').update(payload).eq('id', editingId);
-      if (error) { alert('Failed: ' + error.message); return; }
+      if (error) { showAlert('Failed: ' + error.message); return; }
     } else {
       const { error } = await supabase.from('user_groups').insert([payload]);
-      if (error) { alert('Failed: ' + error.message); return; }
+      if (error) { showAlert('Failed: ' + error.message); return; }
     }
     await fetchUserGroups();
   };
@@ -1167,10 +1331,10 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     let roleId = editingId || '';
     if (editingId) {
       const { error } = await supabase.from('roles').update(data).eq('id', editingId);
-      if (error) { alert('Failed to update role'); return; }
+      if (error) { showAlert('Failed to update role'); return; }
     } else {
       const { data: newRole, error } = await supabase.from('roles').insert([data]).select().single();
-      if (error || !newRole) { alert(error?.message || 'Unable to create role'); return; }
+      if (error || !newRole) { showAlert(error?.message || 'Unable to create role'); return; }
       roleId = newRole.id;
     }
     await supabase.from('role_permissions').delete().eq('role_id', roleId);
@@ -1187,9 +1351,10 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     const existingIds = currentMembers.map(m => m.enterprise_user_id);
     const newIds = userIds.filter(id => !existingIds.includes(id));
     if (!newIds.length) return;
-    await supabase.from('user_group_members').insert(
-      newIds.map(uid => ({ user_group_id: groupId, enterprise_user_id: uid }))
+    const { error } = await supabase.from('user_group_members').insert(
+      newIds.map(uid => ({ user_group_id: groupId, enterprise_user_id: uid, ...(tenantId ? { tenant_id: tenantId } : {}) }))
     );
+    if (error) { showAlert('Could not add members: ' + error.message); return; }
     await fetchGroupMembers(groupId);
   };
 
@@ -1201,9 +1366,9 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
 
   const deleteAdminRecord = async (table: string, id: string): Promise<boolean> => {
     if (!supabase) return false;
-    if (!window.confirm('Are you sure you want to delete this record?')) return false;
+    if (!(await showConfirm('Are you sure you want to delete this record?', { variant:'danger', confirmLabel:'Delete' }))) return false;
     const { error } = await supabase.from(table).delete().eq('id', id);
-    if (error) { alert(error.message); return false; }
+    if (error) { showAlert(error.message); return false; }
     if (table === 'organizations') await fetchOrganizations();
     if (table === 'business_units') await fetchBusinessUnits();
     if (table === 'enterprise_users') await fetchEnterpriseUsers();
@@ -1239,7 +1404,7 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
         }
         case 'products': {
           const id = generateId('PROD');
-          const { data: insertedProd, error } = await supabase.from('products').insert([{ ...sys, custom_data: data.custom_data||{}, product_number: id, owner: data.owner||currentUser?.email||'', owner_id: data.owner_id||currentUser?.id||null, comments: data.comments||'', name: data.name, category: data.category, price: Number(data.price || 0), status: data.status || 'Active' }]).select().single();
+          const { data: insertedProd, error } = await supabase.from('products').insert([{ ...sys, custom_data: data.custom_data||{}, product_number: id, owner: data.owner||currentUser?.email||'', owner_id: data.owner_id||currentUser?.id||null, comments: data.comments||'', name: data.name, category: data.category, price: Number(data.price || 0), status: data.status || 'Active', stock_quantity: Number(data.stock_quantity || 0), reorder_level: Number(data.reorder_level ?? 10), track_inventory: data.track_inventory !== false }]).select().single();
           if (error) throw error;
           await runAutomations('products', insertedProd?.id ?? id, { ...data, id: insertedProd?.id, product_number: id }, 'on_create');
           await fetchProducts(); return { id, name: data.name };
@@ -1302,7 +1467,7 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
       return null;
     } catch (err: any) {
       console.error(err);
-      alert(`Failed to create record: ${err.message}`);
+      showAlert(`Failed to create record: ${err.message}`);
       return null;
     }
   };
@@ -1322,13 +1487,13 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     switch (page) {
       case 'customers': {
         const { error: e_customers } = await supabase.from('customers').update({ ...sys, custom_data: record.custom_data||{}, name: record.name, email: record.email, phone: record.phone, company: record.company, industry: record.industry, primary_contact_id: record.primaryContactId, billing_address: record.billingAddress, shipping_address: record.shippingAddress, city: record.city, state: record.state, postal_code: record.postalCode||record.postal_code||'', country: record.country||'', website: record.website||'', gst_number: record.gstNumber||record.gst_number||'', description: record.description||'', owner: record.owner||'', owner_id: record.owner_id||null, status: record.status, comments: record.comments||'' }).eq('customer_number', record.id);
-        if (e_customers) { console.error('update customers:', e_customers.message); alert('Save failed: ' + e_customers.message); return; }
+        if (e_customers) { console.error('update customers:', e_customers.message); showAlert('Save failed: ' + e_customers.message); return; }
         await logAudit({ recordType: 'customer', recordId: record.id, recordName: record.name, action: 'updated' });
         await runAutomations('customers', record.id, record, 'on_update');
         await fetchCustomers(); break; }
       case 'contacts': {
         const { error: e_contacts } = await supabase.from('contacts').update({ ...sys, custom_data: record.custom_data||{}, customer: record.customer, customer_id: record.customerId||null, name: record.name, email: record.email||'', phone: record.phone||'', mobile: record.mobile||'', designation: record.designation||'', department: record.department||'', is_primary: record.isPrimary||false, linked_in: record.linkedIn||'', description: record.description||'', owner: record.owner||'', owner_id: record.owner_id||null, status: record.status, comments: record.comments||'' }).eq('contact_number', record.id);
-        if (e_contacts) { console.error('update contacts:', e_contacts.message); alert('Save failed: ' + e_contacts.message); return; }
+        if (e_contacts) { console.error('update contacts:', e_contacts.message); showAlert('Save failed: ' + e_contacts.message); return; }
         if (record.isPrimary && record.customerId) {
           await supabase.from('contacts').update({ is_primary: false }).eq('customer_id', record.customerId).neq('contact_number', record.id);
           await supabase.from('customers').update({ primary_contact_id: record.id }).eq('customer_number', record.customerId);
@@ -1336,20 +1501,20 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
         await runAutomations('contacts', record.id, record, 'on_update');
         await fetchContacts(); await fetchCustomers(); break; }
       case 'products': {
-        const { error: e_products } = await supabase.from('products').update({ ...sys, custom_data: record.custom_data||{}, name: record.name, product_family: record.productFamily||'', category: record.category||'', sku: record.sku||'', price: Number(record.price||0), cost: Number(record.cost||0), unit: record.unit||'', tax_rate: Number(record.taxRate||record.tax_rate||0), hsn_code: record.hsn_code||'', gst_rate: record.gst_rate!=null?Number(record.gst_rate):null, taxable: record.taxable||'', tax_category: record.tax_category||'', vat_rate: record.vat_rate!=null?Number(record.vat_rate):null, description: record.description||'', owner: record.owner||'', status: record.status, comments: record.comments||'' }).eq('id', record._uuid || record.id);
-        if (e_products) { console.error('update products:', e_products.message); alert('Save failed: ' + e_products.message); return; }
+        const { error: e_products } = await supabase.from('products').update({ ...sys, custom_data: record.custom_data||{}, name: record.name, product_family: record.productFamily||'', category: record.category||'', sku: record.sku||'', price: Number(record.price||0), cost: Number(record.cost||0), unit: record.unit||'', tax_rate: Number(record.taxRate||record.tax_rate||0), hsn_code: record.hsn_code||'', gst_rate: record.gst_rate!=null?Number(record.gst_rate):null, taxable: record.taxable||'', tax_category: record.tax_category||'', vat_rate: record.vat_rate!=null?Number(record.vat_rate):null, description: record.description||'', owner: record.owner||'', status: record.status, comments: record.comments||'', stock_quantity: Number(record.stock_quantity||0), reorder_level: Number(record.reorder_level ?? 10), track_inventory: record.track_inventory !== false }).eq('id', record._uuid || record.id);
+        if (e_products) { console.error('update products:', e_products.message); showAlert('Save failed: ' + e_products.message); return; }
         await runAutomations('products', record._uuid || record.id, record, 'on_update');
-        await fetchProducts(); return { id, name: data.name }; }
+        await fetchProducts(); break; }
       case 'leads': {
         const { error: e_leads } = await supabase.from('leads').update({ ...sys, custom_data: record.custom_data||{}, name: record.name, customer: record.customer, customer_id: record.customerId||null, contact: record.contact, contact_id: record.contactId||null, email: record.email||'', phone: record.phone||'', source: record.source||'', amount: calcAmount||Number(record.amount||0), expected_close_date: record.expectedCloseDate||null, billing_address: record.billingAddress||record.billing_address||'', shipping_address: record.shippingAddress||record.shipping_address||'', description: record.description||'', owner: record.owner||'', owner_id: record.owner_id||null, status: record.status, comments: record.comments||'' }).eq('lead_number', record.id);
-        if (e_leads) { console.error('update leads:', e_leads.message); alert('Save failed: ' + e_leads.message); return; }
+        if (e_leads) { console.error('update leads:', e_leads.message); showAlert('Save failed: ' + e_leads.message); return; }
         await upsertLineItems('lead_line_items', 'lead_number', record.id);
         await logAudit({ recordType: 'lead', recordId: record.id, recordName: record.name, action: 'updated' });
         await runAutomations('leads', record.id, record, 'on_update');
         await fetchLeads(); break; }
       case 'opportunities': {
         const { error: e_opportunities } = await supabase.from('opportunities').update({ ...sys, custom_data: record.custom_data||{}, name: record.name, customer: record.customer, customer_id: record.customerId||null, contact: record.contact, contact_id: record.contactId||null, stage: record.stage||'', amount: calcAmount||Number(record.amount||0), close_date: record.closeDate||null, probability: Number(record.probability||0), campaign: record.campaign||'', billing_address: record.billingAddress||record.billing_address||'', shipping_address: record.shippingAddress||record.shipping_address||'', description: record.description||'', owner: record.owner||'', owner_id: record.owner_id||null, status: record.status, comments: record.comments||'' }).eq('opportunity_number', record.id);
-        if (e_opportunities) { console.error('update opportunities:', e_opportunities.message); alert('Save failed: ' + e_opportunities.message); return; }
+        if (e_opportunities) { console.error('update opportunities:', e_opportunities.message); showAlert('Save failed: ' + e_opportunities.message); return; }
         await upsertLineItems('opportunity_line_items', 'opportunity_number', record.id);
         await logAudit({ recordType: 'opportunity', recordId: record.id, recordName: record.name, action: 'updated' });
         await runAutomations('opportunities', record.id, record, 'on_update');
@@ -1369,7 +1534,7 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
           owner: record.owner||'', owner_id: record.owner_id||null,
           status: record.status, comments: record.comments||''
         }).eq('order_number', record.id);
-        if (e_orders) { console.error('update orders:', e_orders.message); alert('Save failed: ' + e_orders.message); return; }
+        if (e_orders) { console.error('update orders:', e_orders.message); showAlert('Save failed: ' + e_orders.message); return; }
         // NOTE: line items for orders are saved by CPQRecordDetail directly — do NOT upsert here (avoids overwrite race)
         await logAudit({ recordType: 'order', recordId: record.id, recordName: record.name, action: 'updated' });
         await runAutomations('orders', record.id, record, 'on_update');
@@ -1388,14 +1553,14 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
           owner: record.owner||'', owner_id: record.owner_id||null,
           status: record.status, comments: record.comments||''
         }).eq('invoice_number', record.id);
-        if (e_invoices) { console.error('update invoices:', e_invoices.message); alert('Save failed: ' + e_invoices.message); return; }
+        if (e_invoices) { console.error('update invoices:', e_invoices.message); showAlert('Save failed: ' + e_invoices.message); return; }
         // NOTE: line items for invoices are saved by CPQRecordDetail directly — do NOT upsert here (avoids overwrite race)
         await logAudit({ recordType: 'invoice', recordId: record.id, recordName: record.name, action: 'updated' });
         await runAutomations('invoices', record.id, record, 'on_update');
         await fetchInvoices(); break; }
       case 'activities': {
         const { error: e_activities } = await supabase.from('activities').update({ ...sys, custom_data: record.custom_data||{}, name: record.name, customer: record.customer, customer_id: record.customerId||null, contact: record.contact, contact_id: record.contactId||null, activity_type: record.activityType||'', activity_date: record.activityDate||null, due_date: record.dueDate||null, priority: record.priority||'Medium', description: record.description||'', notes: record.notes||'', owner: record.owner||'', owner_id: record.owner_id||null, status: record.status, comments: record.comments||'' }).eq('activity_number', record.id);
-        if (e_activities) { console.error('update activities:', e_activities.message); alert('Save failed: ' + e_activities.message); return; }
+        if (e_activities) { console.error('update activities:', e_activities.message); showAlert('Save failed: ' + e_activities.message); return; }
         await runAutomations('activities', record.id, record, 'on_update');
         await fetchActivities(); break; }
     }
@@ -1458,56 +1623,119 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     await autoSetCustomerStatus(opportunity.customerId, 'Active'); await fetchOrders();
   };
 
-  const createInvoiceFromOrder = async (order: Order) => {
-    if (!supabase) return;
-    await supabase.from('orders').update({ status: 'Delivered', ...buildSystemFields(true) }).eq('order_number', order.id);
-    setOrders(prev => prev.map(o => o.id === order.id ? { ...o, status: 'Delivered' } : o));
-    const items = await fetchLineItems('order_line_items', 'order_number', order.id);
-    const totalAmount = items.reduce((s, i) => s + i.quantity * i.price, 0);
+  // Creates an invoice from a B2B order. By default (no `selections`) invoices
+  // the full remaining balance of every line item — this keeps all existing
+  // call sites (quick 3-dot menu, list actions) working unchanged.
+  // Pass `selections` as [{ _id: <order_line_item id>, qty: <number to invoice now> }]
+  // to invoice only part of the order; the order and its line items track how
+  // much has been invoiced so far via `invoiced_qty`, and repeat calls keep
+  // reducing the remaining balance until fully invoiced.
+  const createInvoiceFromOrder = async (order: Order, selections: { _id: any; qty: number }[] | null = null) => {
+    if (!supabase) return null;
+    const { data: rawItems } = await supabase.from('order_line_items').select('*').eq('order_number', order.id).order('sort_order');
+    const allItems = rawItems || [];
+    if (!allItems.length) { showAlert('This order has no line items to invoice.'); return null; }
+
+    // Work out how much of each line to invoice now.
+    const toInvoice = allItems.map((i: any) => {
+      const qty = Number(i.quantity || 0);
+      const already = Number(i.invoiced_qty || 0);
+      const remaining = Math.max(0, qty - already);
+      const sel = selections?.find((s) => String(s._id) === String(i.id));
+      const qtyNow = selections ? Math.max(0, Math.min(Number(sel?.qty || 0), remaining)) : remaining;
+      return { ...i, qtyNow, remaining };
+    }).filter((i: any) => i.qtyNow > 0);
+
+    if (!toInvoice.length) { showAlert('Nothing to invoice — all items are already fully invoiced, or no quantities were selected.'); return null; }
+
+    const subtotal = toInvoice.reduce((s: number, i: any) => s + i.qtyNow * Number(i.price || 0), 0);
+    const lineDisc = toInvoice.reduce((s: number, i: any) => s + i.qtyNow * Number(i.price || 0) * (Number(i.discount || 0) / 100), 0);
+    const lineTax  = toInvoice.reduce((s: number, i: any) => {
+      const net = i.qtyNow * Number(i.price || 0) * (1 - Number(i.discount || 0) / 100);
+      return s + net * (Number(i.tax_pct || 0) / 100);
+    }, 0);
+    // Overall discount is a PERCENTAGE on the order — scales correctly with
+    // this invoice's own subtotal, so it's safe to apply on every partial
+    // invoice. (Previously this was never actually subtracted from the
+    // invoice amount at all, despite being copied onto the invoice record —
+    // the printed invoice would show a discount/shipping line that didn't
+    // match its own total.)
+    const overallDiscPct = Number((order as any).overall_discount || 0);
+    const od = subtotal * overallDiscPct / 100;
+    // Shipping is a flat amount on the order — charge it once, on whichever
+    // invoice completes the order's full invoiced quantity, rather than
+    // charging it on every partial invoice (double-billing) or never (as before).
+    const invoicedPreview = new Map(toInvoice.map((i: any) => [i.id, i.qtyNow]));
+    const willBeFullyInvoiced = allItems.every((i: any) => {
+      const already = Number(i.invoiced_qty || 0) + (invoicedPreview.get(i.id) || 0);
+      return already >= Number(i.quantity || 0);
+    });
+    const shippingCost = willBeFullyInvoiced ? Number((order as any).shipping_cost || 0) : 0;
+    const totalAmount = subtotal - lineDisc + lineTax - od + shippingCost;
     const id = generateId('INV');
     const dueDate = new Date(); dueDate.setDate(dueDate.getDate() + 30);
-    await supabase.from('invoices').insert([{
+    const orderNum = order.displayNumber
+      ? 'ORD-' + String(order.displayNumber).padStart(5, '0')
+      : (order.order_number || order.id);
+
+    const { error } = await supabase.from('invoices').insert([{
       ...buildSystemFields(),
       invoice_number: id,
       name: order.name,
-      order_number: order.displayNumber
-        ? 'RORD-' + String(order.displayNumber).padStart(5, '0')
-        : (order.order_number || order.id),
+      order_number: orderNum,
       customer: order.customer,
       customer_id: order.customerId || (order as any).customer_id,
       contact: order.contact,
       contact_id: order.contactId || (order as any).contact_id,
-      amount: totalAmount,
+      amount: Number(totalAmount.toFixed(2)),
       currency: (order as any).currency || 'INR',
       billing_address: (order as any).billing_address || (order as any).billingAddress || '',
       shipping_address: (order as any).shipping_address || (order as any).shippingAddress || '',
       payment_terms: (order as any).payment_terms || (order as any).paymentTerms || '',
-      overall_discount: (order as any).overall_discount || 0,
-      shipping_cost: (order as any).shipping_cost || 0,
-      subtotal: (order as any).subtotal || totalAmount,
-      total_discount: (order as any).total_discount || 0,
-      total_tax: (order as any).total_tax || 0,
+      overall_discount: overallDiscPct,
+      shipping_cost: shippingCost,
+      subtotal: Number(subtotal.toFixed(2)),
+      total_discount: Number((lineDisc + od).toFixed(2)),
+      total_tax: Number(lineTax.toFixed(2)),
       notes: (order as any).notes || '',
       due_date: dueDate.toISOString().split('T')[0],
       owner: order.owner || currentUser?.email || '',
       owner_id: order.owner_id || currentUser?.id || null,
       status: 'Pending',
     }]);
-    if (items.length) await supabase.from('invoice_line_items').insert(items.map((i: any, idx: number) => ({
+    if (error) { showAlert('Failed to create invoice: ' + error.message); return null; }
+
+    await supabase.from('invoice_line_items').insert(toInvoice.map((i: any, idx: number) => ({
       invoice_number: id,
       product_name:   i.product_name || i.product || '',
       product_code:   i.product_code || '',
       description:    i.description  || '',
-      quantity:       Number(i.quantity   || 1),
+      quantity:       i.qtyNow,
       price:          Number(i.price      || 0),
       list_price:     Number(i.list_price || i.price || 0),
       discount:       Number(i.discount   || 0),
       tax_pct:        Number(i.tax_pct    || 0),
-      extended_price: Number(i.quantity||1) * Number(i.price||0) * (1 - Number(i.discount||0)/100),
+      extended_price: i.qtyNow * Number(i.price||0) * (1 - Number(i.discount||0)/100) * (1 + Number(i.tax_pct||0)/100),
       sort_order:     idx,
     })));
+
+    // Update each order line item's running invoiced_qty.
+    await Promise.all(toInvoice.map((i: any) =>
+      supabase.from('order_line_items').update({ invoiced_qty: Number(i.invoiced_qty || 0) + i.qtyNow }).eq('id', i.id)
+    ));
+
+    // Order-level status reflects fulfillment: fully invoiced vs partially invoiced.
+    // (Reuses willBeFullyInvoiced computed above, before the insert — the
+    // underlying line items haven't changed since, so it's still accurate.)
+    const fullyInvoiced = willBeFullyInvoiced;
+    const newStatus = fullyInvoiced ? 'Invoiced' : 'Partially Invoiced';
+    await supabase.from('orders').update({ status: newStatus, ...buildSystemFields(true) }).eq('order_number', order.id);
+    setOrders(prev => prev.map(o => o.id === order.id ? { ...o, status: newStatus } : o));
+
     await logAudit({ recordType: 'order', recordId: order.id, recordName: order.name, action: 'converted_to_invoice' });
-    await autoSetCustomerStatus(order.customerId || (order as any).customer_id, 'Active'); await fetchInvoices();
+    await autoSetCustomerStatus(order.customerId || (order as any).customer_id, 'Active');
+    await fetchInvoices();
+    return { invoiceNumber: id, fullyInvoiced };
   };
 
   // \u2500\u2500\u2500 Quote Templates \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
@@ -1528,11 +1756,11 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     };
     if (editingId) {
       const { error } = await supabase.from('quote_templates').update(payload).eq('id', editingId);
-      if (error) { alert('Save failed: ' + error.message); return; }
+      if (error) { showAlert('Save failed: ' + error.message); return; }
     } else {
       const tNum = generateId('TEMP');
       const { error } = await supabase.from('quote_templates').insert([{ ...payload, template_number: tNum, is_default: false, ...(tenantId?{tenant_id:tenantId}:{}), created_by: currentUser?.email }]);
-      if (error) { alert('Save failed: ' + error.message); return; }
+      if (error) { showAlert('Save failed: ' + error.message); return; }
     }
     await fetchQuoteTemplates();
   };
@@ -1540,7 +1768,7 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
   // ─── Invoice Templates ────────────────────────────────────────────────────
   const fetchInvoiceTemplates = async () => {
     if (!supabase) return;
-    const { data } = await supabase.from('invoice_templates').select('*').order('created_at', { ascending: false });
+    const { data } = await tScope(supabase.from('invoice_templates').select('*')).order('created_at', { ascending: false });
     if (data) setInvoiceTemplates(data.map((t: any) => ({
       ...t, id: t.template_number || t.id, dbId: t.id, isDefault: t.is_default,
     })));
@@ -1556,17 +1784,18 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     };
     if (editingId) {
       const { error } = await supabase.from('invoice_templates').update(payload).eq('id', editingId);
-      if (error) { alert('Save failed: ' + error.message); return; }
+      if (error) { showAlert('Save failed: ' + error.message); return; }
     } else {
       const tNum = 'INVTPL-' + Date.now();
       const { error } = await supabase.from('invoice_templates').insert([{ ...payload, template_number: tNum, ...(tenantId?{tenant_id:tenantId}:{}), created_by: currentUser?.email }]);
-      if (error) { alert('Save failed: ' + error.message); return; }
+      if (error) { showAlert('Save failed: ' + error.message); return; }
     }
     await fetchInvoiceTemplates();
   };
 
   const deleteInvoiceTemplate = async (templateId: string) => {
-    if (!supabase || !window.confirm('Delete this invoice template?')) return;
+    if (!supabase) return;
+    if (!(await showConfirm('Delete this invoice template?', { variant:'danger', confirmLabel:'Delete' }))) return;
     await supabase.from('invoice_templates').delete().eq('id', templateId);
     await fetchInvoiceTemplates();
   };
@@ -1584,7 +1813,7 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
   // ─── Warehouses / Subinventories ──────────────────────────────────────────
   const fetchWarehouses = async () => {
     if (!supabase) return;
-    const { data } = await supabase.from('warehouses').select('*').order('name');
+    const { data } = await tScope(supabase.from('warehouses').select('*')).order('name');
     if (data) setWarehouses(data);
   };
 
@@ -1593,23 +1822,25 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     const payload = { ...data, updated_at: new Date().toISOString() };
     if (editingId) {
       const { error } = await supabase.from('warehouses').update(payload).eq('id', editingId);
-      if (error) { alert('Save failed: ' + error.message); return; }
+      if (error) { showAlert('Save failed: ' + error.message); return; }
     } else {
       const { error } = await supabase.from('warehouses').insert([{ ...payload, created_at: new Date().toISOString(), ...(tenantId ? { tenant_id: tenantId } : {}) }]);
-      if (error) { alert('Save failed: ' + error.message); return; }
+      if (error) { showAlert('Save failed: ' + error.message); return; }
     }
     await fetchWarehouses();
   };
 
   const deleteWarehouse = async (id: string) => {
-    if (!supabase || !window.confirm('Delete this warehouse/location?')) return;
+    if (!supabase) return;
+    if (!(await showConfirm('Delete this warehouse/location?', { variant:'danger', confirmLabel:'Delete' }))) return;
     await supabase.from('warehouses').delete().eq('id', id);
     await fetchWarehouses();
   };
 
 
   const deleteQuoteTemplate = async (templateId: string) => {
-    if (!supabase || !window.confirm('Delete this template?')) return;
+    if (!supabase) return;
+    if (!(await showConfirm('Delete this template?', { variant:'danger', confirmLabel:'Delete' }))) return;
     await supabase.from('quote_templates').delete().eq('template_number', templateId);
     await fetchQuoteTemplates();
   };
@@ -1630,17 +1861,17 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     let ruleId = editingId || '';
     if (editingId) {
       const { error } = await supabase.from('workflow_rules').update({ ...cleanData, ...buildSystemFields(true) }).eq('id', editingId);
-      if (error) { alert('Save failed: ' + error.message); return; }
+      if (error) { showAlert('Save failed: ' + error.message); return; }
     } else {
       const { data: rule, error } = await supabase.from('workflow_rules').insert([{ ...cleanData, ...buildSystemFields(), rule_number: generateId('WF') }]).select().single();
-      if (error || !rule) { alert(error?.message || 'Error saving workflow rule'); return; }
+      if (error || !rule) { showAlert(error?.message || 'Error saving workflow rule'); return; }
       ruleId = rule.id;
     }
     // Replace all actions atomically
     await supabase.from('workflow_actions').delete().eq('workflow_rule_id', ruleId);
     if (actions.length) {
       const { error: actErr } = await supabase.from('workflow_actions').insert(
-        actions.map((a, i) => ({ workflow_rule_id: ruleId, action_type: a.action_type, action_config: a.action_config || {}, execution_order: i + 1 }))
+        actions.map((a, i) => ({ workflow_rule_id: ruleId, action_type: a.action_type, action_config: a.action_config || {}, execution_order: i + 1, ...(tenantId ? { tenant_id: tenantId } : {}) }))
       );
       if (actErr) console.error('workflow_actions insert:', actErr.message);
     }
@@ -1648,7 +1879,8 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
   };
 
   const deleteWorkflowRule = async (id: string) => {
-    if (!supabase || !window.confirm('Delete this workflow rule?')) return;
+    if (!supabase) return;
+    if (!(await showConfirm('Delete this workflow rule?', { variant:'danger', confirmLabel:'Delete' }))) return;
     await supabase.from('workflow_rules').delete().eq('id', id);
     await fetchWorkflowRules();
   };
@@ -1661,16 +1893,17 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     cleanData.assign_to_group_id = cleanData.assign_to_group_id || null;
     if (editingId) {
       const { error } = await supabase.from('assignment_rules').update({ ...cleanData, ...buildSystemFields(true) }).eq('id', editingId);
-      if (error) { alert('Save failed: ' + error.message); return; }
+      if (error) { showAlert('Save failed: ' + error.message); return; }
     } else {
       const { error } = await supabase.from('assignment_rules').insert([{ ...cleanData, ...buildSystemFields(), rule_number: generateId('AR') }]);
-      if (error) { alert('Save failed: ' + error.message); return; }
+      if (error) { showAlert('Save failed: ' + error.message); return; }
     }
     await fetchAssignmentRules();
   };
 
   const deleteAssignmentRule = async (id: string) => {
-    if (!supabase || !window.confirm('Delete this rule?')) return;
+    if (!supabase) return;
+    if (!(await showConfirm('Delete this rule?', { variant:'danger', confirmLabel:'Delete' }))) return;
     await supabase.from('assignment_rules').delete().eq('id', id);
     await fetchAssignmentRules();
   };
@@ -1683,16 +1916,17 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     cleanData.escalate_to_group_id = cleanData.escalate_to_group_id || null;
     if (editingId) {
       const { error } = await supabase.from('sla_policies').update({ ...cleanData, ...buildSystemFields(true) }).eq('id', editingId);
-      if (error) { alert('Save failed: ' + error.message); return; }
+      if (error) { showAlert('Save failed: ' + error.message); return; }
     } else {
       const { error } = await supabase.from('sla_policies').insert([{ ...cleanData, ...buildSystemFields(), policy_number: generateId('SLA') }]);
-      if (error) { alert('Save failed: ' + error.message); return; }
+      if (error) { showAlert('Save failed: ' + error.message); return; }
     }
     await fetchSLAPolicies();
   };
 
   const deleteSLAPolicy = async (id: string) => {
-    if (!supabase || !window.confirm('Delete this SLA policy?')) return;
+    if (!supabase) return;
+    if (!(await showConfirm('Delete this SLA policy?', { variant:'danger', confirmLabel:'Delete' }))) return;
     await supabase.from('sla_policies').delete().eq('id', id);
     await fetchSLAPolicies();
   };
@@ -1706,11 +1940,11 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     let processId = editingId || '';
     if (editingId) {
       const { error } = await supabase.from('approval_processes').update(payload).eq('id', editingId);
-      if (error) { alert('Save failed: ' + error.message); return; }
+      if (error) { showAlert('Save failed: ' + error.message); return; }
     } else {
       const { data: proc, error } = await supabase.from('approval_processes')
         .insert([{ ...payload, process_number: generateId('AP'), ...(tenantId?{tenant_id:tenantId}:{}) }]).select().single();
-      if (error || !proc) { alert(error?.message || 'Error saving approval process'); return; }
+      if (error || !proc) { showAlert(error?.message || 'Error saving approval process'); return; }
       processId = proc.id;
     }
     // Replace steps atomically — strip client fields from each step too
@@ -1728,13 +1962,14 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
         };
       });
       const { error: stepErr } = await supabase.from('approval_steps').insert(stepRows);
-      if (stepErr) { alert('Error saving steps: ' + stepErr.message); return; }
+      if (stepErr) { showAlert('Error saving steps: ' + stepErr.message); return; }
     }
     await fetchApprovalProcesses();
   };
 
   const deleteApprovalProcess = async (id: string) => {
-    if (!supabase || !window.confirm('Delete this approval process?')) return;
+    if (!supabase) return;
+    if (!(await showConfirm('Delete this approval process?', { variant:'danger', confirmLabel:'Delete' }))) return;
     await supabase.from('approval_processes').delete().eq('id', id);
     await fetchApprovalProcesses();
   };
@@ -1745,16 +1980,16 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     if (!supabase || !currentUser) return;
     // Use the pre-matched process if provided, otherwise find first active one for this type
     const process = matchedProcess || approvalProcesses.find(p => p.object_type === recordType && p.is_active);
-    if (!process) { alert('No active approval process found for this record type.'); return; }
+    if (!process) { showAlert('No active approval process found for this record type.'); return; }
     // Load steps fresh from DB to get current step IDs
     const { data: steps, error: stepsErr } = await supabase
       .from('approval_steps').select('*').eq('approval_process_id', process.id).order('step_number');
-    if (stepsErr || !steps?.length) { alert('No approval steps configured for this process.'); return; }
+    if (stepsErr || !steps?.length) { showAlert('No approval steps configured for this process.'); return; }
     const firstStep = steps[0];
     // Check if already pending
     const { data: existing } = await supabase.from('approval_requests')
       .select('id').eq('record_id', recordId).eq('record_type', recordType).eq('status', 'Pending').maybeSingle();
-    if (existing) { alert('An approval request is already pending for this record.'); return; }
+    if (existing) { showAlert('An approval request is already pending for this record.'); return; }
     const { error } = await supabase.from('approval_requests').insert([{
       ...(tenantId ? { tenant_id: tenantId } : {}),
       request_number: generateId('REQ'),
@@ -1771,7 +2006,7 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
       organization_id: currentUser.organization_id,
       business_unit_id: currentUser.business_unit_id,
     }]);
-    if (error) { alert('Submission failed: ' + error.message); return; }
+    if (error) { showAlert('Submission failed: ' + error.message); return; }
 
     // Persist 'Pending Approval' status onto the underlying record so it survives refresh
     const STATUS_TABLE_MAP: Record<string, { table: string; idField: string }> = {
@@ -1822,7 +2057,7 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     if (submitRefetchFn) await submitRefetchFn();
 
     await fetchApprovalRequests();
-    alert('Submitted for approval successfully.');
+    showAlert('Submitted for approval successfully.');
   };
 
   const processApproval = async (requestId: string, decision: 'Approved' | 'Rejected', comments: string) => {
@@ -2286,7 +2521,14 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
 
   useEffect(() => {
     if (!supabase) return;
-    supabase.auth.getSession().then(({ data: { session } }) => { setSession(session); setAuthLoading(false); });
+    supabase.auth.getSession().then(async ({ data: { session } }) => {
+      if (session?.user) {
+        // Cross-tenant guard for restored sessions (e.g. token persisted before this fix)
+        const ok = await verifyTenantMembership(session.user);
+        if (!ok) { await supabase.auth.signOut(); setSession(null); setAuthLoading(false); return; }
+      }
+      setSession(session); setAuthLoading(false);
+    });
     const { data: listener } = supabase.auth.onAuthStateChange((_e, s) => setSession(s));
     return () => listener.subscription.unsubscribe();
   }, [supabase]);
@@ -2324,9 +2566,9 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
   // Re-fetch all data once permissions + data_scope are confirmed
   // This ensures applyDataSecurity runs with the correct scope after auth resolves
   useEffect(() => {
-    if (!permissionsLoaded || !userDataScope) return;
-    // Only re-fetch if scope is restrictive (not 'all') to avoid double-fetching for admins
-    if (userDataScope === 'all') return;
+    if (!permissionsLoaded) return;
+    // Re-fetch for EVERY scope once permissions resolve — the pre-permission
+    // fetch pass stored [] (no-leak guard), so all users need one clean pass.
     // Re-fetch all B2B objects with correct scope applied
     Promise.all([
       fetchCustomers(), fetchLeads(), fetchOpportunities(), fetchOrders(),
@@ -2512,6 +2754,10 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
   // eslint-disable-next-line react-hooks/exhaustive-deps
 
   const [appPreferences, setAppPreferences] = useState(() => { try { const s=typeof window!=='undefined'&&window.localStorage.getItem(_LS_KEY); if(s) return _cp(JSON.parse(s)); } catch(e) {} return _DEF_PREFS; });
+  // Publish prefs to window so lib/utils formatters follow regional settings
+  useEffect(() => {
+    if (typeof window !== 'undefined') (window as any).__bp_prefs = appPreferences || {};
+  }, [appPreferences]);
   const fetchAppPreferences = async () => {
     // Try localStorage first (fast path)
     try {
@@ -2589,11 +2835,11 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
   const [quotations, setQuotations] = useState([]);
   const fetchQuotations = async () => {
     if (!supabase) return;
-    const { data, error } = await supabase.from('quotations').select('*').order('created_at', { ascending: false });
+    const { data, error } = await tScope(supabase.from('quotations').select('*')).order('created_at', { ascending: false }).limit(LIST_FETCH_LIMIT);
     if (error) console.error('fetchQuotations:', error);
     if (data) setQuotations(applyDataSecurity(data).map(q => ({ ...q, customerId: q.customer_id, displayNumber: q.display_number })));
   };
-  const createQuotation = async (data,items=[]) => { if(!supabase||!currentUser)return null; const qNum=generateId('QUO'); const{_uuid,id,customerId,displayNumber,contactId,activityType,activityDate,dueDate,closeDate,isPrimary,linkedIn,ownerName,...cleanData}=data; const{data:inserted,error}=await supabase.from('quotations').insert([{...buildSystemFields(),quote_number:qNum,...cleanData,status:cleanData.status||'Draft',version:1,owner:cleanData.owner||currentUser.email,owner_id:cleanData.owner_id||currentUser.id}]).select().single(); if(error){alert('Failed: '+error.message);return null;} if(items.length)await upsertLineItemsGeneric('quotation_line_items','quote_number',qNum,items); await autoSetCustomerStatus(data.customer_id, 'Prospect'); await runAutomations('quotations', qNum, inserted, 'on_create'); await fetchQuotations(); return {...inserted, customerId: inserted.customer_id}; };
+  const createQuotation = async (data,items=[]) => { if(!supabase||!currentUser)return null; const qNum=generateId('QUO'); const{_uuid,id,customerId,displayNumber,contactId,activityType,activityDate,dueDate,closeDate,isPrimary,linkedIn,ownerName,...cleanData}=data; const{data:inserted,error}=await supabase.from('quotations').insert([{...buildSystemFields(),quote_number:qNum,...cleanData,status:cleanData.status||'Draft',version:1,owner:cleanData.owner||currentUser.email,owner_id:cleanData.owner_id||currentUser.id}]).select().single(); if(error){showAlert('Failed: '+error.message);return null;} if(items.length)await upsertLineItemsGeneric('quotation_line_items','quote_number',qNum,items); await autoSetCustomerStatus(data.customer_id, 'Prospect'); await runAutomations('quotations', qNum, inserted, 'on_create'); await fetchQuotations(); return {...inserted, customerId: inserted.customer_id}; };
   const updateQuotation = async (data,items=[]) => {
     if(!supabase)return;
     const {
@@ -2606,12 +2852,12 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
       .from('quotations')
       .update({ ...rest, ...buildSystemFields(true) })
       .eq('quote_number', quote_number);
-    if(error){ console.error('updateQuotation:',error.message); alert('Save failed: '+error.message); return; }
+    if(error){ console.error('updateQuotation:',error.message); showAlert('Save failed: '+error.message); return; }
     if(items) await upsertLineItemsGeneric('quotation_line_items','quote_number',quote_number,items);
     await runAutomations('quotations', quote_number, data, 'on_update');
     await fetchQuotations();
   };
-  const deleteQuotation = async (qNum) => { if(!supabase||!window.confirm('Delete?'))return; await supabase.from('quotation_line_items').delete().eq('quote_number',qNum); await supabase.from('quotations').delete().eq('quote_number',qNum); await fetchQuotations(); };
+  const deleteQuotation = async (qNum) => { if(!supabase)return; if(!(await showConfirm('Delete this quotation?', { variant:'danger', confirmLabel:'Delete' })))return; await supabase.from('quotation_line_items').delete().eq('quote_number',qNum); await supabase.from('quotations').delete().eq('quote_number',qNum); await fetchQuotations(); };
   const generateNewVersion = async (q) => { if(!supabase||!currentUser)return null; const qNum=generateId('QUO'); const v=(q.version||1)+1; const items=await fetchLineItems('quotation_line_items','quote_number',q.quote_number); await supabase.from('quotations').insert([{...buildSystemFields(),...q,quote_number:qNum,version:v,status:'Draft',id:undefined,created_at:new Date().toISOString()}]); if(items.length)await upsertLineItemsGeneric('quotation_line_items','quote_number',qNum,items.map(i=>({...i,id:undefined}))); await fetchQuotations(); return{quote_number:qNum}; };
   const createQuotationFromOpportunity = async (opp) => {
     if(!supabase||!currentUser)return null;
@@ -2622,28 +2868,118 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     const totalDisc = items.reduce((s,i)=>s+Number(i.quantity||1)*Number(i.price||i.unit_price||0)*Number(i.discount||i.discount_pct||0)/100,0);
     const totalTax  = items.reduce((s,i)=>{const net=Number(i.quantity||1)*Number(i.price||i.unit_price||0)*(1-Number(i.discount||i.discount_pct||0)/100);return s+net*Number(i.tax_pct||0)/100;},0);
     const grandTotal = items.length ? (subtotal - totalDisc + totalTax) : Number(opp.amount||0);
-    const{data:inserted,error}=await supabase.from('quotations').insert([{...buildSystemFields(),quote_number:qNum,name:`Quote - ${opp.name}`,status:'Draft',version:1,customer:opp.customer||'',customer_id:opp.customerId||null,contact:opp.contact||'',contact_id:opp.contactId||null,opportunity_id:opp.id,currency:opp.currency||'INR',subtotal:Number(subtotal.toFixed(2)),total_discount:Number(totalDisc.toFixed(2)),total_tax:Number(totalTax.toFixed(2)),grand_total:Number(grandTotal.toFixed(2)),billing_address:opp.billingAddress||opp.billing_address||'',shipping_address:opp.shippingAddress||opp.shipping_address||'',payment_terms:opp.paymentTerms||opp.payment_terms||'',owner:opp.owner||currentUser.email,owner_id:opp.owner_id||currentUser.id}]).select().single(); if(error){alert('Failed: '+error.message);return null;} if(items.length)await supabase.from('quotation_line_items').insert(items.map((i,idx)=>({quote_number:qNum,product_name:i.product||i.product_name||'',product_id:i.product_id||null,quantity:Number(i.quantity||1),unit_price:Number(i.price||0),list_price:Number(i.list_price||i.price||0),discount_pct:Number(i.discount||i.discount_pct||0),tax_pct:Number(i.tax_pct||0),extended_price:Number(i.quantity||1)*Number(i.price||0)*(1-Number(i.discount||i.discount_pct||0)/100),sort_order:idx,configuration:i.configuration||{}}))); await autoSetCustomerStatus(opp.customerId, 'Prospect'); await supabase.from('opportunities').update({ status:'Negotiation', stage:'Negotiation', updated_at:new Date().toISOString() }).eq('opportunity_number', opp.id);
+    const{data:inserted,error}=await supabase.from('quotations').insert([{...buildSystemFields(),quote_number:qNum,name:`Quote - ${opp.name}`,status:'Draft',version:1,customer:opp.customer||'',customer_id:opp.customerId||null,contact:opp.contact||'',contact_id:opp.contactId||null,opportunity_id:opp.id,currency:opp.currency||'INR',subtotal:Number(subtotal.toFixed(2)),total_discount:Number(totalDisc.toFixed(2)),total_tax:Number(totalTax.toFixed(2)),grand_total:Number(grandTotal.toFixed(2)),billing_address:opp.billingAddress||opp.billing_address||'',shipping_address:opp.shippingAddress||opp.shipping_address||'',payment_terms:opp.paymentTerms||opp.payment_terms||'',owner:opp.owner||currentUser.email,owner_id:opp.owner_id||currentUser.id}]).select().single(); if(error){showAlert('Failed: '+error.message);return null;} if(items.length)await supabase.from('quotation_line_items').insert(items.map((i,idx)=>({quote_number:qNum,product_name:i.product||i.product_name||'',product_id:i.product_id||null,quantity:Number(i.quantity||1),unit_price:Number(i.price||0),list_price:Number(i.list_price||i.price||0),discount_pct:Number(i.discount||i.discount_pct||0),tax_pct:Number(i.tax_pct||0),extended_price:Number(i.quantity||1)*Number(i.price||0)*(1-Number(i.discount||i.discount_pct||0)/100),sort_order:idx,configuration:i.configuration||{}}))); await autoSetCustomerStatus(opp.customerId, 'Prospect'); await supabase.from('opportunities').update({ status:'Negotiation', stage:'Negotiation', updated_at:new Date().toISOString() }).eq('opportunity_number', opp.id);
     await fetchOpportunities();
     await fetchQuotations(); return{...inserted, customerId: inserted.customer_id}; };
 
   // ─── CPQ Flow: Quote→Order→Invoice, Opp→Order ─────────────────────────────
-  const createOrderFromQuotation = async (quotation) => { if(!supabase||!currentUser)return null; const{data:qItems}=await supabase.from('quotation_line_items').select('*').eq('quote_number',quotation.quote_number).order('sort_order'); const li=qItems||[]; const sub=li.reduce((s,i)=>s+Number(i.quantity||1)*Number(i.unit_price||i.price||0),0); const disc=li.reduce((s,i)=>s+Number(i.quantity||1)*Number(i.unit_price||i.price||0)*(Number(i.discount_pct||i.discount||0)/100),0); const tax=li.reduce((s,i)=>{const n=Number(i.quantity||1)*Number(i.unit_price||i.price||0)*(1-Number(i.discount_pct||0)/100);return s+n*(Number(i.tax_pct||0)/100);},0); const od=sub*Number(quotation.overall_discount||0)/100; const gt=sub-disc+tax-od+Number(quotation.shipping_cost||0); const ordId=generateId('ORD'); const{error}=await supabase.from('orders').insert([{...buildSystemFields(),order_number:ordId,name:quotation.name||`Order - ${quotation.quote_number}`,quote_number:quotation.quote_number,customer:quotation.customer||'',customer_id:quotation.customer_id||null,contact:quotation.contact||'',contact_id:quotation.contact_id||null,billing_address:quotation.billing_address||'',shipping_address:quotation.shipping_address||'',payment_terms:quotation.payment_terms||'',currency:quotation.currency||'INR',overall_discount:Number(quotation.overall_discount||0),shipping_cost:Number(quotation.shipping_cost||0),subtotal:Number(sub.toFixed(2)),total_discount:Number((disc+od).toFixed(2)),total_tax:Number(tax.toFixed(2)),amount:Number(gt.toFixed(2)),status:'Draft',owner:quotation.owner||currentUser.email,owner_id:quotation.owner_id||currentUser.id}]); if(error){alert('Failed to create order: '+error.message);return null;} if(li.length)await supabase.from('order_line_items').insert(li.map((i,idx)=>({order_number:ordId,product_name:i.product_name||'',product_code:i.product_code||'',description:i.description||'',quantity:Number(i.quantity||1),price:Number(i.unit_price||i.price||0),list_price:Number(i.unit_price||i.price||0),discount:Number(i.discount_pct||i.discount||0),tax_pct:Number(i.tax_pct||0),extended_price:Number(i.quantity||1)*Number(i.unit_price||i.price||0)*(1-Number(i.discount_pct||0)/100),sort_order:idx}))); await supabase.from('quotations').update({status:'Ordered',...buildSystemFields(true)}).eq('quote_number',quotation.quote_number); setQuotations(prev=>prev.map(q=>q.quote_number===quotation.quote_number?{...q,status:'Ordered'}:q)); await autoSetCustomerStatus(quotation.customer_id, 'Active'); if (quotation.opportunity_id) {
-      await supabase.from('opportunities').update({ status:'Closed Won', stage:'Closed Won', updated_at:new Date().toISOString() }).eq('opportunity_number', quotation.opportunity_id);
+  // Creates an order from a B2B quotation. By default (no `selections`) orders
+  // the full remaining balance of every line item — existing callers that
+  // don't pass `selections` keep working exactly as before.
+  // Pass `selections` as [{ _id: <quotation_line_item id>, qty: <number to order now> }]
+  // to convert only part of the quote; each quotation line item tracks how
+  // much has been ordered so far via `ordered_qty`.
+  const createOrderFromQuotation = async (quotation, selections: { _id: any; qty: number }[] | null = null) => {
+    if (!supabase || !currentUser) return null;
+    const { data: qItems } = await supabase.from('quotation_line_items').select('*').eq('quote_number', quotation.quote_number).order('sort_order');
+    const allItems = qItems || [];
+    if (!allItems.length) { showAlert('This quotation has no line items to order.'); return null; }
+
+    const toOrder = allItems.map((i: any) => {
+      const qty = Number(i.quantity || 0);
+      const already = Number(i.ordered_qty || 0);
+      const remaining = Math.max(0, qty - already);
+      const sel = selections?.find((s) => String(s._id) === String(i.id));
+      const qtyNow = selections ? Math.max(0, Math.min(Number(sel?.qty || 0), remaining)) : remaining;
+      return { ...i, qtyNow, remaining };
+    }).filter((i: any) => i.qtyNow > 0);
+
+    if (!toOrder.length) { showAlert('Nothing to order — all items are already fully ordered, or no quantities were selected.'); return null; }
+
+    const sub  = toOrder.reduce((s: number, i: any) => s + i.qtyNow * Number(i.unit_price || i.price || 0), 0);
+    const disc = toOrder.reduce((s: number, i: any) => s + i.qtyNow * Number(i.unit_price || i.price || 0) * (Number(i.discount_pct || i.discount || 0) / 100), 0);
+    const tax  = toOrder.reduce((s: number, i: any) => {
+      const n = i.qtyNow * Number(i.unit_price || i.price || 0) * (1 - Number(i.discount_pct || 0) / 100);
+      return s + n * (Number(i.tax_pct || 0) / 100);
+    }, 0);
+    // Overall discount is a PERCENTAGE, so it scales correctly with `sub` on
+    // its own — apply it to every order, full or partial, rather than only
+    // full conversions. (Previously this was gated to full-conversions only,
+    // which silently dropped the discount entirely on any partial order.)
+    const od = sub * Number(quotation.overall_discount || 0) / 100;
+    // Shipping is a flat amount on the quote, not naturally divisible per
+    // line item — charge it once, on whichever order completes the quote's
+    // full ordered quantity, rather than splitting it across partial orders
+    // or (as before) silently dropping it whenever the quote isn't fully
+    // converted in one shot.
+    const orderedPreview = new Map(toOrder.map((i: any) => [i.id, i.qtyNow]));
+    const willBeFullyOrdered = allItems.every((i: any) => {
+      const already = Number(i.ordered_qty || 0) + (orderedPreview.get(i.id) || 0);
+      return already >= Number(i.quantity || 0);
+    });
+    const shippingCost = willBeFullyOrdered ? Number(quotation.shipping_cost || 0) : 0;
+    const gt = sub - disc + tax - od + shippingCost;
+    const ordId = generateId('ORD');
+
+    const { error } = await supabase.from('orders').insert([{
+      ...buildSystemFields(),
+      order_number: ordId,
+      name: quotation.name || `Order - ${quotation.quote_number}`,
+      quote_number: quotation.quote_number,
+      customer: quotation.customer || '', customer_id: quotation.customer_id || null,
+      contact: quotation.contact || '', contact_id: quotation.contact_id || null,
+      billing_address: quotation.billing_address || '', shipping_address: quotation.shipping_address || '',
+      payment_terms: quotation.payment_terms || '', currency: quotation.currency || 'INR',
+      overall_discount: Number(quotation.overall_discount || 0),
+      shipping_cost: shippingCost,
+      subtotal: Number(sub.toFixed(2)), total_discount: Number((disc + od).toFixed(2)),
+      total_tax: Number(tax.toFixed(2)), amount: Number(gt.toFixed(2)),
+      status: 'Draft', owner: quotation.owner || currentUser.email, owner_id: quotation.owner_id || currentUser.id,
+    }]);
+    if (error) { showAlert('Failed to create order: ' + error.message); return null; }
+
+    await supabase.from('order_line_items').insert(toOrder.map((i: any, idx: number) => ({
+      order_number: ordId,
+      product_name: i.product_name || '', product_code: i.product_code || '', description: i.description || '',
+      quantity: i.qtyNow, price: Number(i.unit_price || i.price || 0), list_price: Number(i.unit_price || i.price || 0),
+      discount: Number(i.discount_pct || i.discount || 0), tax_pct: Number(i.tax_pct || 0),
+      extended_price: i.qtyNow * Number(i.unit_price || i.price || 0) * (1 - Number(i.discount_pct || 0) / 100),
+      sort_order: idx, invoiced_qty: 0,
+    })));
+
+    // Update each quotation line item's running ordered_qty.
+    await Promise.all(toOrder.map((i: any) =>
+      supabase.from('quotation_line_items').update({ ordered_qty: Number(i.ordered_qty || 0) + i.qtyNow }).eq('id', i.id)
+    ));
+
+    // Quotation-level status reflects fulfillment: fully vs. partially ordered.
+    // (Reuses willBeFullyOrdered computed above, before the insert — the
+    // underlying line items haven't changed since, so it's still accurate.)
+    const fullyOrdered = willBeFullyOrdered;
+    const newQStatus = fullyOrdered ? 'Ordered' : 'Partially Ordered';
+    await supabase.from('quotations').update({ status: newQStatus, ...buildSystemFields(true) }).eq('quote_number', quotation.quote_number);
+    setQuotations(prev => prev.map(q => q.quote_number === quotation.quote_number ? { ...q, status: newQStatus } : q));
+    await autoSetCustomerStatus(quotation.customer_id, 'Active');
+
+    if (quotation.opportunity_id && fullyOrdered) {
+      await supabase.from('opportunities').update({ status: 'Closed Won', stage: 'Closed Won', updated_at: new Date().toISOString() }).eq('opportunity_number', quotation.opportunity_id);
       await fetchOpportunities();
     }
-    await fetchOrders(); return ordId; };
+    await fetchOrders();
+    return ordId;
+  };
 
   // ─── Reports ───────────────────────────────────────────────────────────────
   const [reports, setReports] = useState([]);
   const fetchReports = async () => {
     if (!supabase || !currentUser) return;
-    const { data } = await supabase.from('reports').select('*')
+    const { data } = await tScope(supabase.from('reports').select('*'))
       .or(`created_by.eq.${currentUser.email},is_public.eq.true`)
       .order('created_at', { ascending: false });
     if (data) setReports(data);
   };
   const saveReport = async (data) => { if(!supabase||!currentUser)return null; let r; if(data.id){const{data:d}=await supabase.from('reports').update({...data,updated_at:new Date().toISOString()}).eq('id',data.id).select().single();r=d;}else{const{data:d}=await supabase.from('reports').insert([{...data,created_by:currentUser.email,organization_id:currentUser.organization_id,created_at:new Date().toISOString(),updated_at:new Date().toISOString()}]).select().single();r=d;} await fetchReports(); return r; };
-  const deleteReport = async (id) => { if(!supabase||!window.confirm('Delete?'))return; await supabase.from('reports').delete().eq('id',id); await fetchReports(); };
+  const deleteReport = async (id) => { if(!supabase)return; if(!(await showConfirm('Delete this report?', { variant:'danger', confirmLabel:'Delete' })))return; await supabase.from('reports').delete().eq('id',id); await fetchReports(); };
 
   // ─── Saved Searches ────────────────────────────────────────────────────────
   const [savedSearches, setSavedSearches] = useState([]);
@@ -2668,19 +3004,19 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
   const setDefaultSavedSearch = async (id,isGlobal=false) => { if(!supabase||!currentUser)return; await supabase.from('saved_searches').update({is_default:false,is_global_default:false}).eq('created_by',currentUser.email); await supabase.from('saved_searches').update({is_default:true,is_global_default:isGlobal}).eq('id',id); await fetchSavedSearches(); };
 
   // ─── Notes / Comments / Attachments ───────────────────────────────────────
-  const fetchRecordNotes = async (rType,rId) => { if(!supabase)return[]; const{data}=await supabase.from('record_notes').select('*').eq('record_type',rType).eq('record_id',rId).order('created_at',{ascending:false}); return data||[]; };
+  const fetchRecordNotes = async (rType,rId) => { if(!supabase)return[]; const{data}=await tScope(supabase.from('record_notes').select('*')).eq('record_type',rType).eq('record_id',rId).order('created_at',{ascending:false}); return data||[]; };
   const saveNote = async (rType,rId,note) => { if(!supabase||!currentUser)return; if(note.id)await supabase.from('record_notes').update({...note,updated_at:new Date().toISOString()}).eq('id',note.id); else await supabase.from('record_notes').insert([{...note,record_type:rType,record_id:rId,created_by:currentUser.email,created_at:new Date().toISOString(),updated_at:new Date().toISOString(),...(tenantId?{tenant_id:tenantId}:{}),...(tenantId?{tenant_id:tenantId}:{})}]); };
   const deleteNote = async (id) => { if(!supabase)return; await supabase.from('record_notes').delete().eq('id',id); };
   const toggleNotePin = async (id,pinned) => { if(!supabase)return; await supabase.from('record_notes').update({is_pinned:!pinned}).eq('id',id); };
-  const fetchRecordComments = async (rType,rId) => { if(!supabase)return[]; const{data}=await supabase.from('record_comments').select('*').eq('record_type',rType).eq('record_id',rId).order('created_at',{ascending:false}); return data||[]; };
+  const fetchRecordComments = async (rType,rId) => { if(!supabase)return[]; const{data}=await tScope(supabase.from('record_comments').select('*')).eq('record_type',rType).eq('record_id',rId).order('created_at',{ascending:false}); return data||[]; };
   const postComment = async (rType,rId,body) => { if(!supabase||!currentUser)return; await supabase.from('record_comments').insert([{record_type:rType,record_id:rId,body,created_by:currentUser.email,created_at:new Date().toISOString(),...(tenantId?{tenant_id:tenantId}:{})}]); };
   const deleteComment = async (id) => { if(!supabase)return; await supabase.from('record_comments').delete().eq('id',id); };
-  const fetchRecordAttachments = async (rType,rId) => { if(!supabase)return[]; const{data}=await supabase.from('record_attachments').select('*').eq('record_type',rType).eq('record_id',rId).order('created_at',{ascending:false}); return data||[]; };
+  const fetchRecordAttachments = async (rType,rId) => { if(!supabase)return[]; const{data}=await tScope(supabase.from('record_attachments').select('*')).eq('record_type',rType).eq('record_id',rId).order('created_at',{ascending:false}); return data||[]; };
   const uploadAttachment = async (rType,rId,file) => { if(!supabase||!currentUser)return null; try{const path=`${rType}/${rId}/${Date.now()}_${file.name}`; const{error}=await supabase.storage.from('attachments').upload(path,file); if(error)return null; await supabase.from('record_attachments').insert([{record_type:rType,record_id:rId,file_name:file.name,file_path:path,file_size:file.size,created_by:currentUser.email,created_at:new Date().toISOString()}]); return path;}catch(e){return null;} };
   const deleteAttachment = async (id,path) => { if(!supabase)return; if(path)await supabase.storage.from('attachments').remove([path]); await supabase.from('record_attachments').delete().eq('id',id); };
   const getAttachmentUrl = (path) => { if(!supabase||!path)return null; const{data}=supabase.storage.from('attachments').getPublicUrl(path); return data?.publicUrl||null; };
-  const fetchApprovalRequestsForRecord = async (rType,rId) => { if(!supabase)return[]; const{data}=await supabase.from('approval_requests').select('*').eq('record_type',rType).eq('record_id',rId).order('created_at',{ascending:false}); return data||[]; };
-  const fetchAuditLog = async (rType,rId) => { if(!supabase)return[]; const{data}=await supabase.from('audit_logs').select('*').eq('record_type',rType).eq('record_id',rId).order('performed_at',{ascending:false}).limit(50); return data||[]; };
+  const fetchApprovalRequestsForRecord = async (rType,rId) => { if(!supabase)return[]; const{data}=await tScope(supabase.from('approval_requests').select('*')).eq('record_type',rType).eq('record_id',rId).order('created_at',{ascending:false}); return data||[]; };
+  const fetchAuditLog = async (rType,rId) => { if(!supabase)return[]; const{data}=await tScope(supabase.from('audit_log').select('*')).eq('record_type',rType).eq('record_id',rId).order('performed_at',{ascending:false}).limit(50); return data||[]; };
   const approveRecord = async (id,comments='') => { if(!supabase)return; await supabase.from('approval_requests').update({status:'Approved',comments,updated_at:new Date().toISOString()}).eq('id',id); await fetchApprovalRequests(); };
   const rejectRecord  = async (id,comments='') => { if(!supabase)return; await supabase.from('approval_requests').update({status:'Rejected',comments,updated_at:new Date().toISOString()}).eq('id',id); await fetchApprovalRequests(); };
   const decideApproval= async (id,action,comments='') => action==='approve'?approveRecord(id,comments):rejectRecord(id,comments);
@@ -2734,7 +3070,8 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
 
   // deleteRecord
   const deleteRecord = async (page, recordId) => {
-    if (!supabase||!window.confirm('Delete this record?')) return;
+    if (!supabase) return;
+    if (!(await showConfirm('Delete this record?', { variant:'danger', confirmLabel:'Delete' }))) return;
     const tableMap = { customers:'customers', leads:'leads', opportunities:'opportunities', orders:'orders', invoices:'invoices', contacts:'contacts', activities:'activities', products:'products' };
     const idFieldMap = { customers:'id', leads:'lead_number', opportunities:'opportunity_number', orders:'order_number', invoices:'invoice_number', contacts:'contact_number', activities:'activity_number', products:'id' };
     // For products, recordId may be PROD-xxx (product_number); resolve to UUID
@@ -2759,8 +3096,8 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
         body: JSON.stringify({ authUserId, password, db_url: tenant.db_url || null }),
       });
       const j = await r.json();
-      if (!r.ok) alert('Password reset failed: ' + (j.error || r.status));
-    } catch(e: any) { alert('Password reset error: ' + e.message); }
+      if (!r.ok) showAlert('Password reset failed: ' + (j.error || r.status));
+    } catch(e: any) { showAlert('Password reset error: ' + e.message); }
   };
 
 
@@ -2777,7 +3114,8 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     hasPermission, isAdmin, applyOwnerScope,
     customers, contacts, products, leads, opportunities, orders, invoices, activities,
     organizations, businessUnits, enterpriseUsers, userGroups, userGroupMembers,
-    roles, permissions, rolePermissions, quoteTemplates,
+    roles, permissions, rolePermissions, quoteTemplates, invoiceTemplates,
+    fetchInvoiceTemplates, saveInvoiceTemplate, deleteInvoiceTemplate, setDefaultInvoiceTemplate,
     workflowRules, assignmentRules, slaPolicies, approvalProcesses, approvalRequests,
     notifications, unreadCount, markNotificationRead, markAllNotificationsRead,
     retailCustomers, retailProducts, retailActivities, retailOrders, retailInvoices,
@@ -2789,7 +3127,7 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     fetchEnterpriseUsers, fetchUserGroups, fetchGroupMembers, fetchRoles, fetchPermissions,
     fetchRolePermissions, fetchQuoteTemplates, fetchWorkflowRules, fetchAssignmentRules,
     fetchSLAPolicies, fetchApprovalProcesses, fetchApprovalRequests, fetchNotifications,
-    fetchLineItems, buildSystemFields, applyDataSecurity,
+    fetchLineItems, buildSystemFields, applyDataSecurity, fetchListCount,
     saveOrganization, saveBusinessUnit, saveEnterpriseUser, saveUserGroup, saveRole,
     addUsersToGroup, removeUserFromGroup, deleteAdminRecord, updateAdminStatus,
     createRecord, updateRecord,

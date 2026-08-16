@@ -4,15 +4,17 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useApp } from '@/context/AppContext';
 import { useTenant } from '@/context/TenantContext';
-import { formatCurrency, getStatusColor, formatDisplayNumber } from '@/lib/utils';
+import { formatCurrency, getStatusColor, formatDisplayNumber, tenantScope } from '@/lib/utils';
 import AISummary from '@/components/ai/AISummary';
 import SearchableSelect from '@/components/shared/SearchableSelect';
 import ConfigureLineItemModal from '@/components/shared/ConfigureLineItemModal';
 import QuickCreateModal from '@/components/shared/QuickCreateModal';
 import AddressSelector from '@/components/shared/AddressSelector';
+import BalanceConversionModal from '@/components/shared/BalanceConversionModal';
+import { useAlert } from '@/components/shared/AlertProvider';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
-const QUOTE_STATUSES = ['Draft','Submitted','Pending Approval','Approved','Sent to Customer','Accepted','Ordered','Rejected','Expired','Cancelled'];
+const QUOTE_STATUSES = ['Draft','Submitted','Pending Approval','Approved','Sent to Customer','Accepted','Partially Ordered','Ordered','Rejected','Expired','Cancelled'];
 
 const STATUS_META = {
   'Draft':              { color:'bg-gray-100 text-gray-700 border-gray-200',    icon:'📝', label:'Draft' },
@@ -24,6 +26,7 @@ const STATUS_META = {
   'Rejected':           { color:'bg-red-100 text-red-700 border-red-200',       icon:'❌', label:'Rejected' },
   'Expired':            { color:'bg-orange-100 text-orange-700 border-orange-200',icon:'⌛', label:'Expired' },
   'Cancelled':          { color:'bg-gray-200 text-gray-500 border-gray-300',    icon:'🚫', label:'Cancelled' },
+  'Partially Ordered':  { color:'bg-teal-50 text-teal-600 border-teal-200',     icon:'📦', label:'Partially Ordered' },
   'Ordered':            { color:'bg-teal-100 text-teal-700 border-teal-200',      icon:'🛒', label:'Ordered' },
 };
 
@@ -56,13 +59,13 @@ const DEFAULT_SECTIONS = [
   { id:'header',    type:'header',    name:'Header',            enabled:true, order:1, settings:{ bgColor:'#0F172A', textColor:'#FFFFFF', showLogo:false, logoUrl:'', companyName:'Umbrella Suite', tagline:'Enterprise Solutions' } },
   { id:'quote_info',type:'quote_info',name:'Quote Information', enabled:true, order:2, settings:{ bgColor:'#F8FAFC', textColor:'#0F172A' } },
   { id:'customer',  type:'customer',  name:'Customer Details',  enabled:true, order:3, settings:{ bgColor:'#FFFFFF', textColor:'#0F172A', showBillTo:true, showShipTo:true } },
-  { id:'items',     type:'items',     name:'Line Items',        enabled:true, order:4, settings:{ headerBgColor:'#0F172A', headerTextColor:'#FFFFFF', stripedRows:true, showProductCode:false, showDiscount:true, showTax:true } },
+  { id:'items',     type:'items',     name:'Line Items',        enabled:true, order:4, settings:{ headerBgColor:'#0F172A', headerTextColor:'#FFFFFF', stripedRows:true, showProductCode:false, showProductImage:false, showDiscount:true, showTax:true } },
   { id:'totals',    type:'totals',    name:'Pricing Summary',   enabled:true, order:5, settings:{ bgColor:'#F8FAFC', accentColor:'#0F172A', showShipping:true, showTax:true } },
   { id:'terms',     type:'terms',     name:'Terms & Conditions',enabled:true, order:6, settings:{ content:'Payment is due within the terms specified. All prices are subject to applicable taxes.' } },
   { id:'footer',    type:'footer',    name:'Footer',            enabled:true, order:7, settings:{ bgColor:'#0F172A', textColor:'#FFFFFF', showSignature:true, signatureLabel:'Authorized Signature', footerText:'' } },
 ];
 
-const buildQuoteHTML = (quote, items, template) => {
+const buildQuoteHTML = (quote, items, template, products) => {
   const sections    = template?.sections?.length ? template.sections : DEFAULT_SECTIONS;
   const pageSettings= template?.page_settings || {};
   const font        = pageSettings.fontFamily || 'Arial, sans-serif';
@@ -76,13 +79,22 @@ const buildQuoteHTML = (quote, items, template) => {
   const shipping   = Number(quote.shipping_cost||0);
   const grandTotal = subtotal - totalDisc + totalTax - overallDisc + shipping;
 
+  // Product image lookup for the optional thumbnail column in the items table
+  const productByCode = new Map((products||[]).map(p => [p.product_code||p.sku, p]).filter(([k]) => k));
+  const productByName = new Map((products||[]).map(p => [p.name, p]).filter(([k]) => k));
+  const findProductImage = (item) => {
+    const p = (item.product_code && productByCode.get(item.product_code))
+      || (item.product_name && productByName.get(item.product_name));
+    return p?.image_url || '';
+  };
+
   const renderSection = (sec) => {
     const s = sec.settings || {};
     switch(sec.type) {
       case 'header': return `<div style="background:${s.bgColor};color:${s.textColor};padding:40px 50px;display:flex;align-items:center;justify-content:space-between;"><div>${s.showLogo&&s.logoUrl?`<img src="${s.logoUrl}" style="height:60px;margin-bottom:10px;display:block;">`:''}  <div style="font-size:28px;font-weight:bold;">${s.companyName||'Company'}</div><div style="font-size:13px;opacity:0.8;margin-top:4px;">${s.tagline||''}</div></div><div style="text-align:right;"><div style="font-size:32px;font-weight:bold;letter-spacing:2px;">QUOTATION</div><div style="font-size:14px;opacity:0.8;margin-top:6px;">${quote.quote_number||''}</div></div></div>`;
       case 'quote_info': return `<div style="background:${s.bgColor};color:${s.textColor};padding:25px 50px;border-bottom:2px solid #E2E8F0;"><div style="display:grid;grid-template-columns:repeat(4,1fr);gap:20px;">${[['Quote Number',quote.quote_number||'-'],['Date',quote.created_at?new Date(quote.created_at).toLocaleDateString():''],['Valid Until',quote.validity_date||'-'],['Version',`v${quote.version||1}`],['Payment Terms',quote.payment_terms||''],['Currency',quote.currency||'INR']].filter(([,v])=>v).map(([l,v])=>`<div><div style="font-size:11px;text-transform:uppercase;opacity:0.6;margin-bottom:4px;">${l}</div><div style="font-weight:600;">${v}</div></div>`).join('')}</div></div>`;
       case 'customer': return `<div style="background:${s.bgColor};padding:25px 50px;display:grid;grid-template-columns:1fr 1fr;gap:40px;font-size:13px;border-bottom:1px solid #E2E8F0;">${s.showBillTo?`<div><div style="font-weight:700;text-transform:uppercase;font-size:9px;color:#64748B;margin-bottom:8px;">Bill To</div><div style="font-weight:700;font-size:16px;">${quote.customer||'-'}</div>${quote.billing_address?`<div style="color:#475569;margin-top:6px;line-height:1.6;">${quote.billing_address}</div>`:''}</div>`:''} ${s.showShipTo&&quote.shipping_address?`<div><div style="font-weight:700;text-transform:uppercase;font-size:9px;color:#64748B;margin-bottom:8px;">Ship To</div><div style="color:#475569;line-height:1.6;">${quote.shipping_address}</div></div>`:''}</div>`;
-      case 'items': return `<div style="padding:30px 50px;"><div style="font-size:11px;font-weight:700;text-transform:uppercase;margin-bottom:15px;color:#64748B;">Products & Services</div><table style="width:100%;border-collapse:collapse;font-size:13px;"><thead><tr style="background:${s.headerBgColor};color:${s.headerTextColor};">${['#',s.showProductCode?'Code':'','Product','Qty','Unit Price',s.showDiscount?'Disc %':'',s.showTax?'Tax %':'','Amount'].filter(Boolean).map(h=>`<th style="padding:12px 14px;text-align:left;font-weight:600;">${h}</th>`).join('')}</tr></thead><tbody>${items.map((item,idx)=>{const net=item.quantity*item.unit_price*(1-item.discount_pct/100);const total=net*(1+item.tax_pct/100);return `<tr style="background:${s.stripedRows&&idx%2===1?'#F8FAFC':'#FFF'};"><td style="padding:12px 14px;border-bottom:1px solid #E2E8F0;color:#64748B;">${idx+1}</td>${s.showProductCode?`<td style="padding:12px 14px;border-bottom:1px solid #E2E8F0;font-family:monospace;">${item.product_code||'-'}</td>`:''}<td style="padding:12px 14px;border-bottom:1px solid #E2E8F0;"><div style="font-weight:600;">${item.product_name||'-'}</div>${item.description?`<div style="font-size:11px;color:#64748B;">${item.description}</div>`:''}</td><td style="padding:12px 14px;border-bottom:1px solid #E2E8F0;">${item.quantity}</td><td style="padding:12px 14px;border-bottom:1px solid #E2E8F0;">${fmt(item.unit_price)}</td>${s.showDiscount?`<td style="padding:12px 14px;border-bottom:1px solid #E2E8F0;color:${item.discount_pct>0?'#16A34A':'#94A3B8'};">${item.discount_pct>0?`${item.discount_pct}%`:'-'}</td>`:''} ${s.showTax?`<td style="padding:12px 14px;border-bottom:1px solid #E2E8F0;color:#64748B;">${item.tax_pct>0?`${item.tax_pct}%`:'-'}</td>`:''}<td style="padding:12px 14px;border-bottom:1px solid #E2E8F0;font-weight:600;">${fmt(total)}</td></tr>`;}).join('')}</tbody></table></div>`;
+      case 'items': return `<div style="padding:30px 50px;"><div style="font-size:11px;font-weight:700;text-transform:uppercase;margin-bottom:15px;color:#64748B;">Products & Services</div><table style="width:100%;border-collapse:collapse;font-size:13px;"><thead><tr style="background:${s.headerBgColor};color:${s.headerTextColor};">${['#',s.showProductImage?'Img':'',s.showProductCode?'Code':'','Product','Qty','Unit Price',s.showDiscount?'Disc %':'',s.showTax?'Tax %':'','Amount'].filter(Boolean).map(h=>`<th style="padding:12px 14px;text-align:left;font-weight:600;">${h}</th>`).join('')}</tr></thead><tbody>${items.map((item,idx)=>{const net=item.quantity*item.unit_price*(1-item.discount_pct/100);const total=net*(1+item.tax_pct/100);const img=s.showProductImage?findProductImage(item):'';return `<tr style="background:${s.stripedRows&&idx%2===1?'#F8FAFC':'#FFF'};"><td style="padding:12px 14px;border-bottom:1px solid #E2E8F0;color:#64748B;">${idx+1}</td>${s.showProductImage?`<td style="padding:12px 14px;border-bottom:1px solid #E2E8F0;">${img?`<img src="${img}" style="width:32px;height:32px;object-fit:cover;border-radius:6px;border:1px solid #E2E8F0;">`:''}</td>`:''}${s.showProductCode?`<td style="padding:12px 14px;border-bottom:1px solid #E2E8F0;font-family:monospace;">${item.product_code||'-'}</td>`:''}<td style="padding:12px 14px;border-bottom:1px solid #E2E8F0;"><div style="font-weight:600;">${item.product_name||'-'}</div>${item.description?`<div style="font-size:11px;color:#64748B;">${item.description}</div>`:''}</td><td style="padding:12px 14px;border-bottom:1px solid #E2E8F0;">${item.quantity}</td><td style="padding:12px 14px;border-bottom:1px solid #E2E8F0;">${fmt(item.unit_price)}</td>${s.showDiscount?`<td style="padding:12px 14px;border-bottom:1px solid #E2E8F0;color:${item.discount_pct>0?'#16A34A':'#94A3B8'};">${item.discount_pct>0?`${item.discount_pct}%`:'-'}</td>`:''} ${s.showTax?`<td style="padding:12px 14px;border-bottom:1px solid #E2E8F0;color:#64748B;">${item.tax_pct>0?`${item.tax_pct}%`:'-'}</td>`:''}<td style="padding:12px 14px;border-bottom:1px solid #E2E8F0;font-weight:600;">${fmt(total)}</td></tr>`;}).join('')}</tbody></table></div>`;
       case 'totals': return `<div style="background:${s.bgColor};padding:20px 50px;display:flex;justify-content:flex-end;"><div style="width:320px;font-size:14px;">${[[`Subtotal`,fmt(subtotal)],totalDisc>0?['Line Discounts',`- ${fmt(totalDisc)}`]:null,overallDisc>0?[`Overall Disc (${quote.overall_discount}%)`,`- ${fmt(overallDisc)}`]:null,s.showTax&&totalTax>0?['Tax',`+ ${fmt(totalTax)}`]:null,s.showShipping&&shipping>0?['Shipping',`+ ${fmt(shipping)}`]:null].filter(Boolean).map(([l,v])=>`<div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid #E2E8F0;"><span style="color:#64748B;">${l}</span><span style="font-weight:600;">${v}</span></div>`).join('')}<div style="display:flex;justify-content:space-between;padding:14px;margin-top:8px;background:${s.accentColor};color:#FFF;border-radius:8px;font-size:16px;"><span style="font-weight:700;">GRAND TOTAL</span><span style="font-weight:700;">${fmt(grandTotal)}</span></div></div></div>`;
       case 'terms': return s.content?`<div style="padding:25px 50px;border-top:1px solid #E2E8F0;"><div style="font-size:11px;font-weight:700;text-transform:uppercase;color:#64748B;margin-bottom:10px;">Terms & Conditions</div><div style="font-size:12px;color:#475569;line-height:1.8;">${s.content}</div></div>`:'';
       case 'footer': return `<div style="background:${s.bgColor};color:${s.textColor};padding:30px 50px;margin-top:20px;"><div style="display:flex;justify-content:space-between;align-items:flex-end;"><div style="font-size:12px;opacity:0.7;">${s.footerText||''}${quote.owner_display?`<br>Prepared by: ${quote.owner_display}`:''}</div>${s.showSignature?`<div style="text-align:center;"><div style="border-top:1px solid ${s.textColor};padding-top:8px;width:200px;font-size:12px;opacity:0.8;">${s.signatureLabel||'Authorized Signature'}</div></div>`:''}</div></div>`;
@@ -102,6 +114,15 @@ function QuoteLineItems({ items, setItems, products, currency }) {
   const sCls = 'w-full border border-blue-200 rounded-lg px-2 py-2 text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-blue-400 text-xs';
 
   const add    = () => setItems(p => [...p, { _id:Date.now(), product_name:'', product_code:'', description:'', quantity:1, unit_price:0, list_price:0, discount_pct:0, tax_pct:18, extended_price:0, configuration:{} }]);
+  // Live availability lookup — always reads the current products array rather
+  // than a stored snapshot, so stock changes elsewhere reflect immediately.
+  const getAvailability = (row) => {
+    const pr = products.find(x => x.name === (row.product_name || row.product));
+    if (!pr || pr.track_inventory === false) return null; // no tracking for this product (e.g. a service)
+    const available = Number(pr.stock_quantity || 0);
+    const short = row.quantity > available;
+    return { available, short, low: !short && available <= Number(pr.reorder_level ?? 10) };
+  };
   const openConfig = (idx) => {
     const row=items[idx]; const pr=products.find(x=>x.name===(row.product_name||row.product));
     if(!pr)return;
@@ -136,12 +157,14 @@ function QuoteLineItems({ items, setItems, products, currency }) {
       <div className="overflow-x-auto">
         <table className="w-full text-xs">
           <thead><tr className="bg-blue-50 border-b border-blue-100">
-            {['Product','Description','Qty','List Price','Unit Price','Disc %','Tax %','Extended',''].map(h=><th key={h} className="px-3 py-2.5 text-left font-bold text-gray-500 uppercase whitespace-nowrap">{h}</th>)}
+            {['Product','Description','Qty','Available','List Price','Unit Price','Disc %','Tax %','Extended',''].map(h=><th key={h} className="px-3 py-2.5 text-left font-bold text-gray-500 uppercase whitespace-nowrap">{h}</th>)}
           </tr></thead>
           <tbody>
             {items.length===0
-              ? <tr><td colSpan={9} className="px-5 py-8 text-center text-gray-400">No line items. Click + Add Line.</td></tr>
-              : items.map((row,idx)=>(
+              ? <tr><td colSpan={10} className="px-5 py-8 text-center text-gray-400">No line items. Click + Add Line.</td></tr>
+              : items.map((row,idx)=>{
+                const avail = getAvailability(row);
+                return (
                 <tr key={row._id??idx} className="border-t border-blue-50 hover:bg-blue-50/30">
                   <td className="px-3 py-2" style={{minWidth:180}}>
                   <div className="flex items-center gap-1">
@@ -159,7 +182,14 @@ function QuoteLineItems({ items, setItems, products, currency }) {
                   {Object.keys(row.configuration||{}).length>0&&<div className="text-xs text-blue-600 mt-0.5 truncate">✓ {Object.keys(row.configuration).length} configured</div>}
                 </td>
                   <td className="px-3 py-2" style={{minWidth:140}}><input value={row.description||''} onChange={e=>upd(idx,'description',e.target.value)} placeholder="Description" className={iCls}/></td>
-                  <td className="px-3 py-2 w-16"><input type="number" min={1} value={row.quantity} onChange={e=>upd(idx,'quantity',e.target.value)} className={`${iCls} text-center`}/></td>
+                  <td className="px-3 py-2 w-16"><input type="number" min={1} value={row.quantity} onChange={e=>upd(idx,'quantity',e.target.value)} className={`${iCls} text-center ${avail?.short?'border-red-300 bg-red-50':''}`}/></td>
+                  <td className="px-3 py-2 w-24 whitespace-nowrap">
+                    {avail === null ? <span className="text-gray-300">—</span> : (
+                      <span className={`text-xs font-bold px-2 py-1 rounded-full ${avail.short?'bg-red-100 text-red-600':avail.low?'bg-amber-100 text-amber-600':'bg-green-100 text-green-600'}`} title={avail.short?`Only ${avail.available} in stock — quote exceeds availability`:avail.low?'Low stock':'In stock'}>
+                        {avail.short?`⚠ ${avail.available} left`:avail.low?`⚡ ${avail.available} left`:`✓ ${avail.available} in stock`}
+                      </span>
+                    )}
+                  </td>
                   <td className="px-3 py-2 text-right text-gray-400 whitespace-nowrap">{fmt(row.list_price)}</td>
                   <td className="px-3 py-2 w-24"><input type="number" min={0} value={row.unit_price} onChange={e=>upd(idx,'unit_price',e.target.value)} className={`${iCls} text-right`}/></td>
                   <td className="px-3 py-2 w-16"><input type="number" min={0} max={100} value={row.discount_pct} onChange={e=>upd(idx,'discount_pct',e.target.value)} className={`${iCls} text-center ${row.discount_pct>0?'border-green-300 bg-green-50':''}`}/></td>
@@ -167,15 +197,15 @@ function QuoteLineItems({ items, setItems, products, currency }) {
                   <td className="px-3 py-2 text-right font-bold text-[#0F172A] whitespace-nowrap">{fmt(row.extended_price)}</td>
                   <td className="px-2 py-2"><button onClick={()=>remove(idx)} className="w-6 h-6 rounded-full bg-red-100 hover:bg-red-200 text-red-500 text-xs font-bold flex items-center justify-center">✕</button></td>
                 </tr>
-              ))
+              );})
             }
           </tbody>
           {items.length>0&&(
             <tfoot className="border-t-2 border-blue-100">
-              <tr className="bg-gray-50"><td colSpan={7} className="px-5 py-2 text-right text-xs text-gray-500 font-medium">Subtotal</td><td className="px-3 py-2 text-right text-xs font-semibold">{fmt(subtotal)}</td><td/></tr>
-              {totalDisc>0&&<tr className="bg-green-50"><td colSpan={7} className="px-5 py-2 text-right text-xs text-green-600">Total Discount</td><td className="px-3 py-2 text-right text-xs font-semibold text-green-600">- {fmt(totalDisc)}</td><td/></tr>}
-              {totalTax>0&&<tr className="bg-blue-50"><td colSpan={7} className="px-5 py-2 text-right text-xs text-blue-600">Total Tax</td><td className="px-3 py-2 text-right text-xs font-semibold text-blue-600">+ {fmt(totalTax)}</td><td/></tr>}
-              <tr className="bg-[#0F172A]"><td colSpan={7} className="px-5 py-3 text-right font-bold text-white text-sm">Net Total</td><td className="px-3 py-3 text-right font-bold text-white text-base">{fmt(subtotal-totalDisc+totalTax)}</td><td/></tr>
+              <tr className="bg-gray-50"><td colSpan={8} className="px-5 py-2 text-right text-xs text-gray-500 font-medium">Subtotal</td><td className="px-3 py-2 text-right text-xs font-semibold">{fmt(subtotal)}</td><td/></tr>
+              {totalDisc>0&&<tr className="bg-green-50"><td colSpan={8} className="px-5 py-2 text-right text-xs text-green-600">Total Discount</td><td className="px-3 py-2 text-right text-xs font-semibold text-green-600">- {fmt(totalDisc)}</td><td/></tr>}
+              {totalTax>0&&<tr className="bg-blue-50"><td colSpan={8} className="px-5 py-2 text-right text-xs text-blue-600">Total Tax</td><td className="px-3 py-2 text-right text-xs font-semibold text-blue-600">+ {fmt(totalTax)}</td><td/></tr>}
+              <tr className="bg-[#0F172A]"><td colSpan={8} className="px-5 py-3 text-right font-bold text-white text-sm">Net Total</td><td className="px-3 py-3 text-right font-bold text-white text-base">{fmt(subtotal-totalDisc+totalTax)}</td><td/></tr>
             </tfoot>
           )}
         </table>
@@ -205,6 +235,8 @@ function QuotationDetail({ quote, onClose, onSaved }) {
     checkMatchingApprovalProcess, submitForApproval, processApproval,
     approvalRequests, appPreferences, exchangeRates,
   } = useApp();
+  const { supabase } = useTenant();
+  const { showAlert, showConfirm } = useAlert();
 
   const [form,           setForm]           = useState({ ...quote });
 
@@ -218,13 +250,13 @@ function QuotationDetail({ quote, onClose, onSaved }) {
   const [creatingOrder,  setCreatingOrder]  = useState(false);
   const [matchingProcess,setMatchingProcess]= useState(null);
   const [dialog,         setDialog]         = useState(null); // { type, data }
-  const [displayCurrency,setDisplayCurrency]= useState(quote.currency || appPreferences.default_currency || 'INR');
+  const [displayCurrency,setDisplayCurrency]= useState(quote.currency || appPreferences?.default_currency || 'INR');
 
   useEffect(() => {
     const load = async () => {
       if (!supabase) return;
-      const { data } = await supabase.from('quotation_line_items').select('*').eq('quote_number', quote.quote_number).order('sort_order');
-      setItems((data||[]).map(r => ({ _id:r.id, product_name:r.product_name||'', product_code:r.product_code||'', description:r.description||'', quantity:Number(r.quantity||1), unit_price:Number(r.unit_price||0), list_price:Number(r.list_price||0), discount_pct:Number(r.discount_pct||0), tax_pct:Number(r.tax_pct||0), extended_price:Number(r.extended_price||0) })));
+      const { data } = await tenantScope(supabase.from('quotation_line_items').select('*')).eq('quote_number', quote.quote_number).order('sort_order');
+      setItems((data||[]).map(r => ({ id:r.id, _id:r.id, product_name:r.product_name||'', product_code:r.product_code||'', description:r.description||'', quantity:Number(r.quantity||1), unit_price:Number(r.unit_price||0), list_price:Number(r.list_price||0), discount_pct:Number(r.discount_pct||0), tax_pct:Number(r.tax_pct||0), extended_price:Number(r.extended_price||0), ordered_qty:Number(r.ordered_qty||0) })));
       setLoading(false);
       const proc = await checkMatchingApprovalProcess('quotations', { ...quote });
       setMatchingProcess(proc);
@@ -293,12 +325,37 @@ function QuotationDetail({ quote, onClose, onSaved }) {
     if (onSaved) onSaved();
   };
 
-  const doCreateOrder = async () => {
+  const doCreateOrder = async (selections) => {
+    // Availability pre-check: warn (don't silently block) if any selected
+    // line exceeds current stock, so quote→order conversion never surprises
+    // the user with an order they can't actually fulfill.
+    const shortages = (selections||[]).map(sel => {
+      const line = items.find(i => i.id === sel._id || i._id === sel._id);
+      if (!line) return null;
+      const pr = products.find(p => p.name === line.product_name);
+      if (!pr || pr.track_inventory === false) return null; // not tracked — skip
+      const available = Number(pr.stock_quantity || 0);
+      return sel.qty > available ? { name: line.product_name, qty: sel.qty, available } : null;
+    }).filter(Boolean);
+
+    if (shortages.length) {
+      const msg = 'The following items exceed available stock:\n' +
+        shortages.map(sh => `• ${sh.name}: ordering ${sh.qty}, only ${sh.available} in stock`).join('\n') +
+        '\n\nCreate the order anyway?';
+      const ok = await showConfirm(msg, { title:'Stock Availability Warning', variant:'warning', confirmLabel:'Create Anyway' });
+      if (!ok) return;
+    }
+
     setDialog(null);
     setCreatingOrder(true);
-    const ordId = await createOrderFromQuotation({ ...form, grand_total:grandTotal });
+    const ordId = await createOrderFromQuotation({ ...form, grand_total:grandTotal }, selections);
     setCreatingOrder(false);
-    if (ordId) { s('status','Ordered'); if (onSaved) onSaved(); onClose(); }
+    if (ordId) {
+      const { data: fresh } = await tenantScope(supabase.from('quotations').select('status')).eq('quote_number', form.quote_number).maybeSingle();
+      if (fresh?.status) s('status', fresh.status);
+      if (onSaved) onSaved();
+      onClose();
+    }
   };
 
   const doNewVersion = async () => {
@@ -359,6 +416,12 @@ function QuotationDetail({ quote, onClose, onSaved }) {
             () => setDialog({ type:'order' }),
             'bg-green-600 hover:bg-green-700'),
         ];
+      case 'Partially Ordered':
+        return [
+          btn('Continue Ordering', '🛒',
+            () => setDialog({ type:'order' }),
+            'bg-teal-600 hover:bg-teal-700'),
+        ];
       case 'Ordered':
       case 'Rejected':
       case 'Expired':
@@ -401,6 +464,15 @@ function QuotationDetail({ quote, onClose, onSaved }) {
                   <span>{statusMeta.icon}</span>{statusMeta.label}
                 </span>
                 <span className="bg-white/20 text-white text-xs font-semibold px-3 py-1 rounded-full">v{form.version||1}</span>
+                {['Partially Ordered','Ordered'].includes(form.status) && items.length>0 && (() => {
+                  const totalQty = items.reduce((s,i)=>s+Number(i.quantity||0),0);
+                  const orderedQty = items.reduce((s,i)=>s+Math.min(Number(i.ordered_qty||0),Number(i.quantity||0)),0);
+                  return (
+                    <span className="bg-teal-500/30 text-teal-100 text-xs font-bold px-3 py-1 rounded-full border border-teal-400/40">
+                      📦 {orderedQty} of {totalQty} units ordered
+                    </span>
+                  );
+                })()}
                 {ownerUser && <span className="bg-white/10 text-white text-xs px-3 py-1 rounded-full">👤 {ownerUser.first_name} {ownerUser.last_name}</span>}
               </div>
               <p className="text-blue-300 text-sm mt-1 flex items-center gap-2 flex-wrap">
@@ -417,7 +489,7 @@ function QuotationDetail({ quote, onClose, onSaved }) {
                   const template = quoteTemplates.find(t=>t.id===form.template_id) || quoteTemplates.find(t=>t.isDefault) || quoteTemplates[0];
                   const oUser = enterpriseUsers.find(u=>u.id===form.owner_id||u.email===form.owner);
                   const qd = { ...form, subtotal, grand_total:grandTotal, owner_display: oUser?`${oUser.first_name} ${oUser.last_name}`:(form.owner||'') };
-                  const html = buildQuoteHTML(qd, items, template);
+                  const html = buildQuoteHTML(qd, items, template, products);
                   let iframe = document.getElementById('pdf-preview-frame');
                   if (!iframe) { iframe=document.createElement('iframe'); iframe.id='pdf-preview-frame'; iframe.style.cssText='position:fixed;top:0;left:0;width:100%;height:100%;border:none;z-index:9999;background:white;'; document.body.appendChild(iframe); }
                   iframe.srcdoc=html; iframe.style.display='block';
@@ -426,7 +498,7 @@ function QuotationDetail({ quote, onClose, onSaved }) {
                     const cb=document.createElement('button'); cb.id='pdf-close-btn'; cb.textContent='✕ Close Preview'; cb.style.cssText='position:fixed;top:16px;right:16px;z-index:10000;background:#0F172A;color:white;border:none;padding:10px 20px;border-radius:12px;font-size:14px;font-weight:bold;cursor:pointer;'; cb.onclick=()=>{iframe.style.display='none';cb.style.display='none';pb.style.display='none';}; document.body.appendChild(cb);
                     const pb=document.createElement('button'); pb.id='pdf-print-btn'; pb.textContent='🖨️ Print / Save PDF'; pb.style.cssText='position:fixed;top:16px;right:180px;z-index:10000;background:#16A34A;color:white;border:none;padding:10px 20px;border-radius:12px;font-size:14px;font-weight:bold;cursor:pointer;'; pb.onclick=()=>{iframe.contentWindow?.focus();iframe.contentWindow?.print();}; document.body.appendChild(pb);
                   }
-                } catch(e){alert('PDF error: '+e.message);} finally{setPrinting(false);}
+                } catch(e){showAlert('PDF error: '+e.message, { variant:'danger', title:'PDF Generation Failed' });} finally{setPrinting(false);}
               }} disabled={printing} className="bg-white/20 hover:bg-white/30 text-white px-4 py-2 rounded-xl text-sm font-semibold flex items-center gap-2">
                 {printing?'⏳':'🖨️'} {printing?'Generating...':'PDF Preview'}
               </button>
@@ -647,12 +719,16 @@ function QuotationDetail({ quote, onClose, onSaved }) {
           <textarea rows={3} value={rejectReason} onChange={e=>setRejectReason(e.target.value)} placeholder="Enter rejection reason..." className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm text-[#0F172A] focus:outline-none focus:ring-2 focus:ring-red-400 resize-none"/></div>
       </ConfirmDialog>
 
-      {/* Create Order */}
-      <ConfirmDialog open={dialog?.type==='order'}
+      {/* Create Order (supports partial fulfillment) */}
+      <BalanceConversionModal
+        open={dialog?.type==='order'}
+        onClose={()=>setDialog(null)}
+        onConfirm={doCreateOrder}
         title="Create Order"
-        message={`Create an Order from "${form.name}" (${form.quote_number})? All ${items.length} line items and pricing will be copied. The quotation will be marked as Accepted.`}
         confirmLabel="Create Order" confirmClass="bg-green-600 hover:bg-green-700"
-        onConfirm={doCreateOrder} onCancel={()=>setDialog(null)}/>
+        items={items} doneField="ordered_qty" priceField="unit_price" currency={form.currency||'INR'}
+        submitting={creatingOrder}
+      />
 
       {/* New Version */}
       <ConfirmDialog open={dialog?.type==='revise'}
@@ -676,7 +752,8 @@ function QuotationDetail({ quote, onClose, onSaved }) {
 
 // ─── Quotations List Page ──────────────────────────────────────────────────────
 export default function QuotationsPage() {
-  const { quotations, fetchQuotations, customers, createQuotation, deleteQuotation, appPreferences } = useApp();
+  const { quotations, fetchQuotations, customers, createQuotation, deleteQuotation, appPreferences, fetchListCount } = useApp();
+  const { showAlert, showConfirm } = useAlert();
   const [selectedQuote, setSelectedQuote] = useState(null);
   const [createOpen,    setCreateOpen]    = useState(false);
   const [quickCreate,   setQuickCreate]   = useState(null);
@@ -693,8 +770,27 @@ export default function QuotationsPage() {
 
 
   const [search,        setSearch]        = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [statusFilter,  setStatusFilter]  = useState('All');
   const [saving,        setSaving]        = useState(false);
+  const [pageSize,      setPageSize]      = useState(25);
+  const [currentPage,   setCurrentPage]   = useState(1);
+  const [serverTotal,   setServerTotal]   = useState(null);
+
+  // Debounce search input (300ms) so filtering doesn't recompute on every
+  // keystroke against a potentially large in-memory array.
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(search), 300);
+    return () => clearTimeout(t);
+  }, [search]);
+
+  // Server-side exact row count — accurate even though `quotations` is capped
+  // at LIST_FETCH_LIMIT client-side (see the pagination TODO in AppContext.tsx).
+  useEffect(() => {
+    let cancelled = false;
+    fetchListCount('quotations').then(c => { if (!cancelled) setServerTotal(c); });
+    return () => { cancelled = true; };
+  }, []);
 
   const sf = (k,v) => setForm(p => ({...p,[k]:v}));
   const iCls = 'w-full border border-blue-200 rounded-xl px-3 py-2.5 text-[#0F172A] bg-white focus:outline-none focus:ring-2 focus:ring-blue-400 text-sm placeholder:text-gray-400';
@@ -702,10 +798,17 @@ export default function QuotationsPage() {
 
   const filtered = useMemo(() => {
     let data = quotations;
-    if (search.trim()) { const q=search.toLowerCase(); data=data.filter(r=>[r.name,r.quote_number,r.customer].some(v=>String(v||'').toLowerCase().includes(q))); }
+    if (debouncedSearch.trim()) { const q=debouncedSearch.toLowerCase(); data=data.filter(r=>[r.name,r.quote_number,r.customer].some(v=>String(v||'').toLowerCase().includes(q))); }
     if (statusFilter !== 'All') data = data.filter(r => r.status === statusFilter);
     return data;
-  }, [quotations, search, statusFilter]);
+  }, [quotations, debouncedSearch, statusFilter]);
+
+  const totalRecords = filtered.length;
+  const totalPages   = Math.max(1, Math.ceil(totalRecords / pageSize));
+  const safePage      = Math.min(currentPage, totalPages);
+  const pagedQuotes   = filtered.slice((safePage-1)*pageSize, safePage*pageSize);
+
+  useEffect(() => { setCurrentPage(1); }, [debouncedSearch, statusFilter]);
 
   const fmtCur = n => new Intl.NumberFormat('en-IN',{style:'currency',currency:appPreferences.default_currency||'INR',maximumFractionDigits:0}).format(n||0);
 
@@ -739,6 +842,14 @@ export default function QuotationsPage() {
         </select>
       </div>
 
+      {/* Truncation warning — loaded rows capped but the table has more */}
+      {serverTotal !== null && quotations.length >= 500 && serverTotal > quotations.length && (
+        <div className="px-5 py-2.5 bg-amber-50 border border-amber-100 rounded-2xl flex items-center gap-2 text-xs text-amber-700">
+          <span>⚠️</span>
+          <span>Showing the {quotations.length.toLocaleString()} most recent quotations of <strong>{serverTotal.toLocaleString()}</strong> total — search and filters only apply to loaded records.</span>
+        </div>
+      )}
+
       {/* Table */}
       <div className="bg-white rounded-[24px] border border-blue-100 shadow-lg overflow-hidden">
         <div className="overflow-x-auto">
@@ -749,7 +860,7 @@ export default function QuotationsPage() {
             <tbody>
               {filtered.length===0
                 ? <tr><td colSpan={8} className="px-5 py-16 text-center"><div className="text-5xl mb-3">📄</div><div className="font-bold text-[#0F172A] text-lg mb-2">No quotations yet</div><p className="text-gray-400">Create a quotation or generate one from an Opportunity.</p></td></tr>
-                : filtered.map(q => {
+                : pagedQuotes.map(q => {
                     const sm = STATUS_META[q.status] || STATUS_META['Draft'];
                     return (
                       <tr key={q.id} className="border-t border-blue-50 hover:bg-blue-50/40">
@@ -767,7 +878,7 @@ export default function QuotationsPage() {
                         <td className="px-5 py-3.5">
                           <div className="flex gap-2">
                             <button onClick={()=>setSelectedQuote(q)} className="bg-blue-100 hover:bg-blue-200 text-blue-700 px-3 py-1.5 rounded-xl text-xs font-semibold">Open</button>
-                            <button onClick={()=>{ if(window.confirm('Delete this quotation?')) deleteQuotation(q.id); }} className="bg-red-100 hover:bg-red-200 text-red-500 px-3 py-1.5 rounded-xl text-xs font-semibold">Delete</button>
+                            <button onClick={async()=>{ if(await showConfirm('Delete this quotation? This cannot be undone.', { variant:'danger', confirmLabel:'Delete', title:'Delete Quotation' })) deleteQuotation(q.id); }} className="bg-red-100 hover:bg-red-200 text-red-500 px-3 py-1.5 rounded-xl text-xs font-semibold">Delete</button>
                           </div>
                         </td>
                       </tr>
@@ -777,6 +888,38 @@ export default function QuotationsPage() {
             </tbody>
           </table>
         </div>
+
+        {/* Pagination footer */}
+        {totalRecords > 0 && (
+          <div className="px-6 py-3 border-t border-blue-50 bg-white flex items-center justify-between flex-wrap gap-3">
+            <div className="flex items-center gap-3">
+              <span className="text-xs text-gray-400">
+                Showing <strong className="text-[#0F172A]">{(safePage-1)*pageSize+1}–{Math.min(safePage*pageSize,totalRecords)}</strong> of <strong className="text-[#0F172A]">{totalRecords}</strong> quotations
+              </span>
+              <select value={pageSize} onChange={e=>{setPageSize(Number(e.target.value));setCurrentPage(1);}}
+                className="border border-blue-200 rounded-lg px-2 py-1 text-xs text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-blue-400">
+                {[10,25,50,100].map(n=><option key={n} value={n}>{n} per page</option>)}
+              </select>
+            </div>
+            {totalPages > 1 && (
+              <div className="flex items-center gap-1">
+                <button onClick={()=>setCurrentPage(1)} disabled={safePage===1} className="px-2 py-1 rounded-lg text-xs font-semibold text-gray-500 hover:bg-blue-50 disabled:opacity-30">«</button>
+                <button onClick={()=>setCurrentPage(p=>Math.max(1,p-1))} disabled={safePage===1} className="px-3 py-1 rounded-lg text-xs font-semibold text-gray-500 hover:bg-blue-50 disabled:opacity-30">‹ Prev</button>
+                {Array.from({length:Math.min(5,totalPages)},(_,i)=>{
+                  const pg = Math.max(1,Math.min(totalPages-4,safePage-2))+i;
+                  return (
+                    <button key={pg} onClick={()=>setCurrentPage(pg)}
+                      className={`px-3 py-1 rounded-lg text-xs font-bold transition-all ${pg===safePage?'bg-[#0F172A] text-white':'text-gray-500 hover:bg-blue-50'}`}>
+                      {pg}
+                    </button>
+                  );
+                })}
+                <button onClick={()=>setCurrentPage(p=>Math.min(totalPages,p+1))} disabled={safePage===totalPages} className="px-3 py-1 rounded-lg text-xs font-semibold text-gray-500 hover:bg-blue-50 disabled:opacity-30">Next ›</button>
+                <button onClick={()=>setCurrentPage(totalPages)} disabled={safePage===totalPages} className="px-2 py-1 rounded-lg text-xs font-semibold text-gray-500 hover:bg-blue-50 disabled:opacity-30">»</button>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Detail panel */}
@@ -805,7 +948,7 @@ export default function QuotationsPage() {
             </div>
             <div className="px-8 py-5 border-t border-blue-100 flex justify-end gap-3">
               <button onClick={()=>setCreateOpen(false)} className="px-6 py-3 text-sm rounded-2xl font-semibold bg-white border border-blue-200 text-[#0F172A] hover:bg-blue-50">Cancel</button>
-              <button onClick={async()=>{if(!form.name?.trim()){alert('Name required.');return;}setSaving(true);const q=await createQuotation(form,[]);setSaving(false);if(q){setCreateOpen(false);setSelectedQuote(q);}}} disabled={saving} className="px-6 py-3 text-sm rounded-2xl font-semibold bg-gradient-to-r from-[#0F172A] to-blue-800 text-white hover:opacity-90 disabled:opacity-50 shadow-lg">
+              <button onClick={async()=>{if(!form.name?.trim()){showAlert('Name required.', { variant:'warning' });return;}setSaving(true);const q=await createQuotation(form,[]);setSaving(false);if(q){setCreateOpen(false);setSelectedQuote(q);}}} disabled={saving} className="px-6 py-3 text-sm rounded-2xl font-semibold bg-gradient-to-r from-[#0F172A] to-blue-800 text-white hover:opacity-90 disabled:opacity-50 shadow-lg">
                 {saving?'Creating...':'Create Quotation'}
               </button>
             </div>

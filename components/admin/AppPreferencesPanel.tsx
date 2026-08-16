@@ -138,7 +138,7 @@ export default function AppPreferencesPanel() {
 
       {/* Password confirmation modal */}
       {showPwModal && (
-        <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-black/50">
           <div className="bg-white rounded-[24px] shadow-2xl p-8 max-w-sm w-full text-center">
             <div className="text-4xl mb-3">🔒</div>
             <h3 className="font-bold text-[#0F172A] text-lg mb-1">Confirm Changes</h3>

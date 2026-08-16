@@ -4,7 +4,7 @@
 import { useState, useEffect } from 'react';
 import { useApp } from '@/context/AppContext';
 import { useTenant } from '@/context/TenantContext';
-import { formatDateTime, getStatusColor } from '@/lib/utils';
+import { formatDateTime, getStatusColor, tenantScope } from '@/lib/utils';
 
 export default function ApprovalsInboxPage() {
   const { currentUser, approvalRequests, processApproval, fetchApprovalRequests } = useApp();
@@ -19,14 +19,14 @@ export default function ApprovalsInboxPage() {
   const load = async () => {
     if (!supabase || !currentUser) return;
     setLoading(true);
-    const { data: pending } = await supabase.from('approval_requests').select('*').eq('status','Pending').order('submitted_at',{ascending:false});
+    const { data: pending } = await tenantScope(supabase.from('approval_requests').select('*')).eq('status','Pending').order('submitted_at',{ascending:false});
     const approvable = [];
     for (const req of (pending||[])) {
       const { data: step } = await supabase.from('approval_steps').select('*').eq('id', req.current_step_id).single();
       if (step?.approver_user_id === currentUser.id) approvable.push({ ...req, step });
     }
     setMyRequests(approvable);
-    const { data: mine } = await supabase.from('approval_requests').select('*').eq('submitted_by', currentUser.email).order('submitted_at',{ascending:false});
+    const { data: mine } = await tenantScope(supabase.from('approval_requests').select('*')).eq('submitted_by', currentUser.email).order('submitted_at',{ascending:false});
     setAllRequests(mine||[]);
     setLoading(false);
   };

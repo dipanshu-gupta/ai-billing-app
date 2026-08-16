@@ -5,6 +5,7 @@
 import { useApp } from '@/context/AppContext';
 import { useTenant } from '@/context/TenantContext';
 import { useEffect, useState } from 'react';
+import { tenantScope } from '@/lib/utils';
 
 // ─── SLA Badge ────────────────────────────────────────────────────────────────
 
@@ -19,7 +20,7 @@ export function SLABadge({ recordType, recordId }: SLABadgeProps) {
 
   useEffect(() => {
     if (!supabase) return;
-    supabase.from('sla_records').select('*')
+    tenantScope(supabase.from('sla_records').select('*'))
       .eq('record_type', recordType).eq('record_id', recordId).eq('status', 'Active').single()
       .then(({ data }) => setSlaRecord(data));
   }, [recordId]);

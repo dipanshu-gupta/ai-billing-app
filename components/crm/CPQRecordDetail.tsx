@@ -10,6 +10,9 @@ import { getStatusOptions, getStatusColor, getPageLabel, formatDateTime, formatD
 import AISummary from '@/components/ai/AISummary';
 import AddressSelector from '@/components/shared/AddressSelector';
 import SearchableSelect from '@/components/shared/SearchableSelect';
+import BalanceConversionModal from '@/components/shared/BalanceConversionModal';
+import { buildInvoiceHTML } from '@/lib/buildInvoiceHTML';
+import { useAlert } from '@/components/shared/AlertProvider';
 
 const iCls = 'w-full border border-blue-200 rounded-xl px-3 py-2.5 text-[#0F172A] bg-white focus:outline-none focus:ring-2 focus:ring-blue-400 text-sm placeholder:text-gray-400';
 const sCls = 'w-full border border-blue-200 rounded-xl px-3 py-2.5 text-[#0F172A] bg-white focus:outline-none focus:ring-2 focus:ring-blue-400 text-sm';
@@ -21,6 +24,8 @@ const STATUS_COLORS = {
   Confirmed:'bg-purple-100 text-purple-700 border-purple-200',
   Shipped:'bg-indigo-100 text-indigo-700 border-indigo-200',
   Delivered:'bg-green-100 text-green-700 border-green-200',
+  Invoiced:'bg-teal-100 text-teal-700 border-teal-200',
+  'Partially Invoiced':'bg-teal-50 text-teal-600 border-teal-200',
   Cancelled:'bg-red-100 text-red-700 border-red-200',
   Pending:'bg-yellow-100 text-yellow-700 border-yellow-200',
   Paid:'bg-emerald-100 text-emerald-700 border-emerald-200',
@@ -134,8 +139,10 @@ export default function CPQRecordDetail({ page, record, onClose }) {
     customers, contacts, products, enterpriseUsers, organizations, businessUnits,
     updateRecord, createInvoiceFromOrder, appPreferences,
     checkMatchingApprovalProcess, submitForApproval, approvalRequests,
+    invoiceTemplates,
   } = useApp();
   const { supabase } = useTenant();
+  const { showAlert, showConfirm } = useAlert();
 
   const [edited,          setEdited]          = useState({ ...record });
   const [items,           setItems]           = useState([]);
@@ -147,6 +154,9 @@ export default function CPQRecordDetail({ page, record, onClose }) {
   const [quickCreate,     setQuickCreate]     = useState(null);
   const [pendingCustomers,setPendingCustomers]= useState([]);
   const [pendingContacts, setPendingContacts] = useState([]);
+  const [showInvoiceModal, setShowInvoiceModal] = useState(false);
+  const [creatingInvoice,  setCreatingInvoice]  = useState(false);
+  const [printingInvoice,  setPrintingInvoice]  = useState(false);
 
   // Map table names
   const LI_TABLE  = page === 'orders' ? 'order_line_items'   : 'invoice_line_items';
@@ -157,6 +167,7 @@ export default function CPQRecordDetail({ page, record, onClose }) {
       if (!supabase) return;
       const { data } = await supabase.from(LI_TABLE).select('*').eq(LI_FIELD, record.id).order('sort_order');
       setItems((data||[]).map(r=>({
+        id: r.id,
         _id: r.id,
         product_name:  r.product_name  || '',
         product_code:  r.product_code  || '',
@@ -167,6 +178,7 @@ export default function CPQRecordDetail({ page, record, onClose }) {
         discount:      Number(r.discount   || 0),
         tax_pct:       Number(r.tax_pct    || 0),
         extended_price:Number(r.extended_price || r.quantity*r.price || 0),
+        invoiced_qty:  Number(r.invoiced_qty || 0),
       })));
       setLoading(false);
     };
@@ -218,7 +230,7 @@ export default function CPQRecordDetail({ page, record, onClose }) {
   const pageIcon    = page==='orders' ? '🛒' : '🧾';
 
   return (
-    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[110] overflow-y-auto">
+    <div className="fixed inset-0 bg-black/50 z-[110] overflow-y-auto">
       <div className="bg-white rounded-[28px] shadow-2xl w-[98vw] my-4 mx-auto overflow-hidden flex flex-col" style={{minHeight:'95vh'}}>
 
         {/* Header */}
@@ -228,6 +240,15 @@ export default function CPQRecordDetail({ page, record, onClose }) {
               <span className="text-3xl">{pageIcon}</span>
               <h2 className="text-2xl font-bold">{edited.name || formatDisplayNumber(PAGE_DISPLAY_PREFIX[page]||'REC', record.displayNumber) || record.id}</h2>
               <span className={`flex items-center gap-1.5 px-4 py-1.5 rounded-full text-sm font-bold border-2 ${statusMeta}`}>{edited.status}</span>
+              {page==='orders' && ['Partially Invoiced','Invoiced'].includes(edited.status) && items.length>0 && (() => {
+                const totalQty = items.reduce((s,i)=>s+Number(i.quantity||0),0);
+                const invoicedQty = items.reduce((s,i)=>s+Math.min(Number(i.invoiced_qty||0),Number(i.quantity||0)),0);
+                return (
+                  <span className="bg-teal-500/30 text-teal-100 text-xs font-bold px-3 py-1 rounded-full border border-teal-400/40">
+                    🧾 {invoicedQty} of {totalQty} units invoiced
+                  </span>
+                );
+              })()}
               {ownerUser && <span className="bg-white/10 text-white text-xs px-3 py-1 rounded-full">👤 {ownerUser.first_name} {ownerUser.last_name}</span>}
             </div>
             <p className="text-blue-300 text-sm mt-1 flex items-center gap-2 flex-wrap">
@@ -241,10 +262,51 @@ export default function CPQRecordDetail({ page, record, onClose }) {
               </p>
           </div>
           <div className="flex items-center gap-2">
-            {page==='orders' && <button onClick={()=>{createInvoiceFromOrder(record);onClose();}} className="bg-white/20 hover:bg-white/30 text-white px-4 py-2 rounded-xl text-sm font-semibold">🧾 Create Invoice</button>}
+            {page==='orders' && <button onClick={()=>setShowInvoiceModal(true)} className="bg-white/20 hover:bg-white/30 text-white px-4 py-2 rounded-xl text-sm font-semibold">🧾 Create Invoice</button>}
+            {page==='invoices' && <button onClick={async()=>{
+              setPrintingInvoice(true);
+              try {
+                const template = (invoiceTemplates||[]).find(t=>t.isDefault) || (invoiceTemplates||[])[0];
+                if (!template) { showAlert('No invoice template found. Create one in Admin Tools → B2B Enterprise → Invoice Templates.', { variant:'warning' }); return; }
+                if (!supabase) return;
+                const { data: liData } = await supabase.from('invoice_line_items').select('*').eq('invoice_number', record.id).order('sort_order');
+                const oUser = enterpriseUsers.find(u=>u.id===edited.owner_id||u.email===edited.owner);
+                const rec = { ...edited, owner_display: oUser?`${oUser.first_name} ${oUser.last_name}`:(edited.owner||'') };
+                const html = buildInvoiceHTML(rec, liData||[], template, products);
+                let iframe = document.getElementById('pdf-preview-frame');
+                if (!iframe) { iframe=document.createElement('iframe'); iframe.id='pdf-preview-frame'; iframe.style.cssText='position:fixed;top:0;left:0;width:100%;height:100%;border:none;z-index:9999;background:white;'; document.body.appendChild(iframe); }
+                iframe.srcdoc=html; iframe.style.display='block';
+                ['pdf-close-btn','pdf-print-btn'].forEach(id=>{ let el=document.getElementById(id); if(el){el.style.display='block';}});
+                if (!document.getElementById('pdf-close-btn')) {
+                  const cb=document.createElement('button'); cb.id='pdf-close-btn'; cb.textContent='✕ Close Preview'; cb.style.cssText='position:fixed;top:16px;right:16px;z-index:10000;background:#0F172A;color:white;border:none;padding:10px 20px;border-radius:12px;font-size:14px;font-weight:bold;cursor:pointer;'; cb.onclick=()=>{iframe.style.display='none';cb.style.display='none';pb.style.display='none';}; document.body.appendChild(cb);
+                  const pb=document.createElement('button'); pb.id='pdf-print-btn'; pb.textContent='🖨️ Print / Save PDF'; pb.style.cssText='position:fixed;top:16px;right:180px;z-index:10000;background:#16A34A;color:white;border:none;padding:10px 20px;border-radius:12px;font-size:14px;font-weight:bold;cursor:pointer;'; pb.onclick=()=>{iframe.contentWindow?.focus();iframe.contentWindow?.print();}; document.body.appendChild(pb);
+                }
+              } catch(e){showAlert('PDF error: '+e.message, { variant:'danger', title:'PDF Generation Failed' });} finally{setPrintingInvoice(false);}
+            }} disabled={printingInvoice} className="bg-white/20 hover:bg-white/30 text-white px-4 py-2 rounded-xl text-sm font-semibold flex items-center gap-2">
+              {printingInvoice?'⏳':'🖨️'} {printingInvoice?'Generating...':'PDF Preview'}
+            </button>}
             <button onClick={onClose} className="w-9 h-9 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-lg">✕</button>
           </div>
         </div>
+
+        {/* Create Invoice (supports partial invoicing) */}
+        {page==='orders' && (
+          <BalanceConversionModal
+            open={showInvoiceModal}
+            onClose={()=>setShowInvoiceModal(false)}
+            onConfirm={async (selections) => {
+              setCreatingInvoice(true);
+              const result = await createInvoiceFromOrder(record, selections);
+              setCreatingInvoice(false);
+              setShowInvoiceModal(false);
+              if (result) onClose();
+            }}
+            title="Create Invoice"
+            confirmLabel="Create Invoice" confirmClass="bg-green-600 hover:bg-green-700"
+            items={items} doneField="invoiced_qty" priceField="price" currency={edited.currency||'INR'}
+            submitting={creatingInvoice}
+          />
+        )}
 
         {/* Top action bar */}
         <div className="bg-white border-b border-blue-100 px-8 py-3 flex items-center justify-between flex-shrink-0">
@@ -292,7 +354,12 @@ export default function CPQRecordDetail({ page, record, onClose }) {
               {/* Status */}
               <div className="bg-white rounded-2xl border border-blue-100 p-4 shadow-sm">
                 <label className="text-xs font-bold uppercase tracking-wider text-gray-400 block mb-2">Status</label>
-                <select value={edited.status||''} onChange={e=>s('status',e.target.value)} className={sCls}>
+                <select value={edited.status||''} onChange={async e=>{
+                  const newStatus = e.target.value;
+                  if (newStatus === edited.status) return;
+                  const ok = await showConfirm(`Change status from "${edited.status||'—'}" to "${newStatus}"?`, { title:'Confirm Status Change', variant:'warning', confirmLabel:'Change Status' });
+                  if (ok) s('status', newStatus);
+                }} className={sCls}>
                   {statusOpts.map(st=><option key={st}>{st}</option>)}
                 </select>
               </div>

@@ -5,6 +5,7 @@ import { useState, useRef, useEffect } from 'react';
 import { useApp } from '@/context/AppContext';
 import { useTenant } from '@/context/TenantContext';
 import { THEMES, LANGUAGES } from '@/lib/i18n';
+import { useAlert } from '@/components/shared/AlertProvider';
 
 const FONT_OPTIONS = [
   { id:'geist',     name:'Geist (Default)',     sample:'Aa Bb Cc' },
@@ -17,6 +18,7 @@ const FONT_OPTIONS = [
 export default function AppearancePanel() {
   const { appearance, saveAppearance, currentUser } = useApp();
   const { supabase } = useTenant();
+  const { showAlert } = useAlert();
 
   const [logoUrl,       setLogoUrl]       = useState(appearance?.company_logo_url || '');
   const [companyName,   setCompanyName]   = useState(appearance?.company_name     || 'Umbrella Suite');
@@ -52,7 +54,7 @@ export default function AppearancePanel() {
     setUploading(true);
     try {
       // supabase is already available from useTenant() at top of component
-      if (!supabase) { alert('Supabase not configured'); return; }
+      if (!supabase) { showAlert('Supabase not configured', { variant:'danger' }); return; }
 
       const ext  = file.name.split('.').pop();
       // Include tenant slug in path to isolate logos per tenant
@@ -63,14 +65,14 @@ export default function AppearancePanel() {
         .from('company-assets')
         .upload(path, file, { upsert: true, contentType: file.type });
 
-      if (upErr) { alert('Upload failed: ' + upErr.message); return; }
+      if (upErr) { showAlert('Upload failed: ' + upErr.message, { variant:'danger', title:'Upload Failed' }); return; }
 
       const { data } = supabase.storage.from('company-assets').getPublicUrl(path);
       const url = data.publicUrl + '?t=' + Date.now(); // cache-bust
       setLogoUrl(url);
       setPreviewLogo(url);
     } catch(e: any) {
-      alert('Upload error: ' + e.message);
+      showAlert('Upload error: ' + e.message, { variant:'danger', title:'Upload Failed' });
     } finally {
       setUploading(false);
     }
