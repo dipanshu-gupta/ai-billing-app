@@ -79,17 +79,14 @@ const safeNum = (v: any) => {
 
 const safeInt = (v: any) => Math.round(safeNum(v));
 
+// Individual per-chart toggles were retired when the dashboard moved to a
+// tabbed structure — tabs already provide the "see what you need" focus that
+// widget show/hide used to (and several charts now legitimately appear in
+// more than one tab, where a single flag no longer maps cleanly). The AI
+// Insights card is the one thing still worth a global toggle since it lives
+// in the hero row above the tabs, visible regardless of which tab is active.
 const DASHBOARD_WIDGETS = [
-  { key:'ai_insights',      label:'✨ AI Insights' },
-  { key:'kpi_revenue',      label:'Revenue & Invoice KPIs' },
-  { key:'kpi_customers',    label:'Customer & Product KPIs' },
-  { key:'sales_trend',      label:'Sales Trend chart' },
-  { key:'loyalty_tiers',    label:'Customer Loyalty Tiers chart' },
-  { key:'payment_revenue',  label:'Revenue by Payment Method chart' },
-  { key:'invoice_status',   label:'Invoices by Status chart' },
-  { key:'top_categories',   label:'Products by Category chart' },
-  { key:'low_stock',        label:'Low Stock Alert' },
-  { key:'recent_invoices',  label:'Recent Invoices table' },
+  { key:'ai_insights', label:'✨ AI Insights' },
 ];
 const DEFAULT_WIDGETS = DASHBOARD_WIDGETS.map(w => w.key);
 
@@ -118,6 +115,7 @@ export default function RetailDashboard() {
   const show = (key: string) => visibleWidgets.includes(key);
 
   const [dateRange, setDateRange] = useState('month');
+  const [activeTab, setActiveTab] = useState('overview');
   // Bumped on tab focus/visibility so date-anchored memos recompute (stale-"Today" fix)
   const [dayTick, setDayTick] = useState(0);
 
@@ -417,55 +415,7 @@ export default function RetailDashboard() {
       .slice(0, 5),
     [retailProducts]);
 
-  // ── Palette ────────────────────────────────────────────────────────────────
-  const buildPalette = (tc: any, prefs: any) => {
-    const brand  = prefs?.brand_color  || tc?.sidebar || '#0F172A';
-    const accent = prefs?.accent_color || tc?.accent  || '#2563EB';
-    const darken = (hex: string, pct: number) => {
-      const n = parseInt(hex.replace('#',''), 16);
-      const r = Math.max(0, Math.min(255, ((n>>16)&0xFF) * (1-pct)));
-      const g = Math.max(0, Math.min(255, ((n>>8)&0xFF)  * (1-pct)));
-      const b = Math.max(0, Math.min(255, (n&0xFF)        * (1-pct)));
-      return '#' + [r,g,b].map((x: number) => Math.round(x).toString(16).padStart(2,'0')).join('');
-    };
-    return [
-      { from: brand,              to: darken(brand, 0.2) },
-      { from: accent,             to: darken(accent, 0.2) },
-      { from: darken(brand, 0.1), to: darken(brand, 0.3) },
-      { from: darken(accent, 0.1), to: darken(accent, 0.3) },
-      { from: darken(brand, 0.2), to: darken(brand, 0.4) },
-      { from: accent,             to: brand },
-      { from: brand,              to: accent },
-      { from: darken(accent, 0.15), to: darken(brand, 0.15) },
-    ];
-  };
-  const palette = buildPalette(appearance?.themeColors, appPreferences);
-
   // ── Sub-components ─────────────────────────────────────────────────────────
-  const StatCard = ({ label, value, sub, icon, paletteIdx = 0, trend = null }) => {
-    const brand = appPreferences?.brand_color || appearance?.themeColors?.sidebar || '#0F172A';
-    const accent = appPreferences?.accent_color || appearance?.themeColors?.accent || '#2563EB';
-    const p = palette?.[paletteIdx] || { from: brand, to: accent };
-    const style = p
-      ? { background: `linear-gradient(135deg, ${p.from}, ${p.to})` }
-      : { background: 'linear-gradient(135deg, #0F172A, #1e3a8a)' };
-    return (
-      <div className="rounded-[20px] p-5 text-white shadow-lg transition-all duration-300 ease-out hover:shadow-2xl hover:-translate-y-1 dashboard-fade-in" style={style}>
-        <div className="flex items-start justify-between mb-2">
-          <div className="text-white/70 text-xs font-semibold uppercase tracking-wider">{label}</div>
-          <div className="text-2xl opacity-80">{icon}</div>
-        </div>
-        <div className="text-2xl font-bold leading-tight mb-1">{value}</div>
-        {sub && <div className="text-white/60 text-xs">{sub}</div>}
-        {trend !== null && (
-          <div className={`text-xs font-semibold mt-2 ${trend >= 0 ? 'text-green-300' : 'text-red-300'}`}>
-            {trend >= 0 ? '▲' : '▼'} {Math.abs(trend)}% vs prev period
-          </div>
-        )}
-      </div>
-    );
-  };
-
   const ChartCard = ({ title, children, className = '' }) => (
     <div className={`group bg-white rounded-[24px] border border-gray-100 shadow-sm p-5 transition-all duration-300 ease-out hover:shadow-xl hover:-translate-y-1 hover:border-blue-100 dashboard-fade-in ${className}`}>
       <h3 className="text-base font-bold text-[#0F172A] mb-4">{title}</h3>
@@ -480,7 +430,7 @@ export default function RetailDashboard() {
   const rangeLabel = DATE_RANGES.find(r => r.v === dateRange)?.l || 'Period';
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
 
       {/* ── Header ── */}
       <div className="flex items-start justify-between flex-wrap gap-4">
@@ -489,7 +439,7 @@ export default function RetailDashboard() {
             {new Date().getHours() < 12 ? '🌅 Good Morning' : new Date().getHours() < 17 ? '☀️ Good Afternoon' : '🌙 Good Evening'},{' '}
             {currentUser?.first_name || 'there'}
           </h1>
-          <p className="text-gray-400 text-sm mt-0.5">
+          <p className="text-gray-500 text-sm mt-0.5">
             Retail Analytics · {new Date().toLocaleDateString(locale, { weekday:'long', day:'numeric', month:'long', year:'numeric' })}
           </p>
         </div>
@@ -531,58 +481,154 @@ export default function RetailDashboard() {
         </div>
       </div>
 
-      {/* ── AI Insights ── */}
-      {show('ai_insights') && <AIInsightsCard kpis={kpis} prevPeriodKpis={prevPeriodKpis} rangeLabel={rangeLabel} fmt={fmt} pctChange={pctChange}/>}
-
-      {/* ── KPI Row 1: Invoice & Revenue focused ── */}
-      {show('kpi_revenue') && (
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <StatCard label="Paid Invoice Revenue" icon="💰" paletteIdx={0}
-          value={fmt(kpis.totalRevenue)}
-          sub={`${fInvoices.filter(i=>i.status==='Paid').length} paid this period`}
-          trend={prevPeriodKpis ? pctChange(kpis.totalRevenue, prevPeriodKpis.totalRevenue) : null}/>
-        <StatCard label="Pending Collections" icon="⏳" paletteIdx={1}
-          value={fmt(kpis.pendingAmount)}
-          sub={`${kpis.pendingCount} invoices · ${kpis.overdueCount} overdue`}/>
-        <StatCard label="Invoices Issued" icon="🧾" paletteIdx={2}
-          value={fInvoices.length.toString()}
-          sub={`${fInvoices.filter(i=>i.status==='Draft').length} draft · ${fInvoices.filter(i=>i.status==='Sent').length} sent`}/>
-        <StatCard label="Refunds Processed" icon="↩️" paletteIdx={4}
-          value={fmt(kpis.refundAmount)}
-          sub={`${kpis.refundCount} invoice${kpis.refundCount!==1?'s':''} refunded`}/>
+      {/* ── Hero Spotlight + AI Insight — the headline number gets real visual
+          weight instead of being one of 8 equal-sized cards, with the AI
+          narrative integrated right alongside it rather than a separate
+          block below the fold ── */}
+      <div className="grid grid-cols-1 lg:grid-cols-5 gap-5">
+        <div className="lg:col-span-2 relative rounded-[28px] p-7 overflow-hidden shadow-xl dashboard-fade-in text-white" style={{background:'linear-gradient(135deg,#0F172A,#1e3a8a 65%,#312e81)'}}>
+          <div className="absolute -top-12 -right-12 w-48 h-48 rounded-full bg-blue-500/20 blur-3xl"/>
+          <div className="relative">
+            <div className="text-white/60 text-xs font-bold uppercase tracking-widest mb-2">Revenue · {rangeLabel}</div>
+            <div className="text-5xl font-bold leading-none mb-3 tabular-nums">{fmt(kpis.totalRevenue)}</div>
+            {prevPeriodKpis && (() => {
+              const t = pctChange(kpis.totalRevenue, prevPeriodKpis.totalRevenue);
+              return t !== null ? (
+                <div className={`inline-flex items-center gap-1.5 text-sm font-bold px-2.5 py-1 rounded-full ${t>=0?'bg-green-500/20 text-green-300':'bg-red-500/20 text-red-300'}`}>
+                  {t >= 0 ? '▲' : '▼'} {Math.abs(t)}% vs previous period
+                </div>
+              ) : null;
+            })()}
+            <div className="grid grid-cols-2 gap-4 mt-6 pt-5 border-t border-white/10">
+              <div>
+                <div className="text-white/50 text-xs font-semibold uppercase tracking-wider mb-1">Paid Invoices</div>
+                <div className="text-xl font-bold">{fInvoices.filter(i=>i.status==='Paid').length}</div>
+              </div>
+              <div>
+                <div className="text-white/50 text-xs font-semibold uppercase tracking-wider mb-1">Pending Collections</div>
+                <div className="text-xl font-bold">{fmt(kpis.pendingAmount)}</div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div className="lg:col-span-3">
+          {show('ai_insights') && <AIInsightsCard kpis={kpis} prevPeriodKpis={prevPeriodKpis} rangeLabel={rangeLabel} fmt={fmt} pctChange={pctChange}/>}
+        </div>
       </div>
+
+      {/* ── Compact stat strip — everything else that used to be two full-width
+          rows of equal-sized cards, condensed into one scannable row ── */}
+      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3">
+        {[
+          { label:'Invoices Issued',   value:kpis.invoicesIssued,               icon:'🧾' },
+          { label:'Refunds',           value:fmt(kpis.refundAmount),            icon:'↩️' },
+          { label:'Total Customers',   value:kpis.totalCustomers,               icon:'🧑‍🤝‍🧑' },
+          { label:'New Customers',     value:kpis.newCustomers,                 icon:'✨' },
+          { label:'Active Products',   value:kpis.activeProducts,               icon:'🏷️' },
+          { label:'Low Stock',         value:kpis.lowStockCount,                icon:'⚠️', warn:kpis.lowStockCount>0 },
+          { label:'Open Activities',   value:kpis.openActivities,               icon:'📅' },
+        ].map(s => (
+          <div key={s.label} className={`bg-white rounded-2xl border p-3.5 shadow-sm dashboard-fade-in transition-all hover:shadow-md hover:-translate-y-0.5 ${s.warn?'border-amber-200 bg-amber-50/50':'border-gray-100'}`}>
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-lg">{s.icon}</span>
+              <span className={`text-lg font-bold ${s.warn?'text-amber-700':'text-[#0F172A]'}`}>{s.value}</span>
+            </div>
+            <div className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide leading-tight">{s.label}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* ── Tab navigation — progressive disclosure: see what you need, not
+          everything at once. Replaces the old "scroll past 8 charts" layout. ── */}
+      <div className="flex items-center gap-1 bg-white border border-gray-200 rounded-2xl p-1.5 shadow-sm w-fit">
+        {[
+          { v:'overview',  l:'📊 Overview' },
+          { v:'sales',     l:'💰 Sales & Invoices' },
+          { v:'customers', l:'🧑‍🤝‍🧑 Customers' },
+          { v:'inventory', l:'📦 Inventory' },
+        ].map(t => (
+          <button key={t.v} onClick={()=>setActiveTab(t.v)}
+            className={`px-4 py-2.5 rounded-xl text-sm font-bold transition-all ${activeTab===t.v?'bg-[#0F172A] text-white shadow':'text-gray-500 hover:text-[#0F172A] hover:bg-gray-50'}`}>
+            {t.l}
+          </button>
+        ))}
+      </div>
+
+      {/* ═══ OVERVIEW TAB — quick snapshot: trend + invoice health + recent activity ═══ */}
+      {activeTab === 'overview' && (
+      <>
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+          <ChartCard title={`Sales Trend — ${rangeLabel}`} className="lg:col-span-2">
+            {salesTrend.every(d => d.sales === 0) ? <Empty/> : (
+              <ResponsiveContainer width="100%" height={260}>
+                <AreaChart data={salesTrend}>
+                  <defs>
+                    <linearGradient id="salesGrad" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%"  stopColor="#3B82F6" stopOpacity={0.3}/>
+                      <stop offset="95%" stopColor="#3B82F6" stopOpacity={0}/>
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9"/>
+                  <XAxis dataKey="label" tick={{ fontSize: 11 }}
+                    interval={salesTrend.length > 14 ? Math.floor(salesTrend.length/7) : 0}/>
+                  <YAxis tick={{ fontSize: 11 }} tickFormatter={v => fmtShort(v)} width={70}/>
+                  <Tooltip
+                    formatter={(v: any, name: string) => [
+                      name === 'Sales' ? fmt(Number(v)) : `${v} invoice${v===1?'':'s'}`,
+                      name === 'Sales' ? 'Revenue' : 'Invoices'
+                    ]}
+                    labelStyle={{ fontWeight: 'bold' }}/>
+                  <Legend/>
+                  <Area type="monotone" dataKey="sales" stroke="#3B82F6" strokeWidth={2.5}
+                    fill="url(#salesGrad)" name="Sales" dot={false}/>
+                  <Line type="monotone" dataKey="invoices" stroke="#10B981" strokeWidth={2}
+                    name="Invoices" dot={false} yAxisId={0}/>
+                </AreaChart>
+              </ResponsiveContainer>
+            )}
+          </ChartCard>
+          <ChartCard title="Invoices by Status">
+            {invoicesByStatus.length === 0 ? <Empty/> : (
+              <div className="space-y-3">
+                {(() => {
+                  const maxAmount = Math.max(...invoicesByStatus.map(s => s.amount), 1);
+                  return invoicesByStatus.map((s, i) => {
+                    const color = statusHex(s.name, i);
+                    const pct = Math.round(s.amount / maxAmount * 100);
+                    return (
+                      <div key={s.name}>
+                        <div className="flex items-center justify-between mb-1">
+                          <div className="flex items-center gap-2">
+                            <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ background: color }}/>
+                            <span className="text-sm font-semibold text-[#0F172A]">{s.name}</span>
+                          </div>
+                          <span className="text-xs text-gray-500">{s.value}</span>
+                        </div>
+                        <div className="h-2 bg-gray-100 rounded-full overflow-hidden mb-0.5">
+                          <div className="h-full rounded-full transition-all" style={{ width:`${Math.max(pct,3)}%`, background: color }}/>
+                        </div>
+                        <div className="text-xs font-bold text-[#0F172A] text-right">{fmt(s.amount)}</div>
+                      </div>
+                    );
+                  });
+                })()}
+              </div>
+            )}
+          </ChartCard>
+        </div>
+        <RecentInvoicesTable recentInvoices={recentInvoices} fmt={fmt}/>
+      </>
       )}
 
-      {/* ── KPI Row 2: Customers & Products focused ── */}
-      {show('kpi_customers') && (
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <StatCard label="Total Customers" icon="🧑‍🤝‍🧑" paletteIdx={2}
-          value={kpis.totalCustomers.toString()}
-          sub={`${kpis.newCustomers} new · ${kpis.vipCount} VIP`}
-          trend={prevPeriodKpis ? pctChange(kpis.newCustomers, prevPeriodKpis.newCustomers) : null}/>
-        <StatCard label="Active Products" icon="🏷️" paletteIdx={6}
-          value={kpis.activeProducts.toString()}
-          sub={`${kpis.totalProducts} total in catalogue`}/>
-        <StatCard label="⚠️ Low Stock" icon="📦" paletteIdx={3}
-          value={kpis.lowStockCount.toString()}
-          sub={kpis.lowStockCount > 0 ? 'Reorder required · live count' : 'All products stocked'}/>
-        <StatCard label="Open Activities" icon="📅" paletteIdx={5}
-          value={kpis.openActivities.toString()}
-          sub="follow-ups & tasks pending"/>
-      </div>
-      )}
-
-      {/* ── Charts row 1 ── */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
-
-        {/* Sales trend */}
-        {show('sales_trend') && (
-        <ChartCard title={`Sales Trend — ${rangeLabel}`} className="lg:col-span-2">
+      {/* ═══ SALES & INVOICES TAB — everything money-related, full width ═══ */}
+      {activeTab === 'sales' && (
+      <>
+        <ChartCard title={`Sales Trend — ${rangeLabel}`}>
           {salesTrend.every(d => d.sales === 0) ? <Empty/> : (
-            <ResponsiveContainer width="100%" height={260}>
+            <ResponsiveContainer width="100%" height={300}>
               <AreaChart data={salesTrend}>
                 <defs>
-                  <linearGradient id="salesGrad" x1="0" y1="0" x2="0" y2="1">
+                  <linearGradient id="salesGrad2" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="5%"  stopColor="#3B82F6" stopOpacity={0.3}/>
                     <stop offset="95%" stopColor="#3B82F6" stopOpacity={0}/>
                   </linearGradient>
@@ -599,128 +645,134 @@ export default function RetailDashboard() {
                   labelStyle={{ fontWeight: 'bold' }}/>
                 <Legend/>
                 <Area type="monotone" dataKey="sales" stroke="#3B82F6" strokeWidth={2.5}
-                  fill="url(#salesGrad)" name="Sales" dot={false}/>
+                  fill="url(#salesGrad2)" name="Sales" dot={false}/>
                 <Line type="monotone" dataKey="invoices" stroke="#10B981" strokeWidth={2}
                   name="Invoices" dot={false} yAxisId={0}/>
               </AreaChart>
             </ResponsiveContainer>
           )}
         </ChartCard>
-        )}
-
-        {/* Loyalty tiers */}
-        {show('loyalty_tiers') && (
-        <ChartCard title="Customer Loyalty Tiers">
-          {loyaltyBreakdown.length === 0 ? <Empty msg="No customer data"/> : (
-            <div className="space-y-3">
-              {(() => {
-                const pcts = roundPercentagesTo100(loyaltyBreakdown.map(t => t.value));
-                const maxVal = Math.max(...loyaltyBreakdown.map(t => t.value), 1);
-                return loyaltyBreakdown.map((t, i) => {
-                  const color = COLORS[i % COLORS.length];
-                  const pct = Math.round(t.value / maxVal * 100);
-                  return (
-                    <div key={t.name}>
-                      <div className="flex items-center justify-between mb-1">
-                        <div className="flex items-center gap-2">
-                          <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ background: color }}/>
-                          <span className="text-sm font-semibold text-[#0F172A]">{t.name}</span>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+          <ChartCard title="Revenue by Payment Method">
+            {invoicesByChannel.length === 0 ? <Empty/> : (
+              <div className="space-y-3">
+                {(() => {
+                  const maxRevenue = Math.max(...invoicesByChannel.map(c => c.revenue), 1);
+                  return invoicesByChannel.map((c, i) => {
+                    const color = COLORS[i % COLORS.length];
+                    const pct = Math.round(c.revenue / maxRevenue * 100);
+                    return (
+                      <div key={c.name}>
+                        <div className="flex items-center justify-between mb-1">
+                          <div className="flex items-center gap-2">
+                            <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ background: color }}/>
+                            <span className="text-sm font-semibold text-[#0F172A]">{c.name}</span>
+                            <span className="text-xs text-gray-500">{c.paidCount} of {c.totalCount} paid</span>
+                          </div>
+                          <span className="text-sm font-bold text-[#0F172A]">{fmt(c.revenue)}</span>
                         </div>
-                        <span className="text-sm font-bold text-[#0F172A]">{t.value} <span className="text-gray-500 font-medium">({pcts[i]}%)</span></span>
-                      </div>
-                      <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
-                        <div className="h-full rounded-full transition-all" style={{ width:`${Math.max(pct,3)}%`, background: color }}/>
-                      </div>
-                    </div>
-                  );
-                });
-              })()}
-            </div>
-          )}
-        </ChartCard>
-        )}
-      </div>
-
-      {/* ── Charts row 2 ── */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-
-        {/* Revenue by payment method — one clear panel, replacing the two
-            previous charts that contradicted each other (one plotted invoice
-            count on a currency axis, the other only showed paid revenue with
-            no context). */}
-        {(show('payment_revenue') || show('payment_methods')) && (
-        <ChartCard title="Revenue by Payment Method">
-          {invoicesByChannel.length === 0 ? <Empty/> : (
-            <div className="space-y-3">
-              {(() => {
-                const maxRevenue = Math.max(...invoicesByChannel.map(c => c.revenue), 1);
-                return invoicesByChannel.map((c, i) => {
-                  const color = COLORS[i % COLORS.length];
-                  const pct = Math.round(c.revenue / maxRevenue * 100);
-                  return (
-                    <div key={c.name}>
-                      <div className="flex items-center justify-between mb-1">
-                        <div className="flex items-center gap-2">
-                          <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ background: color }}/>
-                          <span className="text-sm font-semibold text-[#0F172A]">{c.name}</span>
-                          <span className="text-xs text-gray-500">{c.paidCount} of {c.totalCount} paid</span>
+                        <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+                          <div className="h-full rounded-full transition-all" style={{ width:`${Math.max(pct,3)}%`, background: color }}/>
                         </div>
-                        <span className="text-sm font-bold text-[#0F172A]">{fmt(c.revenue)}</span>
                       </div>
-                      <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
-                        <div className="h-full rounded-full transition-all" style={{ width:`${Math.max(pct,3)}%`, background: color }}/>
-                      </div>
-                    </div>
-                  );
-                });
-              })()}
-            </div>
-          )}
-        </ChartCard>
-        )}
-
-        {/* Invoice status breakdown — count AND amount per status, as a clean
-            readable list rather than a tiny pie chart nobody can read */}
-        {show('invoice_status') && (
-        <ChartCard title="Invoices by Status">
-          {invoicesByStatus.length === 0 ? <Empty/> : (
-            <div className="space-y-3">
-              {(() => {
-                const maxAmount = Math.max(...invoicesByStatus.map(s => s.amount), 1);
-                return invoicesByStatus.map((s, i) => {
-                  const color = statusHex(s.name, i);
-                  const pct = Math.round(s.amount / maxAmount * 100);
-                  return (
-                    <div key={s.name}>
-                      <div className="flex items-center justify-between mb-1">
-                        <div className="flex items-center gap-2">
-                          <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ background: color }}/>
-                          <span className="text-sm font-semibold text-[#0F172A]">{s.name}</span>
-                          <span className="text-xs text-gray-500">{s.value} invoice{s.value!==1?'s':''}</span>
+                    );
+                  });
+                })()}
+              </div>
+            )}
+          </ChartCard>
+          <ChartCard title="Invoices by Status">
+            {invoicesByStatus.length === 0 ? <Empty/> : (
+              <div className="space-y-3">
+                {(() => {
+                  const maxAmount = Math.max(...invoicesByStatus.map(s => s.amount), 1);
+                  return invoicesByStatus.map((s, i) => {
+                    const color = statusHex(s.name, i);
+                    const pct = Math.round(s.amount / maxAmount * 100);
+                    return (
+                      <div key={s.name}>
+                        <div className="flex items-center justify-between mb-1">
+                          <div className="flex items-center gap-2">
+                            <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ background: color }}/>
+                            <span className="text-sm font-semibold text-[#0F172A]">{s.name}</span>
+                            <span className="text-xs text-gray-500">{s.value} invoice{s.value!==1?'s':''}</span>
+                          </div>
+                          <span className="text-sm font-bold text-[#0F172A]">{fmt(s.amount)}</span>
                         </div>
-                        <span className="text-sm font-bold text-[#0F172A]">{fmt(s.amount)}</span>
+                        <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+                          <div className="h-full rounded-full transition-all" style={{ width:`${Math.max(pct,3)}%`, background: color }}/>
+                        </div>
                       </div>
-                      <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
-                        <div className="h-full rounded-full transition-all" style={{ width:`${Math.max(pct,3)}%`, background: color }}/>
-                      </div>
-                    </div>
-                  );
-                });
-              })()}
-            </div>
-          )}
-        </ChartCard>
-        )}
-      </div>
+                    );
+                  });
+                })()}
+              </div>
+            )}
+          </ChartCard>
+        </div>
+        <RecentInvoicesTable recentInvoices={recentInvoices} fmt={fmt}/>
+      </>
+      )}
 
-      {/* ── Charts row 3: Products + Low stock ── */}
+      {/* ═══ CUSTOMERS TAB ═══ */}
+      {activeTab === 'customers' && (
+      <>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+          <ChartCard title="Customer Loyalty Tiers">
+            {loyaltyBreakdown.length === 0 ? <Empty msg="No customer data"/> : (
+              <div className="space-y-3">
+                {(() => {
+                  const maxVal = Math.max(...loyaltyBreakdown.map(t => t.value), 1);
+                  const pcts = roundPercentagesTo100(loyaltyBreakdown.map(t => t.value));
+                  return loyaltyBreakdown.map((t, i) => {
+                    const color = COLORS[i % COLORS.length];
+                    const pct = Math.round(t.value / maxVal * 100);
+                    return (
+                      <div key={t.name}>
+                        <div className="flex items-center justify-between mb-1">
+                          <div className="flex items-center gap-2">
+                            <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ background: color }}/>
+                            <span className="text-sm font-semibold text-[#0F172A]">{t.name}</span>
+                          </div>
+                          <span className="text-sm font-bold text-[#0F172A]">{t.value} <span className="text-gray-500 font-medium">({pcts[i]}%)</span></span>
+                        </div>
+                        <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+                          <div className="h-full rounded-full transition-all" style={{ width:`${Math.max(pct,3)}%`, background: color }}/>
+                        </div>
+                      </div>
+                    );
+                  });
+                })()}
+              </div>
+            )}
+          </ChartCard>
+          <ChartCard title="Customer Snapshot">
+            <div className="space-y-4">
+              <div className="flex items-center justify-between p-3 bg-gray-50 rounded-xl">
+                <span className="text-sm font-semibold text-gray-600">Total Customers</span>
+                <span className="text-lg font-bold text-[#0F172A]">{kpis.totalCustomers}</span>
+              </div>
+              <div className="flex items-center justify-between p-3 bg-blue-50 rounded-xl">
+                <span className="text-sm font-semibold text-blue-700">New This Period</span>
+                <span className="text-lg font-bold text-blue-700">{kpis.newCustomers}</span>
+              </div>
+              <div className="flex items-center justify-between p-3 bg-amber-50 rounded-xl">
+                <span className="text-sm font-semibold text-amber-700">VIP Customers</span>
+                <span className="text-lg font-bold text-amber-700">{kpis.vipCount}</span>
+              </div>
+            </div>
+          </ChartCard>
+        </div>
+        <RecentInvoicesTable recentInvoices={recentInvoices} fmt={fmt}/>
+      </>
+      )}
+
+      {/* ═══ INVENTORY TAB ═══ */}
+      {activeTab === 'inventory' && (
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
-
-        {/* Products by category */}
-        {show('top_categories') && (
         <ChartCard title="Products by Category" className="lg:col-span-2">
           {topCategories.length === 0 ? <Empty msg="No products yet"/> : (
-            <ResponsiveContainer width="100%" height={220}>
+            <ResponsiveContainer width="100%" height={280}>
               <BarChart data={topCategories} layout="vertical">
                 <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9"/>
                 <XAxis type="number" tick={{ fontSize: 11 }} allowDecimals={false}/>
@@ -731,15 +783,11 @@ export default function RetailDashboard() {
             </ResponsiveContainer>
           )}
         </ChartCard>
-        )}
-
-        {/* Low stock alert */}
-        {show('low_stock') && (
         <ChartCard title="⚠️ Low Stock Alert">
           {lowStockList.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-48 text-center">
               <div className="text-4xl mb-2">✅</div>
-              <p className="text-gray-400 text-sm">All products are well stocked</p>
+              <p className="text-gray-500 text-sm">All products are well stocked</p>
             </div>
           ) : (
             <div className="space-y-3">
@@ -772,52 +820,54 @@ export default function RetailDashboard() {
             </div>
           )}
         </ChartCard>
-        )}
-      </div>
-
-      {/* ── Recent orders table ── */}
-      {show('recent_invoices') && (
-      <div className="bg-white rounded-[24px] border border-gray-100 shadow-sm overflow-hidden dashboard-fade-in transition-all duration-300 hover:shadow-md">
-        <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
-          <h3 className="font-bold text-[#0F172A]">Recent Invoices</h3>
-          <span className="text-xs text-gray-400">{recentInvoices.length} most recent</span>
-        </div>
-        {recentInvoices.length === 0 ? (
-          <div className="py-12 text-center text-gray-400 text-sm">No invoices yet</div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead className="bg-gray-50">
-                <tr>
-                  {['Invoice #','Customer','Payment','Due Date','Amount','Status'].map(h => (
-                    <th key={h} className="px-5 py-3 text-left text-xs font-bold uppercase tracking-wide text-gray-500">{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {recentInvoices.map(inv => (
-                  <tr key={inv.id} className="border-t border-gray-50 hover:bg-blue-50/40 transition-all">
-                    <td className="px-5 py-3 font-mono text-xs font-bold text-purple-600">
-                      {inv.display_number ? 'RINV-'+String(inv.display_number).padStart(5,'0') : inv.invoice_number || inv.id?.slice(0,8)}
-                    </td>
-                    <td className="px-5 py-3 font-semibold text-[#0F172A]">{inv.customer || '—'}</td>
-                    <td className="px-5 py-3 text-gray-600">{inv.payment_method || '—'}</td>
-                    <td className="px-5 py-3 text-gray-600">{inv.due_date ? String(inv.due_date).slice(0,10) : '—'}</td>
-                    <td className="px-5 py-3 font-bold text-[#0F172A]">{fmt(safeNum(inv.amount))}</td>
-                    <td className="px-5 py-3">
-                      <span className={`px-2.5 py-0.5 rounded-full text-xs font-bold border ${getStatusColor(inv.status)}`}>
-                        {inv.status}
-                      </span>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
       </div>
       )}
 
+    </div>
+  );
+}
+
+// ─── Recent Invoices — shared across tabs ──────────────────────────────────────
+function RecentInvoicesTable({ recentInvoices, fmt }) {
+  return (
+    <div className="bg-white rounded-[24px] border border-gray-100 shadow-sm overflow-hidden dashboard-fade-in transition-all duration-300 hover:shadow-md">
+      <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
+        <h3 className="font-bold text-[#0F172A]">Recent Invoices</h3>
+        <span className="text-xs text-gray-500">{recentInvoices.length} most recent</span>
+      </div>
+      {recentInvoices.length === 0 ? (
+        <div className="py-12 text-center text-gray-400 text-sm">No invoices yet</div>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="bg-gray-50">
+              <tr>
+                {['Invoice #','Customer','Payment','Due Date','Amount','Status'].map(h => (
+                  <th key={h} className="px-5 py-3 text-left text-xs font-bold uppercase tracking-wide text-gray-500">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {recentInvoices.map(inv => (
+                <tr key={inv.id} className="border-t border-gray-50 hover:bg-blue-50/40 transition-all">
+                  <td className="px-5 py-3 font-mono text-xs font-bold text-purple-600">
+                    {inv.display_number ? 'RINV-'+String(inv.display_number).padStart(5,'0') : inv.invoice_number || inv.id?.slice(0,8)}
+                  </td>
+                  <td className="px-5 py-3 font-semibold text-[#0F172A]">{inv.customer || '—'}</td>
+                  <td className="px-5 py-3 text-gray-600">{inv.payment_method || '—'}</td>
+                  <td className="px-5 py-3 text-gray-600">{inv.due_date ? String(inv.due_date).slice(0,10) : '—'}</td>
+                  <td className="px-5 py-3 font-bold text-[#0F172A]">{fmt(safeNum(inv.amount))}</td>
+                  <td className="px-5 py-3">
+                    <span className={`px-2.5 py-0.5 rounded-full text-xs font-bold border ${getStatusColor(inv.status)}`}>
+                      {inv.status}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }
