@@ -55,7 +55,7 @@ export function AlertProvider({ children }) {
     <AlertContext.Provider value={{ showAlert, showConfirm }}>
       {children}
       {current && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[300] flex items-center justify-center p-4" onClick={() => current.kind === 'alert' && dismiss(true)}>
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[99999999] flex items-center justify-center p-4" onClick={() => current.kind === 'alert' && dismiss(true)}>
           <div onClick={(e) => e.stopPropagation()} className={`bg-white rounded-[24px] shadow-2xl w-full max-w-sm overflow-hidden ring-8 ${VARIANT_META[current.variant].ring}`}>
             <div className="px-6 pt-6 pb-4 text-center">
               <div className="text-4xl mb-3">{VARIANT_META[current.variant].icon}</div>

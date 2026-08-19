@@ -3,6 +3,7 @@
 
 import { useState, useEffect } from 'react';
 import { useCustomFields, invalidateCustomFieldCache } from '@/lib/useCustomFields';
+import LineItemCustomFieldInput from '@/components/shared/LineItemCustomFieldInput';
 import { Lead360, Contact360, Opportunity360, Quotation360, Order360, Invoice360, Activity360 } from '@/components/crm/Record360';
 import { useApp } from '@/context/AppContext';
 import {
@@ -89,12 +90,14 @@ function OwnerField({ record, edited, onPick }) {
 // ApprovalBanner imported from shared component
 
 // ─── Line Items Table ─────────────────────────────────────────────────────────
-function LineItemsTable({ items, setItems, products }) {
+function LineItemsTable({ items, setItems, products, page }) {
   const [configModal, setConfigModal] = useState(null);
+  const LI_OBJ_MAP = { orders:'orderLineItems', invoices:'invoiceLineItems' };
+  const { fields: customFields } = useCustomFields(LI_OBJ_MAP[page] || '');
 
   const iCls = 'w-full border border-blue-200 rounded-xl px-3 py-2.5 text-sm text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-blue-400';
 
-  const add    = () => setItems(p => [...p, { _id:Date.now(), product:'', quantity:1, price:0, discount:0, configuration:{} }]);
+  const add    = () => setItems(p => [...p, { _id:Date.now(), product:'', quantity:1, price:0, discount:0, configuration:{}, custom_data:{} }]);
   const remove = (idx) => setItems(p => p.filter((_,i) => i !== idx));
   const upd    = (idx, field, raw) => setItems(p => p.map((r,i) => {
     if (i !== idx) return r;
@@ -104,6 +107,7 @@ function LineItemsTable({ items, setItems, products }) {
     }
     return { ...r, [field]: ['quantity','price','discount'].includes(field) ? Number(raw) : raw };
   }));
+  const updCustom = (idx, apiName, val) => setItems(p => p.map((r,i) => i!==idx ? r : { ...r, custom_data: { ...(r.custom_data||{}), [apiName]: val } }));
 
   const openConfig = (idx) => {
     const row = items[idx];
@@ -138,11 +142,12 @@ function LineItemsTable({ items, setItems, products }) {
               <th className="px-4 py-3 text-right text-xs font-bold uppercase text-gray-500 w-32">Price (₹)</th>
               <th className="px-4 py-3 text-center text-xs font-bold uppercase text-gray-500 w-28">Disc (%)</th>
               <th className="px-4 py-3 text-right text-xs font-bold uppercase text-gray-500 w-32">Total</th>
+              {customFields.map(f=><th key={f.id} className="px-4 py-3 text-left text-xs font-bold uppercase text-gray-500" style={{minWidth:110}}>{f.label}</th>)}
               <th className="w-10"/>
             </tr></thead>
             <tbody>
               {items.length === 0
-                ? <tr><td colSpan={6} className="px-5 py-10 text-center text-gray-400 text-sm">No items. Click + Add Item.</td></tr>
+                ? <tr><td colSpan={6+customFields.length} className="px-5 py-10 text-center text-gray-400 text-sm">No items. Click + Add Item.</td></tr>
                 : items.map((row, idx) => {
                     const lt = row.quantity * row.price * (1 - row.discount/100);
                     const hasConfig = Object.keys(row.configuration||{}).length > 0;
@@ -175,6 +180,7 @@ function LineItemsTable({ items, setItems, products }) {
                         <td className="px-4 py-2"><input type="number" min={0} value={row.price} onChange={e=>upd(idx,'price',e.target.value)} className={`${iCls} text-right`}/></td>
                         <td className="px-4 py-2"><input type="number" min={0} max={100} value={row.discount} onChange={e=>upd(idx,'discount',e.target.value)} className={`${iCls} text-center ${row.discount>0?'border-green-300 bg-green-50':''}`}/></td>
                         <td className="px-4 py-2 text-right font-bold text-[#0F172A]">{fmt(lt)}</td>
+                        {customFields.map(f=><td key={f.id} className="px-4 py-2"><LineItemCustomFieldInput field={f} value={(row.custom_data||{})[f.api_name]} onChange={v=>updCustom(idx,f.api_name,v)}/></td>)}
                         <td className="px-2 py-2 text-center"><button onClick={()=>remove(idx)} className="w-7 h-7 rounded-full bg-red-100 hover:bg-red-200 text-red-500 text-xs font-bold flex items-center justify-center">✕</button></td>
                       </tr>
                     );
@@ -183,9 +189,9 @@ function LineItemsTable({ items, setItems, products }) {
             </tbody>
             {items.length > 0 && (
               <tfoot className="border-t-2 border-blue-100">
-                <tr className="bg-gray-50"><td colSpan={4} className="px-5 py-2.5 text-right text-sm text-gray-500">Subtotal</td><td className="px-4 py-2.5 text-right text-sm font-semibold">{fmt(sub)}</td><td/></tr>
-                {disc>0 && <tr className="bg-green-50"><td colSpan={4} className="px-5 py-2.5 text-right text-sm text-green-600">Discount</td><td className="px-4 py-2.5 text-right text-sm font-semibold text-green-600">- {fmt(disc)}</td><td/></tr>}
-                <tr className="bg-[#0F172A]"><td colSpan={4} className="px-5 py-3 text-right font-bold text-white">Grand Total</td><td className="px-4 py-3 text-right font-bold text-white text-lg">{fmt(grand)}</td><td/></tr>
+                <tr className="bg-gray-50"><td colSpan={4+customFields.length} className="px-5 py-2.5 text-right text-sm text-gray-500">Subtotal</td><td className="px-4 py-2.5 text-right text-sm font-semibold">{fmt(sub)}</td><td/></tr>
+                {disc>0 && <tr className="bg-green-50"><td colSpan={4+customFields.length} className="px-5 py-2.5 text-right text-sm text-green-600">Discount</td><td className="px-4 py-2.5 text-right text-sm font-semibold text-green-600">- {fmt(disc)}</td><td/></tr>}
+                <tr className="bg-[#0F172A]"><td colSpan={4+customFields.length} className="px-5 py-3 text-right font-bold text-white">Grand Total</td><td className="px-4 py-3 text-right font-bold text-white text-lg">{fmt(grand)}</td><td/></tr>
               </tfoot>
             )}
           </table>
@@ -820,7 +826,7 @@ export default function RecordDetailPanel({ page, record, onClose, prefillCustom
                   : <LineItemsTable items={lineItems} setItems={(updater)=>{
                       setIsDirty(true);
                       setLineItems(updater);
-                    }} products={products}/>
+                    }} products={products} page={page}/>
                 )}
 
                 {/* Additional Information — B2B App Composer custom fields */}

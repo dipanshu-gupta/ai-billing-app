@@ -24,3 +24,24 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+/* Dashboard widget entrance animation — subtle fade + rise on mount, with a
+   small stagger between successive cards so the page feels alive without
+   being distracting. Respects users who've asked for reduced motion. */
+@keyframes dashboardFadeIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.dashboard-fade-in {
+  animation: dashboardFadeIn 0.5s ease-out backwards;
+}
+.dashboard-fade-in:nth-child(1) { animation-delay: 0.02s; }
+.dashboard-fade-in:nth-child(2) { animation-delay: 0.06s; }
+.dashboard-fade-in:nth-child(3) { animation-delay: 0.10s; }
+.dashboard-fade-in:nth-child(4) { animation-delay: 0.14s; }
+.dashboard-fade-in:nth-child(5) { animation-delay: 0.18s; }
+.dashboard-fade-in:nth-child(6) { animation-delay: 0.22s; }
+
+@media (prefers-reduced-motion: reduce) {
+  .dashboard-fade-in { animation: none; }
+}

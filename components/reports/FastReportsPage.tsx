@@ -5,6 +5,7 @@ import { useState, useMemo, useEffect, useCallback } from 'react';
 import { useApp } from '@/context/AppContext';
 import { formatDisplayNumber, PAGE_DISPLAY_PREFIX, formatCurrency, formatDate } from '@/lib/utils';
 import { useAlert } from '@/components/shared/AlertProvider';
+import { useCustomFields } from '@/lib/useCustomFields';
 import {
   BarChart, Bar, LineChart, Line, PieChart, Pie, Cell, AreaChart, Area,
   XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
@@ -272,12 +273,13 @@ const fmtVal = (val, fieldDef, currency = 'INR') => {
 };
 
 const getValueForField = (record, field) => {
+  if (field.isCustom) return (record.custom_data || {})[field.apiName] ?? null;
   return record[field.k] ?? record[field.k.replace(/([A-Z])/g, '_$1').toLowerCase()] ?? null;
 };
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
 function FilterRow({ field, value, operator, onChange, onRemove, allData }) {
-  const uniqueVals = useMemo(() => [...new Set(allData.map(r => r[field.k]).filter(Boolean))].sort(), [allData, field.k]);
+  const uniqueVals = useMemo(() => [...new Set(allData.map(r => getValueForField(r, field)).filter(Boolean))].sort(), [allData, field]);
   const operators = field.t === 'currency' || field.t === 'number'
     ? ['=','!=','>','<','>=','<=']
     : field.t === 'date'
@@ -360,7 +362,25 @@ export default function FastReportsPage() {
   const [page,          setPage]          = useState(1);
   const PAGE_SIZE = 50;
 
-  const fields = ALL_FIELDS[objType] || [];
+  // Object-level custom fields (from App Composer) merged into the report's
+  // available fields — namespaced with a `custom_` key prefix so they can
+  // never collide with a real column name, and marked isCustom/apiName so
+  // every value-access point (filter, sort, group, KPI, CSV export, on-screen
+  // table) knows to read from record.custom_data instead of record[key].
+  const { fields: rawCustomFields } = useCustomFields(objType);
+  const customReportFields = useMemo(() => rawCustomFields.map(f => ({
+    k: `custom_${f.api_name}`,
+    l: `${f.label} (Custom)`,
+    t: ['number'].includes(f.field_type) ? 'number'
+      : f.field_type === 'currency' ? 'currency'
+      : ['date','datetime'].includes(f.field_type) ? 'date'
+      : 'text',
+    filterable: true,
+    isCustom: true,
+    apiName: f.api_name,
+  })), [rawCustomFields]);
+
+  const fields = [...(ALL_FIELDS[objType] || []), ...customReportFields];
 
   // ── Init columns when object changes ───────────────────────────────────────
   useEffect(() => {
@@ -408,9 +428,10 @@ export default function FastReportsPage() {
       if (!f.value && f.value !== 0) continue;
       const fieldDef = fields.find(fd => fd.k === f.field);
       data = data.filter(r => {
-        const rv = String(r[f.field] ?? '').toLowerCase();
+        const raw  = getValueForField(r, fieldDef || { k: f.field });
+        const rv = String(raw ?? '').toLowerCase();
         const fv = String(f.value).toLowerCase();
-        const numRv = Number(r[f.field] || 0);
+        const numRv = Number(raw || 0);
         const numFv = Number(f.value);
         switch (f.operator) {
           case '=':           return rv === fv;
@@ -422,9 +443,9 @@ export default function FastReportsPage() {
           case 'contains':    return rv.includes(fv);
           case 'not_contains':return !rv.includes(fv);
           case 'starts_with': return rv.startsWith(fv);
-          case 'on':          return r[f.field]?.startsWith(f.value);
-          case 'before':      return r[f.field] && r[f.field] < f.value;
-          case 'after':       return r[f.field] && r[f.field] > f.value;
+          case 'on':          return String(raw??'').startsWith(f.value);
+          case 'before':      return raw && String(raw) < f.value;
+          case 'after':       return raw && String(raw) > f.value;
           default:            return true;
         }
       });
@@ -437,14 +458,15 @@ export default function FastReportsPage() {
     if (!sorts.length) return filteredData;
     return [...filteredData].sort((a, b) => {
       for (const s of sorts) {
-        const av = a[s.field]; const bv = b[s.field];
+        const fd = fields.find(f => f.k === s.field);
+        const av = getValueForField(a, fd || { k: s.field }); const bv = getValueForField(b, fd || { k: s.field });
         if (av === bv) continue;
         const cmp = (av ?? '') < (bv ?? '') ? -1 : 1;
         return s.direction === 'desc' ? -cmp : cmp;
       }
       return 0;
     });
-  }, [filteredData, sorts]);
+  }, [filteredData, sorts, fields]);
 
   // ── Pagination ─────────────────────────────────────────────────────────────
   const totalPages   = Math.max(1, Math.ceil(sortedData.length / PAGE_SIZE));
@@ -454,7 +476,7 @@ export default function FastReportsPage() {
   const kpis = useMemo(() => {
     const currencyFields = fields.filter(f => f.t === 'currency');
     const primaryAmt = currencyFields[0];
-    const totalVal = primaryAmt ? filteredData.reduce((s, r) => s + Number(r[primaryAmt.k] || 0), 0) : 0;
+    const totalVal = primaryAmt ? filteredData.reduce((s, r) => s + Number(getValueForField(r, primaryAmt) || 0), 0) : 0;
     const uniqueOwners = new Set(filteredData.map(r => r.owner).filter(Boolean)).size;
     return {
       total: filteredData.length,
@@ -468,19 +490,24 @@ export default function FastReportsPage() {
   // ── Group data for charts ──────────────────────────────────────────────────
   const groupedData = useMemo(() => {
     if (!groupBy) return [];
+    const groupField  = fields.find(f => f.k === groupBy);
+    const metricField = fields.find(f => f.k === chartMetric);
     const groups = {};
     const isNumericMetric = chartMetric && chartMetric !== 'count';
     filteredData.forEach(r => {
-      const key = String(r[groupBy] || 'Unknown');
+      const key = String(getValueForField(r, groupField || { k: groupBy }) || 'Unknown');
       if (!groups[key]) groups[key] = { label: key, count: 0, value: 0 };
       groups[key].count++;
-      if (isNumericMetric) groups[key].value += Number(r[chartMetric] || 0);
+      if (isNumericMetric) groups[key].value += Number(getValueForField(r, metricField || { k: chartMetric }) || 0);
     });
     return Object.values(groups).sort((a, b) => b.count - a.count).slice(0, 20);
-  }, [filteredData, groupBy, chartMetric]);
+  }, [filteredData, groupBy, chartMetric, fields]);
 
   // ── Unique values for status options ───────────────────────────────────────
-  const uniqueValsFor = useCallback((key) => [...new Set(rawData.map(r => r[key]).filter(Boolean))].sort(), [rawData]);
+  const uniqueValsFor = useCallback((key) => {
+    const fd = fields.find(f => f.k === key);
+    return [...new Set(rawData.map(r => getValueForField(r, fd || { k: key })).filter(Boolean))].sort();
+  }, [rawData, fields]);
 
   // ── Add filter ─────────────────────────────────────────────────────────────
   const addFilter = () => {
@@ -548,7 +575,7 @@ export default function FastReportsPage() {
     const headers = columns.map(k => fields.find(f => f.k === k)?.l || k);
     const rows = sortedData.map(r => columns.map(k => {
       const fd = fields.find(f => f.k === k);
-      const v  = r[k];
+      const v  = fd?.isCustom ? (r.custom_data || {})[fd.apiName] : r[k];
       if (fd?.t === 'date') return v ? formatDate(v) : '';
       if (fd?.t === 'currency') return v ?? '';
       return v ?? '';
@@ -855,7 +882,7 @@ export default function FastReportsPage() {
                             <td className="px-4 py-3 text-gray-400 text-xs">{(page-1)*PAGE_SIZE + i + 1}</td>
                             {columns.map(k => {
                               const fd = fields.find(f=>f.k===k);
-                              const v  = row[k];
+                              const v  = fd?.isCustom ? (row.custom_data||{})[fd.apiName] : row[k];
                               return (
                                 <td key={k} className="px-4 py-3 text-[#0F172A] whitespace-nowrap">
                                   {fd?.t==='currency'

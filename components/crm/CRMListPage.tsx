@@ -44,6 +44,15 @@ const OPERATORS = {
   select:  [{v:'equals',l:'is'},{v:'not_equals',l:'is not'}],
   boolean: [{v:'is_true',l:'is true'},{v:'is_false',l:'is false'}],
 };
+// Human-readable operator text for any type — used when describing a saved
+// search in plain English instead of showing raw operator codes like 'gte'.
+const operatorLabel = (op) => {
+  for (const list of Object.values(OPERATORS)) {
+    const found = (list as any[]).find(o => o.v === op);
+    if (found) return found.l;
+  }
+  return op;
+};
 
 const matchesCondition = (record, cond) => {
   const raw = record[cond.field];
@@ -120,7 +129,7 @@ function StatusBadge({ status }) {
 }
 
 function SavedSearchPanel({ page, currentFilters, onApply, onClose }) {
-  const { currentUser, savedSearches, fetchSavedSearches, createSavedSearch, deleteSavedSearch, setDefaultSavedSearch,
+  const { currentUser, savedSearches, fetchSavedSearches, createSavedSearch, updateSavedSearch, deleteSavedSearch, setDefaultSavedSearch,
     appPreferences, createOrderFromOpportunity, fetchOrders, pendingRecord, setPendingRecord,
   } = useApp();
   const { showAlert } = useAlert();
@@ -128,72 +137,125 @@ function SavedSearchPanel({ page, currentFilters, onApply, onClose }) {
   const [saveDef,    setSaveDef]    = useState(false);
   const [saveGlobal, setSaveGlobal] = useState(false);
   const [saving,     setSaving]     = useState(false);
+  const [filterText, setFilterText] = useState('');
+  const [renamingId, setRenamingId] = useState(null);
+  const [renameVal,  setRenameVal]  = useState('');
+  const [showSaveForm, setShowSaveForm] = useState(false);
 
   useEffect(() => { fetchSavedSearches(page); }, [page]);
-
-  const mySearches     = savedSearches.filter(s => s.object_type === page && s.created_by === currentUser?.email);
-  const globalSearches = savedSearches.filter(s => s.object_type === page && s.is_global_default && s.created_by !== currentUser?.email);
 
   const describe = (f) => {
     const parts = [];
     if (f.search)       parts.push(`Search: "${f.search}"`);
     if (f.status && f.status !== 'All') parts.push(`Status: ${f.status}`);
     if (f.timePeriod)   parts.push(TIME_PERIODS.find(t=>t.v===f.timePeriod)?.l || f.timePeriod);
-    (f.advFilters||[]).forEach(c => { if (c.field && (c.value || c.op==='is_empty' || c.op==='is_not_empty' || c.op==='is_true' || c.op==='is_false')) parts.push(`${c.field} ${c.op} ${c.value||''}`.trim()); });
+    (f.advFilters||[]).forEach(c => { if (c.field && (c.value || c.op==='is_empty' || c.op==='is_not_empty' || c.op==='is_true' || c.op==='is_false')) parts.push(`${fieldLabel(c.field)} ${operatorLabel(c.op)} ${c.value||''}`.trim()); });
     if (f.owner)        parts.push(`Owner: ${f.owner}`);
-    if (f.sortField)    parts.push(`Sort: ${f.sortField} ${f.sortDir||'asc'}`);
-    return parts.length ? parts.join(' · ') : 'All records';
+    if (f.sortField)    parts.push(`Sorted by ${fieldLabel(f.sortField)} (${f.sortDir==='desc'?'descending':'ascending'})`);
+    return parts.length ? parts.join(' · ') : 'All records, no filters';
   };
 
-  const SearchCard = ({ s }) => (
-    <div className="bg-white border border-blue-100 rounded-2xl p-4 hover:border-blue-300 transition-all">
-      <div className="font-semibold text-[#0F172A] flex items-center gap-2 mb-1">
-        {s.name}
-        {s.is_global_default && <span className="bg-purple-100 text-purple-700 text-xs px-2 py-0.5 rounded-full">Global Default</span>}
-        {s.is_default && !s.is_global_default && <span className="bg-blue-100 text-blue-700 text-xs px-2 py-0.5 rounded-full">My Default</span>}
+  // A search "matches" the currently active filters if applying it would be
+  // a no-op — used to show a clear "Currently Applied" badge so users can
+  // tell at a glance which saved view (if any) they're looking at.
+  const isCurrentlyApplied = (s) => JSON.stringify(s.filters||{}) === JSON.stringify(currentFilters);
+
+  const allForPage = savedSearches.filter(s => s.object_type === page);
+  const q = filterText.trim().toLowerCase();
+  const matchesQuery = (s) => !q || s.name.toLowerCase().includes(q) || describe(s.filters||{}).toLowerCase().includes(q);
+  const mySearches     = allForPage.filter(s => s.created_by === currentUser?.email && matchesQuery(s));
+  const globalSearches = allForPage.filter(s => s.is_global_default && s.created_by !== currentUser?.email && matchesQuery(s));
+
+  const startRename = (s) => { setRenamingId(s.id); setRenameVal(s.name); };
+  const confirmRename = async (s) => {
+    if (renameVal.trim() && renameVal.trim() !== s.name) await updateSavedSearch(s.id, { name: renameVal.trim() });
+    setRenamingId(null);
+  };
+
+  const SearchCard = ({ s }) => {
+    const applied = isCurrentlyApplied(s);
+    const isRenaming = renamingId === s.id;
+    return (
+      <div className={`border rounded-2xl p-4 transition-all ${applied ? 'bg-blue-50 border-blue-300 ring-1 ring-blue-200' : 'bg-white border-blue-100 hover:border-blue-300'}`}>
+        <div className="flex items-center gap-2 mb-1">
+          {isRenaming ? (
+            <input autoFocus value={renameVal} onChange={e=>setRenameVal(e.target.value)}
+              onKeyDown={e=>{ if(e.key==='Enter') confirmRename(s); if(e.key==='Escape') setRenamingId(null); }}
+              onBlur={()=>confirmRename(s)}
+              className="flex-1 border border-blue-300 rounded-lg px-2 py-1 text-sm font-semibold text-[#0F172A] focus:outline-none focus:ring-2 focus:ring-blue-400"/>
+          ) : (
+            <button onClick={()=>startRename(s)} title="Click to rename" className="font-semibold text-[#0F172A] hover:text-blue-700 text-left">
+              {s.name}
+            </button>
+          )}
+          {s.is_global_default && <span className="bg-purple-100 text-purple-700 text-xs px-2 py-0.5 rounded-full flex-shrink-0">🌐 Team Default</span>}
+          {s.is_default && !s.is_global_default && <span className="bg-blue-100 text-blue-700 text-xs px-2 py-0.5 rounded-full flex-shrink-0">⭐ My Default</span>}
+          {applied && <span className="bg-green-100 text-green-700 text-xs px-2 py-0.5 rounded-full flex-shrink-0">✓ Applied</span>}
+        </div>
+        <div className="text-xs text-gray-400 mb-3">{describe(s.filters || {})}</div>
+        <div className="flex gap-2 flex-wrap">
+          <button onClick={()=>{onApply(s.filters||{});onClose();}} disabled={applied}
+            className="flex-1 bg-gradient-to-r from-[#0F172A] to-blue-800 text-white py-2 rounded-xl text-xs font-bold hover:opacity-90 disabled:opacity-40 disabled:cursor-default">
+            {applied ? 'Currently Applied' : 'Apply'}
+          </button>
+          {!s.is_default && <button onClick={()=>setDefaultSavedSearch(s.id,s.is_global_default)} title="Set as default" className="bg-blue-100 text-blue-700 px-3 py-2 rounded-xl text-xs font-semibold hover:bg-blue-200">⭐</button>}
+          <button onClick={()=>startRename(s)} title="Rename" className="bg-gray-100 text-gray-600 px-3 py-2 rounded-xl text-xs font-semibold hover:bg-gray-200">✎</button>
+          <button onClick={()=>deleteSavedSearch(s.id, s.name)} title="Delete" className="bg-red-100 text-red-500 px-3 py-2 rounded-xl text-xs font-semibold hover:bg-red-200">🗑</button>
+        </div>
       </div>
-      <div className="text-xs text-gray-400 mb-3">{describe(s.filters || {})}</div>
-      <div className="flex gap-2 flex-wrap">
-        <button onClick={()=>{onApply(s.filters||{});onClose();}} className="flex-1 bg-gradient-to-r from-[#0F172A] to-blue-800 text-white py-2 rounded-xl text-xs font-bold hover:opacity-90">Apply</button>
-        {!s.is_default && <button onClick={()=>setDefaultSavedSearch(s.id,s.is_global_default)} className="bg-blue-100 text-blue-700 px-3 py-2 rounded-xl text-xs font-semibold hover:bg-blue-200">Set Default</button>}
-        <button onClick={()=>deleteSavedSearch(s.id)} className="bg-red-100 text-red-500 px-3 py-2 rounded-xl text-xs font-semibold hover:bg-red-200">Delete</button>
-      </div>
-    </div>
-  );
+    );
+  };
 
   return (
-    <div className="absolute right-0 top-14 w-96 bg-white rounded-[28px] shadow-2xl border border-blue-100 z-50 overflow-hidden" style={{maxHeight:'85vh',overflowY:'auto'}}>
-      <div className="bg-gradient-to-r from-[#0F172A] to-blue-900 px-5 py-4 flex items-center justify-between">
-        <h3 className="text-white font-bold">Saved Searches</h3>
+    <div className="absolute right-0 top-14 w-96 bg-white rounded-[28px] shadow-2xl border border-blue-100 z-50 overflow-hidden" style={{maxHeight:'85vh',display:'flex',flexDirection:'column'}}>
+      <div className="bg-gradient-to-r from-[#0F172A] to-blue-900 px-5 py-4 flex items-center justify-between flex-shrink-0">
+        <h3 className="text-white font-bold">🔖 Saved Searches</h3>
         <button onClick={onClose} className="text-white/70 hover:text-white text-xl">✕</button>
       </div>
-      <div className="p-4 space-y-5">
-        <div className="bg-blue-50 rounded-2xl p-4 space-y-3">
-          <h4 className="font-bold text-[#0F172A] text-sm">Save Current Filters</h4>
-          <input value={saveName} onChange={e=>setSaveName(e.target.value)} placeholder="Name this search..." className="w-full border border-blue-200 rounded-xl px-3 py-2 text-sm text-[#0F172A] focus:outline-none focus:ring-2 focus:ring-blue-400"/>
-          <div className="text-xs text-gray-500 bg-white rounded-xl px-3 py-2 border border-blue-100">{describe(currentFilters)}</div>
-          <label className="flex items-center gap-2 text-sm text-[#0F172A] cursor-pointer">
-            <input type="checkbox" checked={saveDef} onChange={e=>setSaveDef(e.target.checked)} className="w-4 h-4 accent-blue-600"/>
-            Set as my default
-          </label>
-          <label className="flex items-center gap-2 text-sm text-[#0F172A] cursor-pointer">
-            <input type="checkbox" checked={saveGlobal} onChange={e=>setSaveGlobal(e.target.checked)} className="w-4 h-4 accent-purple-600"/>
-            Make this the team default for everyone
-          </label>
-          <button onClick={async()=>{if(!saveName.trim()){showAlert('Enter a name.', { variant:'warning' });return;}setSaving(true);await createSavedSearch({name:saveName,object_type:page,filters:currentFilters,is_default:saveDef,is_global_default:saveGlobal});setSaveName('');setSaveDef(false);setSaveGlobal(false);setSaving(false);}} disabled={saving} className="w-full bg-gradient-to-r from-[#0F172A] to-blue-800 text-white py-2.5 rounded-xl font-bold text-sm disabled:opacity-50">
-            {saving ? 'Saving...' : 'Save Search'}
+
+      {allForPage.length >= 5 && (
+        <div className="px-4 pt-3 flex-shrink-0">
+          <input value={filterText} onChange={e=>setFilterText(e.target.value)} placeholder="Filter your saved searches..."
+            className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm text-[#0F172A] focus:outline-none focus:ring-2 focus:ring-blue-300 placeholder:text-gray-400"/>
+        </div>
+      )}
+
+      <div className="p-4 space-y-4 overflow-y-auto">
+        <div className="bg-blue-50 rounded-2xl overflow-hidden">
+          <button onClick={()=>setShowSaveForm(!showSaveForm)} className="w-full flex items-center justify-between px-4 py-3 text-left">
+            <span className="font-bold text-[#0F172A] text-sm">+ Save Current Filters</span>
+            <span className="text-blue-600 text-xs">{showSaveForm ? 'Hide ▲' : 'Show ▼'}</span>
           </button>
+          {showSaveForm && (
+            <div className="px-4 pb-4 space-y-3">
+              <input value={saveName} onChange={e=>setSaveName(e.target.value)} placeholder="Name this search..." className="w-full border border-blue-200 rounded-xl px-3 py-2 text-sm text-[#0F172A] focus:outline-none focus:ring-2 focus:ring-blue-400"/>
+              <div className="text-xs text-gray-500 bg-white rounded-xl px-3 py-2 border border-blue-100">{describe(currentFilters)}</div>
+              <label className="flex items-center gap-2 text-sm text-[#0F172A] cursor-pointer">
+                <input type="checkbox" checked={saveDef} onChange={e=>setSaveDef(e.target.checked)} className="w-4 h-4 accent-blue-600"/>
+                Set as my default
+              </label>
+              <label className="flex items-center gap-2 text-sm text-[#0F172A] cursor-pointer">
+                <input type="checkbox" checked={saveGlobal} onChange={e=>setSaveGlobal(e.target.checked)} className="w-4 h-4 accent-purple-600"/>
+                Make this the team default for everyone
+              </label>
+              <button onClick={async()=>{if(!saveName.trim()){showAlert('Enter a name.', { variant:'warning' });return;}setSaving(true);const r=await createSavedSearch({name:saveName,object_type:page,filters:currentFilters,is_default:saveDef,is_global_default:saveGlobal});setSaving(false);if(r){setSaveName('');setSaveDef(false);setSaveGlobal(false);setShowSaveForm(false);}}} disabled={saving} className="w-full bg-gradient-to-r from-[#0F172A] to-blue-800 text-white py-2.5 rounded-xl font-bold text-sm disabled:opacity-50">
+                {saving ? 'Saving...' : 'Save Search'}
+              </button>
+            </div>
+          )}
         </div>
         {globalSearches.length > 0 && (
           <div>
-            <h4 className="font-bold text-gray-500 text-xs uppercase tracking-wider mb-2">Global Defaults</h4>
+            <h4 className="font-bold text-gray-500 text-xs uppercase tracking-wider mb-2">Team Defaults</h4>
             <div className="space-y-2">{globalSearches.map(s=><SearchCard key={s.id} s={s}/>)}</div>
           </div>
         )}
         <div>
           <h4 className="font-bold text-gray-500 text-xs uppercase tracking-wider mb-2">My Searches ({mySearches.length})</h4>
           {mySearches.length === 0
-            ? <div className="text-gray-400 text-sm text-center py-4">No saved searches yet.</div>
+            ? <div className="text-gray-400 text-sm text-center py-6">
+                {q ? 'No saved searches match your filter.' : 'No saved searches yet — set some filters above and save them for one-click access next time.'}
+              </div>
             : <div className="space-y-2">{mySearches.map(s=><SearchCard key={s.id} s={s}/>)}</div>
           }
         </div>
@@ -314,7 +376,7 @@ export default function CRMListPage({ page }) {
   useEffect(() => {
     fetchSavedSearches(page);
     setSearch(''); setStatusFilter('All'); setTimePeriod('');
-    setFieldFilter({field:'',value:''}); setOwnerFilter('');
+    setAdvFilters([]); setOwnerFilter('');
     setDefaultLoaded(false);
     setTimeout(() => setDefaultLoaded(true), 300);
   }, [page]);
@@ -416,7 +478,7 @@ export default function CRMListPage({ page }) {
   const pagedRecords = sorted.slice((safePage - 1) * pageSize, safePage * pageSize);
 
   const pageLabel    = getPageLabel(page);
-  const activeCount  = [search, statusFilter!=='All', timePeriod, advFilters.some(c=>c.field), ownerFilter].filter(Boolean).length;
+  const activeCount  = (search?1:0) + (statusFilter!=='All'?1:0) + (timePeriod?1:0) + advFilters.filter(c=>c.field).length + (ownerFilter?1:0);
   const clearFilters = () => { setSearch(''); setStatusFilter('All'); setTimePeriod(''); setAdvFilters([]); setOwnerFilter(''); };
   const getSecondary = (r) => r.customer || r.company || r.category || r.email || '';
   const addFilterRow = () => { const f = fieldMeta.find(f=>f.key!=='id')||fieldMeta[0]; setAdvFilters(p=>[...p,{field:f.key,type:f.type,op:OPERATORS[f.type][0].v,value:''}]); };

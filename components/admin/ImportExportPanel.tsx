@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { useApp } from '@/context/AppContext';
 import { useTenant } from '@/context/TenantContext';
+import { tenantScope } from '@/lib/utils';
 
 // ─── Field definitions per object ─────────────────────────────────────────────
 const IMPORT_OBJECTS = {
@@ -27,7 +28,7 @@ const IMPORT_OBJECTS = {
       { key:'gst_number',       label:'GST Number',          example:'27AAPFU0939F1ZV' },
       { key:'type',             label:'Customer Type',       example:'Customer' },
       { key:'status',           label:'Status',              example:'Active' },
-      { key:'owner',            label:'Owner Email',         example:'rep@company.com' },
+      { key:'owner',            label:'Owner Email',         example:'rep@company.com' , resolve:{against:'enterpriseUsers',matchField:'email',setField:'owner_id',mode:'optional'} },
       { key:'description',      label:'Description',         example:'Enterprise client' },
     ],
   },
@@ -37,7 +38,7 @@ const IMPORT_OBJECTS = {
     requiredCols: ['name'],
     columns: [
       { key:'name',               label:'Name *',            example:'John Smith' },
-      { key:'customer',           label:'Company',           example:'ABC Corp' },
+      { key:'customer',           label:'Company',           example:'ABC Corp' , resolve:{against:'customers',matchField:'name',setField:'customer_id',mode:'optional',keepRaw:true} },
       { key:'email',              label:'Email',             example:'john@abc.com' },
       { key:'phone',              label:'Phone',             example:'+91 9876543210' },
       { key:'contact',            label:'Contact Person',    example:'John Smith' },
@@ -45,7 +46,7 @@ const IMPORT_OBJECTS = {
       { key:'amount',             label:'Amount',            example:'50000' },
       { key:'status',             label:'Status',            example:'New' },
       { key:'expected_close_date',label:'Expected Close',    example:'2025-12-31' },
-      { key:'owner',              label:'Owner Email',       example:'rep@company.com' },
+      { key:'owner',              label:'Owner Email',       example:'rep@company.com' , resolve:{against:'enterpriseUsers',matchField:'email',setField:'owner_id',mode:'optional'} },
       { key:'description',        label:'Description',       example:'Interested in CRM' },
     ],
   },
@@ -55,7 +56,7 @@ const IMPORT_OBJECTS = {
     requiredCols: ['name'],
     columns: [
       { key:'name',        label:'Name *',         example:'Jane Doe' },
-      { key:'customer',    label:'Company',         example:'Acme Corp' },
+      { key:'customer',    label:'Company',         example:'Acme Corp' , resolve:{against:'customers',matchField:'name',setField:'customer_id',mode:'optional',keepRaw:true} },
       { key:'email',       label:'Email',           example:'jane@acme.com' },
       { key:'phone',       label:'Phone',           example:'+91 9876543210' },
       { key:'mobile',      label:'Mobile',          example:'+91 9876543210' },
@@ -72,14 +73,14 @@ const IMPORT_OBJECTS = {
     requiredCols: ['name'],
     columns: [
       { key:'name',       label:'Name *',          example:'Q1 Deal - Acme' },
-      { key:'customer',   label:'Customer',         example:'Acme Corp' },
+      { key:'customer',   label:'Customer',         example:'Acme Corp' , resolve:{against:'customers',matchField:'name',setField:'customer_id',mode:'optional',keepRaw:true} },
       { key:'stage',      label:'Stage',            example:'Proposal Sent' },
       { key:'amount',     label:'Amount',           example:'250000' },
       { key:'probability',label:'Probability %',    example:'60' },
       { key:'close_date', label:'Close Date',       example:'2025-12-31' },
       { key:'status',     label:'Status',           example:'Open' },
       { key:'campaign',   label:'Campaign',         example:'Summer 2025' },
-      { key:'owner',      label:'Owner Email',      example:'rep@company.com' },
+      { key:'owner',      label:'Owner Email',      example:'rep@company.com' , resolve:{against:'enterpriseUsers',matchField:'email',setField:'owner_id',mode:'optional'} },
       { key:'description',label:'Description',      example:'Key strategic deal' },
     ],
   },
@@ -96,8 +97,8 @@ const IMPORT_OBJECTS = {
       { key:'cost',           label:'Cost',            example:'4999' },
       { key:'unit',           label:'Unit',            example:'Per License' },
       { key:'tax_rate',       label:'Tax Rate %',      example:'18' },
-      { key:'gst_rate',       label:'GST Rate %',      example:'18' },
-      { key:'hsn_code',       label:'HSN Code',        example:'998313' },
+      { key:'stock_quantity', label:'Stock Quantity',  example:'100' },
+      { key:'reorder_level',  label:'Reorder Level',   example:'10' },
       { key:'status',         label:'Status',          example:'Active' },
       { key:'description',    label:'Description',     example:'Enterprise CRM license' },
     ],
@@ -109,14 +110,14 @@ const IMPORT_OBJECTS = {
     columns: [
       { key:'name',          label:'Name *',         example:'Follow up call' },
       { key:'activity_type', label:'Type *',          example:'Call' },
-      { key:'customer',      label:'Customer',        example:'Acme Corp' },
+      { key:'customer',      label:'Customer',        example:'Acme Corp' , resolve:{against:'customers',matchField:'name',setField:'customer_id',mode:'optional',keepRaw:true} },
       { key:'contact',       label:'Contact',         example:'Jane Doe' },
       { key:'subject',       label:'Subject',         example:'Product demo follow up' },
       { key:'status',        label:'Status',          example:'Open' },
       { key:'priority',      label:'Priority',        example:'High' },
       { key:'activity_date', label:'Activity Date',   example:'2025-01-15' },
       { key:'due_date',      label:'Due Date',        example:'2025-01-20' },
-      { key:'owner',         label:'Owner Email',     example:'rep@company.com' },
+      { key:'owner',         label:'Owner Email',     example:'rep@company.com' , resolve:{against:'enterpriseUsers',matchField:'email',setField:'owner_id',mode:'optional'} },
       { key:'notes',         label:'Notes',           example:'Call went well' },
     ],
   },
@@ -126,7 +127,7 @@ const IMPORT_OBJECTS = {
     requiredCols: ['name', 'customer'],
     columns: [
       { key:'name',             label:'Name *',            example:'Q1 Proposal - Acme' },
-      { key:'customer',         label:'Customer *',         example:'Acme Corp' },
+      { key:'customer',         label:'Customer *',         example:'Acme Corp' , resolve:{against:'customers',matchField:'name',setField:'customer_id',mode:'optional',keepRaw:true} },
       { key:'contact',          label:'Contact',            example:'Jane Doe' },
       { key:'status',           label:'Status',             example:'Draft' },
       { key:'validity_date',    label:'Validity Date',      example:'2025-12-31' },
@@ -140,7 +141,7 @@ const IMPORT_OBJECTS = {
       { key:'grand_total',      label:'Grand Total',        example:'50000' },
       { key:'place_of_supply',  label:'Place of Supply',    example:'Maharashtra' },
       { key:'gstin',            label:'GSTIN',              example:'27AAPFU0939F1ZV' },
-      { key:'owner',            label:'Owner Email',        example:'rep@company.com' },
+      { key:'owner',            label:'Owner Email',        example:'rep@company.com' , resolve:{against:'enterpriseUsers',matchField:'email',setField:'owner_id',mode:'optional'} },
       { key:'notes',            label:'Notes',              example:'Includes support for 1 year' },
     ],
   },
@@ -150,7 +151,7 @@ const IMPORT_OBJECTS = {
     requiredCols: ['name', 'customer'],
     columns: [
       { key:'name',             label:'Name *',            example:'Order - Acme Corp' },
-      { key:'customer',         label:'Customer *',         example:'Acme Corp' },
+      { key:'customer',         label:'Customer *',         example:'Acme Corp' , resolve:{against:'customers',matchField:'name',setField:'customer_id',mode:'optional',keepRaw:true} },
       { key:'contact',          label:'Contact',            example:'Jane Doe' },
       { key:'status',           label:'Status',             example:'Draft' },
       { key:'delivery_date',    label:'Delivery Date',      example:'2025-12-31' },
@@ -166,7 +167,7 @@ const IMPORT_OBJECTS = {
       { key:'amount',           label:'Grand Total',        example:'53600' },
       { key:'place_of_supply',  label:'Place of Supply',    example:'Maharashtra' },
       { key:'gstin',            label:'GSTIN',              example:'27AAPFU0939F1ZV' },
-      { key:'owner',            label:'Owner Email',        example:'rep@company.com' },
+      { key:'owner',            label:'Owner Email',        example:'rep@company.com' , resolve:{against:'enterpriseUsers',matchField:'email',setField:'owner_id',mode:'optional'} },
       { key:'notes',            label:'Notes',              example:'Rush delivery' },
     ],
   },
@@ -176,7 +177,7 @@ const IMPORT_OBJECTS = {
     requiredCols: ['name', 'customer'],
     columns: [
       { key:'name',             label:'Name *',            example:'Invoice - Acme Corp' },
-      { key:'customer',         label:'Customer *',         example:'Acme Corp' },
+      { key:'customer',         label:'Customer *',         example:'Acme Corp' , resolve:{against:'customers',matchField:'name',setField:'customer_id',mode:'optional',keepRaw:true} },
       { key:'contact',          label:'Contact',            example:'Jane Doe' },
       { key:'status',           label:'Status',             example:'Draft' },
       { key:'due_date',         label:'Due Date',           example:'2025-12-31' },
@@ -192,7 +193,7 @@ const IMPORT_OBJECTS = {
       { key:'order_number',     label:'Order Number',       example:'ORD-00001' },
       { key:'place_of_supply',  label:'Place of Supply',    example:'Maharashtra' },
       { key:'gstin',            label:'GSTIN',              example:'27AAPFU0939F1ZV' },
-      { key:'owner',            label:'Owner Email',        example:'rep@company.com' },
+      { key:'owner',            label:'Owner Email',        example:'rep@company.com' , resolve:{against:'enterpriseUsers',matchField:'email',setField:'owner_id',mode:'optional'} },
       { key:'notes',            label:'Notes',              example:'Thank you for your business' },
     ],
   },
@@ -206,10 +207,12 @@ const IMPORT_OBJECTS = {
       { key:'name',          label:'Name *',         example:'Alice Johnson' },
       { key:'email',         label:'Email',           example:'alice@email.com' },
       { key:'phone',         label:'Phone',           example:'+91 9876543210' },
-      { key:'address',       label:'Address',         example:'456 Park Ave' },
+      { key:'address_line1', label:'Address Line 1',  example:'456 Park Ave' },
+      { key:'address_line2', label:'Address Line 2',  example:'Apt 4B' },
       { key:'city',          label:'City',            example:'Delhi' },
       { key:'state',         label:'State',           example:'Delhi' },
       { key:'postal_code',   label:'Postal Code',     example:'110001' },
+      { key:'country',       label:'Country',         example:'India' },
       { key:'status',        label:'Status',          example:'Active' },
       { key:'loyalty_tier',  label:'Loyalty Tier',    example:'Gold' },
       { key:'notes',         label:'Notes',           example:'VIP customer' },
@@ -244,12 +247,12 @@ const IMPORT_OBJECTS = {
     columns: [
       { key:'subject',       label:'Subject *',      example:'Walk-in visit' },
       { key:'activity_type', label:'Type *',          example:'Visit' },
-      { key:'customer',      label:'Customer Name',   example:'Alice Johnson' },
+      { key:'customer',      label:'Customer Name',   example:'Alice Johnson' , resolve:{against:'retailCustomers',matchField:'name',setField:'customer_id',mode:'required',keepRaw:false} },
       { key:'status',        label:'Status',          example:'Open' },
       { key:'priority',      label:'Priority',        example:'Medium' },
       { key:'activity_date', label:'Activity Date',   example:'2025-01-15' },
       { key:'due_date',      label:'Due Date',        example:'2025-01-20' },
-      { key:'owner',         label:'Owner Email',     example:'staff@store.com' },
+      { key:'owner',         label:'Owner Email',     example:'staff@store.com' , resolve:{against:'enterpriseUsers',matchField:'email',setField:'owner_id',mode:'optional'} },
       { key:'description',   label:'Description',     example:'Customer inquired about new stock' },
       { key:'notes',         label:'Notes',           example:'Follow up next week' },
     ],
@@ -259,7 +262,7 @@ const IMPORT_OBJECTS = {
     table: 'retail_orders', idField: 'order_number', idPrefix: 'RORD',
     requiredCols: ['customer','order_date'],
     columns: [
-      { key:'customer',        label:'Customer Name *', example:'Alice Johnson' },
+      { key:'customer',        label:'Customer Name *', example:'Alice Johnson', resolve:{against:'retailCustomers',matchField:'name',setField:'customer_id',mode:'required',keepRaw:false} },
       { key:'customer_phone',  label:'Customer Phone',  example:'+91 9876543210' },
       { key:'order_date',      label:'Order Date',      example:'2025-01-15' },
       { key:'channel',         label:'Channel',         example:'In-Store' },
@@ -281,7 +284,7 @@ const IMPORT_OBJECTS = {
     table: 'retail_invoices', idField: 'invoice_number', idPrefix: 'RINV',
     requiredCols: ['customer','invoice_date'],
     columns: [
-      { key:'customer',         label:'Customer Name *', example:'Alice Johnson' },
+      { key:'customer',         label:'Customer Name *', example:'Alice Johnson', resolve:{against:'retailCustomers',matchField:'name',setField:'customer_id',mode:'required',keepRaw:false} },
       { key:'customer_phone',   label:'Customer Phone',  example:'+91 9876543210' },
       { key:'order_number',     label:'Order Number',    example:'RORD-00001' },
       { key:'invoice_date',     label:'Invoice Date',    example:'2025-01-15' },
@@ -297,6 +300,90 @@ const IMPORT_OBJECTS = {
       { key:'gstin',            label:'GSTIN',           example:'07AAPFU0939F1ZV' },
       { key:'status',           label:'Status',          example:'Paid' },
       { key:'notes',            label:'Notes',           example:'Payment received in cash' },
+    ],
+  },
+
+  // ── Line Items — each row is ONE line item, linked to its parent record via
+  // the parent's DISPLAY NUMBER (e.g. 'ORD-00001'), not an internal UUID —
+  // this is the standard "human-readable foreign key" convention (Oracle
+  // Fusion, etc.) for line-item bulk data migration. Line items have no
+  // display-number identity of their own (noDisplayId), so import is
+  // create-only here — there's no stable business key to safely match an
+  // existing line item against for an update/upsert.
+  quotationLineItems: {
+    label: 'Quotation Line Items', icon: '📝', group: 'B2B Enterprise', noDisplayId: true,
+    table: 'quotation_line_items', idField: 'id',
+    parentField: 'quote_number', parentLabel: 'Quotation #', parentTable: 'quotations', parentDisplayField: 'quote_number',
+    requiredCols: ['quote_number', 'product_name', 'quantity'],
+    columns: [
+      { key:'quote_number',  label:'Quotation # *',  example:'QUO-00001' },
+      { key:'product_name',  label:'Product Name *', example:'CRM Pro License' },
+      { key:'product_code',  label:'Product Code',   example:'CRM-PRO-001' },
+      { key:'description',   label:'Description',    example:'Annual subscription' },
+      { key:'quantity',      label:'Quantity *',     example:'5' },
+      { key:'unit_price',    label:'Unit Price',     example:'9999' },
+      { key:'discount_pct',  label:'Discount %',     example:'10' },
+      { key:'tax_pct',       label:'Tax %',          example:'18' },
+    ],
+  },
+  orderLineItems: {
+    label: 'Order Line Items', icon: '📝', group: 'B2B Enterprise', noDisplayId: true,
+    table: 'order_line_items', idField: 'id',
+    parentField: 'order_number', parentLabel: 'Order #', parentTable: 'orders', parentDisplayField: 'order_number',
+    requiredCols: ['order_number', 'product_name', 'quantity'],
+    columns: [
+      { key:'order_number',  label:'Order # *',      example:'ORD-00001' },
+      { key:'product_name',  label:'Product Name *', example:'CRM Pro License' },
+      { key:'product_code',  label:'Product Code',   example:'CRM-PRO-001' },
+      { key:'description',   label:'Description',    example:'Annual subscription' },
+      { key:'quantity',      label:'Quantity *',     example:'5' },
+      { key:'price',         label:'Unit Price',     example:'9999' },
+      { key:'discount',      label:'Discount %',     example:'10' },
+      { key:'tax_pct',       label:'Tax %',          example:'18' },
+    ],
+  },
+  invoiceLineItems: {
+    label: 'Invoice Line Items', icon: '📝', group: 'B2B Enterprise', noDisplayId: true,
+    table: 'invoice_line_items', idField: 'id',
+    parentField: 'invoice_number', parentLabel: 'Invoice #', parentTable: 'invoices', parentDisplayField: 'invoice_number',
+    requiredCols: ['invoice_number', 'product_name', 'quantity'],
+    columns: [
+      { key:'invoice_number', label:'Invoice # *',    example:'INV-00001' },
+      { key:'product_name',   label:'Product Name *', example:'CRM Pro License' },
+      { key:'product_code',   label:'Product Code',   example:'CRM-PRO-001' },
+      { key:'description',    label:'Description',    example:'Annual subscription' },
+      { key:'quantity',       label:'Quantity *',     example:'5' },
+      { key:'price',          label:'Unit Price',     example:'9999' },
+      { key:'discount',       label:'Discount %',     example:'10' },
+      { key:'tax_pct',        label:'Tax %',          example:'18' },
+    ],
+  },
+  retailOrderLineItems: {
+    label: 'Retail Order Line Items', icon: '📝', group: 'B2C Retail', noDisplayId: true,
+    table: 'retail_order_line_items', idField: 'id',
+    parentField: 'order_number', parentLabel: 'Retail Order #', parentTable: 'retail_orders', parentDisplayField: 'order_number',
+    requiredCols: ['order_number', 'product_name', 'quantity'],
+    columns: [
+      { key:'order_number',  label:'Retail Order # *', example:'RORD-00001' },
+      { key:'product_name',  label:'Product Name *',   example:'Running Shoes X200' },
+      { key:'quantity',      label:'Quantity *',       example:'2' },
+      { key:'unit_price',    label:'Unit Price',       example:'1999' },
+      { key:'discount_pct',  label:'Discount %',       example:'10' },
+      { key:'tax_pct',       label:'Tax %',            example:'12' },
+    ],
+  },
+  retailInvoiceLineItems: {
+    label: 'Retail Invoice Line Items', icon: '📝', group: 'B2C Retail', noDisplayId: true,
+    table: 'retail_invoice_line_items', idField: 'id',
+    parentField: 'invoice_number', parentLabel: 'Retail Invoice #', parentTable: 'retail_invoices', parentDisplayField: 'invoice_number',
+    requiredCols: ['invoice_number', 'product_name', 'quantity'],
+    columns: [
+      { key:'invoice_number', label:'Retail Invoice # *', example:'RINV-00001' },
+      { key:'product_name',   label:'Product Name *',     example:'Running Shoes X200' },
+      { key:'quantity',       label:'Quantity *',         example:'2' },
+      { key:'unit_price',     label:'Unit Price',         example:'1999' },
+      { key:'discount_pct',   label:'Discount %',         example:'10' },
+      { key:'tax_pct',        label:'Tax %',              example:'12' },
     ],
   },
 };
@@ -361,7 +448,8 @@ const downloadCsv = (filename: string, content: string) => {
 
 // ─── Main Component ────────────────────────────────────────────────────────────
 export default function ImportExportPanel() {
-  const { currentUser, appPreferences } = useApp() as any;
+  const { currentUser, appPreferences, customers, retailCustomers, enterpriseUsers, orders, invoices, quotations, retailOrders, retailInvoices } = useApp() as any;
+  const PARENT_LOOKUP: Record<string, any[]> = { orders, invoices, quotations, retail_orders: retailOrders, retail_invoices: retailInvoices };
   const { supabase }  = useTenant();
   const isB2C         = appPreferences?.b2c_mode === true;
   const isCRMEnabled  = appPreferences?.crm_enabled !== false;
@@ -478,7 +566,9 @@ export default function ImportExportPanel() {
       setExportRows(flatData);
 
       // Build ordered columns for output: record_number first, then selected fields
-      const outputCols = [cfg.idField, ...exportFields.filter(f => f !== cfg.idField)];
+      const outputCols = cfg.noDisplayId
+        ? exportFields.filter(f => f !== cfg.idField)
+        : [cfg.idField, ...exportFields.filter(f => f !== cfg.idField)];
 
       if (exportFmt === 'csv') {
         // Human-readable headers
@@ -519,7 +609,7 @@ export default function ImportExportPanel() {
     // Row 2: actual field keys — THIS is the header row the importer reads
     // Row 3: example data
     const allCols = [
-      { key: cfg.idField,   label: 'Record Number (auto-generated, leave blank)', example: '' },
+      ...(cfg.noDisplayId ? [] : [{ key: cfg.idField, label: 'Record Number (auto-generated, leave blank)', example: '' }]),
       ...cfg.columns,
       ...customFields.map(f => ({ key: f.key.replace('custom_data.',''), label: f.label.replace('[Custom] ',''), example: '' })),
     ];
@@ -562,7 +652,7 @@ export default function ImportExportPanel() {
       // Auto-map: exact match on key, then case-insensitive, then label match
       const autoMap: Record<string,string> = {};
       const allCfgCols = [
-        { key: cfg.idField, label: 'Record Number' },
+        ...(cfg.noDisplayId ? [] : [{ key: cfg.idField, label: 'Record Number' }]),
         ...cfg.columns,
         ...customFields.map(f => ({ key: f.key.replace('custom_data.',''), label: f.label.replace('[Custom] ','') })),
       ];
@@ -740,17 +830,68 @@ export default function ImportExportPanel() {
     const now = new Date().toISOString();
     const sys = { created_by: currentUser.email, updated_by: currentUser.email, updated_at: now };
 
-    // Get next sequence number for ID generation
-    const { data: seqData } = await supabase
-      .from(cfg.table)
-      .select(cfg.idField)
-      .order('created_at', { ascending: false })
-      .limit(1);
+    // Get next sequence number for ID generation — skipped for line items,
+    // which use the DB's own UUID default rather than a generated display
+    // number (they're child records with no business-key identity of their
+    // own; they're always looked up in the context of their parent record).
     let seq = 1;
-    if (seqData?.[0]?.[cfg.idField]) {
-      const lastNum = parseInt(seqData[0][cfg.idField].split('-').pop() || '0', 10);
-      seq = lastNum + 1;
+    if (!cfg.noDisplayId) {
+      const { data: seqData } = await tenantScope(supabase
+        .from(cfg.table)
+        .select(cfg.idField))
+        .order('created_at', { ascending: false })
+        .limit(1);
+      if (seqData?.[0]?.[cfg.idField]) {
+        const lastNum = parseInt(seqData[0][cfg.idField].split('-').pop() || '0', 10);
+        seq = lastNum + 1;
+      }
     }
+
+    // Line items are validated against their parent record's DISPLAY NUMBER
+    // (e.g. "ORD-00001"), not an internal UUID — matching the human-readable
+    // foreign key convention used throughout this import/export feature.
+    // Blocks the row with a clear message if the parent doesn't exist,
+    // rather than silently creating an orphaned line item.
+    const validateParent = (rec: any): string | null => {
+      if (!cfg.parentField) return null;
+      const parentVal = rec[cfg.parentField];
+      if (!parentVal || String(parentVal).trim() === '') return `"${cfg.parentLabel}" is required.`;
+      const parentArr = PARENT_LOOKUP[cfg.parentTable] || [];
+      const match = parentArr.find((p: any) => p.id === String(parentVal).trim());
+      if (!match) return `"${cfg.parentLabel}" value "${parentVal}" was not found — create that record first or check for typos.`;
+      return null;
+    };
+
+    // Resolves any column tagged with `.resolve` metadata (customer names,
+    // owner emails) to the actual foreign-key UUID before writing to the DB.
+    // Previously the import wrote raw text straight into columns that may
+    // not exist at all (retail orders/invoices/activities don't have a
+    // plain `customer` text column — only `customer_id`), and never linked
+    // owner emails to `owner_id`. `mode:'required'` blocks the row with a
+    // clear message if the referenced record can't be found, rather than
+    // silently writing bad/orphaned data.
+    const LOOKUP_SOURCES: Record<string, any[]> = { customers, retailCustomers, enterpriseUsers };
+    const resolveReferenceFields = (rec: any) => {
+      const resolved: any = {};
+      const dropKeys: string[] = [];
+      const rowErrors: string[] = [];
+      for (const col of cfg.columns) {
+        if (!(col as any).resolve) continue;
+        const r = (col as any).resolve;
+        const raw = rec[col.key];
+        if (!(col.key in rec) || raw === '' || raw === undefined || raw === null) continue;
+        const source = LOOKUP_SOURCES[r.against] || [];
+        const needle = String(raw).toLowerCase().trim();
+        const match = source.find((x) => String(x[r.matchField] || '').toLowerCase().trim() === needle);
+        if (match) {
+          resolved[r.setField] = match._uuid || match.id;
+        } else if (r.mode === 'required') {
+          rowErrors.push(`"${col.label.replace(' *','').replace('*','').trim()}" value "${raw}" was not found — create it first or check for typos.`);
+        }
+        if (!r.keepRaw) dropKeys.push(col.key);
+      }
+      return { resolved, dropKeys, rowErrors };
+    };
 
     // Process in batches of 50
     const BATCH = 50;
@@ -758,10 +899,19 @@ export default function ImportExportPanel() {
       const batch = validation.valid.slice(i, i + BATCH);
 
       if (importMode === 'create') {
-        const rows = batch.map(rec => {
+        const rows: any[] = [];
+        batch.forEach((rec, idx) => {
+          const parentErr = validateParent(rec);
+          if (parentErr) { result.errors.push(`Row ${i+idx+1}: ${parentErr}`); result.skipped++; return; }
+          const { resolved, dropKeys, rowErrors } = resolveReferenceFields(rec);
+          if (rowErrors.length) {
+            rowErrors.forEach(e => result.errors.push(`Row ${i+idx+1}: ${e}`));
+            result.skipped++;
+            return;
+          }
           const cfData: any = {};
           const stdData: any = {};
-          Object.entries(rec).filter(([,v]) => v !== '').forEach(([k,v]) => {
+          Object.entries(rec).filter(([k,v]) => v !== '' && !dropKeys.includes(k)).forEach(([k,v]) => {
             const numFields = ['amount','price','mrp','cost','probability','tax_rate','gst_rate',
               'vat_rate','stock','stock_quantity','reorder_level','quantity','subtotal',
               'total_discount','total_tax','shipping_cost','grand_total','loyalty_points',
@@ -772,15 +922,17 @@ export default function ImportExportPanel() {
               stdData[k] = numFields.includes(k) ? Number(v) : v;
             }
           });
-          return {
-            ...sys, ...stdData,
-            [cfg.idField]: generateDisplayId(cfg.idPrefix, seq++),
+          rows.push({
+            ...sys, ...stdData, ...resolved,
+            ...(cfg.noDisplayId ? {} : { [cfg.idField]: generateDisplayId(cfg.idPrefix, seq++) }),
             ...(Object.keys(cfData).length ? { custom_data: cfData } : {}),
-          };
+          });
         });
-        const { error } = await supabase.from(cfg.table).insert(rows);
-        if (error) { result.errors.push(`Batch ${Math.floor(i/BATCH)+1}: ${error.message}`); }
-        else result.created += rows.length;
+        if (rows.length) {
+          const { error } = await supabase.from(cfg.table).insert(rows);
+          if (error) { result.errors.push(`Batch ${Math.floor(i/BATCH)+1}: ${error.message}`); }
+          else result.created += rows.length;
+        }
 
       } else {
         // Upsert: check if record exists by dupe key
@@ -792,10 +944,22 @@ export default function ImportExportPanel() {
             continue;
           }
 
-          // Try matching by dupe key — if dupe key is the idField, match on idField
+          const { resolved, dropKeys, rowErrors } = resolveReferenceFields(rec);
+          if (rowErrors.length) {
+            rowErrors.forEach(e => result.errors.push(`Row (${dupeVal}): ${e}`));
+            result.skipped++;
+            continue;
+          }
+
+          // Try matching by dupe key — if dupe key is the idField, match on idField.
+          // Tenant-scoped: on a shared DB, an unscoped match here could find and
+          // silently overwrite a DIFFERENT tenant's record that happens to share
+          // the same dupe-key value (e.g. the same customer name or display ID
+          // pattern) — a real cross-tenant data integrity risk in a multi-tenant
+          // architecture like this one.
           const matchField = importDupeKey === cfg.idField ? cfg.idField : importDupeKey;
-          const { data: existing } = await supabase
-            .from(cfg.table).select('id').eq(matchField, String(dupeVal).trim()).maybeSingle();
+          const { data: existing } = await tenantScope(supabase
+            .from(cfg.table).select('id')).eq(matchField, String(dupeVal).trim()).maybeSingle();
 
           const cfData: any = {};
           const cleaned: any = {};
@@ -803,18 +967,18 @@ export default function ImportExportPanel() {
             'vat_rate','stock','stock_quantity','reorder_level','quantity','subtotal',
             'total_discount','total_tax','shipping_cost','grand_total','loyalty_points',
             'discount_pct','sales_tax_rate','tax_pct','extended_price','overall_discount'];
-          Object.entries(rec).filter(([,v]) => v !== '').forEach(([k,v]: [string,any]) => {
+          Object.entries(rec).filter(([k,v]) => v !== '' && !dropKeys.includes(k)).forEach(([k,v]: [string,any]) => {
             if (k.startsWith('custom_data.')) { cfData[k.replace('custom_data.','')] = v; }
             else { cleaned[k] = numFields.includes(k) ? Number(v) : v; }
           });
           if (Object.keys(cfData).length) cleaned.custom_data = cfData;
 
           if (existing) {
-            const { error } = await supabase.from(cfg.table).update({ ...cleaned, ...sys }).eq('id', existing.id);
+            const { error } = await supabase.from(cfg.table).update({ ...cleaned, ...resolved, ...sys }).eq('id', existing.id);
             if (error) result.errors.push(`Update "${dupeVal}": ${error.message}`);
             else result.updated++;
           } else {
-            const { error } = await supabase.from(cfg.table).insert({ ...sys, ...cleaned, [cfg.idField]: generateDisplayId(cfg.idPrefix, seq++) });
+            const { error } = await supabase.from(cfg.table).insert({ ...sys, ...cleaned, ...resolved, [cfg.idField]: generateDisplayId(cfg.idPrefix, seq++) });
             if (error) result.errors.push(`Insert "${dupeVal}": ${error.message}`);
             else result.created++;
           }
@@ -834,14 +998,15 @@ export default function ImportExportPanel() {
     }, ...p].slice(0, 50));
   };
 
-  const resetImport = () => {
+  const resetImport = (targetObjKey?: string) => {
     setImportStep('upload');
     setImportFile(null);
     setImportParsed(null);
     setColMap({});
     setValidation({ valid:[], errors:[] });
     setImportResult(null);
-    setImportMode('upsert');
+    const targetCfg = IMPORT_OBJECTS[targetObjKey || selObj];
+    setImportMode(targetCfg?.noDisplayId ? 'create' : 'upsert');
     if (fileRef.current) fileRef.current.value = '';
   };
 
@@ -887,7 +1052,7 @@ export default function ImportExportPanel() {
               <div key={group} className="contents">
                 {items.length > 0 && <span className="w-full text-xs font-bold text-gray-400 uppercase tracking-wider pt-2 first:pt-0">{group}</span>}
                 {items.map(([key, ocfg]) => (
-                  <button key={key} onClick={()=>{ setSelObj(key); resetImport(); setExportDone(''); }}
+                  <button key={key} onClick={()=>{ setSelObj(key); resetImport(key); setExportDone(''); }}
                     className={`flex items-center gap-2 px-4 py-2 rounded-2xl text-sm font-semibold border transition-all ${selObj===key ? 'bg-[#0F172A] text-white border-transparent shadow' : 'bg-white text-gray-600 border-gray-200 hover:border-blue-400'}`}>
                     <span>{ocfg.icon}</span> {ocfg.label}
                   </button>
@@ -1064,17 +1229,25 @@ export default function ImportExportPanel() {
               {/* Import mode */}
               <div className="bg-gray-50 rounded-[16px] p-4 space-y-3">
                 <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider">Import Mode</h4>
+                {cfg.noDisplayId && (
+                  <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">
+                    ℹ️ Line items have no display number of their own, so only Create is available — there's no stable key to match an existing line item against for an update.
+                  </p>
+                )}
                 <div className="flex gap-3">
-                  {([['create','➕ Create Only','Always insert new records — skip if duplicate'],
-                     ['upsert','🔄 Create or Update','Update existing records, create new ones']] as const).map(([val, lbl, desc]) => (
+                  {(cfg.noDisplayId
+                    ? [['create','➕ Create Only','Always insert new line items']]
+                    : [['create','➕ Create Only','Always insert new records — skip if duplicate'],
+                       ['upsert','🔄 Create or Update','Update existing records, create new ones']]
+                  ).map(([val, lbl, desc]) => (
                     <label key={val} className={`flex-1 cursor-pointer border rounded-2xl p-4 transition-all ${importMode===val?'border-blue-400 bg-blue-50':'border-gray-200 hover:border-blue-300'}`}>
-                      <input type="radio" name="importMode" value={val} checked={importMode===val} onChange={()=>setImportMode(val)} className="hidden"/>
+                      <input type="radio" name="importMode" value={val} checked={importMode===val} onChange={()=>setImportMode(val as any)} className="hidden"/>
                       <div className="font-bold text-sm text-[#0F172A]">{lbl}</div>
                       <div className="text-xs text-gray-400 mt-1">{desc}</div>
                     </label>
                   ))}
                 </div>
-                {importMode === 'upsert' && (
+                {importMode === 'upsert' && !cfg.noDisplayId && (
                   <div>
                     <label className="block text-xs font-bold text-gray-500 mb-1">Match existing records by</label>
                     <select value={importDupeKey} onChange={e=>setImportDupeKey(e.target.value)}

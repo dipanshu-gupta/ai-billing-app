@@ -12,6 +12,8 @@ import QuickCreateModal from '@/components/shared/QuickCreateModal';
 import AddressSelector from '@/components/shared/AddressSelector';
 import BalanceConversionModal from '@/components/shared/BalanceConversionModal';
 import { useAlert } from '@/components/shared/AlertProvider';
+import { useCustomFields } from '@/lib/useCustomFields';
+import LineItemCustomFieldInput from '@/components/shared/LineItemCustomFieldInput';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const QUOTE_STATUSES = ['Draft','Submitted','Pending Approval','Approved','Sent to Customer','Accepted','Partially Ordered','Ordered','Rejected','Expired','Cancelled'];
@@ -109,11 +111,13 @@ const buildQuoteHTML = (quote, items, template, products) => {
 function QuoteLineItems({ items, setItems, products, currency }) {
   const [configModal, setConfigModal] = useState(null);
   const { supabase } = useTenant();
+  const { fields: customFields } = useCustomFields('quotationLineItems');
   const fmt = n => new Intl.NumberFormat('en-IN',{style:'currency',currency:currency||'INR',maximumFractionDigits:0}).format(n||0);
   const iCls = 'w-full border border-blue-200 rounded-lg px-2 py-2 text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-blue-400 text-xs';
   const sCls = 'w-full border border-blue-200 rounded-lg px-2 py-2 text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-blue-400 text-xs';
 
-  const add    = () => setItems(p => [...p, { _id:Date.now(), product_name:'', product_code:'', description:'', quantity:1, unit_price:0, list_price:0, discount_pct:0, tax_pct:18, extended_price:0, configuration:{} }]);
+  const add    = () => setItems(p => [...p, { _id:Date.now(), product_name:'', product_code:'', description:'', quantity:1, unit_price:0, list_price:0, discount_pct:0, tax_pct:18, extended_price:0, configuration:{}, custom_data:{} }]);
+  const updCustom = (idx, apiName, val) => setItems(p => p.map((r,i) => i!==idx ? r : { ...r, custom_data: { ...(r.custom_data||{}), [apiName]: val } }));
   // Live availability lookup — always reads the current products array rather
   // than a stored snapshot, so stock changes elsewhere reflect immediately.
   const getAvailability = (row) => {
@@ -157,11 +161,13 @@ function QuoteLineItems({ items, setItems, products, currency }) {
       <div className="overflow-x-auto">
         <table className="w-full text-xs">
           <thead><tr className="bg-blue-50 border-b border-blue-100">
-            {['Product','Description','Qty','Available','List Price','Unit Price','Disc %','Tax %','Extended',''].map(h=><th key={h} className="px-3 py-2.5 text-left font-bold text-gray-500 uppercase whitespace-nowrap">{h}</th>)}
+            {['Product','Description','Qty','Available','List Price','Unit Price','Disc %','Tax %','Extended'].map(h=><th key={h} className="px-3 py-2.5 text-left font-bold text-gray-500 uppercase whitespace-nowrap">{h}</th>)}
+            {customFields.map(f=><th key={f.id} className="px-3 py-2.5 text-left font-bold text-gray-500 uppercase whitespace-nowrap">{f.label}</th>)}
+            <th className="px-3 py-2.5"></th>
           </tr></thead>
           <tbody>
             {items.length===0
-              ? <tr><td colSpan={10} className="px-5 py-8 text-center text-gray-400">No line items. Click + Add Line.</td></tr>
+              ? <tr><td colSpan={10+customFields.length} className="px-5 py-8 text-center text-gray-400">No line items. Click + Add Line.</td></tr>
               : items.map((row,idx)=>{
                 const avail = getAvailability(row);
                 return (
@@ -195,6 +201,7 @@ function QuoteLineItems({ items, setItems, products, currency }) {
                   <td className="px-3 py-2 w-16"><input type="number" min={0} max={100} value={row.discount_pct} onChange={e=>upd(idx,'discount_pct',e.target.value)} className={`${iCls} text-center ${row.discount_pct>0?'border-green-300 bg-green-50':''}`}/></td>
                   <td className="px-3 py-2 w-16"><input type="number" min={0} max={100} value={row.tax_pct} onChange={e=>upd(idx,'tax_pct',e.target.value)} className={`${iCls} text-center`}/></td>
                   <td className="px-3 py-2 text-right font-bold text-[#0F172A] whitespace-nowrap">{fmt(row.extended_price)}</td>
+                  {customFields.map(f=><td key={f.id} className="px-3 py-2" style={{minWidth:110}}><LineItemCustomFieldInput field={f} value={(row.custom_data||{})[f.api_name]} onChange={v=>updCustom(idx,f.api_name,v)}/></td>)}
                   <td className="px-2 py-2"><button onClick={()=>remove(idx)} className="w-6 h-6 rounded-full bg-red-100 hover:bg-red-200 text-red-500 text-xs font-bold flex items-center justify-center">✕</button></td>
                 </tr>
               );})
@@ -202,10 +209,10 @@ function QuoteLineItems({ items, setItems, products, currency }) {
           </tbody>
           {items.length>0&&(
             <tfoot className="border-t-2 border-blue-100">
-              <tr className="bg-gray-50"><td colSpan={8} className="px-5 py-2 text-right text-xs text-gray-500 font-medium">Subtotal</td><td className="px-3 py-2 text-right text-xs font-semibold">{fmt(subtotal)}</td><td/></tr>
-              {totalDisc>0&&<tr className="bg-green-50"><td colSpan={8} className="px-5 py-2 text-right text-xs text-green-600">Total Discount</td><td className="px-3 py-2 text-right text-xs font-semibold text-green-600">- {fmt(totalDisc)}</td><td/></tr>}
-              {totalTax>0&&<tr className="bg-blue-50"><td colSpan={8} className="px-5 py-2 text-right text-xs text-blue-600">Total Tax</td><td className="px-3 py-2 text-right text-xs font-semibold text-blue-600">+ {fmt(totalTax)}</td><td/></tr>}
-              <tr className="bg-[#0F172A]"><td colSpan={8} className="px-5 py-3 text-right font-bold text-white text-sm">Net Total</td><td className="px-3 py-3 text-right font-bold text-white text-base">{fmt(subtotal-totalDisc+totalTax)}</td><td/></tr>
+              <tr className="bg-gray-50"><td colSpan={8+customFields.length} className="px-5 py-2 text-right text-xs text-gray-500 font-medium">Subtotal</td><td className="px-3 py-2 text-right text-xs font-semibold">{fmt(subtotal)}</td><td/></tr>
+              {totalDisc>0&&<tr className="bg-green-50"><td colSpan={8+customFields.length} className="px-5 py-2 text-right text-xs text-green-600">Total Discount</td><td className="px-3 py-2 text-right text-xs font-semibold text-green-600">- {fmt(totalDisc)}</td><td/></tr>}
+              {totalTax>0&&<tr className="bg-blue-50"><td colSpan={8+customFields.length} className="px-5 py-2 text-right text-xs text-blue-600">Total Tax</td><td className="px-3 py-2 text-right text-xs font-semibold text-blue-600">+ {fmt(totalTax)}</td><td/></tr>}
+              <tr className="bg-[#0F172A]"><td colSpan={8+customFields.length} className="px-5 py-3 text-right font-bold text-white text-sm">Net Total</td><td className="px-3 py-3 text-right font-bold text-white text-base">{fmt(subtotal-totalDisc+totalTax)}</td><td/></tr>
             </tfoot>
           )}
         </table>

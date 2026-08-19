@@ -10,6 +10,8 @@ import { getTaxRegime } from '@/lib/taxConfig';
 import SearchableSelect from '@/components/shared/SearchableSelect';
 import ProductImages from '@/components/products/ProductImages';
 import { useAlert } from '@/components/shared/AlertProvider';
+import { useCustomFields } from '@/lib/useCustomFields';
+import LineItemCustomFieldInput from '@/components/shared/LineItemCustomFieldInput';
 
 const iCls = 'w-full border border-blue-200 rounded-xl px-3 py-2.5 text-[#0F172A] bg-white focus:outline-none focus:ring-2 focus:ring-blue-400 text-sm placeholder:text-gray-400';
 const sCls = iCls;
@@ -334,6 +336,14 @@ const getRetailFieldMeta = (page) => {
   const fields = [{ key:'id', label:'Record #', type:'text' }];
   cfg.sections.forEach(sec => sec.fields.forEach(f => {
     if (seen.has(f.key)) return; seen.add(f.key);
+    // customer_id is a foreign key (UUID) — not directly displayable, sortable,
+    // or filterable in any meaningful way. Point "Customer" at the resolved
+    // name field computed in the main component instead, so every downstream
+    // use (column display, sort, filter) works with the actual customer name.
+    if (f.type === 'retailCustomer') {
+      fields.push({ key:'customer_name_resolved', label:f.label, type:'text' });
+      return;
+    }
     fields.push({ key:f.key, label:f.label, type: mapRetailFieldType(f), opts: f.opts });
   }));
   // Orders/Invoices totals are computed from line items on save, not a form
@@ -349,9 +359,9 @@ const getRetailFieldMeta = (page) => {
 const RETAIL_DEFAULT_COLUMNS = {
   retailCustomers:  ['id','name','phone','email','loyalty_tier','loyalty_points','status'],
   retailProducts:   ['id','name','category','sku','price','stock_quantity','status'],
-  retailActivities: ['id','subject','activity_type','customer','activity_date','priority','status'],
-  retailOrders:     ['id','customer','channel','order_date','amount','status'],
-  retailInvoices:   ['id','customer','order_number','invoice_date','amount','status'],
+  retailActivities: ['id','subject','activity_type','customer_name_resolved','activity_date','priority','status'],
+  retailOrders:     ['id','customer_name_resolved','channel','order_date','amount','status'],
+  retailInvoices:   ['id','customer_name_resolved','order_number','invoice_date','amount','status'],
 };
 const RETAIL_OPERATORS = {
   text:    [{v:'contains',l:'contains'},{v:'equals',l:'is exactly'},{v:'not_equals',l:'is not'},{v:'is_empty',l:'is empty'},{v:'is_not_empty',l:'is not empty'}],
@@ -359,6 +369,15 @@ const RETAIL_OPERATORS = {
   date:    [{v:'on',l:'on'},{v:'before',l:'before'},{v:'after',l:'after'},{v:'is_empty',l:'is empty'}],
   select:  [{v:'equals',l:'is'},{v:'not_equals',l:'is not'}],
   boolean: [{v:'is_true',l:'is true'},{v:'is_false',l:'is false'}],
+};
+// Human-readable operator text — used when describing a saved search in
+// plain English instead of showing raw operator codes like 'gte'.
+const retailOperatorLabel = (op) => {
+  for (const list of Object.values(RETAIL_OPERATORS)) {
+    const found = (list as any[]).find(o => o.v === op);
+    if (found) return found.l;
+  }
+  return op;
 };
 const retailMatchesCondition = (record, cond) => {
   const raw = record[cond.field];
@@ -408,15 +427,17 @@ function buildCustomerPrefill(customer) {
 }
 
 // ─── Line items table (Orders / Invoices) ──────────────────────────────────
-function RetailLineItems({ items, setItems, products, taxRegime }) {
+function RetailLineItems({ items, setItems, products, taxRegime, page }) {
   const [stockWarning, setStockWarning] = useState(null);
+  const { fields: customFields } = useCustomFields(page === 'retailInvoices' ? 'retailInvoiceLineItems' : 'retailOrderLineItems');
+  const updCustom = (idx, apiName, val) => setItems(p => p.map((r,i) => i!==idx ? r : { ...r, custom_data: { ...(r.custom_data||{}), [apiName]: val } }));
 
   // Filter out discontinued products from the product picker
   const activeProducts = products.filter(p => p.status !== 'Discontinued');
 
   const add = () => setItems(p => [...p, {
     _id: Date.now(), product_name:'', description:'', quantity:1, unit_price:0, list_price:0, discount_pct:0,
-    extended_price:0,
+    extended_price:0, custom_data:{},
     ...(taxRegime.regime==='india_gst' ? { hsn_code:'', gst_rate:18 } : {}),
     ...(taxRegime.regime==='us_sales_tax' ? { taxable:'Yes', sales_tax_rate:0 } : {}),
     ...(taxRegime.regime==='uk_vat' ? { vat_rate:20 } : {}),
@@ -505,30 +526,22 @@ function RetailLineItems({ items, setItems, products, taxRegime }) {
 
       {/* Grid */}
       <div className="overflow-x-auto">
-        <table className="w-full" style={{ tableLayout:'fixed', minWidth:'700px' }}>
-          <colgroup>
-            <col style={{width:'26%'}}/>
-            <col style={{width:'8%'}}/>
-            <col style={{width:'12%'}}/>
-            <col style={{width:'8%'}}/>
-            {taxCols.map(tc=><col key={tc.key} style={{width:tc.type==='select'?'11%':'9%'}}/>)}
-            <col style={{width:'13%'}}/>
-            <col style={{width:'5%'}}/>
-          </colgroup>
+        <table className="w-full" style={{ minWidth:'700px' }}>
           <thead>
             <tr className="bg-blue-50 border-b border-blue-100">
-              <th className="px-4 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">Product</th>
-              <th className="px-4 py-3 text-center text-xs font-bold text-gray-500 uppercase tracking-wider">Qty</th>
-              <th className="px-4 py-3 text-right text-xs font-bold text-gray-500 uppercase tracking-wider">Unit Price</th>
-              <th className="px-4 py-3 text-center text-xs font-bold text-gray-500 uppercase tracking-wider">Disc %</th>
-              {taxCols.map(tc=><th key={tc.key} className="px-4 py-3 text-center text-xs font-bold text-gray-500 uppercase tracking-wider whitespace-nowrap">{tc.label}</th>)}
-              <th className="px-4 py-3 text-right text-xs font-bold text-gray-500 uppercase tracking-wider">Extended</th>
+              <th className="px-4 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider" style={{minWidth:200}}>Product</th>
+              <th className="px-4 py-3 text-center text-xs font-bold text-gray-500 uppercase tracking-wider" style={{minWidth:70}}>Qty</th>
+              <th className="px-4 py-3 text-right text-xs font-bold text-gray-500 uppercase tracking-wider" style={{minWidth:100}}>Unit Price</th>
+              <th className="px-4 py-3 text-center text-xs font-bold text-gray-500 uppercase tracking-wider" style={{minWidth:70}}>Disc %</th>
+              {taxCols.map(tc=><th key={tc.key} className="px-4 py-3 text-center text-xs font-bold text-gray-500 uppercase tracking-wider whitespace-nowrap" style={{minWidth:tc.type==='select'?110:90}}>{tc.label}</th>)}
+              <th className="px-4 py-3 text-right text-xs font-bold text-gray-500 uppercase tracking-wider" style={{minWidth:110}}>Extended</th>
+              {customFields.map(f=><th key={f.id} className="px-4 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider" style={{minWidth:110}}>{f.label}</th>)}
               <th/>
             </tr>
           </thead>
           <tbody className="divide-y divide-blue-50">
             {items.length === 0
-              ? <tr><td colSpan={6 + taxCols.length} className="px-5 py-12 text-center text-gray-400 text-sm">
+              ? <tr><td colSpan={6 + taxCols.length + customFields.length} className="px-5 py-12 text-center text-gray-400 text-sm">
                   No items yet — click <span className="font-semibold text-[#0F172A]">+ Add Item</span> to begin.
                 </td></tr>
               : items.map((row, idx) => (
@@ -589,6 +602,7 @@ function RetailLineItems({ items, setItems, products, taxRegime }) {
                   <td className="px-3 py-3 text-right font-bold text-[#0F172A] text-sm">
                     {formatCurrency(row.extended_price || 0)}
                   </td>
+                  {customFields.map(f=><td key={f.id} className="px-3 py-3"><LineItemCustomFieldInput field={f} value={(row.custom_data||{})[f.api_name]} onChange={v=>updCustom(idx,f.api_name,v)}/></td>)}
                   <td className="px-3 py-3 text-center">
                     <button type="button" onClick={() => remove(idx)}
                       className="w-7 h-7 flex items-center justify-center rounded-lg text-red-400 hover:text-red-600 hover:bg-red-50 transition-all font-bold text-lg mx-auto">
@@ -1087,14 +1101,9 @@ function RetailQuickCreateCustomer({ prefillName, onCreated, onClose }) {
 
   async function save() {
     if (!form.name.trim()) { showAlert('Name is required', { variant:'warning' }); return; }
-    const duplicate = (retailCustomers || []).find(c =>
-      c.name?.toLowerCase().trim() === form.name.toLowerCase().trim() ||
-      (form.phone && c.phone === form.phone.trim())
-    );
-    if (duplicate) {
-      const msg = `A customer named "${duplicate.name}" already exists${form.phone && duplicate.phone === form.phone ? ' with the same phone number' : ''}. Create anyway?`;
-      if (!(await showConfirm(msg, { title:'Possible Duplicate', variant:'warning', confirmLabel:'Create Anyway' }))) return;
-    }
+    // Duplicate check now happens centrally in createRetailRecord — covers
+    // this quick-create flow and every other retail customer creation path
+    // consistently, without prompting twice.
     setSaving(true);
     const rec = await createRetailRecord('retailCustomers', {
       ...form, status:'Active', loyalty_points:0, loyalty_tier:'Standard',
@@ -1692,7 +1701,7 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo, on
           {cfg.hasLineItems && (
             loadingLI
               ? <div className="bg-white rounded-[20px] border border-blue-100 shadow p-8 text-center text-gray-400">Loading line items...</div>
-              : <RetailLineItems items={items} setItems={setItems} products={retailProducts} taxRegime={taxRegime}/>
+              : <RetailLineItems items={items} setItems={setItems} products={retailProducts} taxRegime={taxRegime} page={page}/>
           )}
 
           {/* System Information */}
@@ -2041,96 +2050,141 @@ function RetailCreateModal({ page, open, onClose, onCreated, prefill = null }) {
 
 // ─── Retail Saved Search Panel ────────────────────────────────────────────────
 function RetailSavedSearchPanel({ page, currentFilters, onApply, onClose }) {
-  const { currentUser, savedSearches, fetchSavedSearches, createSavedSearch, deleteSavedSearch, setDefaultSavedSearch } = useApp();
+  const { currentUser, savedSearches, fetchSavedSearches, createSavedSearch, updateSavedSearch, deleteSavedSearch, setDefaultSavedSearch } = useApp();
   const { showAlert } = useAlert();
   const [saveName, setSaveName] = useState('');
   const [saveDef,  setSaveDef]  = useState(false);
   const [saveGlobal, setSaveGlobal] = useState(false);
   const [saving,   setSaving]   = useState(false);
+  const [filterText, setFilterText] = useState('');
+  const [renamingId, setRenamingId] = useState(null);
+  const [renameVal,  setRenameVal]  = useState('');
+  const [showSaveForm, setShowSaveForm] = useState(false);
 
   useEffect(() => { if (fetchSavedSearches) fetchSavedSearches(page); }, [page]);
 
-  const mySearches     = (savedSearches||[]).filter(s => s.object_type === page && s.created_by === currentUser?.email);
-  const globalSearches = (savedSearches||[]).filter(s => s.object_type === page && s.is_global_default && s.created_by !== currentUser?.email);
+  const pageFieldMeta = useMemo(() => getRetailFieldMeta(page), [page]);
+  const retailFieldLabel = (key) => pageFieldMeta.find(f => f.key === key)?.label || key;
 
   const describe = (f) => {
     const parts = [];
     if (f.search)            parts.push(`Search: "${f.search}"`);
     if (f.status && f.status !== 'All') parts.push(`Status: ${f.status}`);
     if (f.timePeriod)        parts.push(f.timePeriod.replace(/_/g,' '));
-    (f.advFilters||[]).forEach(c => { if (c.field && (c.value || c.op==='is_empty' || c.op==='is_not_empty' || c.op==='is_true' || c.op==='is_false')) parts.push(`${c.field} ${c.op} ${c.value||''}`.trim()); });
+    (f.advFilters||[]).forEach(c => { if (c.field && (c.value || c.op==='is_empty' || c.op==='is_not_empty' || c.op==='is_true' || c.op==='is_false')) parts.push(`${retailFieldLabel(c.field)} ${retailOperatorLabel(c.op)} ${c.value||''}`.trim()); });
     if (f.owner)             parts.push(`Owner: ${f.owner}`);
-    if (f.sortField)         parts.push(`Sort: ${f.sortField} ${f.sortDir||'asc'}`);
-    return parts.length ? parts.join(' · ') : 'All records';
+    if (f.sortField)         parts.push(`Sorted by ${retailFieldLabel(f.sortField)} (${f.sortDir==='desc'?'descending':'ascending'})`);
+    return parts.length ? parts.join(' · ') : 'All records, no filters';
   };
 
-  const SearchCard = ({ s }) => (
-    <div className="bg-white border border-blue-100 rounded-2xl p-4 hover:border-blue-300 transition-all">
-      <div className="font-semibold text-[#0F172A] flex items-center gap-2 mb-1 flex-wrap">
-        {s.name}
-        {s.is_global_default && <span className="bg-purple-100 text-purple-700 text-xs px-2 py-0.5 rounded-full">Global Default</span>}
-        {s.is_default && !s.is_global_default && <span className="bg-blue-100 text-blue-700 text-xs px-2 py-0.5 rounded-full">My Default</span>}
-      </div>
-      <div className="text-xs text-gray-400 mb-3">{describe(s.filters || {})}</div>
-      <div className="flex gap-2 flex-wrap">
-        <button onClick={() => { onApply(s.filters || {}); onClose(); }}
-          className="flex-1 bg-gradient-to-r from-[#0F172A] to-blue-800 text-white py-2 rounded-xl text-xs font-bold hover:opacity-90">
-          Apply
-        </button>
-        {!s.is_default && setDefaultSavedSearch && (
-          <button onClick={() => setDefaultSavedSearch(s.id, s.is_global_default)}
-            className="bg-blue-100 text-blue-700 px-3 py-2 rounded-xl text-xs font-semibold hover:bg-blue-200">
-            Set Default
+  const isCurrentlyApplied = (s) => JSON.stringify(s.filters||{}) === JSON.stringify(currentFilters);
+
+  const allForPage = (savedSearches||[]).filter(s => s.object_type === page);
+  const q = filterText.trim().toLowerCase();
+  const matchesQuery = (s) => !q || s.name.toLowerCase().includes(q) || describe(s.filters||{}).toLowerCase().includes(q);
+  const mySearches     = allForPage.filter(s => s.created_by === currentUser?.email && matchesQuery(s));
+  const globalSearches = allForPage.filter(s => s.is_global_default && s.created_by !== currentUser?.email && matchesQuery(s));
+
+  const startRename = (s) => { setRenamingId(s.id); setRenameVal(s.name); };
+  const confirmRename = async (s) => {
+    if (renameVal.trim() && renameVal.trim() !== s.name && updateSavedSearch) await updateSavedSearch(s.id, { name: renameVal.trim() });
+    setRenamingId(null);
+  };
+
+  const SearchCard = ({ s }) => {
+    const applied = isCurrentlyApplied(s);
+    const isRenaming = renamingId === s.id;
+    return (
+      <div className={`border rounded-2xl p-4 transition-all ${applied ? 'bg-blue-50 border-blue-300 ring-1 ring-blue-200' : 'bg-white border-blue-100 hover:border-blue-300'}`}>
+        <div className="flex items-center gap-2 mb-1 flex-wrap">
+          {isRenaming ? (
+            <input autoFocus value={renameVal} onChange={e=>setRenameVal(e.target.value)}
+              onKeyDown={e=>{ if(e.key==='Enter') confirmRename(s); if(e.key==='Escape') setRenamingId(null); }}
+              onBlur={()=>confirmRename(s)}
+              className="flex-1 border border-blue-300 rounded-lg px-2 py-1 text-sm font-semibold text-[#0F172A] focus:outline-none focus:ring-2 focus:ring-blue-400"/>
+          ) : (
+            <button onClick={()=>startRename(s)} title="Click to rename" className="font-semibold text-[#0F172A] hover:text-blue-700 text-left">
+              {s.name}
+            </button>
+          )}
+          {s.is_global_default && <span className="bg-purple-100 text-purple-700 text-xs px-2 py-0.5 rounded-full flex-shrink-0">🌐 Team Default</span>}
+          {s.is_default && !s.is_global_default && <span className="bg-blue-100 text-blue-700 text-xs px-2 py-0.5 rounded-full flex-shrink-0">⭐ My Default</span>}
+          {applied && <span className="bg-green-100 text-green-700 text-xs px-2 py-0.5 rounded-full flex-shrink-0">✓ Applied</span>}
+        </div>
+        <div className="text-xs text-gray-400 mb-3">{describe(s.filters || {})}</div>
+        <div className="flex gap-2 flex-wrap">
+          <button onClick={() => { onApply(s.filters || {}); onClose(); }} disabled={applied}
+            className="flex-1 bg-gradient-to-r from-[#0F172A] to-blue-800 text-white py-2 rounded-xl text-xs font-bold hover:opacity-90 disabled:opacity-40 disabled:cursor-default">
+            {applied ? 'Currently Applied' : 'Apply'}
           </button>
-        )}
-        {deleteSavedSearch && (
-          <button onClick={() => deleteSavedSearch(s.id)}
-            className="bg-red-100 text-red-500 px-3 py-2 rounded-xl text-xs font-semibold hover:bg-red-200">
-            Delete
-          </button>
-        )}
+          {!s.is_default && setDefaultSavedSearch && (
+            <button onClick={() => setDefaultSavedSearch(s.id, s.is_global_default)} title="Set as default"
+              className="bg-blue-100 text-blue-700 px-3 py-2 rounded-xl text-xs font-semibold hover:bg-blue-200">⭐</button>
+          )}
+          <button onClick={()=>startRename(s)} title="Rename" className="bg-gray-100 text-gray-600 px-3 py-2 rounded-xl text-xs font-semibold hover:bg-gray-200">✎</button>
+          {deleteSavedSearch && (
+            <button onClick={() => deleteSavedSearch(s.id, s.name)} title="Delete"
+              className="bg-red-100 text-red-500 px-3 py-2 rounded-xl text-xs font-semibold hover:bg-red-200">🗑</button>
+          )}
+        </div>
       </div>
-    </div>
-  );
+    );
+  };
 
   return (
-    <div className="absolute right-0 top-12 w-96 bg-white rounded-[28px] shadow-2xl border border-blue-100 z-50 overflow-hidden" style={{maxHeight:'85vh',overflowY:'auto'}}>
-      <div className="bg-gradient-to-r from-[#0F172A] to-blue-900 px-5 py-4 flex items-center justify-between">
-        <h3 className="text-white font-bold">Saved Searches</h3>
+    <div className="absolute right-0 top-12 w-96 bg-white rounded-[28px] shadow-2xl border border-blue-100 z-50 overflow-hidden" style={{maxHeight:'85vh',display:'flex',flexDirection:'column'}}>
+      <div className="bg-gradient-to-r from-[#0F172A] to-blue-900 px-5 py-4 flex items-center justify-between flex-shrink-0">
+        <h3 className="text-white font-bold">🔖 Saved Searches</h3>
         <button onClick={onClose} className="text-white/70 hover:text-white text-xl">✕</button>
       </div>
-      <div className="p-4 space-y-5">
+
+      {allForPage.length >= 5 && (
+        <div className="px-4 pt-3 flex-shrink-0">
+          <input value={filterText} onChange={e=>setFilterText(e.target.value)} placeholder="Filter your saved searches..."
+            className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm text-[#0F172A] focus:outline-none focus:ring-2 focus:ring-blue-300 placeholder:text-gray-400"/>
+        </div>
+      )}
+
+      <div className="p-4 space-y-4 overflow-y-auto">
         {/* Save current */}
-        <div className="bg-blue-50 rounded-2xl p-4 space-y-3">
-          <h4 className="font-bold text-[#0F172A] text-sm">Save Current Filters</h4>
-          <input value={saveName} onChange={e => setSaveName(e.target.value)}
-            placeholder="Name this search…"
-            className="w-full border border-blue-200 rounded-xl px-3 py-2 text-sm text-[#0F172A] focus:outline-none focus:ring-2 focus:ring-blue-400"/>
-          <div className="text-xs text-gray-500 bg-white rounded-xl px-3 py-2 border border-blue-100">{describe(currentFilters)}</div>
-          <label className="flex items-center gap-2 text-sm text-[#0F172A] cursor-pointer">
-            <input type="checkbox" checked={saveDef} onChange={e => setSaveDef(e.target.checked)} className="w-4 h-4 accent-blue-600"/>
-            Set as my default
-          </label>
-          <label className="flex items-center gap-2 text-sm text-[#0F172A] cursor-pointer">
-            <input type="checkbox" checked={saveGlobal} onChange={e => setSaveGlobal(e.target.checked)} className="w-4 h-4 accent-purple-600"/>
-            Make this the team default for everyone
-          </label>
-          <button
-            onClick={async () => {
-              if (!saveName.trim()) { showAlert('Enter a name.', { variant:'warning' }); return; }
-              setSaving(true);
-              await createSavedSearch({ name:saveName, object_type:page, filters:currentFilters, is_default:saveDef, is_global_default:saveGlobal });
-              setSaveName(''); setSaveDef(false); setSaveGlobal(false); setSaving(false);
-            }}
-            disabled={saving}
-            className="w-full bg-gradient-to-r from-[#0F172A] to-blue-800 text-white py-2.5 rounded-xl font-bold text-sm disabled:opacity-50">
-            {saving ? 'Saving…' : 'Save Search'}
+        <div className="bg-blue-50 rounded-2xl overflow-hidden">
+          <button onClick={()=>setShowSaveForm(!showSaveForm)} className="w-full flex items-center justify-between px-4 py-3 text-left">
+            <span className="font-bold text-[#0F172A] text-sm">+ Save Current Filters</span>
+            <span className="text-blue-600 text-xs">{showSaveForm ? 'Hide ▲' : 'Show ▼'}</span>
           </button>
+          {showSaveForm && (
+            <div className="px-4 pb-4 space-y-3">
+              <input value={saveName} onChange={e => setSaveName(e.target.value)}
+                placeholder="Name this search…"
+                className="w-full border border-blue-200 rounded-xl px-3 py-2 text-sm text-[#0F172A] focus:outline-none focus:ring-2 focus:ring-blue-400"/>
+              <div className="text-xs text-gray-500 bg-white rounded-xl px-3 py-2 border border-blue-100">{describe(currentFilters)}</div>
+              <label className="flex items-center gap-2 text-sm text-[#0F172A] cursor-pointer">
+                <input type="checkbox" checked={saveDef} onChange={e => setSaveDef(e.target.checked)} className="w-4 h-4 accent-blue-600"/>
+                Set as my default
+              </label>
+              <label className="flex items-center gap-2 text-sm text-[#0F172A] cursor-pointer">
+                <input type="checkbox" checked={saveGlobal} onChange={e => setSaveGlobal(e.target.checked)} className="w-4 h-4 accent-purple-600"/>
+                Make this the team default for everyone
+              </label>
+              <button
+                onClick={async () => {
+                  if (!saveName.trim()) { showAlert('Enter a name.', { variant:'warning' }); return; }
+                  setSaving(true);
+                  const r = await createSavedSearch({ name:saveName, object_type:page, filters:currentFilters, is_default:saveDef, is_global_default:saveGlobal });
+                  setSaving(false);
+                  if (r) { setSaveName(''); setSaveDef(false); setSaveGlobal(false); setShowSaveForm(false); }
+                }}
+                disabled={saving}
+                className="w-full bg-gradient-to-r from-[#0F172A] to-blue-800 text-white py-2.5 rounded-xl font-bold text-sm disabled:opacity-50">
+                {saving ? 'Saving…' : 'Save Search'}
+              </button>
+            </div>
+          )}
         </div>
         {/* Global defaults */}
         {globalSearches.length > 0 && (
           <div>
-            <h4 className="font-bold text-gray-500 text-xs uppercase tracking-wider mb-2">Global Defaults</h4>
+            <h4 className="font-bold text-gray-500 text-xs uppercase tracking-wider mb-2">Team Defaults</h4>
             <div className="space-y-2">{globalSearches.map(s => <SearchCard key={s.id} s={s}/>)}</div>
           </div>
         )}
@@ -2138,7 +2192,9 @@ function RetailSavedSearchPanel({ page, currentFilters, onApply, onClose }) {
         <div>
           <h4 className="font-bold text-gray-500 text-xs uppercase tracking-wider mb-2">My Searches ({mySearches.length})</h4>
           {mySearches.length === 0
-            ? <div className="text-gray-400 text-sm text-center py-4">No saved searches yet.</div>
+            ? <div className="text-gray-400 text-sm text-center py-6">
+                {q ? 'No saved searches match your filter.' : 'No saved searches yet — set some filters above and save them for one-click access next time.'}
+              </div>
             : <div className="space-y-2">{mySearches.map(s => <SearchCard key={s.id} s={s}/>)}</div>
           }
         </div>
@@ -2166,7 +2222,18 @@ export default function RetailListPage({ page }) {
     retailActivities: fetchRetailActivities, retailOrders: fetchRetailOrders,
     retailInvoices: fetchRetailInvoices,
   };
-  const data = dataMap[page] || [];
+  const rawData = dataMap[page] || [];
+  // Resolve the customer_id foreign key to an actual, human-readable name
+  // before it's used anywhere — display, sort, and filter all read this
+  // resolved field instead of the raw UUID from here on, so there's no
+  // special-casing needed downstream.
+  const data = useMemo(() => {
+    if (!['retailActivities','retailOrders','retailInvoices'].includes(page)) return rawData;
+    return rawData.map(r => ({
+      ...r,
+      customer_name_resolved: r.customer || retailCustomers.find(c => c._uuid === r.customer_id || c.id === r.customer_id)?.name || '',
+    }));
+  }, [rawData, retailCustomers, page]);
 
   // ── Filter state ───────────────────────────────────────────────────────────
   const [search,         setSearch]         = useState('');
@@ -2368,7 +2435,7 @@ export default function RetailListPage({ page }) {
   const totalPages   = Math.max(1, Math.ceil(totalRecords / pageSize));
   const safePage     = Math.min(currentPage, totalPages);
   const pagedRows    = sorted.slice((safePage-1)*pageSize, safePage*pageSize);
-  const activeCount  = [debouncedSearch, statusFilter!=='All', timePeriod, advFilters.some(c=>c.field), ownerFilter].filter(Boolean).length;
+  const activeCount  = (debouncedSearch?1:0) + (statusFilter!=='All'?1:0) + (timePeriod?1:0) + advFilters.filter(c=>c.field).length + (ownerFilter?1:0);
   const clearFilters = () => { setSearch(''); setStatusFilter('All'); setTimePeriod(''); setAdvFilters([]); setOwnerFilter(''); setCurrentPage(1); };
   const addFilterRow = () => { const f = fieldMeta.find(f=>f.key!=='id')||fieldMeta[0]; setAdvFilters(p=>[...p,{field:f.key,type:f.type,op:RETAIL_OPERATORS[f.type][0].v,value:''}]); };
   const updateFilterRow = (idx, patch) => setAdvFilters(p => p.map((c,i) => i===idx ? {...c,...patch} : c));

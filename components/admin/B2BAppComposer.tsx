@@ -23,6 +23,9 @@ const B2B_OBJECTS = [
   { v: 'quotations',     l: 'Quotations',      icon: '📋' },
   { v: 'activities',     l: 'Activities',      icon: '📅' },
   { v: 'products',       l: 'Products',        icon: '📦' },
+  { v: 'quotationLineItems', l: 'Quotation Line Items', icon: '📝', isLineItem: true },
+  { v: 'orderLineItems',     l: 'Order Line Items',     icon: '📝', isLineItem: true },
+  { v: 'invoiceLineItems',   l: 'Invoice Line Items',   icon: '📝', isLineItem: true },
 ];
 
 const FIELD_TYPES = [
@@ -151,15 +154,36 @@ export default function B2BAppComposer() {
       </div>
 
       {/* Object selector */}
-      <div className="grid grid-cols-3 sm:grid-cols-5 xl:grid-cols-9 gap-2">
-        {B2B_OBJECTS.map(obj=>(
-          <button key={obj.v} onClick={()=>setSelectedObj(obj.v)}
-            className={`flex flex-col items-center py-3 px-2 rounded-[16px] border text-xs font-bold transition-all gap-1.5 ${selectedObj===obj.v?'bg-[#0F172A] text-white border-transparent shadow-lg':'bg-white text-gray-600 border-gray-200 hover:border-blue-400 hover:text-blue-700'}`}>
-            <span className="text-xl">{obj.icon}</span>
-            <span className="text-center leading-tight">{obj.l.replace(' ','')}</span>
-          </button>
-        ))}
+      <div>
+        <p className="text-xs font-bold uppercase tracking-wider text-gray-400 mb-2">Records</p>
+        <div className="grid grid-cols-3 sm:grid-cols-5 xl:grid-cols-9 gap-2">
+          {B2B_OBJECTS.filter(o=>!o.isLineItem).map(obj=>(
+            <button key={obj.v} onClick={()=>setSelectedObj(obj.v)}
+              className={`flex flex-col items-center py-3 px-2 rounded-[16px] border text-xs font-bold transition-all gap-1.5 ${selectedObj===obj.v?'bg-[#0F172A] text-white border-transparent shadow-lg':'bg-white text-gray-600 border-gray-200 hover:border-blue-400 hover:text-blue-700'}`}>
+              <span className="text-xl">{obj.icon}</span>
+              <span className="text-center leading-tight">{obj.l.replace(' ','')}</span>
+            </button>
+          ))}
+        </div>
       </div>
+      <div>
+        <p className="text-xs font-bold uppercase tracking-wider text-gray-400 mb-2">Line Item Grids</p>
+        <div className="grid grid-cols-3 gap-2">
+          {B2B_OBJECTS.filter(o=>o.isLineItem).map(obj=>(
+            <button key={obj.v} onClick={()=>setSelectedObj(obj.v)}
+              className={`flex flex-col items-center py-3 px-2 rounded-[16px] border text-xs font-bold transition-all gap-1.5 ${selectedObj===obj.v?'bg-[#0F172A] text-white border-transparent shadow-lg':'bg-white text-gray-600 border-gray-200 hover:border-blue-400 hover:text-blue-700'}`}>
+              <span className="text-xl">{obj.icon}</span>
+              <span className="text-center leading-tight">{obj.l.replace(' ','')}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {selObj?.isLineItem && (
+        <div className="bg-amber-50 border border-amber-200 rounded-2xl px-4 py-3 text-sm text-amber-800">
+          ℹ️ These fields appear as extra <strong>columns</strong> in the line item grid (not a full-page form) — one value per line, not per whole record. "Details only / Create only" don't apply here; a published field always shows as a column.
+        </div>
+      )}
 
       {/* Fields panel */}
       <div className="bg-white rounded-[20px] border border-gray-200 shadow-sm overflow-hidden">

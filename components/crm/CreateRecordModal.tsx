@@ -218,8 +218,9 @@ export default function CreateRecordModal({ page, open, prefillCustomer, onClose
       const u = enterpriseUsers.find(x => x.id === form.owner_id);
       record.owner = u?.email || currentUser?.email || '';
     }
-    await createRecord(page, { ...record, custom_data: customData });
+    const result = await createRecord(page, { ...record, custom_data: customData });
     setSaving(false);
+    if (!result) return; // cancelled (e.g. declined the duplicate warning) or failed — keep the form open so the user can adjust and retry
     setForm(defaultForm());
     onCreated?.();
     onClose();

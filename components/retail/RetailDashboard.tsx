@@ -3,7 +3,7 @@
 
 import { useState, useMemo, useEffect } from 'react';
 import { useApp } from '@/context/AppContext';
-import { getStatusColor } from '@/lib/utils';
+import { getStatusColor, roundPercentagesTo100 } from '@/lib/utils';
 import {
   BarChart, Bar, LineChart, Line, PieChart, Pie, Cell,
   AreaChart, Area,
@@ -68,13 +68,44 @@ const safeNum = (v: any) => {
 
 const safeInt = (v: any) => Math.round(safeNum(v));
 
+const DASHBOARD_WIDGETS = [
+  { key:'ai_insights',      label:'✨ AI Insights' },
+  { key:'kpi_revenue',      label:'Revenue & Invoice KPIs' },
+  { key:'kpi_customers',    label:'Customer & Product KPIs' },
+  { key:'sales_trend',      label:'Sales Trend chart' },
+  { key:'loyalty_tiers',    label:'Customer Loyalty Tiers chart' },
+  { key:'payment_revenue',  label:'Revenue by Payment Method chart' },
+  { key:'invoice_status',   label:'Invoices by Status chart' },
+  { key:'payment_methods',  label:'Payment Methods chart' },
+  { key:'top_categories',   label:'Products by Category chart' },
+  { key:'low_stock',        label:'Low Stock Alert' },
+  { key:'recent_invoices',  label:'Recent Invoices table' },
+];
+const DEFAULT_WIDGETS = DASHBOARD_WIDGETS.map(w => w.key);
+
 // ─── Component ────────────────────────────────────────────────────────────────
 export default function RetailDashboard() {
   const {
     retailCustomers, retailProducts, retailActivities,
     retailOrders, retailInvoices,
     currentUser, appPreferences, appearance,
+    fetchListViewPrefs, saveListViewPrefs,
   } = useApp();
+
+  const [visibleWidgets, setVisibleWidgets] = useState<string[]>(DEFAULT_WIDGETS);
+  const [customizeOpen, setCustomizeOpen] = useState(false);
+  useEffect(() => {
+    if (!fetchListViewPrefs) return;
+    fetchListViewPrefs('retailDashboard').then((saved: any) => {
+      if (saved?.columns?.length) setVisibleWidgets(saved.columns);
+    });
+  }, []);
+  const toggleWidget = (key: string) => {
+    const next = visibleWidgets.includes(key) ? visibleWidgets.filter(k => k !== key) : [...visibleWidgets, key];
+    setVisibleWidgets(next);
+    if (saveListViewPrefs) saveListViewPrefs('retailDashboard', { columns: next, sort: {} });
+  };
+  const show = (key: string) => visibleWidgets.includes(key);
 
   const [dateRange, setDateRange] = useState('month');
   // Bumped on tab focus/visibility so date-anchored memos recompute (stale-"Today" fix)
@@ -137,6 +168,49 @@ export default function RetailDashboard() {
     filterByRange(retailProducts, dateRange, 'created_at'),
     [retailProducts, dateRange, dayTick]);
 
+  // ── Previous-period comparison — real period-over-period % change, not the
+  // fake 'up'/'down' placeholder that was causing "NaN% vs prev period".
+  // Computes the equivalent PRIOR calendar window for whatever range is
+  // currently selected (e.g. "This Month" → last month, same span) and
+  // re-filters the same data against it.
+  const prevPeriodKpis = useMemo(() => {
+    if (dateRange === 'all') return null; // no meaningful "previous" for all-time
+    const now = new Date();
+    const curStart = getRangeStart(dateRange) || new Date(now.getFullYear(), now.getMonth(), 1);
+    const spanMs = now.getTime() - curStart.getTime();
+    const prevEnd = new Date(curStart.getTime() - 1);
+    const prevStart = new Date(prevEnd.getTime() - spanMs);
+    const prevStartStr = toDateStr(prevStart), prevEndStr = toDateStr(prevEnd);
+    const inPrevWindow = (dateStr: string) => dateStr >= prevStartStr && dateStr <= prevEndStr;
+
+    const prevInvoices = retailInvoices.filter(i => {
+      const d = String(i.invoice_date || i.created_at || '').slice(0,10);
+      return d && inPrevWindow(d) && i.status === 'Paid';
+    });
+    const prevOrders = retailOrders.filter(o => {
+      const d = String(o.order_date || o.created_at || '').slice(0,10);
+      return d && inPrevWindow(d) && o.status === 'Completed';
+    });
+    const prevCustomers = retailCustomers.filter(c => {
+      const d = String(c.created_at || '').slice(0,10);
+      return d && inPrevWindow(d);
+    });
+    return {
+      totalRevenue: prevInvoices.reduce((s,i)=>s+safeNum(i.amount),0),
+      ordersCount: prevOrders.length,
+      newCustomers: prevCustomers.length,
+    };
+  }, [retailInvoices, retailOrders, retailCustomers, dateRange]);
+
+  // Percentage change vs the previous period — null when there's no
+  // meaningful baseline (e.g. "All Time", or the previous period was zero,
+  // where a % change is undefined rather than a real number).
+  const pctChange = (current: number, previous: number | undefined | null): number | null => {
+    if (previous === null || previous === undefined) return null;
+    if (previous === 0) return current > 0 ? 100 : null;
+    return Math.round(((current - previous) / previous) * 100);
+  };
+
   // ── KPIs ──────────────────────────────────────────────────────────────────
   const kpis = useMemo(() => {
     const completedOrders = fOrders.filter(o => o.status === 'Completed');
@@ -189,7 +263,13 @@ export default function RetailDashboard() {
     };
   }, [fOrders, fInvoices, fCustomersNew, fActivities, fProducts, retailCustomers, retailProducts, retailInvoices, dateRange]);
 
-  // ── Sales trend — last 14 days or by period ────────────────────────────────
+  // ── Sales trend — uses the exact same calendar-aligned boundaries as every
+  // other metric on this dashboard (getRangeStart), not an independent
+  // rolling day-count window. Previously the chart's window didn't line up
+  // with the KPI cards for the same selected period (e.g. "This Month" on
+  // the 5th showed the KPIs for Aug 1–5 but a rolling 30-day chart spanning
+  // back into July) — this is what made switching the filter feel like the
+  // whole dashboard was inconsistently changing.
   const salesTrend = useMemo(() => {
     if (dateRange === 'today') {
       // Hourly breakdown for today
@@ -208,12 +288,16 @@ export default function RetailDashboard() {
       return hours.filter((_, i) => i <= new Date().getHours());
     }
 
-    // Daily breakdown for other ranges
-    const days = dateRange === 'year' ? 365
-      : dateRange === 'quarter' ? 90
-      : dateRange === 'month' ? 30
-      : dateRange === 'week' ? 7
-      : 14;
+    const today = new Date();
+    let start = getRangeStart(dateRange);
+    if (!start) {
+      // 'all' — use the earliest paid invoice's date as the start, so "All
+      // Time" genuinely shows the tenant's full history rather than
+      // silently falling back to an arbitrary short window.
+      const dates = fInvoices.filter(i => i.status === 'Paid' && i.invoice_date).map(i => String(i.invoice_date).slice(0,10));
+      start = dates.length ? new Date(dates.sort()[0]) : new Date(today.getFullYear(), today.getMonth(), 1);
+    }
+    const days = Math.max(1, Math.round((today.getTime() - start.getTime()) / 86400000) + 1);
 
     const result = [];
     for (let i = days - 1; i >= 0; i--) {
@@ -230,7 +314,7 @@ export default function RetailDashboard() {
         invoices: dayInvoices.length,
       });
     }
-    // For longer ranges, aggregate to weekly to avoid too many points
+    // For longer ranges, aggregate to weekly to keep the chart readable.
     if (days > 30) {
       const weekly = [];
       for (let i = 0; i < result.length; i += 7) {
@@ -358,7 +442,7 @@ export default function RetailDashboard() {
       ? { background: `linear-gradient(135deg, ${p.from}, ${p.to})` }
       : { background: 'linear-gradient(135deg, #0F172A, #1e3a8a)' };
     return (
-      <div className="rounded-[20px] p-5 text-white shadow-lg" style={style}>
+      <div className="rounded-[20px] p-5 text-white shadow-lg transition-all duration-300 ease-out hover:shadow-2xl hover:-translate-y-1 dashboard-fade-in" style={style}>
         <div className="flex items-start justify-between mb-2">
           <div className="text-white/70 text-xs font-semibold uppercase tracking-wider">{label}</div>
           <div className="text-2xl opacity-80">{icon}</div>
@@ -375,7 +459,7 @@ export default function RetailDashboard() {
   };
 
   const ChartCard = ({ title, children, className = '' }) => (
-    <div className={`bg-white rounded-[24px] border border-gray-100 shadow-sm p-5 ${className}`}>
+    <div className={`group bg-white rounded-[24px] border border-gray-100 shadow-sm p-5 transition-all duration-300 ease-out hover:shadow-xl hover:-translate-y-1 hover:border-blue-100 dashboard-fade-in ${className}`}>
       <h3 className="text-base font-bold text-[#0F172A] mb-4">{title}</h3>
       {children}
     </div>
@@ -401,22 +485,54 @@ export default function RetailDashboard() {
             Retail Analytics · {new Date().toLocaleDateString(locale, { weekday:'long', day:'numeric', month:'long', year:'numeric' })}
           </p>
         </div>
-        <div className="flex items-center gap-1 bg-white border border-gray-200 rounded-2xl p-1 shadow-sm flex-wrap">
-          {DATE_RANGES.map(r => (
-            <button key={r.v} onClick={() => setDateRange(r.v)}
-              className={`px-3 py-2 rounded-xl text-xs font-bold transition-all ${dateRange === r.v ? 'bg-[#0F172A] text-white shadow' : 'text-gray-500 hover:text-[#0F172A]'}`}>
-              {r.l}
+        <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex items-center gap-1 bg-white border border-gray-200 rounded-2xl p-1 shadow-sm flex-wrap">
+            {DATE_RANGES.map(r => (
+              <button key={r.v} onClick={() => setDateRange(r.v)}
+                className={`px-3 py-2 rounded-xl text-xs font-bold transition-all ${dateRange === r.v ? 'bg-[#0F172A] text-white shadow' : 'text-gray-500 hover:text-[#0F172A]'}`}>
+                {r.l}
+              </button>
+            ))}
+          </div>
+          <div className="relative">
+            <button onClick={() => setCustomizeOpen(!customizeOpen)}
+              className={`flex items-center gap-2 text-sm font-semibold px-4 py-2.5 rounded-2xl border shadow-sm transition-all ${customizeOpen?'bg-[#0F172A] text-white border-transparent':'bg-white text-gray-600 border-gray-200 hover:border-blue-300'}`}>
+              ⚙️ Customize
             </button>
-          ))}
+            {customizeOpen && (
+              <div className="absolute right-0 top-12 w-80 bg-white rounded-[24px] shadow-2xl border border-blue-100 z-50 overflow-hidden" style={{maxHeight:'70vh',overflowY:'auto'}}>
+                <div className="bg-gradient-to-r from-[#0F172A] to-blue-900 px-5 py-3 flex items-center justify-between">
+                  <h3 className="text-white font-bold text-sm">Customize Dashboard</h3>
+                  <button onClick={()=>setCustomizeOpen(false)} className="text-white/70 hover:text-white">✕</button>
+                </div>
+                <div className="p-3">
+                  <p className="text-xs text-gray-400 px-2 pb-2">Show or hide widgets — your choice is saved automatically.</p>
+                  {DASHBOARD_WIDGETS.map(w => (
+                    <label key={w.key} className="flex items-center gap-2.5 px-2 py-2 hover:bg-blue-50 rounded-xl cursor-pointer">
+                      <input type="checkbox" checked={show(w.key)} onChange={()=>toggleWidget(w.key)} className="w-4 h-4 accent-blue-600"/>
+                      <span className="text-sm text-[#0F172A]">{w.label}</span>
+                    </label>
+                  ))}
+                  <div className="border-t border-gray-100 mt-2 pt-2 px-2">
+                    <button onClick={()=>{setVisibleWidgets(DEFAULT_WIDGETS); if(saveListViewPrefs) saveListViewPrefs('retailDashboard',{columns:DEFAULT_WIDGETS,sort:{}});}} className="text-xs text-gray-400 hover:text-[#0F172A]">Show all widgets</button>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
+      {/* ── AI Insights ── */}
+      {show('ai_insights') && <AIInsightsCard kpis={kpis} prevPeriodKpis={prevPeriodKpis} rangeLabel={rangeLabel} fmt={fmt} pctChange={pctChange}/>}
+
       {/* ── KPI Row 1: Invoice & Revenue focused ── */}
+      {show('kpi_revenue') && (
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <StatCard label="Paid Invoice Revenue" icon="💰" paletteIdx={0}
           value={fmt(kpis.totalRevenue)}
           sub={`${fInvoices.filter(i=>i.status==='Paid').length} paid this period`}
-          trend={kpis.totalRevenue > 0 ? 'up' : null}/>
+          trend={prevPeriodKpis ? pctChange(kpis.totalRevenue, prevPeriodKpis.totalRevenue) : null}/>
         <StatCard label="Pending Collections" icon="⏳" paletteIdx={1}
           value={fmt(kpis.pendingAmount)}
           sub={`${kpis.pendingCount} invoices · ${kpis.overdueCount} overdue`}/>
@@ -427,29 +543,32 @@ export default function RetailDashboard() {
           value={fmt(kpis.refundAmount)}
           sub={`${kpis.refundCount} invoice${kpis.refundCount!==1?'s':''} refunded`}/>
       </div>
+      )}
 
       {/* ── KPI Row 2: Customers & Products focused ── */}
+      {show('kpi_customers') && (
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <StatCard label="Total Customers" icon="🧑‍🤝‍🧑" paletteIdx={2}
           value={kpis.totalCustomers.toString()}
           sub={`${kpis.newCustomers} new · ${kpis.vipCount} VIP`}
-          trend={kpis.newCustomers > 0 ? 'up' : null}/>
+          trend={prevPeriodKpis ? pctChange(kpis.newCustomers, prevPeriodKpis.newCustomers) : null}/>
         <StatCard label="Active Products" icon="🏷️" paletteIdx={6}
           value={kpis.activeProducts.toString()}
           sub={`${kpis.totalProducts} total in catalogue`}/>
         <StatCard label="⚠️ Low Stock" icon="📦" paletteIdx={3}
           value={kpis.lowStockCount.toString()}
-          sub={kpis.lowStockCount > 0 ? 'Reorder required' : 'All products stocked'}
-          trend={kpis.lowStockCount > 0 ? 'down' : null}/>
+          sub={kpis.lowStockCount > 0 ? 'Reorder required · live count' : 'All products stocked'}/>
         <StatCard label="Open Activities" icon="📅" paletteIdx={5}
           value={kpis.openActivities.toString()}
           sub="follow-ups & tasks pending"/>
       </div>
+      )}
 
       {/* ── Charts row 1 ── */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
 
         {/* Sales trend */}
+        {show('sales_trend') && (
         <ChartCard title={`Sales Trend — ${rangeLabel}`} className="lg:col-span-2">
           {salesTrend.every(d => d.sales === 0) ? <Empty/> : (
             <ResponsiveContainer width="100%" height={260}>
@@ -466,8 +585,8 @@ export default function RetailDashboard() {
                 <YAxis tick={{ fontSize: 11 }} tickFormatter={v => fmtShort(v)} width={70}/>
                 <Tooltip
                   formatter={(v: any, name: string) => [
-                    name === 'sales' ? fmt(Number(v)) : String(v) + ' invoices',
-                    name === 'sales' ? 'Revenue' : 'Invoices'
+                    name === 'Sales' ? fmt(Number(v)) : `${v} invoice${v===1?'':'s'}`,
+                    name === 'Sales' ? 'Revenue' : 'Invoices'
                   ]}
                   labelStyle={{ fontWeight: 'bold' }}/>
                 <Legend/>
@@ -479,8 +598,10 @@ export default function RetailDashboard() {
             </ResponsiveContainer>
           )}
         </ChartCard>
+        )}
 
         {/* Loyalty tiers */}
+        {show('loyalty_tiers') && (
         <ChartCard title="Customer Loyalty Tiers">
           {loyaltyBreakdown.length === 0 ? <Empty msg="No customer data"/> : (
             <>
@@ -494,7 +615,9 @@ export default function RetailDashboard() {
                 </PieChart>
               </ResponsiveContainer>
               <div className="space-y-1.5 mt-2">
-                {loyaltyBreakdown.map((t, i) => (
+                {(() => {
+                  const pcts = roundPercentagesTo100(loyaltyBreakdown.map(t => t.value));
+                  return loyaltyBreakdown.map((t, i) => (
                   <div key={t.name} className="flex items-center justify-between text-xs">
                     <div className="flex items-center gap-2">
                       <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ background: COLORS[i % COLORS.length] }}/>
@@ -503,21 +626,24 @@ export default function RetailDashboard() {
                     <div className="flex items-center gap-2">
                       <span className="font-bold text-[#0F172A]">{t.value}</span>
                       <span className="text-gray-400">
-                        ({retailCustomers.length > 0 ? Math.round(t.value / retailCustomers.length * 100) : 0}%)
+                        ({pcts[i]}%)
                       </span>
                     </div>
                   </div>
-                ))}
+                  ));
+                })()}
               </div>
             </>
           )}
         </ChartCard>
+        )}
       </div>
 
       {/* ── Charts row 2 ── */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
 
         {/* Invoice revenue by payment method */}
+        {show('payment_revenue') && (
         <ChartCard title="Revenue by Payment Method">
           {invoicesByChannel.length === 0 ? <Empty/> : (
             <ResponsiveContainer width="100%" height={220}>
@@ -533,8 +659,10 @@ export default function RetailDashboard() {
             </ResponsiveContainer>
           )}
         </ChartCard>
+        )}
 
         {/* Invoice status breakdown */}
+        {show('invoice_status') && (
         <ChartCard title="Invoices by Status">
           {invoicesByStatus.length === 0 ? <Empty/> : (
             <>
@@ -548,7 +676,9 @@ export default function RetailDashboard() {
                 </PieChart>
               </ResponsiveContainer>
               <div className="space-y-1.5 mt-2">
-                {invoicesByStatus.map((s, i) => (
+                {(() => {
+                  const pcts = roundPercentagesTo100(invoicesByStatus.map(s => s.value));
+                  return invoicesByStatus.map((s, i) => (
                   <div key={s.name} className="flex items-center justify-between text-xs">
                     <div className="flex items-center gap-2">
                       <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ background: COLORS[i % COLORS.length] }}/>
@@ -557,17 +687,20 @@ export default function RetailDashboard() {
                     <div className="flex gap-2">
                       <span className="font-bold text-[#0F172A]">{s.value}</span>
                       <span className="text-gray-400">
-                        ({fInvoices.length > 0 ? Math.round(s.value / fInvoices.length * 100) : 0}%)
+                        ({pcts[i]}%)
                       </span>
                     </div>
                   </div>
-                ))}
+                  ));
+                })()}
               </div>
             </>
           )}
         </ChartCard>
+        )}
 
         {/* Payment methods */}
+        {show('payment_methods') && (
         <ChartCard title="Payment Methods">
           {paymentMethods.length === 0 ? <Empty/> : (
             <>
@@ -581,31 +714,35 @@ export default function RetailDashboard() {
                 </PieChart>
               </ResponsiveContainer>
               <div className="space-y-1.5 mt-2">
-                {paymentMethods.map((pm, i) => {
-                  const total = paymentMethods.reduce((s, x) => s + x.value, 0);
-                  return (
-                    <div key={pm.name} className="flex items-center justify-between text-xs">
-                      <div className="flex items-center gap-2">
-                        <span className="w-2.5 h-2.5 rounded-full" style={{ background: COLORS[(i+3) % COLORS.length] }}/>
-                        <span className="text-gray-600">{pm.name}</span>
+                {(() => {
+                  const pcts = roundPercentagesTo100(paymentMethods.map(pm => pm.value));
+                  return paymentMethods.map((pm, i) => {
+                    return (
+                      <div key={pm.name} className="flex items-center justify-between text-xs">
+                        <div className="flex items-center gap-2">
+                          <span className="w-2.5 h-2.5 rounded-full" style={{ background: COLORS[(i+3) % COLORS.length] }}/>
+                          <span className="text-gray-600">{pm.name}</span>
+                        </div>
+                        <div className="flex gap-2">
+                          <span className="font-bold text-[#0F172A]">{pm.value}</span>
+                          <span className="text-gray-400">({pcts[i]}%)</span>
+                        </div>
                       </div>
-                      <div className="flex gap-2">
-                        <span className="font-bold text-[#0F172A]">{pm.value}</span>
-                        <span className="text-gray-400">({total > 0 ? Math.round(pm.value/total*100) : 0}%)</span>
-                      </div>
-                    </div>
-                  );
-                })}
+                    );
+                  });
+                })()}
               </div>
             </>
           )}
         </ChartCard>
+        )}
       </div>
 
       {/* ── Charts row 3: Products + Low stock ── */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
 
         {/* Products by category */}
+        {show('top_categories') && (
         <ChartCard title="Products by Category" className="lg:col-span-2">
           {topCategories.length === 0 ? <Empty msg="No products yet"/> : (
             <ResponsiveContainer width="100%" height={220}>
@@ -619,8 +756,10 @@ export default function RetailDashboard() {
             </ResponsiveContainer>
           )}
         </ChartCard>
+        )}
 
         {/* Low stock alert */}
+        {show('low_stock') && (
         <ChartCard title="⚠️ Low Stock Alert">
           {lowStockList.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-48 text-center">
@@ -658,10 +797,12 @@ export default function RetailDashboard() {
             </div>
           )}
         </ChartCard>
+        )}
       </div>
 
       {/* ── Recent orders table ── */}
-      <div className="bg-white rounded-[24px] border border-gray-100 shadow-sm overflow-hidden">
+      {show('recent_invoices') && (
+      <div className="bg-white rounded-[24px] border border-gray-100 shadow-sm overflow-hidden dashboard-fade-in transition-all duration-300 hover:shadow-md">
         <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
           <h3 className="font-bold text-[#0F172A]">Recent Invoices</h3>
           <span className="text-xs text-gray-400">{recentInvoices.length} most recent</span>
@@ -700,7 +841,100 @@ export default function RetailDashboard() {
           </div>
         )}
       </div>
+      )}
 
+    </div>
+  );
+}
+
+// ─── AI Insights ──────────────────────────────────────────────────────────────
+// Generates a short, data-driven narrative using the app's existing AI
+// endpoint (same pattern as AISummary.tsx) — summarizing the current period's
+// key figures into 2-3 sentences of plain-English business insight, with an
+// actionable recommendation, rather than just repeating the numbers already
+// shown on the KPI cards above.
+function AIInsightsCard({ kpis, prevPeriodKpis, rangeLabel, fmt, pctChange }) {
+  const [insight, setInsight]   = useState('');
+  const [loading, setLoading]   = useState(false);
+  const [error, setError]       = useState('');
+  const [generated, setGenerated] = useState(false);
+
+  const generate = async () => {
+    setLoading(true); setError('');
+    try {
+      const revTrend = prevPeriodKpis ? pctChange(kpis.totalRevenue, prevPeriodKpis.totalRevenue) : null;
+      const context = [
+        `Period: ${rangeLabel}`,
+        `Paid invoice revenue: ${fmt(kpis.totalRevenue)}${revTrend!=null?` (${revTrend>=0?'+':''}${revTrend}% vs previous period)`:''}`,
+        `Pending collections: ${fmt(kpis.pendingAmount)} across ${kpis.pendingCount} invoices, ${kpis.overdueCount} overdue`,
+        `Orders completed: ${kpis.ordersCount}, average order value ${fmt(kpis.avgOrderValue)}`,
+        `Refunds: ${fmt(kpis.refundAmount)} across ${kpis.refundCount} orders`,
+        `Customers: ${kpis.totalCustomers} total, ${kpis.newCustomers} new this period, ${kpis.vipCount} VIP`,
+        `Products: ${kpis.activeProducts} active, ${kpis.lowStockCount} low on stock`,
+        `Open activities: ${kpis.openActivities}`,
+      ].join('\n');
+      const sb = (window as any).__bp_supabase;
+      const session = sb ? (await sb.auth.getSession()).data.session : null;
+      const res = await fetch('/api/ai', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(session?.access_token ? { 'Authorization': `Bearer ${session.access_token}` } : {}),
+        },
+        body: JSON.stringify({
+          system: `You are a retail business analyst. Given these dashboard figures, write a concise 2-3 sentence insight: call out what's going well, what needs attention (e.g. overdue collections, low stock, refunds), and end with one specific, actionable recommendation. Be direct and specific with numbers — no generic advice.`,
+          messages: [{ role: 'user', content: context }],
+          max_tokens: 220,
+        }),
+      });
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+      setInsight(data.content?.[0]?.text || 'Unable to generate insight.');
+      setGenerated(true);
+    } catch (e: any) {
+      setError(e.message?.includes('API_KEY') || e.message?.includes('ANTHROPIC') || e.message?.includes('GEMINI')
+        ? 'AI not configured — add API key to enable insights'
+        : 'Insight unavailable right now');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="relative rounded-[24px] p-6 overflow-hidden shadow-lg dashboard-fade-in transition-all duration-300 hover:shadow-xl" style={{background:'linear-gradient(135deg,#0F172A,#1e3a8a 60%,#312e81)'}}>
+      <div className="absolute -top-10 -right-10 w-40 h-40 rounded-full bg-blue-500/20 blur-3xl"/>
+      <div className="absolute -bottom-8 -left-8 w-32 h-32 rounded-full bg-purple-500/20 blur-3xl"/>
+      <div className="relative flex items-start justify-between gap-4">
+        <div className="flex-1">
+          <div className="flex items-center gap-2 mb-2">
+            <span className="text-xl">✨</span>
+            <h3 className="text-white font-bold text-sm uppercase tracking-wider">AI Insights</h3>
+          </div>
+          {!generated && !loading && !error && (
+            <div>
+              <p className="text-blue-200/80 text-sm mb-3">Get a plain-English read on this period's numbers, with a specific recommendation.</p>
+              <button onClick={generate} className="bg-white/10 hover:bg-white/20 text-white text-sm font-semibold px-4 py-2 rounded-xl border border-white/20 transition-all">
+                Generate Insight
+              </button>
+            </div>
+          )}
+          {loading && (
+            <div className="flex items-center gap-2 text-blue-200 text-sm">
+              <span className="inline-block w-2 h-2 rounded-full bg-blue-300 animate-pulse"/>
+              <span className="inline-block w-2 h-2 rounded-full bg-blue-300 animate-pulse" style={{animationDelay:'0.15s'}}/>
+              <span className="inline-block w-2 h-2 rounded-full bg-blue-300 animate-pulse" style={{animationDelay:'0.3s'}}/>
+              <span className="ml-1">Analyzing your data…</span>
+            </div>
+          )}
+          {error && <p className="text-red-300 text-sm">{error}</p>}
+          {generated && !loading && (
+            <>
+              <p className="text-white text-sm leading-relaxed">{insight}</p>
+              <button onClick={generate} className="mt-3 text-blue-300 hover:text-white text-xs font-semibold">↻ Regenerate</button>
+            </>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

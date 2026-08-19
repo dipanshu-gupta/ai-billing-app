@@ -13,6 +13,8 @@ import SearchableSelect from '@/components/shared/SearchableSelect';
 import BalanceConversionModal from '@/components/shared/BalanceConversionModal';
 import { buildInvoiceHTML } from '@/lib/buildInvoiceHTML';
 import { useAlert } from '@/components/shared/AlertProvider';
+import { useCustomFields } from '@/lib/useCustomFields';
+import LineItemCustomFieldInput from '@/components/shared/LineItemCustomFieldInput';
 
 const iCls = 'w-full border border-blue-200 rounded-xl px-3 py-2.5 text-[#0F172A] bg-white focus:outline-none focus:ring-2 focus:ring-blue-400 text-sm placeholder:text-gray-400';
 const sCls = 'w-full border border-blue-200 rounded-xl px-3 py-2.5 text-[#0F172A] bg-white focus:outline-none focus:ring-2 focus:ring-blue-400 text-sm';
@@ -35,9 +37,10 @@ const STATUS_COLORS = {
 const CURRENCIES = ['INR','USD','EUR','GBP','AED','SGD','AUD','CAD','JPY','CNY'];
 
 // ─── CPQ Line Items Table (shared by Order + Invoice) ──────────────────────────
-function CPQLineItems({ items, setItems, products, readOnly, currency }) {
+function CPQLineItems({ items, setItems, products, readOnly, currency, page }) {
+  const { fields: customFields } = useCustomFields(page === 'invoices' ? 'invoiceLineItems' : 'orderLineItems');
   const fmt = n => new Intl.NumberFormat('en-IN',{style:'currency',currency:currency||'INR',maximumFractionDigits:0}).format(n||0);
-  const add = () => !readOnly && setItems(p=>[...p,{_id:Date.now(),product_name:'',product_code:'',description:'',quantity:1,price:0,list_price:0,discount:0,tax_pct:18,extended_price:0}]);
+  const add = () => !readOnly && setItems(p=>[...p,{_id:Date.now(),product_name:'',product_code:'',description:'',quantity:1,price:0,list_price:0,discount:0,tax_pct:18,extended_price:0,custom_data:{}}]);
   const remove = idx => !readOnly && setItems(p=>p.filter((_,i)=>i!==idx));
   const upd = (idx,field,val) => {
     if (readOnly) return;
@@ -50,6 +53,7 @@ function CPQLineItems({ items, setItems, products, readOnly, currency }) {
       return u;
     }));
   };
+  const updCustom = (idx, apiName, val) => !readOnly && setItems(p => p.map((r,i) => i!==idx ? r : { ...r, custom_data: { ...(r.custom_data||{}), [apiName]: val } }));
 
   const subtotal  = items.reduce((s,i)=>s+i.quantity*i.price,0);
   const totalDisc = items.reduce((s,i)=>s+i.quantity*i.price*(i.discount/100),0);
@@ -72,12 +76,13 @@ function CPQLineItems({ items, setItems, products, readOnly, currency }) {
                 {h:'Disc %',      w:'80px'},
                 {h:'Tax %',       w:'80px'},
                 {h:'Extended',    w:'120px'},
-                {h:'',            w:'40px'},
               ].map(({h,w})=><th key={h} style={{minWidth:w}} className="px-4 py-3 text-left font-bold text-gray-600 uppercase text-xs tracking-wide bg-blue-50">{h}</th>)}
+            {customFields.map(f=><th key={f.id} style={{minWidth:'110px'}} className="px-4 py-3 text-left font-bold text-gray-600 uppercase text-xs tracking-wide bg-blue-50">{f.label}</th>)}
+            {!readOnly && <th style={{minWidth:'40px'}} className="px-4 py-3 bg-blue-50"></th>}
           </tr></thead>
           <tbody>
             {items.length===0
-              ? <tr><td colSpan={8} className="px-5 py-8 text-center text-gray-400">No line items.{!readOnly&&' Click + Add Line.'}</td></tr>
+              ? <tr><td colSpan={8+customFields.length} className="px-5 py-8 text-center text-gray-400">No line items.{!readOnly&&' Click + Add Line.'}</td></tr>
               : items.map((row,idx)=>(
                 <tr key={row._id??idx} className="border-t border-blue-50 hover:bg-blue-50/30">
                   <td className="px-4 py-3" style={{minWidth:'200px'}}>
@@ -114,6 +119,11 @@ function CPQLineItems({ items, setItems, products, readOnly, currency }) {
                   <td className="px-4 py-3 text-right" style={{minWidth:'120px'}}>
                     <span className="font-bold text-[#0F172A]">{fmt(row.extended_price||row.quantity*row.price)}</span>
                   </td>
+                  {customFields.map(f=><td key={f.id} className="px-4 py-3" style={{minWidth:'110px'}}>
+                    {readOnly
+                      ? <span className="text-gray-600">{(row.custom_data||{})[f.api_name] ?? '-'}</span>
+                      : <LineItemCustomFieldInput field={f} value={(row.custom_data||{})[f.api_name]} onChange={v=>updCustom(idx,f.api_name,v)}/>}
+                  </td>)}
                   {!readOnly && <td className="px-3 py-3"><button onClick={()=>remove(idx)} className="w-8 h-8 rounded-full bg-red-100 hover:bg-red-200 text-red-500 text-sm font-bold flex items-center justify-center shadow-sm">✕</button></td>}
                 </tr>
               ))
@@ -121,10 +131,10 @@ function CPQLineItems({ items, setItems, products, readOnly, currency }) {
           </tbody>
           {items.length>0&&(
             <tfoot className="border-t-2 border-blue-100">
-              <tr className="bg-gray-50"><td colSpan={readOnly?6:7} className="px-5 py-2 text-right text-xs text-gray-500 font-medium">Subtotal</td><td className="px-3 py-2 text-right text-xs font-semibold">{fmt(subtotal)}</td>{!readOnly&&<td/>}</tr>
-              {totalDisc>0&&<tr className="bg-green-50"><td colSpan={readOnly?6:7} className="px-5 py-2 text-right text-xs text-green-600">Discount</td><td className="px-3 py-2 text-right text-xs font-semibold text-green-600">- {fmt(totalDisc)}</td>{!readOnly&&<td/>}</tr>}
-              {totalTax>0&&<tr className="bg-blue-50"><td colSpan={readOnly?6:7} className="px-5 py-2 text-right text-xs text-blue-600">Tax</td><td className="px-3 py-2 text-right text-xs font-semibold text-blue-600">+ {fmt(totalTax)}</td>{!readOnly&&<td/>}</tr>}
-              <tr className="bg-[#0F172A]"><td colSpan={readOnly?6:7} className="px-5 py-3 text-right font-bold text-white text-sm">Net Total</td><td className="px-3 py-3 text-right font-bold text-white text-base">{fmt(subtotal-totalDisc+totalTax)}</td>{!readOnly&&<td/>}</tr>
+              <tr className="bg-gray-50"><td colSpan={(readOnly?6:7)+customFields.length} className="px-5 py-2 text-right text-xs text-gray-500 font-medium">Subtotal</td><td className="px-3 py-2 text-right text-xs font-semibold">{fmt(subtotal)}</td>{!readOnly&&<td/>}</tr>
+              {totalDisc>0&&<tr className="bg-green-50"><td colSpan={(readOnly?6:7)+customFields.length} className="px-5 py-2 text-right text-xs text-green-600">Discount</td><td className="px-3 py-2 text-right text-xs font-semibold text-green-600">- {fmt(totalDisc)}</td>{!readOnly&&<td/>}</tr>}
+              {totalTax>0&&<tr className="bg-blue-50"><td colSpan={(readOnly?6:7)+customFields.length} className="px-5 py-2 text-right text-xs text-blue-600">Tax</td><td className="px-3 py-2 text-right text-xs font-semibold text-blue-600">+ {fmt(totalTax)}</td>{!readOnly&&<td/>}</tr>}
+              <tr className="bg-[#0F172A]"><td colSpan={(readOnly?6:7)+customFields.length} className="px-5 py-3 text-right font-bold text-white text-sm">Net Total</td><td className="px-3 py-3 text-right font-bold text-white text-base">{fmt(subtotal-totalDisc+totalTax)}</td>{!readOnly&&<td/>}</tr>
             </tfoot>
           )}
         </table>
@@ -216,10 +226,11 @@ export default function CPQRecordDetail({ page, record, onClose }) {
           tax_pct:          Number(i.tax_pct    || 0),
           extended_price:   Number(i.extended_price || 0),
           sort_order:       idx,
+          custom_data:      i.custom_data || {},
         })));
       }
     }
-    await updateRecord(page, { ...edited, amount: grandTotal }, []);
+    await updateRecord(page, { ...edited, amount: grandTotal }, null);
     setSaving(false);
     if (andClose) { onClose(); } else { setSaveSuccess(true); setTimeout(()=>setSaveSuccess(false),2500); }
   };
@@ -315,7 +326,7 @@ export default function CPQRecordDetail({ page, record, onClose }) {
             {saveSuccess && <span className="text-green-600 text-sm font-semibold">✓ Saved</span>}
             <button onClick={onClose} className="px-4 py-2 text-sm rounded-xl font-semibold border border-gray-200 text-gray-600 hover:bg-gray-50">Cancel</button>
             {matchingProcess && !['Pending Approval','Approved'].includes(edited.status) && (
-              <button onClick={async()=>{setSubmitting(true);await submitForApproval(page,record.id,record.name||record.order_number||record.invoice_number,matchingProcess);setSubmitting(false);setForm(p=>({...p,status:'Pending Approval'}));setMatchingProcess(null);}} disabled={submitting}
+              <button onClick={async()=>{setSubmitting(true);await submitForApproval(page,record.id,record.name||record.order_number||record.invoice_number,matchingProcess);setSubmitting(false);setEdited(p=>({...p,status:'Pending Approval'}));setMatchingProcess(null);}} disabled={submitting}
                 className="flex items-center gap-2 px-4 py-2 text-sm rounded-xl font-semibold bg-purple-600 hover:bg-purple-700 text-white disabled:opacity-50 shadow">
                 {submitting?'Submitting…':'📋 Submit for Approval'}
                 <span className="bg-purple-300 text-purple-900 text-xs px-2 py-0.5 rounded-full">{matchingProcess?.name}</span>
@@ -338,7 +349,7 @@ export default function CPQRecordDetail({ page, record, onClose }) {
                   const tbl=page==='orders'?'orders':'invoices';
                   const idField=page==='orders'?'order_number':'invoice_number';
                   const{data:fresh}=await supabase.from(tbl).select('status').eq(idField,record.id).maybeSingle();
-                  if(fresh?.status) setForm(p=>({...p,status:fresh.status}));
+                  if(fresh?.status) setEdited(p=>({...p,status:fresh.status}));
                   const proc=await checkMatchingApprovalProcess(page,{...edited});
                   setMatchingProcess(proc);
                 }}/>
@@ -441,7 +452,7 @@ export default function CPQRecordDetail({ page, record, onClose }) {
             </div>
 
             {/* Line Items */}
-            <CPQLineItems items={items} setItems={setItems} products={products} currency={edited.currency||appPreferences?.default_currency||'INR'}/>
+            <CPQLineItems items={items} setItems={setItems} products={products} currency={edited.currency||appPreferences?.default_currency||'INR'} page={page}/>
 
             {/* Charges + Summary */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">

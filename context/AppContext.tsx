@@ -737,6 +737,8 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
       const { error } = await supabase.from(table).insert(items.map((i: any, idx: number) => ({
         [fkField]:      id,
         product_name:   i.product_name || i.product || '',
+        product_code:   i.product_code || '',
+        description:    i.description  || '',
         quantity:       Number(i.quantity   || 1),
         unit_price:     Number(i.unit_price ?? i.price ?? 0),
         list_price:     Number(i.list_price ?? i.unit_price ?? i.price ?? 0),
@@ -744,6 +746,8 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
         tax_pct:        Number(i.tax_pct    || 0),
         extended_price: Number(i.quantity||1) * Number(i.unit_price ?? i.price ?? 0) * (1 - Number(i.discount_pct ?? i.discount ?? 0)/100),
         sort_order:     idx,
+        configuration:  i.configuration || {},
+        custom_data:    i.custom_data || {},
         ...(effectiveTenantId ? { tenant_id: effectiveTenantId } : {}),
       })));
       if (error) console.error('[upsertLineItemsGeneric] insert error:', error.message, 'tenantId:', effectiveTenantId);
@@ -863,6 +867,7 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
           Number(i.quantity||1) * Number(i.unit_price ?? i.price ?? 0) * (1 - Number(i.discount_pct ?? i.discount ?? 0)/100)
         )),
         sort_order:     idx,
+        custom_data:    i.custom_data || {},
         ...(effectiveTenantId ? { tenant_id: effectiveTenantId } : {}),
       })));
       if (error) console.error('[upsertRetailLineItems] error:', error.message, 'tenantId:', effectiveTenantId);
@@ -917,6 +922,29 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     }
     if (page === 'retailActivities' && !String(data.subject || '').trim()) {
       showAlert('Subject is required.'); return null;
+    }
+    // Duplicate check — B2C customer creation only, per the same pattern as
+    // B2B below. Matches on name OR phone OR email; warns and lets the admin
+    // decide rather than blocking outright, since a legitimate second
+    // customer can share a common name.
+    if (page === 'retailCustomers') {
+      const nameNorm  = String(data.name||'').toLowerCase().trim();
+      const phoneNorm = String(data.phone||'').replace(/\D/g,'');
+      const emailNorm = String(data.email||'').toLowerCase().trim();
+      const dup = (retailCustomers||[]).find(c =>
+        (nameNorm && c.name?.toLowerCase().trim() === nameNorm) ||
+        (phoneNorm && c.phone && c.phone.replace(/\D/g,'') === phoneNorm) ||
+        (emailNorm && c.email?.toLowerCase().trim() === emailNorm)
+      );
+      if (dup) {
+        const matchedOn = [
+          nameNorm && dup.name?.toLowerCase().trim() === nameNorm ? 'name' : null,
+          phoneNorm && dup.phone?.replace(/\D/g,'') === phoneNorm ? 'phone' : null,
+          emailNorm && dup.email?.toLowerCase().trim() === emailNorm ? 'email' : null,
+        ].filter(Boolean).join(' and ');
+        const ok = await showConfirm(`A customer named "${dup.name}" already exists with a matching ${matchedOn}. Create this as a new, separate customer anyway?`, { title:'Possible Duplicate Customer', variant:'warning', confirmLabel:'Create Anyway' });
+        if (!ok) return null;
+      }
     }
     const newId = generateId(cfg.prefix);
     const allowed = RETAIL_ALLOWED_COLS[cfg.table] || [];
@@ -1482,6 +1510,26 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     try {
       switch (page) {
         case 'customers': {
+          // Duplicate check — warns rather than blocks, since a legitimate
+          // second customer can share a common name. Matches on name OR
+          // phone OR email, same pattern as the retail (B2C) customer check.
+          const nameNorm  = String(data.name||'').toLowerCase().trim();
+          const phoneNorm = String(data.phone||'').replace(/\D/g,'');
+          const emailNorm = String(data.email||'').toLowerCase().trim();
+          const dup = customers.find(c =>
+            (nameNorm && c.name?.toLowerCase().trim() === nameNorm) ||
+            (phoneNorm && c.phone && c.phone.replace(/\D/g,'') === phoneNorm) ||
+            (emailNorm && c.email?.toLowerCase().trim() === emailNorm)
+          );
+          if (dup) {
+            const matchedOn = [
+              nameNorm && dup.name?.toLowerCase().trim() === nameNorm ? 'name' : null,
+              phoneNorm && dup.phone?.replace(/\D/g,'') === phoneNorm ? 'phone' : null,
+              emailNorm && dup.email?.toLowerCase().trim() === emailNorm ? 'email' : null,
+            ].filter(Boolean).join(' and ');
+            const ok = await showConfirm(`A customer named "${dup.name}" already exists with a matching ${matchedOn}. Create this as a new, separate customer anyway?`, { title:'Possible Duplicate Customer', variant:'warning', confirmLabel:'Create Anyway' });
+            if (!ok) return null;
+          }
           const id = generateId('CUST');
           const { error } = await supabase.from('customers').insert([{ ...sys, custom_data: data.custom_data||{}, owner: data.owner||currentUser?.email||'', owner_id: data.owner_id||currentUser?.id||null, comments: data.comments||'', customer_number: id, name: data.name, company: data.company, industry: data.industry, email: data.email, phone: data.phone, website: data.website, billing_address: data.billingAddress, shipping_address: data.shippingAddress, city: data.city, state: data.state, postal_code: data.postalCode, country: data.country, gst_number: data.gstNumber, status: data.status || 'Active' }]);
           if (error) throw error;
@@ -1559,15 +1607,22 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     }
   };
 
-  const updateRecord = async (page: string, record: any, lineItems: LineItem[]) => {
+  const updateRecord = async (page: string, record: any, lineItems: LineItem[] | null = null) => {
     if (!supabase) return;
     const sys = buildSystemFields(true);
     const calcAmount = (lineItems||[]).reduce((s, i) => s + (i.quantity||1) * (i.price||0), 0);
 
     const upsertLineItems = async (table: string, field: string, id: string) => {
+      if (lineItems === null) return; // caller explicitly handles line items itself elsewhere
       await supabase.from(table).delete().eq(field, id);
       if (lineItems.length) {
-        await supabase.from(table).insert(lineItems.map(i => ({ [field]: id, product_name: i.product, quantity: i.quantity, price: i.price })));
+        await supabase.from(table).insert(lineItems.map(i => ({
+          [field]: id, product_name: i.product || i.product_name || '',
+          product_code: i.product_code || '', description: i.description || '',
+          quantity: i.quantity, price: i.price,
+          discount: Number((i as any).discount || 0),
+          custom_data: (i as any).custom_data || {},
+        })));
       }
     };
 
@@ -1622,7 +1677,13 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
           status: record.status, comments: record.comments||''
         }).eq('order_number', record.id);
         if (e_orders) { console.error('update orders:', e_orders.message); showAlert('Save failed: ' + e_orders.message); return; }
-        // NOTE: line items for orders are saved by CPQRecordDetail directly — do NOT upsert here (avoids overwrite race)
+        // When CPQ is enabled, CPQRecordDetail saves line items itself and
+        // passes lineItems=null here to skip (upsertLineItems no-ops on null).
+        // When CPQ is disabled, the fallback RecordDetailPanel view has no
+        // other path to persist line-item edits — this call is what actually
+        // saves them in that case (previously always skipped, silently
+        // losing any line-item changes made via the fallback view).
+        await upsertLineItems('order_line_items', 'order_number', record.id);
         await logAudit({ recordType: 'order', recordId: record.id, recordName: record.name, action: 'updated' });
         await runAutomations('orders', record.id, record, 'on_update');
         await fetchOrders(); break; }
@@ -1641,7 +1702,8 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
           status: record.status, comments: record.comments||''
         }).eq('invoice_number', record.id);
         if (e_invoices) { console.error('update invoices:', e_invoices.message); showAlert('Save failed: ' + e_invoices.message); return; }
-        // NOTE: line items for invoices are saved by CPQRecordDetail directly — do NOT upsert here (avoids overwrite race)
+        // See the matching comment in the 'orders' case above — same fix.
+        await upsertLineItems('invoice_line_items', 'invoice_number', record.id);
         await logAudit({ recordType: 'invoice', recordId: record.id, recordName: record.name, action: 'updated' });
         await runAutomations('invoices', record.id, record, 'on_update');
         await fetchInvoices(); break; }
@@ -1804,6 +1866,7 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
       tax_pct:        Number(i.tax_pct    || 0),
       extended_price: i.qtyNow * Number(i.price||0) * (1 - Number(i.discount||0)/100) * (1 + Number(i.tax_pct||0)/100),
       sort_order:     idx,
+      custom_data:    i.custom_data || {},
     })));
 
     // Update each order line item's running invoiced_qty.
@@ -3077,7 +3140,7 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
       quantity: i.qtyNow, price: Number(i.unit_price || i.price || 0), list_price: Number(i.unit_price || i.price || 0),
       discount: Number(i.discount_pct || i.discount || 0), tax_pct: Number(i.tax_pct || 0),
       extended_price: i.qtyNow * Number(i.unit_price || i.price || 0) * (1 - Number(i.discount_pct || 0) / 100),
-      sort_order: idx, invoiced_qty: 0,
+      sort_order: idx, invoiced_qty: 0, custom_data: i.custom_data || {},
     })));
 
     // Update each quotation line item's running ordered_qty.
@@ -3180,7 +3243,21 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     await fetchSavedSearches();
     return r;
   };
-  const deleteSavedSearch = async (id) => { if(!supabase)return; const{error}=await supabase.from('saved_searches').delete().eq('id',id); if(error){showAlert('Failed to delete search: '+error.message,{variant:'danger'});return;} await fetchSavedSearches(); };
+  const updateSavedSearch = async (id: string, patch: { name?: string; filters?: any }) => {
+    if(!supabase)return null;
+    if(patch.name !== undefined && !patch.name.trim()){ showAlert('Saved search name cannot be empty.', { variant:'warning' }); return null; }
+    const{data:r,error}=await supabase.from('saved_searches').update(patch).eq('id',id).select().single();
+    if(error){ showAlert('Failed to update search: '+error.message, { variant:'danger' }); return null; }
+    await fetchSavedSearches();
+    return r;
+  };
+  const deleteSavedSearch = async (id, name = 'this saved search') => {
+    if(!supabase)return;
+    if(!(await showConfirm(`Delete "${name}"? This can't be undone.`, { variant:'danger', confirmLabel:'Delete', title:'Delete Saved Search' })))return;
+    const{error}=await supabase.from('saved_searches').delete().eq('id',id);
+    if(error){showAlert('Failed to delete search: '+error.message,{variant:'danger'});return;}
+    await fetchSavedSearches();
+  };
   // isGlobal: false = personal default (only affects the current user),
   // true = team-wide default (visible/applied for everyone on this object).
   const setDefaultSavedSearch = async (id: string, isGlobal: boolean = false) => {
@@ -3357,7 +3434,7 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     quotations, fetchQuotations, createQuotation, updateQuotation, deleteQuotation, generateNewVersion,
     createQuotationFromOpportunity, createOrderFromQuotation,
     reports, fetchReports, saveReport, deleteReport,
-    savedSearches, fetchSavedSearches, createSavedSearch, deleteSavedSearch, setDefaultSavedSearch,
+    savedSearches, fetchSavedSearches, createSavedSearch, updateSavedSearch, deleteSavedSearch, setDefaultSavedSearch,
     fetchRecordNotes, saveNote, deleteNote, toggleNotePin,
     fetchRecordComments, postComment, deleteComment,
     fetchRecordAttachments, uploadAttachment, deleteAttachment, getAttachmentUrl,

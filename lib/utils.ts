@@ -5,6 +5,29 @@
 // Reads the tenant's regional settings, published to window by AppContext
 const _prefs = () => (typeof window !== 'undefined' ? (window as any).__bp_prefs : null) || {};
 
+// Rounds a set of category values to whole-number percentages that are
+// GUARANTEED to sum to exactly 100 (when total > 0) — using the largest
+// remainder method. Naively rounding each category independently
+// (Math.round(value/total*100) per row) does NOT guarantee this and is a
+// classic source of dashboard breakdowns that visibly don't add up to 100%.
+// Returns percentages in the same order as the input values.
+export const roundPercentagesTo100 = (values: number[]): number[] => {
+  const total = values.reduce((s, v) => s + (v || 0), 0);
+  if (total <= 0) return values.map(() => 0);
+  const exact = values.map(v => (v || 0) / total * 100);
+  const floors = exact.map(Math.floor);
+  const remainder = 100 - floors.reduce((s, v) => s + v, 0);
+  // Distribute the leftover percentage points to the categories with the
+  // largest fractional remainders first — this is what keeps the total
+  // exact while staying as close as possible to the true proportions.
+  const order = exact
+    .map((v, i) => ({ i, frac: v - floors[i] }))
+    .sort((a, b) => b.frac - a.frac);
+  const result = [...floors];
+  for (let k = 0; k < remainder; k++) result[order[k % order.length].i] += 1;
+  return result;
+};
+
 export const formatCurrency = (value: number): string => {
   const currency = _prefs().default_currency || 'INR';
   const locale = currency === 'INR' ? 'en-IN' : currency === 'GBP' ? 'en-GB' : currency === 'EUR' ? 'de-DE' : 'en-US';

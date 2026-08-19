@@ -25,6 +25,8 @@ const RETAIL_OBJECTS = [
   { v: 'retailActivities', l: 'Retail Activities', icon: '📅' },
   { v: 'retailOrders',     l: 'Retail Orders',     icon: '🛒' },
   { v: 'retailInvoices',   l: 'Retail Invoices',   icon: '🧾' },
+  { v: 'retailOrderLineItems',   l: 'Order Line Items',   icon: '📝', isLineItem: true },
+  { v: 'retailInvoiceLineItems', l: 'Invoice Line Items', icon: '📝', isLineItem: true },
 ];
 
 const FIELD_TYPES = [
@@ -292,6 +294,12 @@ export default function AppComposer() {
           {draftCount > 0 && <span className="text-amber-600 font-semibold">⏳ {draftCount} unpublished</span>}
         </div>
       </div>
+
+      {objMeta?.isLineItem && (
+        <div className="bg-amber-50 border border-amber-200 rounded-2xl px-4 py-3 text-sm text-amber-800">
+          ℹ️ These fields appear as extra <strong>columns</strong> in the line item grid (not a full-page form) — one value per line, not per whole record.
+        </div>
+      )}
 
       {/* Field list */}
       {loading ? (
