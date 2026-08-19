@@ -1309,6 +1309,20 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
       }
       return out;
     };
+    if (data.organization_id) {
+      const org = organizations.find(o => o.id === data.organization_id);
+      if (org && org.status !== 'Active') {
+        const ok = await showConfirm(`"${org.name}" is currently Inactive. Continue assigning this user to it anyway?`, { title:'Inactive Organization', variant:'warning', confirmLabel:'Continue Anyway' });
+        if (!ok) return;
+      }
+    }
+    if (data.business_unit_id) {
+      const bu = businessUnits.find(b => b.id === data.business_unit_id);
+      if (bu && bu.status !== 'Active') {
+        const ok = await showConfirm(`"${bu.name}" is currently Inactive. Continue assigning this user to it anyway?`, { title:'Inactive Business Unit', variant:'warning', confirmLabel:'Continue Anyway' });
+        if (!ok) return;
+      }
+    }
     if (editingId) {
       // Duplicate email guard on edit too — changing an existing user's email
       // to one already used by someone else was previously unguarded (only

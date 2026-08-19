@@ -330,7 +330,7 @@ const mapRetailFieldType = (f) => {
   if (f.type === 'checkbox') return 'boolean';
   return 'text';
 };
-const getRetailFieldMeta = (page) => {
+export const getRetailFieldMeta = (page) => {
   const cfg = RETAIL_CONFIG[page]; if (!cfg) return [];
   const seen = new Set();
   const fields = [{ key:'id', label:'Record #', type:'text' }];

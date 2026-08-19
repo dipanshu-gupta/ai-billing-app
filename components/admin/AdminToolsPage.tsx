@@ -14,9 +14,10 @@ import AppPreferencesPanel from '@/components/admin/AppPreferencesPanel';
 import ImportExportPanel from '@/components/admin/ImportExportPanel';
 import { useApp } from '@/context/AppContext';
 import { useTenant } from '@/context/TenantContext';
-import { formatDate, getStatusOptions } from '@/lib/utils';
+import { formatDate, getStatusOptions, getObjectFields } from '@/lib/utils';
 import Modal from '@/components/shared/Modal';
 import { useAlert } from '@/components/shared/AlertProvider';
+import { getRetailFieldMeta } from '@/components/retail/RetailListPage';
 
 // ─── Shared styles ────────────────────────────────────────────────────────────
 const iCls = 'w-full border border-blue-200 rounded-xl px-3 py-2.5 text-[#0F172A] bg-white focus:outline-none focus:ring-2 focus:ring-blue-400 text-sm placeholder:text-gray-400';
@@ -42,34 +43,57 @@ function RetailAdminWrapper({ title, icon, desc, children }) {
     </div>
   );
 }
-const RETAIL_CONDITION_FIELDS: Record<string,{v:string,l:string}[]> = {
-  retailCustomers:  [{v:'status',l:'Status'},{v:'loyalty_tier',l:'Loyalty Tier'},{v:'gender',l:'Gender'},{v:'city',l:'City'},{v:'owner',l:'Owner'}],
-  retailProducts:   [{v:'status',l:'Status'},{v:'category',l:'Category'},{v:'brand',l:'Brand'},{v:'price',l:'Price'},{v:'stock_quantity',l:'Stock Qty'}],
-  retailActivities: [{v:'status',l:'Status'},{v:'activity_type',l:'Activity Type'},{v:'priority',l:'Priority'},{v:'owner',l:'Owner'}],
-  retailOrders:     [{v:'status',l:'Status'},{v:'payment_status',l:'Payment Status'},{v:'payment_method',l:'Payment Method'},{v:'amount',l:'Amount'},{v:'owner',l:'Owner'}],
-  retailInvoices:   [{v:'status',l:'Status'},{v:'payment_status',l:'Payment Status'},{v:'amount',l:'Amount'},{v:'due_date',l:'Due Date'},{v:'owner',l:'Owner'}],
+const RETAIL_FIELD_KEYS = ['retailCustomers','retailProducts','retailActivities','retailOrders','retailInvoices'];
+// Fields available per object for conditions / update-field actions — derived
+// from the SAME comprehensive field registry the list-view filters use
+// (getRetailFieldMeta), rather than a separately-maintained short list that
+// only ever covered 4-6 fields and silently excluded everything else on the
+// object.
+const RETAIL_CONDITION_FIELDS: Record<string,{v:string,l:string}[]> = Object.fromEntries(
+  RETAIL_FIELD_KEYS.map(obj => [obj, getRetailFieldMeta(obj).filter(f => f.key !== 'id').map(f => ({ v: f.key, l: f.label }))])
+);
+
+const B2B_FIELD_LABELS: Record<string,string> = {
+  name:'Name', customer:'Customer', contact:'Contact', owner:'Owner', status:'Status',
+  amount:'Amount', price:'Price', cost:'Cost', stage:'Stage', source:'Source',
+  industry:'Industry', phone:'Phone', email:'Email', website:'Website', gstNumber:'GST Number',
+  billingAddress:'Billing Address', shippingAddress:'Shipping Address', city:'City', state:'State',
+  postalCode:'Postal Code', country:'Country', description:'Description', designation:'Designation',
+  department:'Department', mobile:'Mobile', isPrimary:'Primary Contact', linkedIn:'LinkedIn',
+  productFamily:'Product Family', category:'Category', sku:'SKU', unit:'Unit', taxRate:'Tax Rate (%)',
+  stock_quantity:'Stock on Hand', reorder_level:'Reorder Level', track_inventory:'Inventory Tracking',
+  expectedCloseDate:'Expected Close Date', closeDate:'Close Date', probability:'Probability (%)',
+  campaign:'Campaign', currency:'Currency', paymentTerms:'Payment Terms', deliveryDate:'Delivery Date',
+  dueDate:'Due Date', activityType:'Activity Type', activityDate:'Activity Date', priority:'Priority',
+  notes:'Notes', grand_total:'Grand Total', quote_number:'Quote Number',
 };
-// Fields available per object for conditions / update-field actions
-const CONDITION_FIELDS = {
-  customers:     [{v:'status',l:'Status'},{v:'industry',l:'Industry'},{v:'country',l:'Country'},{v:'city',l:'City'},{v:'owner',l:'Owner'}],
-  leads:         [{v:'status',l:'Status'},{v:'source',l:'Source'},{v:'amount',l:'Amount'},{v:'campaign',l:'Campaign'},{v:'owner',l:'Owner'}],
-  opportunities: [{v:'status',l:'Status'},{v:'stage',l:'Stage'},{v:'amount',l:'Amount'},{v:'probability',l:'Probability %'},{v:'currency',l:'Currency'},{v:'owner',l:'Owner'}],
-  orders:        [{v:'status',l:'Status'},{v:'amount',l:'Amount'},{v:'currency',l:'Currency'},{v:'payment_status',l:'Payment Status'},{v:'owner',l:'Owner'}],
-  invoices:      [{v:'status',l:'Status'},{v:'payment_terms',l:'Payment Terms'},{v:'amount',l:'Amount'},{v:'currency',l:'Currency'},{v:'payment_status',l:'Payment Status'},{v:'owner',l:'Owner'}],
-  contacts:      [{v:'status',l:'Status'},{v:'designation',l:'Designation'},{v:'department',l:'Department'},{v:'owner',l:'Owner'}],
-  activities:    [{v:'status',l:'Status'},{v:'activity_type',l:'Activity Type'},{v:'priority',l:'Priority'},{v:'owner',l:'Owner'}],
-  quotations:    [{v:'status',l:'Status'},{v:'payment_terms',l:'Payment Terms'},{v:'currency',l:'Currency'},{v:'grand_total',l:'Grand Total'},{v:'owner',l:'Owner'}],
-  products:      [{v:'status',l:'Status'},{v:'category',l:'Category'},{v:'productFamily',l:'Product Family'},{v:'price',l:'Price'}],
-};
+const b2bFieldLabel = (k: string) => B2B_FIELD_LABELS[k] || k.replace(/([A-Z])/g,' $1').replace(/_/g,' ').replace(/^./,c=>c.toUpperCase()).trim();
+const B2B_OBJECT_KEYS = ['customers','leads','opportunities','orders','invoices','contacts','activities','quotations','products'];
+// Same fix, B2B side — derived from getObjectFields(), the same comprehensive
+// registry the B2B list-view filters use.
+const CONDITION_FIELDS: Record<string,{v:string,l:string}[]> = Object.fromEntries(
+  B2B_OBJECT_KEYS.map(obj => [obj, getObjectFields(obj).map(k => ({ v: k, l: b2bFieldLabel(k) }))])
+);
 
 // For a given object + field, return dropdown options (null = free text)
 const getFieldOptions = (objType, field) => {
+  if (!field) return null;
+  // Retail objects: use the field's own opts from the canonical field
+  // registry when available (e.g. Country, Loyalty Tier) — this also covers
+  // fields not explicitly special-cased below.
+  if (objType && RETAIL_FIELD_KEYS.includes(objType)) {
+    const meta = getRetailFieldMeta(objType).find(f => f.key === field);
+    if (meta?.opts?.length) return meta.opts;
+    if (meta?.type === 'status') return getStatusOptions(objType);
+  }
   if (field === 'status')        return getStatusOptions(objType);
   if (field === 'source')        return ['Website','Campaign','Referral','Cold Call','Trade Show','Partner'];
   if (field === 'stage')         return ['Qualification','Proposal Sent','Negotiation','Closed Won','Closed Lost'];
-  if (field === 'activity_type') return ['Call','Meeting','Email','Task','Demo'];
+  if (field === 'activity_type' || field === 'activityType') return ['Call','Meeting','Email','Task','Demo'];
   if (field === 'industry')      return ['Technology','Healthcare','Finance','Retail','Manufacturing','Education','Other'];
-  if (field === 'payment_terms') return ['Due on Receipt','Net 15','Net 30','Net 45'];
+  if (field === 'payment_terms' || field === 'paymentTerms') return ['Due on Receipt','Net 15','Net 30','Net 45'];
+  if (field === 'priority')      return ['Low','Medium','High','Urgent'];
+  if (field === 'department')    return ['Sales','Marketing','Engineering','Finance','Operations','HR','Support','Other'];
   return null; // free text
 };
 
@@ -93,7 +117,8 @@ const ACTION_TYPES = [
   {v:'create_task',l:'📋 Create Task'},
 ];
 
-const NUMERIC_FIELDS = ['amount','probability','price','grand_total','cost','quantity'];
+const NUMERIC_FIELDS = ['amount','probability','price','grand_total','cost','quantity',
+  'taxRate','stock_quantity','reorder_level','loyalty_points','mrp','discount','tax_rate','gst_rate'];
 
 const TRIGGER_EVENTS = [
   {v:'on_create',       l:'When record is Created'},
@@ -406,8 +431,8 @@ function UsersPanel() {
                 />
               </div>
             ))}
-            <div><L t="Organization"/><select value={(form as any).organization_id||''} onChange={e=>s('organization_id',e.target.value)} className={sCls}><option value="">Select Organization</option>{organizations.map(o=><option key={o.id} value={o.id}>{o.name}</option>)}</select></div>
-            <div><L t="Business Unit"/><select value={(form as any).business_unit_id||''} onChange={e=>s('business_unit_id',e.target.value)} className={sCls} disabled={!(form as any).organization_id}><option value="">{(form as any).organization_id?'Select Business Unit':'Select org first'}</option>{businessUnits.filter(b=>!(form as any).organization_id||b.organization_id===(form as any).organization_id).map(b=><option key={b.id} value={b.id}>{b.name}</option>)}</select></div>
+            <div><L t="Organization"/><select value={(form as any).organization_id||''} onChange={e=>s('organization_id',e.target.value)} className={sCls}><option value="">Select Organization</option>{organizations.map(o=><option key={o.id} value={o.id}>{o.name}{o.status!=='Active'?' (Inactive)':''}</option>)}</select></div>
+            <div><L t="Business Unit"/><select value={(form as any).business_unit_id||''} onChange={e=>s('business_unit_id',e.target.value)} className={sCls} disabled={!(form as any).organization_id}><option value="">{(form as any).organization_id?'Select Business Unit':'Select org first'}</option>{businessUnits.filter(b=>!(form as any).organization_id||b.organization_id===(form as any).organization_id).map(b=><option key={b.id} value={b.id}>{b.name}{b.status!=='Active'?' (Inactive)':''}</option>)}</select></div>
             <div className="col-span-2">
               <L t="Primary Role"/>
               <select value={(form as any).role_id||''} onChange={e=>s('role_id',e.target.value)} className={sCls}>
@@ -665,8 +690,8 @@ function SecurityConsolePanel() {
 // ═══════════════════════════ WORKFLOW BUILDER ══════════════════════════════════
 // ── Shared condition builder ─────────────────────────────────────────────────
 
-function ConditionRow({ fields, condition, onChange, onRemove, users }) {
-  const opts = getFieldOptions(null, condition.field);
+function ConditionRow({ fields, condition, onChange, onRemove, users, objType }) {
+  const opts = getFieldOptions(objType, condition.field);
   const noValue = ['is_empty','is_not_empty'].includes(condition.operator);
   return (
     <div className="flex items-center gap-2 flex-wrap">
@@ -694,7 +719,7 @@ function ConditionRow({ fields, condition, onChange, onRemove, users }) {
   );
 }
 
-function ConditionBuilder({ fields, conditions, logic, onChange }) {
+function ConditionBuilder({ fields, conditions, logic, onChange, objType }) {
   const addCond = () => onChange({ logic, conditions: [...conditions, {field:'',operator:'equals',value:''}] });
   const updCond = (i,c) => onChange({ logic, conditions: conditions.map((x,j)=>j===i?c:x) });
   const remCond = (i) => onChange({ logic, conditions: conditions.filter((_,j)=>j!==i) });
@@ -711,7 +736,7 @@ function ConditionBuilder({ fields, conditions, logic, onChange }) {
         <span className="text-sm text-gray-400">of these conditions</span>
       </div>
       {conditions.map((c,i)=>(
-        <ConditionRow key={i} fields={fields} condition={c}
+        <ConditionRow key={i} fields={fields} condition={c} objType={objType}
           onChange={nc=>updCond(i,nc)} onRemove={()=>remCond(i)} />
       ))}
       <button onClick={addCond} className="text-sm text-blue-600 hover:text-blue-800 font-semibold flex items-center gap-1">
@@ -1035,7 +1060,7 @@ function WorkflowBuilderPanel({ objectList = ALL_OBJECTS, conditionFields = COND
           {/* Conditions */}
           <div className="bg-gray-50 rounded-[16px] p-4">
             <h4 className="text-sm font-bold text-[#0F172A] mb-3">🔍 Additional Conditions (optional)</h4>
-            <ConditionBuilder fields={fields} conditions={conditions.conditions||[]} logic={conditions.logic||'AND'} onChange={setCond}/>
+            <ConditionBuilder fields={fields} conditions={conditions.conditions||[]} logic={conditions.logic||'AND'} onChange={setCond} objType={form.object_type}/>
           </div>
 
           {/* Actions */}
@@ -1208,7 +1233,7 @@ function AssignmentRulesPanel({ objectList = ALL_OBJECTS, conditionFields = COND
                 <select value={form.assign_to_user_id||''} onChange={e=>s('assign_to_user_id',e.target.value)}
                   className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-900 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400">
                   <option value="">Select user...</option>
-                  {enterpriseUsers.map(u=><option key={u.id} value={u.id}>{`${u.first_name||''} ${u.last_name||''}`.trim()||u.email}</option>)}
+                  {enterpriseUsers.map(u=><option key={u.id} value={u.id}>{(`${u.first_name||''} ${u.last_name||''}`.trim()||u.email)}{u.status!=='Active'?' (Inactive)':''}</option>)}
                 </select>
               </div>
               <div>
@@ -1392,7 +1417,7 @@ function SLAPanel({ objectList = ALL_OBJECTS, conditionFields = CONDITION_FIELDS
               <select value={form.escalate_to_user_id||''} onChange={e=>s('escalate_to_user_id',e.target.value)}
                 className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-blue-400">
                 <option value="">No escalation</option>
-                {enterpriseUsers.map(u=><option key={u.id} value={u.id}>{`${u.first_name||''} ${u.last_name||''}`.trim()||u.email}</option>)}
+                {enterpriseUsers.map(u=><option key={u.id} value={u.id}>{(`${u.first_name||''} ${u.last_name||''}`.trim()||u.email)}{u.status!=='Active'?' (Inactive)':''}</option>)}
               </select>
             </div>
             <div className="flex items-end pb-1">
@@ -1560,7 +1585,7 @@ function ApprovalProcessPanel({ objectList = ALL_OBJECTS, conditionFields = COND
 
           <div className="bg-purple-50 rounded-[16px] p-4">
             <h4 className="text-sm font-bold text-[#0F172A] mb-3">🔍 Entry Conditions (when to trigger)</h4>
-            <ConditionBuilder fields={fields} conditions={conditions.conditions||[]} logic={conditions.logic||'AND'} onChange={setCond}/>
+            <ConditionBuilder fields={fields} conditions={conditions.conditions||[]} logic={conditions.logic||'AND'} onChange={setCond} objType={form.object_type}/>
           </div>
 
           <div>
@@ -1586,7 +1611,7 @@ function ApprovalProcessPanel({ objectList = ALL_OBJECTS, conditionFields = COND
                       <select value={step.approver_user_id||''} onChange={e=>setSteps(p=>p.map((x,j)=>j===i?{...x,approver_user_id:e.target.value}:x))}
                         className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-900 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400">
                         <option value="">Select approver...</option>
-                        {enterpriseUsers.map(u=><option key={u.id} value={u.id}>{`${u.first_name||''} ${u.last_name||''}`.trim()||u.email}</option>)}
+                        {enterpriseUsers.map(u=><option key={u.id} value={u.id}>{(`${u.first_name||''} ${u.last_name||''}`.trim()||u.email)}{u.status!=='Active'?' (Inactive)':''}</option>)}
                       </select>
                     </div>
                     <div>

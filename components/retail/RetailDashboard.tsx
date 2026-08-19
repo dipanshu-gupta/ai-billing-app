@@ -892,9 +892,13 @@ function AIInsightsCard({ kpis, prevPeriodKpis, rangeLabel, fmt, pctChange }) {
       setInsight(data.content?.[0]?.text || 'Unable to generate insight.');
       setGenerated(true);
     } catch (e: any) {
-      setError(e.message?.includes('API_KEY') || e.message?.includes('ANTHROPIC') || e.message?.includes('GEMINI')
-        ? 'AI not configured — add API key to enable insights'
-        : 'Insight unavailable right now');
+      // Show the server's actual error message when we have one — it's
+      // already specific and actionable (e.g. "AI is not configured for
+      // this deployment", "Session expired — please log in again"). Only
+      // fall back to a generic message for genuine network-level failures
+      // (fetch itself failing, JSON parse errors) where there's nothing
+      // more specific to show.
+      setError(e?.message || 'Insight unavailable right now — please try again.');
     } finally {
       setLoading(false);
     }
