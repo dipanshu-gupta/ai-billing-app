@@ -977,28 +977,32 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     if (!supabase) return;
     const cfg = RETAIL_TABLE_MAP[page];
     if (!cfg) return;
-    const payload: any = { ...record, ...buildSystemFields(true) };
-    // Strip all client-side computed fields that have no DB column
-    delete payload.id;
-    delete payload._uuid;
-    delete payload[cfg.idField];
-    delete payload.displayNumber;
-    delete payload.display_number;
-    delete payload.customerId;
-    delete payload.primaryContactId;
-    // Invoices: order_number is enriched to display format on fetch — never write it back
-    if (page === 'retailInvoices') delete payload.order_number;
+
     // Terminal statuses can never be reverted (checked against the DB, not stale UI state)
     const TERMINAL = ['Completed','Paid','Cancelled','Refunded'];
-    if (payload.status && !TERMINAL.includes(payload.status)) {
+    if (record.status && !TERMINAL.includes(record.status)) {
       const { data: cur } = await supabase.from(cfg.table).select('status').eq(cfg.idField, record.id).maybeSingle();
-      if (cur && TERMINAL.includes(cur.status) && cur.status !== payload.status) {
-        showAlert(`This record is ${cur.status} and its status can no longer be changed to ${payload.status}.`);
+      if (cur && TERMINAL.includes(cur.status) && cur.status !== record.status) {
+        showAlert(`This record is ${cur.status} and its status can no longer be changed to ${record.status}.`);
         return;
       }
     }
-    payload.customer    = record.customer;    // keep customer name
-    payload.custom_data = record.custom_data || {}; // keep JSONB custom fields
+
+    // Allowlist filtering — only known DB columns are ever written, mirroring
+    // createRetailRecord's approach. This is safer than a hand-maintained
+    // denylist of specific client-side fields to exclude: a denylist has to
+    // be remembered and updated every single time a new computed/display-only
+    // field gets added anywhere in the record object, and reliably breaks
+    // when it isn't — e.g. customer_name_resolved (added later for list-view
+    // display) was never added to the old denylist, causing every retail
+    // invoice/order/activity save to fail with a "column not found" error.
+    const allowed = RETAIL_ALLOWED_COLS[cfg.table] || [];
+    const filtered: any = {};
+    allowed.forEach(k => { if (record[k] !== undefined) filtered[k] = record[k]; });
+    // Invoices: order_number is enriched to a display format on fetch — never write it back
+    if (page === 'retailInvoices') delete filtered.order_number;
+
+    const payload: any = { ...filtered, ...buildSystemFields(true) };
     const { error } = await supabase.from(cfg.table).update(payload).eq(cfg.idField, record.id);
     if (error) { console.error(`update ${cfg.table}:`, error.message); showAlert('Save failed: ' + error.message); return; }
     if (cfg.lineItemTable) {
