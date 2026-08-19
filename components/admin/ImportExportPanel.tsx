@@ -828,7 +828,17 @@ export default function ImportExportPanel() {
     setImporting(true);
     const result = { created:0, updated:0, skipped:0, errors:[] as string[] };
     const now = new Date().toISOString();
-    const sys = { created_by: currentUser.email, updated_by: currentUser.email, updated_at: now };
+    // tenant_id was previously never set on imported rows at all. On this
+    // shared multi-tenant DB that meant rows could be inserted successfully
+    // (no error shown, so the UI reported "success") but with tenant_id left
+    // NULL — which makes them invisible to every tenant-scoped query used
+    // everywhere else in the app, since tenant visibility only allows NULL
+    // through for the demo tenant specifically. This is exactly what "import
+    // successful, but no record appears" looks like from the outside: the
+    // row really was created, just orphaned under no tenant.
+    const effectiveTenantId = (typeof window !== 'undefined' ? (window as any).__bp_tenant?.id : null) || null;
+    const sys: any = { created_by: currentUser.email, updated_by: currentUser.email, updated_at: now };
+    if (effectiveTenantId) sys.tenant_id = effectiveTenantId;
 
     // Get next sequence number for ID generation — skipped for line items,
     // which use the DB's own UUID default rather than a generated display

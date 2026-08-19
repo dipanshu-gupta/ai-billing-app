@@ -132,7 +132,7 @@ function SavedSearchPanel({ page, currentFilters, onApply, onClose }) {
   const { currentUser, savedSearches, fetchSavedSearches, createSavedSearch, updateSavedSearch, deleteSavedSearch, setDefaultSavedSearch,
     appPreferences, createOrderFromOpportunity, fetchOrders, pendingRecord, setPendingRecord,
   } = useApp();
-  const { showAlert } = useAlert();
+  const { showAlert, showConfirm } = useAlert();
   const [saveName,   setSaveName]   = useState('');
   const [saveDef,    setSaveDef]    = useState(false);
   const [saveGlobal, setSaveGlobal] = useState(false);
@@ -171,6 +171,10 @@ function SavedSearchPanel({ page, currentFilters, onApply, onClose }) {
     if (renameVal.trim() && renameVal.trim() !== s.name) await updateSavedSearch(s.id, { name: renameVal.trim() });
     setRenamingId(null);
   };
+  const updateToCurrentFilters = async (s) => {
+    const ok = await showConfirm(`Update "${s.name}" to match your current filters? This replaces what it currently searches for.`, { title:'Update Saved Search', variant:'warning', confirmLabel:'Update' });
+    if (ok) await updateSavedSearch(s.id, { filters: currentFilters });
+  };
 
   const SearchCard = ({ s }) => {
     const applied = isCurrentlyApplied(s);
@@ -198,6 +202,7 @@ function SavedSearchPanel({ page, currentFilters, onApply, onClose }) {
             className="flex-1 bg-gradient-to-r from-[#0F172A] to-blue-800 text-white py-2 rounded-xl text-xs font-bold hover:opacity-90 disabled:opacity-40 disabled:cursor-default">
             {applied ? 'Currently Applied' : 'Apply'}
           </button>
+          {!applied && <button onClick={()=>updateToCurrentFilters(s)} title="Update this search to match your current filters" className="bg-amber-100 text-amber-700 px-3 py-2 rounded-xl text-xs font-semibold hover:bg-amber-200">🔄</button>}
           {!s.is_default && <button onClick={()=>setDefaultSavedSearch(s.id,s.is_global_default)} title="Set as default" className="bg-blue-100 text-blue-700 px-3 py-2 rounded-xl text-xs font-semibold hover:bg-blue-200">⭐</button>}
           <button onClick={()=>startRename(s)} title="Rename" className="bg-gray-100 text-gray-600 px-3 py-2 rounded-xl text-xs font-semibold hover:bg-gray-200">✎</button>
           <button onClick={()=>deleteSavedSearch(s.id, s.name)} title="Delete" className="bg-red-100 text-red-500 px-3 py-2 rounded-xl text-xs font-semibold hover:bg-red-200">🗑</button>

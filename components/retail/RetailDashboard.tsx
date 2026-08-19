@@ -12,6 +12,17 @@ import {
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const COLORS = ['#0F172A','#3B82F6','#10B981','#F59E0B','#EF4444','#8B5CF6','#EC4899','#14B8A6'];
+// Semantic colors for status-based charts — carries real meaning (green =
+// good/complete, amber = needs attention, red = overdue/problem, grey =
+// not-yet-actioned) rather than an arbitrary palette assignment that changes
+// meaning depending on which statuses happen to be present.
+const STATUS_HEX: Record<string,string> = {
+  Paid:'#10B981', Completed:'#10B981', Active:'#10B981', Delivered:'#10B981',
+  Pending:'#F59E0B', Sent:'#3B82F6', Processing:'#3B82F6', 'In Progress':'#3B82F6',
+  Draft:'#94A3B8', Overdue:'#EF4444', Cancelled:'#EF4444', Failed:'#EF4444',
+  Refunded:'#8B5CF6', Unknown:'#CBD5E1',
+};
+const statusHex = (name: string, fallbackIdx: number) => STATUS_HEX[name] || COLORS[fallbackIdx % COLORS.length];
 
 const DATE_RANGES = [
   { v:'today',  l:'Today' },
@@ -76,7 +87,6 @@ const DASHBOARD_WIDGETS = [
   { key:'loyalty_tiers',    label:'Customer Loyalty Tiers chart' },
   { key:'payment_revenue',  label:'Revenue by Payment Method chart' },
   { key:'invoice_status',   label:'Invoices by Status chart' },
-  { key:'payment_methods',  label:'Payment Methods chart' },
   { key:'top_categories',   label:'Products by Category chart' },
   { key:'low_stock',        label:'Low Stock Alert' },
   { key:'recent_invoices',  label:'Recent Invoices table' },
@@ -332,37 +342,35 @@ export default function RetailDashboard() {
 
   // ── Orders by status ───────────────────────────────────────────────────────
   const invoicesByStatus = useMemo(() => {
-    const counts: Record<string,number> = {};
+    const counts: Record<string,{count:number,amount:number}> = {};
     fInvoices.forEach(inv => {
       const s = inv.status || 'Unknown';
-      counts[s] = (counts[s] || 0) + 1;
+      if (!counts[s]) counts[s] = { count: 0, amount: 0 };
+      counts[s].count += 1;
+      counts[s].amount += safeNum(inv.amount);
     });
     return Object.entries(counts)
-      .map(([name, value]) => ({ name, value }))
+      .map(([name, v]) => ({ name, value: v.count, amount: Math.round(v.amount) }))
       .sort((a, b) => b.value - a.value);
   }, [fInvoices]);
   // ── Orders by channel ──────────────────────────────────────────────────────
+  // ── Revenue by payment method — total invoices AND how many are actually
+  // paid AND realized revenue, all together. Previously this was split across
+  // two separate, contradictory charts: one plotted invoice COUNT (including
+  // unpaid Draft invoices) on the same axis as REVENUE, making it look like
+  // "8 invoices" was "₹8" of revenue; the other only showed paid revenue with
+  // no context for how much was still outstanding. One clear number now.
   const invoicesByChannel = useMemo(() => {
-    const ch: Record<string,{count:number,revenue:number}> = {};
+    const ch: Record<string,{totalCount:number,paidCount:number,revenue:number}> = {};
     fInvoices.forEach(inv => {
       const k = inv.channel || inv.payment_method || 'Direct';
-      if (!ch[k]) ch[k] = { count: 0, revenue: 0 };
-      ch[k].count += 1;
-      if (inv.status === 'Paid') ch[k].revenue += safeNum(inv.amount);
+      if (!ch[k]) ch[k] = { totalCount: 0, paidCount: 0, revenue: 0 };
+      ch[k].totalCount += 1;
+      if (inv.status === 'Paid') { ch[k].paidCount += 1; ch[k].revenue += safeNum(inv.amount); }
     });
     return Object.entries(ch)
-      .map(([name, v]) => ({ name, invoices: v.count, revenue: Math.round(v.revenue) }))
+      .map(([name, v]) => ({ name, totalCount: v.totalCount, paidCount: v.paidCount, revenue: Math.round(v.revenue) }))
       .sort((a, b) => b.revenue - a.revenue);
-  }, [fInvoices]);
-
-  // ── Payment method breakdown ───────────────────────────────────────────────
-  const paymentMethods = useMemo(() => {
-    const pm: Record<string,number> = {};
-    fInvoices.filter(i => i.status === 'Paid').forEach(inv => {
-      const k = inv.payment_method || 'Unknown';
-      pm[k] = (pm[k] || 0) + safeNum(inv.amount);
-    });
-    return Object.entries(pm).map(([name, value]) => ({ name, value }));
   }, [fInvoices]);
 
   // ── Products by category (count + inventory value; NOT sales revenue — ─────
@@ -604,135 +612,102 @@ export default function RetailDashboard() {
         {show('loyalty_tiers') && (
         <ChartCard title="Customer Loyalty Tiers">
           {loyaltyBreakdown.length === 0 ? <Empty msg="No customer data"/> : (
-            <>
-              <ResponsiveContainer width="100%" height={180}>
-                <PieChart>
-                  <Pie data={loyaltyBreakdown} dataKey="value" nameKey="name"
-                    cx="50%" cy="50%" outerRadius={70} innerRadius={35}>
-                    {loyaltyBreakdown.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]}/>)}
-                  </Pie>
-                  <Tooltip formatter={(v, name) => [`${v} customers`, name]}/>
-                </PieChart>
-              </ResponsiveContainer>
-              <div className="space-y-1.5 mt-2">
-                {(() => {
-                  const pcts = roundPercentagesTo100(loyaltyBreakdown.map(t => t.value));
-                  return loyaltyBreakdown.map((t, i) => (
-                  <div key={t.name} className="flex items-center justify-between text-xs">
-                    <div className="flex items-center gap-2">
-                      <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ background: COLORS[i % COLORS.length] }}/>
-                      <span className="text-gray-600 font-medium">{t.name}</span>
+            <div className="space-y-3">
+              {(() => {
+                const pcts = roundPercentagesTo100(loyaltyBreakdown.map(t => t.value));
+                const maxVal = Math.max(...loyaltyBreakdown.map(t => t.value), 1);
+                return loyaltyBreakdown.map((t, i) => {
+                  const color = COLORS[i % COLORS.length];
+                  const pct = Math.round(t.value / maxVal * 100);
+                  return (
+                    <div key={t.name}>
+                      <div className="flex items-center justify-between mb-1">
+                        <div className="flex items-center gap-2">
+                          <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ background: color }}/>
+                          <span className="text-sm font-semibold text-[#0F172A]">{t.name}</span>
+                        </div>
+                        <span className="text-sm font-bold text-[#0F172A]">{t.value} <span className="text-gray-500 font-medium">({pcts[i]}%)</span></span>
+                      </div>
+                      <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+                        <div className="h-full rounded-full transition-all" style={{ width:`${Math.max(pct,3)}%`, background: color }}/>
+                      </div>
                     </div>
-                    <div className="flex items-center gap-2">
-                      <span className="font-bold text-[#0F172A]">{t.value}</span>
-                      <span className="text-gray-400">
-                        ({pcts[i]}%)
-                      </span>
-                    </div>
-                  </div>
-                  ));
-                })()}
-              </div>
-            </>
+                  );
+                });
+              })()}
+            </div>
           )}
         </ChartCard>
         )}
       </div>
 
       {/* ── Charts row 2 ── */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
 
-        {/* Invoice revenue by payment method */}
-        {show('payment_revenue') && (
+        {/* Revenue by payment method — one clear panel, replacing the two
+            previous charts that contradicted each other (one plotted invoice
+            count on a currency axis, the other only showed paid revenue with
+            no context). */}
+        {(show('payment_revenue') || show('payment_methods')) && (
         <ChartCard title="Revenue by Payment Method">
           {invoicesByChannel.length === 0 ? <Empty/> : (
-            <ResponsiveContainer width="100%" height={220}>
-              <BarChart data={invoicesByChannel}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9"/>
-                <XAxis dataKey="name" tick={{ fontSize: 11 }}/>
-                <YAxis tick={{ fontSize: 11 }} tickFormatter={v => fmtShort(v)} width={65}/>
-                <Tooltip formatter={(v: any, name: string) => [name === 'revenue' ? fmt(v) : v, name === 'revenue' ? 'Revenue' : 'Invoices']}/>
-                <Legend/>
-                <Bar dataKey="revenue"  fill="#3B82F6" radius={[6,6,0,0]} name="Revenue"/>
-                <Bar dataKey="invoices" fill="#10B981" radius={[6,6,0,0]} name="Count"/>
-              </BarChart>
-            </ResponsiveContainer>
+            <div className="space-y-3">
+              {(() => {
+                const maxRevenue = Math.max(...invoicesByChannel.map(c => c.revenue), 1);
+                return invoicesByChannel.map((c, i) => {
+                  const color = COLORS[i % COLORS.length];
+                  const pct = Math.round(c.revenue / maxRevenue * 100);
+                  return (
+                    <div key={c.name}>
+                      <div className="flex items-center justify-between mb-1">
+                        <div className="flex items-center gap-2">
+                          <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ background: color }}/>
+                          <span className="text-sm font-semibold text-[#0F172A]">{c.name}</span>
+                          <span className="text-xs text-gray-500">{c.paidCount} of {c.totalCount} paid</span>
+                        </div>
+                        <span className="text-sm font-bold text-[#0F172A]">{fmt(c.revenue)}</span>
+                      </div>
+                      <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+                        <div className="h-full rounded-full transition-all" style={{ width:`${Math.max(pct,3)}%`, background: color }}/>
+                      </div>
+                    </div>
+                  );
+                });
+              })()}
+            </div>
           )}
         </ChartCard>
         )}
 
-        {/* Invoice status breakdown */}
+        {/* Invoice status breakdown — count AND amount per status, as a clean
+            readable list rather than a tiny pie chart nobody can read */}
         {show('invoice_status') && (
         <ChartCard title="Invoices by Status">
           {invoicesByStatus.length === 0 ? <Empty/> : (
-            <>
-              <ResponsiveContainer width="100%" height={180}>
-                <PieChart>
-                  <Pie data={invoicesByStatus} dataKey="value" nameKey="name"
-                    cx="50%" cy="50%" outerRadius={70} innerRadius={35}>
-                    {invoicesByStatus.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]}/>)}
-                  </Pie>
-                  <Tooltip formatter={(v: any, name: string) => [`${v} invoices`, name]}/>
-                </PieChart>
-              </ResponsiveContainer>
-              <div className="space-y-1.5 mt-2">
-                {(() => {
-                  const pcts = roundPercentagesTo100(invoicesByStatus.map(s => s.value));
-                  return invoicesByStatus.map((s, i) => (
-                  <div key={s.name} className="flex items-center justify-between text-xs">
-                    <div className="flex items-center gap-2">
-                      <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ background: COLORS[i % COLORS.length] }}/>
-                      <span className="text-gray-600">{s.name}</span>
-                    </div>
-                    <div className="flex gap-2">
-                      <span className="font-bold text-[#0F172A]">{s.value}</span>
-                      <span className="text-gray-400">
-                        ({pcts[i]}%)
-                      </span>
-                    </div>
-                  </div>
-                  ));
-                })()}
-              </div>
-            </>
-          )}
-        </ChartCard>
-        )}
-
-        {/* Payment methods */}
-        {show('payment_methods') && (
-        <ChartCard title="Payment Methods">
-          {paymentMethods.length === 0 ? <Empty/> : (
-            <>
-              <ResponsiveContainer width="100%" height={180}>
-                <PieChart>
-                  <Pie data={paymentMethods} dataKey="value" nameKey="name"
-                    cx="50%" cy="50%" outerRadius={70} innerRadius={35}>
-                    {paymentMethods.map((_, i) => <Cell key={i} fill={COLORS[(i + 3) % COLORS.length]}/>)}
-                  </Pie>
-                  <Tooltip formatter={(v: any) => [fmt(v), 'Revenue']}/>
-                </PieChart>
-              </ResponsiveContainer>
-              <div className="space-y-1.5 mt-2">
-                {(() => {
-                  const pcts = roundPercentagesTo100(paymentMethods.map(pm => pm.value));
-                  return paymentMethods.map((pm, i) => {
-                    return (
-                      <div key={pm.name} className="flex items-center justify-between text-xs">
+            <div className="space-y-3">
+              {(() => {
+                const maxAmount = Math.max(...invoicesByStatus.map(s => s.amount), 1);
+                return invoicesByStatus.map((s, i) => {
+                  const color = statusHex(s.name, i);
+                  const pct = Math.round(s.amount / maxAmount * 100);
+                  return (
+                    <div key={s.name}>
+                      <div className="flex items-center justify-between mb-1">
                         <div className="flex items-center gap-2">
-                          <span className="w-2.5 h-2.5 rounded-full" style={{ background: COLORS[(i+3) % COLORS.length] }}/>
-                          <span className="text-gray-600">{pm.name}</span>
+                          <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ background: color }}/>
+                          <span className="text-sm font-semibold text-[#0F172A]">{s.name}</span>
+                          <span className="text-xs text-gray-500">{s.value} invoice{s.value!==1?'s':''}</span>
                         </div>
-                        <div className="flex gap-2">
-                          <span className="font-bold text-[#0F172A]">{pm.value}</span>
-                          <span className="text-gray-400">({pcts[i]}%)</span>
-                        </div>
+                        <span className="text-sm font-bold text-[#0F172A]">{fmt(s.amount)}</span>
                       </div>
-                    );
-                  });
-                })()}
-              </div>
-            </>
+                      <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+                        <div className="h-full rounded-full transition-all" style={{ width:`${Math.max(pct,3)}%`, background: color }}/>
+                      </div>
+                    </div>
+                  );
+                });
+              })()}
+            </div>
           )}
         </ChartCard>
         )}
@@ -785,7 +760,7 @@ export default function RetailDashboard() {
                         stock === 0 ? 'bg-red-500' : pct < 30 ? 'bg-amber-500' : 'bg-emerald-500'
                       }`} style={{ width: `${pct}%` }}/>
                     </div>
-                    <div className="text-[10px] text-gray-400 mt-0.5">Reorder at {reorder} · {p.category||'Uncategorized'}</div>
+                    <div className="text-[11px] text-gray-500 mt-0.5">Reorder at {reorder} · {p.category||'Uncategorized'}</div>
                   </div>
                 );
               })}
@@ -815,7 +790,7 @@ export default function RetailDashboard() {
               <thead className="bg-gray-50">
                 <tr>
                   {['Invoice #','Customer','Payment','Due Date','Amount','Status'].map(h => (
-                    <th key={h} className="px-5 py-3 text-left text-xs font-bold uppercase tracking-wide text-gray-400">{h}</th>
+                    <th key={h} className="px-5 py-3 text-left text-xs font-bold uppercase tracking-wide text-gray-500">{h}</th>
                   ))}
                 </tr>
               </thead>
