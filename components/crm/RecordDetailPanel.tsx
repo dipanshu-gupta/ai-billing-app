@@ -23,6 +23,7 @@ import SearchableSelect from '@/components/shared/SearchableSelect';
 import AddressManager from '@/components/shared/AddressManager';
 import AddressSelector from '@/components/shared/AddressSelector';
 import { useAlert } from '@/components/shared/AlertProvider';
+import { t } from '@/lib/i18n';
 
 const iCls = 'w-full border border-blue-200 rounded-xl px-3 py-2.5 text-[#0F172A] bg-white focus:outline-none focus:ring-2 focus:ring-blue-400 text-sm placeholder:text-gray-400';
 const sCls = 'w-full border border-blue-200 rounded-xl px-3 py-2.5 text-[#0F172A] bg-white focus:outline-none focus:ring-2 focus:ring-blue-400 text-sm';
@@ -314,9 +315,10 @@ export default function RecordDetailPanel({ page, record, onClose, prefillCustom
     updateRecord, submitForApproval, checkMatchingApprovalProcess,
     convertLeadToOpportunity, createInvoiceFromOrder, createOrderFromOpportunity,
     createQuotationFromOpportunity, fetchLineItems, fetchEnterpriseUsers,
-    currentUserPermissions, permissionsLoaded, appPreferences, currentUser,
+    currentUserPermissions, permissionsLoaded, appPreferences, currentUser, appearance,
     invoiceTemplates,
   } = useApp();
+  const lang = appearance?.language || 'en';
 
   // Local permission helper (mirrors CRMListPage canDo)
   const [edited,          setEdited]          = useState({ ...record });
@@ -610,13 +612,13 @@ export default function RecordDetailPanel({ page, record, onClose, prefillCustom
               <div className="flex items-center gap-3">
                 {saveSuccess && <span className="text-green-600 text-sm font-semibold flex items-center gap-1">✓ Saved</span>}
                 <button onClick={onClose} className="px-4 py-2 text-sm rounded-xl font-semibold bg-white border border-gray-200 text-gray-600 hover:bg-gray-50">
-                  Cancel
+                  {t(lang,'cancel')}
                 </button>
                 <button onClick={() => handleSave(false)} disabled={saving || !isDirty} className={`px-4 py-2 text-sm rounded-xl font-semibold transition-all ${isDirty&&!saving?'bg-blue-100 hover:bg-blue-200 text-blue-700':'bg-gray-100 text-gray-400 cursor-not-allowed'} disabled:opacity-50`}>
-                  {saving ? 'Saving…' : 'Save Changes'}
+                  {saving ? t(lang,'loading') : t(lang,'saveChanges')}
                 </button>
                 <button onClick={() => handleSave(true)} disabled={saving || !isDirty} className="px-5 py-2 text-sm rounded-xl font-semibold bg-gradient-to-r from-[#0F172A] to-blue-800 text-white hover:opacity-90 disabled:opacity-50 shadow-md">
-                  {saving ? 'Saving…' : 'Save & Close'}
+                  {saving ? t(lang,'loading') : t(lang,'saveClose')}
                 </button>
               </div>
             )}
@@ -644,8 +646,8 @@ export default function RecordDetailPanel({ page, record, onClose, prefillCustom
               : page==='activities'
               ? [{key:'details',label:'📋 Details'},{key:'360',label:'🔄 Activity 360'}]
               : [{key:'details',label:'📋 Details'}]
-            ).map(t=>(
-                <button key={t.key} onClick={()=>setTab(t.key)} className={`px-5 py-2.5 rounded-t-xl text-sm font-semibold whitespace-nowrap transition-all ${tab===t.key?'bg-white text-[#0F172A] border border-b-white border-blue-200 -mb-px shadow-sm':'text-gray-500 hover:text-[#0F172A]'}`}>{t.label}</button>
+            ).map(tb=>(
+                <button key={tb.key} onClick={()=>setTab(tb.key)} className={`px-5 py-2.5 rounded-t-xl text-sm font-semibold whitespace-nowrap transition-all ${tab===tb.key?'bg-white text-[#0F172A] border border-b-white border-blue-200 -mb-px shadow-sm':'text-gray-500 hover:text-[#0F172A]'}`}>{tb.label}</button>
               ))}
             </div>
           )}

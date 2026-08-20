@@ -8,6 +8,7 @@ import RecordDetailPanel from '@/components/crm/RecordDetailPanel';
 import CreateRecordModal from '@/components/crm/CreateRecordModal';
 import CPQRecordDetail from '@/components/crm/CPQRecordDetail';
 import { useAlert } from '@/components/shared/AlertProvider';
+import { t } from '@/lib/i18n';
 
 const FIELD_LABELS = {
   name:'Name', customer:'Customer', contact:'Contact', owner:'Owner', status:'Status',
@@ -158,7 +159,17 @@ function SavedSearchPanel({ page, currentFilters, onApply, onClose }) {
   // A search "matches" the currently active filters if applying it would be
   // a no-op — used to show a clear "Currently Applied" badge so users can
   // tell at a glance which saved view (if any) they're looking at.
-  const isCurrentlyApplied = (s) => JSON.stringify(s.filters||{}) === JSON.stringify(currentFilters);
+  // Normalizes a filters object to a stable, defaulted shape before
+  // comparing — a raw JSON.stringify comparison breaks the moment the two
+  // objects have keys in a different order, or when one is missing a key
+  // entirely (e.g. a saved search created before sortField/sortDir existed)
+  // even though they're functionally identical once defaults are applied.
+  const normalizeFilters = (f) => JSON.stringify({
+    search: f?.search || '', status: f?.status || 'All', timePeriod: f?.timePeriod || '',
+    advFilters: f?.advFilters || [], owner: f?.owner || '',
+    sortField: f?.sortField || '', sortDir: f?.sortDir || 'asc',
+  });
+  const isCurrentlyApplied = (s) => normalizeFilters(s.filters) === normalizeFilters(currentFilters);
 
   const allForPage = savedSearches.filter(s => s.object_type === page);
   const q = filterText.trim().toLowerCase();
@@ -275,11 +286,12 @@ export default function CRMListPage({ page }) {
     enterpriseUsers, savedSearches, fetchSavedSearches,
     convertLeadToOpportunity, createOrderFromOpportunity, createInvoiceFromOrder,
     createQuotationFromOpportunity, fetchQuotations,
-    currentUserPermissions, permissionsLoaded, appPreferences, hasPermission,
+    currentUserPermissions, permissionsLoaded, appPreferences, appearance, hasPermission,
     fetchOrders, pendingReturnTo, setPendingReturnTo, pendingRecord, setPendingRecord,
     fetchListCount, listViewPrefs, fetchListViewPrefs, saveListViewPrefs,
   } = useApp();
   const { showAlert, showConfirm } = useAlert();
+  const lang = appearance?.language || 'en';
 
   const [successDialog, setSuccessDialog] = useState(null); // { title, message }
 
@@ -527,17 +539,17 @@ export default function CRMListPage({ page }) {
       {/* Filters */}
       <div className="bg-white rounded-2xl border border-blue-100 p-4 shadow-sm">
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-          <input value={search} onChange={e=>setSearch(e.target.value)} placeholder={`Search ${page}…`}
+          <input value={search} onChange={e=>setSearch(e.target.value)} placeholder={`${t(lang,'search')} ${page}…`}
             className="border border-blue-200 rounded-xl px-4 py-2.5 text-sm text-[#0F172A] focus:outline-none focus:ring-2 focus:ring-blue-300 placeholder:text-gray-400"/>
           <select value={statusFilter} onChange={e=>{setStatusFilter(e.target.value);setCurrentPage(1);}} className="border border-blue-200 rounded-xl px-4 py-2.5 text-sm text-[#0F172A] bg-white focus:outline-none focus:ring-2 focus:ring-blue-300">
-            <option>All</option>
+            <option value="All">{t(lang,'allStatuses')}</option>
             {getStatusOptions(page).map(s=><option key={s}>{s}</option>)}
           </select>
           <select value={timePeriod} onChange={e=>setTimePeriod(e.target.value)} className="border border-blue-200 rounded-xl px-4 py-2.5 text-sm text-[#0F172A] bg-white focus:outline-none focus:ring-2 focus:ring-blue-300">
-            {TIME_PERIODS.map(t=><option key={t.v} value={t.v}>{t.l}</option>)}
+            {TIME_PERIODS.map(tp=><option key={tp.v} value={tp.v}>{tp.l}</option>)}
           </select>
           <select value={ownerFilter} onChange={e=>setOwnerFilter(e.target.value)} className="border border-blue-200 rounded-xl px-4 py-2.5 text-sm text-[#0F172A] bg-white focus:outline-none focus:ring-2 focus:ring-blue-300">
-            <option value="">All Owners</option>
+            <option value="">{t(lang,'allOwners')}</option>
             {enterpriseUsers.map(u=><option key={u.id} value={u.email}>{u.first_name} {u.last_name}</option>)}
           </select>
         </div>
@@ -564,7 +576,7 @@ export default function CRMListPage({ page }) {
                           <option value="">Select…</option>
                           {getStatusOptions(page).map(s=><option key={s} value={s}>{s}</option>)}
                         </select>
-                      : <input type={meta.type==='date'?'date':meta.type==='number'?'number':'text'} value={cond.value} onChange={e=>updateFilterRow(idx,{value:e.target.value})} placeholder="Value"
+                      : <input type={meta.type==='date'?'date':meta.type==='number'?'number':'text'} value={cond.value} onChange={e=>updateFilterRow(idx,{value:e.target.value})} placeholder={t(lang,'selectValue')}
                           className="flex-1 min-w-[100px] border border-blue-200 rounded-lg px-2 py-1.5 text-xs text-[#0F172A] focus:outline-none focus:ring-1 focus:ring-blue-400 placeholder:text-gray-400"/>
                   )}
                   <button onClick={()=>removeFilterRow(idx)} className="w-6 h-6 rounded-full bg-red-100 hover:bg-red-200 text-red-500 text-xs font-bold flex items-center justify-center flex-shrink-0">✕</button>
@@ -574,14 +586,14 @@ export default function CRMListPage({ page }) {
           </div>
         )}
         <div className="flex items-center justify-between mt-3 pt-3 border-t border-blue-50">
-          <button onClick={addFilterRow} className="text-xs font-semibold text-blue-600 hover:underline flex items-center gap-1">+ Add Filter</button>
+          <button onClick={addFilterRow} className="text-xs font-semibold text-blue-600 hover:underline flex items-center gap-1">{t(lang,'addFilter')}</button>
         </div>
         <div className="flex items-center justify-between mt-3 pt-3 border-t border-blue-50">
           <div className="text-xs text-blue-600 font-medium">{activeCount > 0 ? `${activeCount} filter${activeCount>1?'s':''} active` : ''}</div>
           <div className="flex items-center gap-2">
             <div className="relative">
               <button onClick={()=>setColumnsOpen(!columnsOpen)} className={`flex items-center gap-2 text-sm font-semibold px-4 py-2 rounded-xl transition-all ${columnsOpen?'bg-[#0F172A] text-white':'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>
-                ⚙️ Columns <span className={`text-xs font-bold px-1.5 py-0.5 rounded-full ${columnsOpen?'bg-white/20 text-white':'bg-gray-200 text-gray-600'}`}>{visibleColumns.length}</span>
+                ⚙️ {t(lang,'columns')} <span className={`text-xs font-bold px-1.5 py-0.5 rounded-full ${columnsOpen?'bg-white/20 text-white':'bg-gray-200 text-gray-600'}`}>{visibleColumns.length}</span>
               </button>
               {columnsOpen && (
                 <div className="absolute right-0 top-12 w-80 bg-white rounded-[24px] shadow-2xl border border-blue-100 z-50 overflow-hidden" style={{maxHeight:'70vh',overflowY:'auto'}}>
@@ -618,7 +630,7 @@ export default function CRMListPage({ page }) {
             </div>
             <div className="relative">
               <button onClick={()=>setSearchPanelOpen(!searchPanelOpen)} className={`flex items-center gap-2 text-sm font-semibold px-4 py-2 rounded-xl transition-all ${searchPanelOpen?'bg-[#0F172A] text-white':'bg-blue-100 text-blue-700 hover:bg-blue-200'}`}>
-                🔖 Saved Searches
+                🔖 {t(lang,'savedSearches')}
                 {savedSearches.filter(s=>s.object_type===page).length > 0 && (
                   <span className={`text-xs font-bold px-1.5 py-0.5 rounded-full ${searchPanelOpen?'bg-white/20 text-white':'bg-blue-200 text-blue-700'}`}>{savedSearches.filter(s=>s.object_type===page).length}</span>
                 )}
@@ -645,7 +657,7 @@ export default function CRMListPage({ page }) {
                     </th>
                   );
                 })}
-                <th className="px-5 py-3.5 text-center text-sm font-semibold w-28">Actions</th>
+                <th className="px-5 py-3.5 text-center text-sm font-semibold w-28">{t(lang,'actions')}</th>
               </tr>
             </thead>
             <tbody>
@@ -653,9 +665,9 @@ export default function CRMListPage({ page }) {
                 <tr>
                   <td colSpan={visibleColumns.length+1} className="px-5 py-16 text-center">
                     <div className="text-5xl mb-3">🔍</div>
-                    <div className="font-bold text-[#0F172A] text-lg">{activeCount > 0 ? 'No matching records' : `No ${page} yet`}</div>
-                    <div className="text-gray-400 text-sm mt-1">{activeCount > 0 ? 'Try adjusting your filters.' : `Create your first ${pageLabel.toLowerCase()}.`}</div>
-                    {activeCount > 0 && <button onClick={clearFilters} className="mt-3 text-blue-600 text-sm font-semibold hover:underline">Clear all filters</button>}
+                    <div className="font-bold text-[#0F172A] text-lg">{activeCount > 0 ? t(lang,'noRecordsFound') : `No ${page} yet`}</div>
+                    <div className="text-gray-400 text-sm mt-1">{activeCount > 0 ? t(lang,'tryAdjustingFilters') : `Create your first ${pageLabel.toLowerCase()}.`}</div>
+                    {activeCount > 0 && <button onClick={clearFilters} className="mt-3 text-blue-600 text-sm font-semibold hover:underline">{t(lang,'clearFilters')}</button>}
                   </td>
                 </tr>
               ) : pagedRecords.map(record => {

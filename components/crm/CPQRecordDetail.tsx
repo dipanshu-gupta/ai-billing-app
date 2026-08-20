@@ -147,12 +147,13 @@ function CPQLineItems({ items, setItems, products, readOnly, currency, page }) {
 export default function CPQRecordDetail({ page, record, onClose }) {
   const {
     customers, contacts, products, enterpriseUsers, organizations, businessUnits,
-    updateRecord, createInvoiceFromOrder, appPreferences,
+    updateRecord, createInvoiceFromOrder, appPreferences, appearance,
     checkMatchingApprovalProcess, submitForApproval, approvalRequests,
     invoiceTemplates,
   } = useApp();
   const { supabase } = useTenant();
   const { showAlert, showConfirm } = useAlert();
+  const lang = appearance?.language || 'en';
 
   const [edited,          setEdited]          = useState({ ...record });
   const [items,           setItems]           = useState([]);
@@ -324,7 +325,7 @@ export default function CPQRecordDetail({ page, record, onClose }) {
           <button onClick={onClose} className="flex items-center gap-2 text-sm text-gray-500 hover:text-[#0F172A] font-semibold">← Back to list</button>
           <div className="flex items-center gap-3">
             {saveSuccess && <span className="text-green-600 text-sm font-semibold">✓ Saved</span>}
-            <button onClick={onClose} className="px-4 py-2 text-sm rounded-xl font-semibold border border-gray-200 text-gray-600 hover:bg-gray-50">Cancel</button>
+            <button onClick={onClose} className="px-4 py-2 text-sm rounded-xl font-semibold border border-gray-200 text-gray-600 hover:bg-gray-50">{t(lang,'cancel')}</button>
             {matchingProcess && !['Pending Approval','Approved'].includes(edited.status) && (
               <button onClick={async()=>{setSubmitting(true);await submitForApproval(page,record.id,record.name||record.order_number||record.invoice_number,matchingProcess);setSubmitting(false);setEdited(p=>({...p,status:'Pending Approval'}));setMatchingProcess(null);}} disabled={submitting}
                 className="flex items-center gap-2 px-4 py-2 text-sm rounded-xl font-semibold bg-purple-600 hover:bg-purple-700 text-white disabled:opacity-50 shadow">
@@ -332,8 +333,8 @@ export default function CPQRecordDetail({ page, record, onClose }) {
                 <span className="bg-purple-300 text-purple-900 text-xs px-2 py-0.5 rounded-full">{matchingProcess?.name}</span>
               </button>
             )}
-            <button onClick={()=>handleSave(false)} disabled={saving} className="px-4 py-2 text-sm rounded-xl font-semibold bg-blue-100 hover:bg-blue-200 text-blue-700 disabled:opacity-50">{saving?'Saving…':'Save Changes'}</button>
-            <button onClick={()=>handleSave(true)} disabled={saving} className="px-5 py-2 text-sm rounded-xl font-semibold bg-gradient-to-r from-[#0F172A] to-blue-800 text-white hover:opacity-90 disabled:opacity-50 shadow-md">{saving?'Saving…':'Save & Close'}</button>
+            <button onClick={()=>handleSave(false)} disabled={saving} className="px-4 py-2 text-sm rounded-xl font-semibold bg-blue-100 hover:bg-blue-200 text-blue-700 disabled:opacity-50">{saving?t(lang,'loading'):t(lang,'saveChanges')}</button>
+            <button onClick={()=>handleSave(true)} disabled={saving} className="px-5 py-2 text-sm rounded-xl font-semibold bg-gradient-to-r from-[#0F172A] to-blue-800 text-white hover:opacity-90 disabled:opacity-50 shadow-md">{saving?t(lang,'loading'):t(lang,'saveClose')}</button>
           </div>
         </div>
 

@@ -1198,10 +1198,12 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
   // \u2500\u2500\u2500 Fetch: Notifications \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 
   const fetchNotifications = async () => {
-    if (!supabase || !currentUser?.email) return;
+    if (!supabase) return;
+    const email = currentUser?.email || session?.user?.email;
+    if (!email) return;
     const { data } = await tScope(supabase
       .from('notifications').select('*'))
-      .eq('recipient_email', currentUser.email)
+      .eq('recipient_email', email)
       .order('created_at', { ascending: false }).limit(50);
     if (data) setNotifications(data);
   };
@@ -2728,16 +2730,30 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
 
   useEffect(() => {
     if (!session?.user?.id) return;
-    Promise.all([
-      fetchCurrentUser(), fetchCustomers(), fetchProducts(), fetchLeads(),
-      fetchOpportunities(), fetchOrders(), fetchInvoices(), fetchContacts(),
-      fetchActivities(), fetchQuoteTemplates(), fetchOrganizations(), fetchBusinessUnits(),
-      fetchEnterpriseUsers(), fetchUserGroups(), fetchRoles(), fetchPermissions(),
-      fetchWorkflowRules(), fetchAssignmentRules(), fetchSLAPolicies(),
-      fetchApprovalProcesses(), fetchApprovalRequests(),
-      fetchQuotations(), fetchReports(), fetchSavedSearches(), fetchInvoiceTemplates(),
-      fetchNotifications(), fetchAppPreferences(), fetchAppearance(),
-    ]);
+    (async () => {
+      // fetchCurrentUser MUST complete before anything else — dozens of the
+      // functions below guard on `if (!currentUser) return`, and since React
+      // state updates are asynchronous, firing them all concurrently with
+      // fetchCurrentUser() meant every one of those guards saw currentUser
+      // as still null on every single fresh page load (not intermittently —
+      // this was 100% reproducible, since the guard check runs synchronously
+      // in the same tick fetchCurrentUser's own setCurrentUser call hasn't
+      // resolved yet). This is exactly why a saved report would vanish after
+      // a refresh but reappear the moment you saved a new one — saving
+      // happens long after this initial race window has passed, so its own
+      // fetchReports() call inside saveReport succeeds normally.
+      await fetchCurrentUser();
+      await Promise.all([
+        fetchCustomers(), fetchProducts(), fetchLeads(),
+        fetchOpportunities(), fetchOrders(), fetchInvoices(), fetchContacts(),
+        fetchActivities(), fetchQuoteTemplates(), fetchOrganizations(), fetchBusinessUnits(),
+        fetchEnterpriseUsers(), fetchUserGroups(), fetchRoles(), fetchPermissions(),
+        fetchWorkflowRules(), fetchAssignmentRules(), fetchSLAPolicies(),
+        fetchApprovalProcesses(), fetchApprovalRequests(),
+        fetchQuotations(), fetchReports(), fetchSavedSearches(), fetchInvoiceTemplates(),
+        fetchNotifications(), fetchAppPreferences(), fetchAppearance(),
+      ]);
+    })();
     // Retail tables may not exist yet (SQL migration pending) — isolate so they never crash B2B init
     Promise.allSettled([
       fetchRetailCustomers(), fetchRetailProducts(), fetchRetailActivities(),
@@ -2816,6 +2832,13 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     def.themeColors = THEME_COLORS['navy'];
     return def;
   });
+  // Publish to window so components mounted outside AppProvider's tree (e.g.
+  // AlertProvider, which wraps TenantProvider/AppProvider at the app root and
+  // therefore can't call useApp()) can still read the current language for
+  // translated dialog button labels.
+  useEffect(() => {
+    if (typeof window !== 'undefined') (window as any).__bp_appearance = appearance || {};
+  }, [appearance]);
 
   const fetchAppearance = async () => {
     try {
@@ -3186,13 +3209,23 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
   // ─── Reports ───────────────────────────────────────────────────────────────
   const [reports, setReports] = useState([]);
   const fetchReports = async () => {
-    if (!supabase || !currentUser) return;
+    if (!supabase) return;
+    // Read the email from session (not the currentUser React state) — this
+    // function is a closure captured when the bootstrap effect was set up,
+    // which only depends on session/supabase, not currentUser. Awaiting
+    // fetchCurrentUser() elsewhere only schedules a future re-render with a
+    // NEW closure; it does not retroactively update currentUser as seen by
+    // THIS already-running closure. session.user.email is available
+    // synchronously and isn't being mutated within this same effect run, so
+    // it sidesteps the stale-closure trap instead of racing against it.
+    const email = currentUser?.email || session?.user?.email;
+    if (!email) return;
     // Built as a single .or() (not stacked on top of tScope's own .or() for
     // the demo tenant) to avoid two same-named `or=` query params landing on
     // one request, which is ambiguous. Tenant scoping is folded directly into
     // this one filter instead.
     const tid = (window as any).__bp_tenant?.id || null;
-    const orClause = `created_by.eq.${currentUser.email},is_public.eq.true`;
+    const orClause = `created_by.eq.${email},is_public.eq.true`;
     const { data, error } = await supabase.from('reports').select('*')
       .or(orClause)
       .order('created_at', { ascending: false });
@@ -3237,9 +3270,11 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
   // none (or omitting it) fetches all saved searches for the user, same as
   // before, so existing bare calls keep working.
   const fetchSavedSearches = async (page?: string) => {
-    if(!supabase||!currentUser)return;
+    if(!supabase)return;
+    const email = currentUser?.email || session?.user?.email;
+    if(!email)return;
     const tid = (window as any).__bp_tenant?.id || null;
-    let q = supabase.from('saved_searches').select('*').or(`created_by.eq.${currentUser.email},is_global_default.eq.true`).order('created_at',{ascending:false});
+    let q = supabase.from('saved_searches').select('*').or(`created_by.eq.${email},is_global_default.eq.true`).order('created_at',{ascending:false});
     if(tid) q = (q as any).eq('tenant_id', tid);
     if(page) q = (q as any).eq('object_type', page);
     const{data}=await q;
@@ -3267,6 +3302,7 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     const{data:r,error}=await supabase.from('saved_searches').update(patch).eq('id',id).select().single();
     if(error){ showAlert('Failed to update search: '+error.message, { variant:'danger' }); return null; }
     await fetchSavedSearches();
+    showAlert(patch.filters !== undefined ? 'Saved search updated with your current filters.' : 'Saved search renamed.', { variant:'success', title:'Updated' });
     return r;
   };
   const deleteSavedSearch = async (id, name = 'this saved search') => {

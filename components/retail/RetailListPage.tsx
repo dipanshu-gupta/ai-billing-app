@@ -12,6 +12,7 @@ import ProductImages from '@/components/products/ProductImages';
 import { useAlert } from '@/components/shared/AlertProvider';
 import { useCustomFields } from '@/lib/useCustomFields';
 import LineItemCustomFieldInput from '@/components/shared/LineItemCustomFieldInput';
+import { t } from '@/lib/i18n';
 
 const iCls = 'w-full border border-blue-200 rounded-xl px-3 py-2.5 text-[#0F172A] bg-white focus:outline-none focus:ring-2 focus:ring-blue-400 text-sm placeholder:text-gray-400';
 const sCls = iCls;
@@ -1094,8 +1095,9 @@ function RetailCustomer360({ customer, onNavigate, onOpenCreate }) {
 
 // ─── Retail Quick Create Customer ────────────────────────────────────────────
 function RetailQuickCreateCustomer({ prefillName, onCreated, onClose }) {
-  const { createRetailRecord, retailCustomers } = useApp();
+  const { createRetailRecord, retailCustomers, appearance } = useApp();
   const { showAlert, showConfirm } = useAlert();
+  const lang = appearance?.language || 'en';
   const [form, setForm] = useState({ name: prefillName||'', phone:'', email:'' });
   const [saving, setSaving] = useState(false);
 
@@ -1129,9 +1131,9 @@ function RetailQuickCreateCustomer({ prefillName, onCreated, onClose }) {
         <input value={form.email} onChange={e=>setForm(p=>({...p,email:e.target.value}))} className={iCls} placeholder="customer@example.com"/>
       </div>
       <div className="flex gap-3 pt-2">
-        <button onClick={onClose} className="flex-1 border border-gray-200 text-gray-600 py-2.5 rounded-xl text-sm font-semibold hover:bg-gray-50">Cancel</button>
+        <button onClick={onClose} className="flex-1 border border-gray-200 text-gray-600 py-2.5 rounded-xl text-sm font-semibold hover:bg-gray-50">{t(lang,'cancel')}</button>
         <button onClick={save} disabled={saving} className="flex-2 bg-gradient-to-r from-[#0F172A] to-blue-800 text-white px-6 py-2.5 rounded-xl text-sm font-bold disabled:opacity-50 shadow hover:opacity-90">
-          {saving ? 'Creating…' : '+ Create Customer'}
+          {saving ? t(lang,'loading') : `+ ${t(lang,'create')} ${t(lang,'customer')}`}
         </button>
       </div>
     </div>
@@ -1141,10 +1143,11 @@ function RetailQuickCreateCustomer({ prefillName, onCreated, onClose }) {
 // ─── Detail Panel ───────────────────────────────────────────────────────────
 function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo, onC360Navigate, onC360Create }) {
   const { updateRetailRecord, deleteRetailRecord, retailCustomers, retailProducts, retailOrders, enterpriseUsers, currentUser,
-          fetchRetailLineItems, fetchRetailCustomers, createRetailRecord, appPreferences, setPendingReturnTo, createRetailInvoiceFromOrder,
+          fetchRetailLineItems, fetchRetailCustomers, createRetailRecord, appPreferences, appearance, setPendingReturnTo, createRetailInvoiceFromOrder,
           checkMatchingApprovalProcess, submitForApproval, currentUserPermissions, permissionsLoaded } = useApp();
   const { supabase } = useTenant();
   const { showAlert, showConfirm } = useAlert();
+  const lang = appearance?.language || 'en';
   const cfg = RETAIL_CONFIG[page];
   const taxRegime = getTaxRegime(appPreferences?.default_currency);
 
@@ -1401,9 +1404,9 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo, on
           }}
           className={sCls}>
           <option value="">Select template...</option>
-          {(invoiceTemplates||[]).map(t => (
-            <option key={t.id} value={t.id}>
-              {t.name}{t.is_default ? ' ★ Default' : ''}
+          {(invoiceTemplates||[]).map(tpl => (
+            <option key={tpl.id} value={tpl.id}>
+              {tpl.name}{tpl.is_default ? ' ★ Default' : ''}
             </option>
           ))}
         </select>
@@ -1515,7 +1518,7 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo, on
             {page==='retailOrders' && edited.status==='Completed' && (
               <button onClick={handleCreateInvoice} disabled={creatingInvoice}
                 className="bg-purple-500 text-white px-4 py-2 rounded-xl text-sm font-bold hover:bg-purple-600 disabled:opacity-50">
-                {creatingInvoice?'Creating...':'🧾 Create Invoice'}
+                {creatingInvoice?t(lang,'loading'):`🧾 ${t(lang,'create')} ${t(lang,'invoices')}`}
               </button>
             )}
             {page==='retailInvoices' && (
@@ -1554,16 +1557,16 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo, on
               <button onClick={handleSubmitForApproval} disabled={submittingApproval}
                 className="flex items-center gap-2 px-4 py-2 text-sm rounded-xl font-semibold bg-purple-500/20 hover:bg-purple-500/30 text-purple-200 border border-purple-400/30 disabled:opacity-50"
                 title={`Process: ${matchingProcess?.name}`}>
-                📋 {submittingApproval ? 'Submitting…' : 'Submit for Approval'}
+                📋 {submittingApproval ? t(lang,'loading') : t(lang,'submit')+' for Approval'}
               </button>
             )}
             <button onClick={()=>handleSave(false)} disabled={saving || isStatusLocked}
               className="bg-white/10 text-white px-4 py-2 rounded-xl text-sm font-bold hover:bg-white/20 disabled:opacity-50">
-              {saving?'Saving...':'Save Changes'}
+              {saving?t(lang,'loading'):t(lang,'saveChanges')}
             </button>
             <button onClick={()=>handleSave(true)} disabled={saving || isStatusLocked}
               className="bg-white text-[#0F172A] px-4 py-2 rounded-xl text-sm font-bold hover:bg-blue-50 disabled:opacity-50">
-              Save & Close
+              {t(lang,'saveClose')}
             </button>
             <button onClick={handleClose} className="text-white/70 hover:text-white text-2xl leading-none ml-1">✕</button>
           </div>
@@ -1782,9 +1785,10 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo, on
 
 // ─── Create Modal ───────────────────────────────────────────────────────────
 function RetailCreateModal({ page, open, onClose, onCreated, prefill = null }) {
-  const { createRetailRecord, retailCustomers, enterpriseUsers, currentUser, appPreferences } = useApp();
+  const { createRetailRecord, retailCustomers, enterpriseUsers, currentUser, appPreferences, appearance } = useApp();
   const { supabase } = useTenant();
   const { showAlert } = useAlert();
+  const lang = appearance?.language || 'en';
   const cfg = RETAIL_CONFIG[page];
   const taxRegime = getTaxRegime(appPreferences?.default_currency);
   const [quickCreateCustomer, setQuickCreateCustomer] = useState(null);
@@ -1926,9 +1930,9 @@ function RetailCreateModal({ page, open, onClose, onCreated, prefill = null }) {
           }}
           className={sCls}>
           <option value="">Select template...</option>
-          {(invoiceTemplates||[]).map(t => (
-            <option key={t.id} value={t.id}>
-              {t.name}{t.is_default ? ' ★ Default' : ''}
+          {(invoiceTemplates||[]).map(tpl => (
+            <option key={tpl.id} value={tpl.id}>
+              {tpl.name}{tpl.is_default ? ' ★ Default' : ''}
             </option>
           ))}
         </select>
@@ -2022,10 +2026,10 @@ function RetailCreateModal({ page, open, onClose, onCreated, prefill = null }) {
           )}
         </div>
         <div className="px-6 py-4 border-t border-gray-100 flex items-center justify-end gap-3 flex-shrink-0 bg-gray-50">
-          <button onClick={onClose} className="px-5 py-2.5 rounded-xl border border-gray-200 text-gray-600 text-sm font-semibold hover:bg-gray-100">Cancel</button>
+          <button onClick={onClose} className="px-5 py-2.5 rounded-xl border border-gray-200 text-gray-600 text-sm font-semibold hover:bg-gray-100">{t(lang,'cancel')}</button>
           <button onClick={handleCreate} disabled={saving}
             className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-[#0F172A] to-blue-800 text-white text-sm font-bold hover:opacity-90 disabled:opacity-50 shadow-md">
-            {saving?'⏳ Creating...':`✓ Create ${cfg.singular}`}
+            {saving?`⏳ ${t(lang,'loading')}`:`✓ ${t(lang,'create')} ${cfg.singular}`}
           </button>
         </div>
       </div>
@@ -2051,7 +2055,7 @@ function RetailCreateModal({ page, open, onClose, onCreated, prefill = null }) {
 // ─── Retail Saved Search Panel ────────────────────────────────────────────────
 function RetailSavedSearchPanel({ page, currentFilters, onApply, onClose }) {
   const { currentUser, savedSearches, fetchSavedSearches, createSavedSearch, updateSavedSearch, deleteSavedSearch, setDefaultSavedSearch } = useApp();
-  const { showAlert } = useAlert();
+  const { showAlert, showConfirm } = useAlert();
   const [saveName, setSaveName] = useState('');
   const [saveDef,  setSaveDef]  = useState(false);
   const [saveGlobal, setSaveGlobal] = useState(false);
@@ -2077,7 +2081,17 @@ function RetailSavedSearchPanel({ page, currentFilters, onApply, onClose }) {
     return parts.length ? parts.join(' · ') : 'All records, no filters';
   };
 
-  const isCurrentlyApplied = (s) => JSON.stringify(s.filters||{}) === JSON.stringify(currentFilters);
+  // Normalizes a filters object to a stable, defaulted shape before
+  // comparing — a raw JSON.stringify comparison breaks the moment the two
+  // objects have keys in a different order, or when one is missing a key
+  // entirely (e.g. a saved search created before sortField/sortDir existed)
+  // even though they're functionally identical once defaults are applied.
+  const normalizeFilters = (f) => JSON.stringify({
+    search: f?.search || '', status: f?.status || 'All', timePeriod: f?.timePeriod || '',
+    advFilters: f?.advFilters || [], owner: f?.owner || '',
+    sortField: f?.sortField || '', sortDir: f?.sortDir || 'asc',
+  });
+  const isCurrentlyApplied = (s) => normalizeFilters(s.filters) === normalizeFilters(currentFilters);
 
   const allForPage = (savedSearches||[]).filter(s => s.object_type === page);
   const q = filterText.trim().toLowerCase();
@@ -2217,8 +2231,9 @@ export default function RetailListPage({ page }) {
     enterpriseUsers, savedSearches, fetchSavedSearches, createSavedSearch,
     deleteSavedSearch, setDefaultSavedSearch, currentUser, appPreferences,
     createRetailInvoiceFromOrder, currentUserPermissions, permissionsLoaded,
-    fetchListCount, listViewPrefs, fetchListViewPrefs, saveListViewPrefs,
+    fetchListCount, listViewPrefs, fetchListViewPrefs, saveListViewPrefs, appearance,
   } = useApp();
+  const lang = appearance?.language || 'en';
 
   const cfg = RETAIL_CONFIG[page];
 
@@ -2360,7 +2375,7 @@ export default function RetailListPage({ page }) {
     const def = savedSearches.find(s => s.object_type===page && s.is_default)
              || savedSearches.find(s => s.object_type===page && s.is_global_default);
     if (def?.filters) applyFilters(def.filters);
-  }, [defaultLoaded, savedSearches]);
+  }, [defaultLoaded]);
 
   useEffect(() => {
     if (!pendingRecord) return;
@@ -2499,20 +2514,20 @@ export default function RetailListPage({ page }) {
       <div className="bg-white rounded-2xl border border-blue-100 p-4 shadow-sm space-y-3">
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
           <input value={search} onChange={e=>{setSearch(e.target.value);setCurrentPage(1);}}
-            placeholder="Search by name, record #, email, phone, SKU…"
+            placeholder={t(lang,'search')+'…'}
             className="border border-blue-200 rounded-xl px-4 py-2.5 text-sm text-[#0F172A] focus:outline-none focus:ring-2 focus:ring-blue-300 placeholder:text-gray-400"/>
           <select value={statusFilter} onChange={e=>{setStatusFilter(e.target.value);setCurrentPage(1);}}
             className="border border-blue-200 rounded-xl px-4 py-2.5 text-sm text-[#0F172A] bg-white focus:outline-none focus:ring-2 focus:ring-blue-300">
-            <option value="All">All Statuses</option>
+            <option value="All">{t(lang,'allStatuses')}</option>
             {cfg.statusOptions.map(s=><option key={s}>{s}</option>)}
           </select>
           <select value={timePeriod} onChange={e=>{setTimePeriod(e.target.value);setCurrentPage(1);}}
             className="border border-blue-200 rounded-xl px-4 py-2.5 text-sm text-[#0F172A] bg-white focus:outline-none focus:ring-2 focus:ring-blue-300">
-            {TIME_PERIODS_R.map(t=><option key={t.v} value={t.v}>{t.l}</option>)}
+            {TIME_PERIODS_R.map(tp=><option key={tp.v} value={tp.v}>{tp.l}</option>)}
           </select>
           <select value={ownerFilter} onChange={e=>{setOwnerFilter(e.target.value);setCurrentPage(1);}}
             className="border border-blue-200 rounded-xl px-4 py-2 text-sm text-[#0F172A] bg-white focus:outline-none focus:ring-2 focus:ring-blue-300">
-            <option value="">All Owners</option>
+            <option value="">{t(lang,'allOwners')}</option>
             {enterpriseUsers.map(u=><option key={u.id} value={u.email}>{u.first_name} {u.last_name}</option>)}
           </select>
         </div>
@@ -2549,7 +2564,7 @@ export default function RetailListPage({ page }) {
           </div>
         )}
         <div className="pt-2 border-t border-blue-50">
-          <button onClick={addFilterRow} className="text-xs font-semibold text-blue-600 hover:underline">+ Add Filter</button>
+          <button onClick={addFilterRow} className="text-xs font-semibold text-blue-600 hover:underline">{t(lang,'addFilter')}</button>
         </div>
 
         <div className="flex items-center justify-between gap-3 pt-2 border-t border-blue-50 flex-wrap">
@@ -2557,7 +2572,7 @@ export default function RetailListPage({ page }) {
           <div className="flex items-center gap-2">
             <div className="relative">
               <button onClick={()=>setColumnsOpen(!columnsOpen)} className={`flex items-center gap-2 text-sm font-semibold px-4 py-2 rounded-xl transition-all ${columnsOpen?'bg-[#0F172A] text-white':'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>
-                ⚙️ Columns <span className={`text-xs font-bold px-1.5 py-0.5 rounded-full ${columnsOpen?'bg-white/20 text-white':'bg-gray-200 text-gray-600'}`}>{visibleColumns.length}</span>
+                ⚙️ {t(lang,'columns')} <span className={`text-xs font-bold px-1.5 py-0.5 rounded-full ${columnsOpen?'bg-white/20 text-white':'bg-gray-200 text-gray-600'}`}>{visibleColumns.length}</span>
               </button>
               {columnsOpen && (
                 <div className="absolute right-0 top-12 w-80 bg-white rounded-[24px] shadow-2xl border border-blue-100 z-50 overflow-hidden" style={{maxHeight:'70vh',overflowY:'auto'}}>
@@ -2595,7 +2610,7 @@ export default function RetailListPage({ page }) {
             <div className="relative">
               <button onClick={()=>setSearchPanel(!searchPanel)}
                 className={`flex items-center gap-2 text-sm font-semibold px-4 py-2 rounded-xl transition-all ${searchPanel?'bg-[#0F172A] text-white':'bg-blue-100 text-blue-700 hover:bg-blue-200'}`}>
-                🔖 Saved Searches
+                🔖 {t(lang,'savedSearches')}
                 {(savedSearches||[]).filter(s=>s.object_type===page).length > 0 && (
                   <span className={`text-xs font-bold px-1.5 py-0.5 rounded-full ${searchPanel?'bg-white/20 text-white':'bg-blue-200 text-blue-700'}`}>
                     {(savedSearches||[]).filter(s=>s.object_type===page).length}
@@ -2626,16 +2641,16 @@ export default function RetailListPage({ page }) {
                     </th>
                   );
                 })}
-                <th className="px-5 py-3.5 text-center text-xs font-semibold uppercase tracking-wider w-24">Actions</th>
+                <th className="px-5 py-3.5 text-center text-xs font-semibold uppercase tracking-wider w-24">{t(lang,'actions')}</th>
               </tr>
             </thead>
             <tbody>
               {pagedRows.length === 0 ? (
                 <tr><td colSpan={visibleColumns.length+1} className="px-5 py-16 text-center">
                   <div className="text-5xl mb-3">{activeCount>0?'🔍':cfg.icon}</div>
-                  <div className="font-bold text-[#0F172A] text-lg mb-1">{activeCount>0?'No matching records':`No ${cfg.title.toLowerCase()} yet`}</div>
-                  <p className="text-gray-400 text-sm">{activeCount>0?'Try adjusting your filters.':`Click "+ Create ${cfg.singular}" to add your first record.`}</p>
-                  {activeCount>0 && <button onClick={clearFilters} className="mt-3 text-blue-600 text-sm font-semibold hover:underline">Clear all filters</button>}
+                  <div className="font-bold text-[#0F172A] text-lg mb-1">{activeCount>0?t(lang,'noRecordsFound'):`No ${cfg.title.toLowerCase()} yet`}</div>
+                  <p className="text-gray-400 text-sm">{activeCount>0?t(lang,'tryAdjustingFilters'):`Click "+ Create ${cfg.singular}" to add your first record.`}</p>
+                  {activeCount>0 && <button onClick={clearFilters} className="mt-3 text-blue-600 text-sm font-semibold hover:underline">{t(lang,'clearFilters')}</button>}
                 </td></tr>
               ) : pagedRows.map(r => (
                 <tr key={r.id} className="border-t border-blue-50 hover:bg-blue-50/40 transition-all">

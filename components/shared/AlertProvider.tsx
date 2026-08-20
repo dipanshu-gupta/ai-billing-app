@@ -1,6 +1,12 @@
 // @ts-nocheck
 'use client';
 import { createContext, useContext, useState, useCallback, useRef } from 'react';
+import { t } from '@/lib/i18n';
+
+// Reads the current language from the window global AppContext publishes —
+// this component wraps TenantProvider/AppProvider at the app root (see
+// app/page.tsx), so it can't call useApp() itself.
+const currentLang = () => (typeof window !== 'undefined' && (window as any).__bp_appearance?.language) || 'en';
 
 // Replaces window.alert()/window.confirm() everywhere in the app with a
 // branded, non-blocking modal. Two APIs:
@@ -39,7 +45,8 @@ export function AlertProvider({ children }) {
   const showConfirm = useCallback((message, opts = {}) => {
     return push({
       kind: 'confirm', message, title: opts.title || 'Please confirm', variant: opts.variant || 'warning',
-      confirmLabel: opts.confirmLabel || 'Confirm', cancelLabel: opts.cancelLabel || 'Cancel',
+      confirmLabel: opts.confirmLabel || t(currentLang(), 'confirm'),
+      cancelLabel: opts.cancelLabel || t(currentLang(), 'cancel'),
     });
   }, [push]);
 
@@ -72,7 +79,7 @@ export function AlertProvider({ children }) {
                 onClick={() => dismiss(true)}
                 className={`flex-1 px-4 py-2.5 rounded-2xl text-sm font-bold text-white shadow-lg ${VARIANT_META[current.variant].accent}`}
               >
-                {current.kind === 'confirm' ? current.confirmLabel : 'OK'}
+                {current.kind === 'confirm' ? current.confirmLabel : t(currentLang(), 'ok')}
               </button>
             </div>
           </div>
