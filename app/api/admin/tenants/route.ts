@@ -98,7 +98,7 @@ export async function POST(request: Request) {
     custom_domain: body.custom_domain || null, logo_url: body.logo_url || null,
     trial_ends_at: body.trial_ends_at ? new Date(body.trial_ends_at).toISOString() : null,
     mrr_usd: Number(body.mrr_usd) || 0,
-    created_by: auth.email, created_at: new Date().toISOString(),
+    created_at: new Date().toISOString(),
   };
 
   const { data, error } = await admin.from('tenants').upsert(payload, { onConflict: 'slug' }).select().single();
@@ -128,7 +128,7 @@ export async function PUT(request: Request) {
     custom_domain: body.custom_domain, logo_url: body.logo_url,
     trial_ends_at: body.trial_ends_at ? new Date(body.trial_ends_at).toISOString() : undefined,
     mrr_usd: body.mrr_usd != null ? Number(body.mrr_usd) : undefined,
-    updated_by: auth.email, updated_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
   };
   // Only overwrite a sensitive credential field if the client actually sent a
   // real new value — the edit form shows masked placeholders for these
@@ -154,7 +154,7 @@ export async function PATCH(request: Request) {
   const body = await request.json();
   if (!body.id || !body.status) return NextResponse.json({ error: 'Tenant id and status are required.' }, { status: 400 });
 
-  const { error } = await admin.from('tenants').update({ status: body.status, updated_by: auth.email, updated_at: new Date().toISOString() }).eq('id', body.id);
+  const { error } = await admin.from('tenants').update({ status: body.status, updated_at: new Date().toISOString() }).eq('id', body.id);
   if (error) return NextResponse.json({ error: error.message }, { status: 400 });
   return NextResponse.json({ ok: true });
 }

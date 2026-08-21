@@ -199,13 +199,31 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
       setTenantId(id);
     }
   }, [tenant?.id]);
-  const isSharedPlan = !tenant?.db_url && !(typeof window !== 'undefined' && (window as any).__bp_tenant?.db_url);
+  // Must match getTenantSupabaseClient's OWN criterion for which tenants get
+  // an isolated auth pool/storageKey (lib/tenant.ts: plan === 'dedicated' ||
+  // 'enterprise') — NOT a proxy field like db_url presence, which can be set
+  // for reasons unrelated to plan and disagree with the actual isolation
+  // decision. A mismatch here meant a tenant using the shared, non-isolated
+  // client (where the membership check is essential, since there's no
+  // storage-level protection) could still skip the check entirely if it
+  // happened to have a non-null db_url for any other reason.
+  const isSharedPlan = tenant?.plan !== 'dedicated' && tenant?.plan !== 'enterprise'
+    && (typeof window === 'undefined' || ((window as any).__bp_tenant?.plan !== 'dedicated' && (window as any).__bp_tenant?.plan !== 'enterprise'));
   // ─── Tenant scoping helpers (shared-plan isolation) ───────────────────────
   const DEMO_TENANT_ID = '00000000-0000-0000-0000-000000000001';
   const getScopeTenantId = () => {
     if (!isSharedPlan) return null; // dedicated DB — inherently isolated
-    return tenantId
-      || (typeof window !== 'undefined' ? (window as any).__bp_tenant?.id : null)
+    // window.__bp_tenant FIRST, not tenantId — the React state can hold
+    // TenantContext's DEMO_TENANT placeholder id during the initial
+    // resolution window on a fresh page load (TenantContext's own `tenant`
+    // state starts as that placeholder before real resolution completes),
+    // and tenantId's own update-effect only catches up once the real
+    // resolved tenant has propagated through a render cycle. window.__bp_tenant
+    // is never pre-populated with a placeholder — it's only ever set once
+    // TenantContext's resolution genuinely finishes — so it's the reliable
+    // signal here, with tenantId only as a same-tick fallback.
+    return (typeof window !== 'undefined' ? (window as any).__bp_tenant?.id : null)
+      || tenantId
       || null;
   };
   // Applies a tenant_id filter to any select/query builder (shared plan only).
@@ -356,13 +374,19 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     // treated "tenant context not resolved yet" as equivalent to "skip the
     // check", the wrong default for a security gate.
     //
-    // Reads window.__bp_tenant directly (not the tenantId React state) on
-    // every poll iteration — tenantId is captured by closure at the time
-    // this function instance was created, so re-reading it in a loop within
-    // the same invocation would only ever see its original, possibly-stale
-    // value, never a later update. window.__bp_tenant is a plain assignment
-    // outside React's render cycle, so it reflects the true current value.
-    let tid = tenantId || (typeof window !== 'undefined' ? (window as any).__bp_tenant?.id : null) || null;
+    // CRITICAL: only window.__bp_tenant is trustworthy evidence that
+    // resolution has genuinely completed. The tenantId REACT STATE is not —
+    // TenantContext's own `tenant` state starts as a DEMO_TENANT placeholder
+    // (useState(DEMO_TENANT)) before real resolution finishes, and on a
+    // fresh page refresh, this component's tenantId state can initialize by
+    // capturing THAT placeholder's id as its own starting value, before the
+    // real tenant has resolved at all. Trusting tenantId here meant this
+    // check could see a non-null (but wrong) value and skip waiting
+    // entirely, verifying membership against the demo tenant instead of
+    // whichever tenant the URL actually pointed to. window.__bp_tenant is
+    // never pre-populated with a placeholder — TenantContext only ever sets
+    // it once genuine resolution has completed.
+    let tid = (typeof window !== 'undefined' ? (window as any).__bp_tenant?.id : null) || null;
     for (let i = 0; i < 30 && !tid; i++) {
       await new Promise(r => setTimeout(r, 100));
       tid = (typeof window !== 'undefined' ? (window as any).__bp_tenant?.id : null) || null;
@@ -371,8 +395,9 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
       console.error('[verifyTenantMembership] Tenant context never resolved — rejecting for safety');
       return false;
     }
+    console.log('[verifyTenantMembership] Checking user', user.email, '(auth_user_id:', user.id, ') against tenant_id:', tid, '| isSharedPlan:', isSharedPlan);
     try {
-      let q: any = supabase.from('enterprise_users').select('id, status, tenant_id');
+      let q: any = supabase.from('enterprise_users').select('id, status, tenant_id, email');
       q = (tid === DEMO_TENANT_ID)
         ? q.or(`tenant_id.eq.${tid},tenant_id.is.null`)
         : q.eq('tenant_id', tid);
@@ -380,13 +405,15 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
       const { data, error } = await q
         .or(`auth_user_id.eq.${user.id},email.ilike.${emailSafe}`)
         .limit(1);
-      if (error) { console.error('[verifyTenantMembership]', error.message); return false; }
+      if (error) { console.error('[verifyTenantMembership] Query error:', error.message); return false; }
       const row = data && data[0];
+      console.log('[verifyTenantMembership] Matched row:', row || 'none found');
       if (!row) return false;
-      if (String(row.status || '').toLowerCase() === 'inactive') return false;
+      if (String(row.status || '').toLowerCase() === 'inactive') { console.log('[verifyTenantMembership] Row is inactive — rejecting'); return false; }
+      console.log('[verifyTenantMembership] PASSED — row tenant_id', row.tenant_id, 'checked against', tid);
       return true;
     } catch (e) {
-      console.error('[verifyTenantMembership]', e);
+      console.error('[verifyTenantMembership] Exception:', e);
       return false;
     }
   };
@@ -2928,7 +2955,7 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     applyAppearance(clean);
     if (!supabase) return;
     try {
-      const effectiveTenantId = tenantId || (typeof window !== 'undefined' ? (window as any).__bp_tenant?.id : null) || null;
+      const effectiveTenantId = (typeof window !== 'undefined' ? (window as any).__bp_tenant?.id : null) || tenantId || null;
       let q = supabase.from('appearance').select('id').limit(1);
       if (effectiveTenantId) q = (q as any).eq('tenant_id', effectiveTenantId);
       const { data:row } = await q.maybeSingle();
@@ -3096,7 +3123,7 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
         ...(currentUser?.organization_id ? { organization_id: currentUser.organization_id } : {}),
       };
       // Find existing row for THIS tenant
-      const effectiveTenantId2 = tenantId || (typeof window !== 'undefined' ? (window as any).__bp_tenant?.id : null) || null;
+      const effectiveTenantId2 = (typeof window !== 'undefined' ? (window as any).__bp_tenant?.id : null) || tenantId || null;
       let pq = supabase.from('app_preferences').select('id').limit(1);
       if (effectiveTenantId2) pq = (pq as any).eq('tenant_id', effectiveTenantId2);
       const { data: row } = await pq.maybeSingle();
