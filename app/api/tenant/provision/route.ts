@@ -73,8 +73,8 @@ export async function POST(req: NextRequest) {
   const body = await req.json();
   const { db_url, db_service_key, admin_email, admin_name, tenant_name } = body;
 
-  if (!db_url || !db_service_key || !admin_email) {
-    return NextResponse.json({ error: 'db_url, db_service_key and admin_email are required' }, { status: 400 });
+  if (!admin_email) {
+    return NextResponse.json({ error: 'admin_email is required' }, { status: 400 });
   }
 
   const firstName    = admin_name?.split(' ')[0] || 'System';
@@ -144,7 +144,7 @@ export async function POST(req: NextRequest) {
   }
 
   // ── Step 4: Upsert enterprise_user with SYSADMIN role ────────────
-  const euBase = {
+  const euBase: any = {
     auth_user_id: authUserId,
     first_name:   firstName,
     last_name:    lastName,
@@ -154,6 +154,11 @@ export async function POST(req: NextRequest) {
     is_admin:     true,
     role_id:      sysadminRoleId,
   };
+  // Shared-plan tenants share one database — without tenant_id, this row
+  // would be created with tenant_id=NULL, which the cross-tenant membership
+  // check only treats as valid for the demo tenant specifically. Without
+  // this, the newly provisioned admin could never log into their own tenant.
+  if (body.is_shared && body.tenant_id) euBase.tenant_id = body.tenant_id;
 
   // Try with temporary_password column
   const { error: upsertErr } = await client.from('enterprise_users')
@@ -165,9 +170,11 @@ export async function POST(req: NextRequest) {
   }
 
   // ── Step 5: Force update role_id by email (handles trigger conflict) ──
-  const { error: forceErr } = await client.from('enterprise_users')
+  let forceUpdateQuery = client.from('enterprise_users')
     .update({ role_id: sysadminRoleId, is_admin: true, auth_user_id: authUserId })
     .eq('email', admin_email);
+  if (body.is_shared && body.tenant_id) forceUpdateQuery = forceUpdateQuery.eq('tenant_id', body.tenant_id);
+  const { error: forceErr } = await forceUpdateQuery;
 
   log.push(forceErr ? `Force update error: ${forceErr.message}` : 'Force update: role_id set');
 
@@ -200,7 +207,7 @@ export async function POST(req: NextRequest) {
         company_name:     tenant_name || 'My Company',
       },
     };
-    if (is_shared && tenant_id) prefsPayload.tenant_id = tenant_id;
+    if (body.is_shared && body.tenant_id) prefsPayload.tenant_id = body.tenant_id;
     const { error: prefsErr } = await client.from('app_preferences').insert([prefsPayload]);
     if (prefsErr) log.push(`app_preferences warning: ${prefsErr.message}`);
     else log.push(`app_preferences created (b2c_mode: ${b2cEnabled})`);
@@ -209,8 +216,10 @@ export async function POST(req: NextRequest) {
   }
 
   // ── Step 6: Verify ───────────────────────────────────────────────
-  const { data: finalEU } = await client.from('enterprise_users')
-    .select('id, role_id, is_admin, first_name, last_name').eq('email', admin_email).maybeSingle();
+  let verifyQuery = client.from('enterprise_users')
+    .select('id, role_id, is_admin, first_name, last_name').eq('email', admin_email);
+  if (body.is_shared && body.tenant_id) verifyQuery = verifyQuery.eq('tenant_id', body.tenant_id);
+  const { data: finalEU } = await verifyQuery.maybeSingle();
 
   log.push(`Final: role_id=${finalEU?.role_id}, is_admin=${finalEU?.is_admin}`);
 
