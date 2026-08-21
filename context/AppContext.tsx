@@ -339,10 +339,38 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
   // valid password alone must NEVER grant access to a workspace.
   const verifyTenantMembership = async (user: any): Promise<boolean> => {
     if (!supabase || !user) return false;
-    const tid = tenantId
-      || (typeof window !== 'undefined' ? (window as any).__bp_tenant?.id : null)
-      || null;
-    if (!isSharedPlan || !tid) return true; // dedicated DB — auth pool is tenant's own
+    // Dedicated tenants have their own separate Supabase auth pool entirely —
+    // a user literally cannot authenticate against a different tenant's
+    // dedicated project using another tenant's credentials, so membership
+    // doesn't need checking against the shared enterprise_users table here.
+    if (!isSharedPlan) return true;
+
+    // Tenant context resolves asynchronously (TenantContext sets
+    // window.__bp_tenant once resolution completes — see its own comment).
+    // This function can be called before that finishes (e.g. from
+    // onAuthStateChange, which can fire very early in the page lifecycle).
+    // The ONLY safe behavior when we don't yet know which tenant we're
+    // scoped to is to wait and find out — never to assume "no check needed"
+    // and grant access, which was the actual root cause of one tenant's
+    // user being able to log into a different tenant: the previous version
+    // treated "tenant context not resolved yet" as equivalent to "skip the
+    // check", the wrong default for a security gate.
+    //
+    // Reads window.__bp_tenant directly (not the tenantId React state) on
+    // every poll iteration — tenantId is captured by closure at the time
+    // this function instance was created, so re-reading it in a loop within
+    // the same invocation would only ever see its original, possibly-stale
+    // value, never a later update. window.__bp_tenant is a plain assignment
+    // outside React's render cycle, so it reflects the true current value.
+    let tid = tenantId || (typeof window !== 'undefined' ? (window as any).__bp_tenant?.id : null) || null;
+    for (let i = 0; i < 30 && !tid; i++) {
+      await new Promise(r => setTimeout(r, 100));
+      tid = (typeof window !== 'undefined' ? (window as any).__bp_tenant?.id : null) || null;
+    }
+    if (!tid) {
+      console.error('[verifyTenantMembership] Tenant context never resolved — rejecting for safety');
+      return false;
+    }
     try {
       let q: any = supabase.from('enterprise_users').select('id, status, tenant_id');
       q = (tid === DEMO_TENANT_ID)
@@ -2713,7 +2741,27 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
       }
       setSession(session); setAuthLoading(false);
     });
-    const { data: listener } = supabase.auth.onAuthStateChange((_e, s) => setSession(s));
+    const { data: listener } = supabase.auth.onAuthStateChange(async (_e, s) => {
+      // CRITICAL: verify tenant membership on EVERY session change, not just
+      // the initial page-load restore above. Supabase fires this listener
+      // directly whenever a sign-in happens (including from handleLogin's own
+      // signInWithPassword call) — without this check here, signing out and
+      // signing back in as a different user belonging to a different tenant,
+      // without a full page reload, would bypass the cross-tenant guard
+      // entirely: this listener would accept the new session unconditionally
+      // regardless of whether that user actually belongs to the tenant
+      // context (window.__bp_tenant) the browser is currently scoped to.
+      if (s?.user) {
+        const ok = await verifyTenantMembership(s.user);
+        if (!ok) {
+          console.error('[onAuthStateChange] Session rejected — user does not belong to this tenant');
+          await supabase.auth.signOut();
+          setSession(null);
+          return;
+        }
+      }
+      setSession(s);
+    });
     return () => listener.subscription.unsubscribe();
   }, [supabase]);
 

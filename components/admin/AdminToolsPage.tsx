@@ -1757,17 +1757,16 @@ export default function AdminToolsPage() {
     }
   };
 
-  if (!canAccessAdmin) {
-    return (
-      <div className="flex flex-col items-center justify-center min-h-[60vh] bg-white rounded-[28px] border border-red-100 shadow p-12 text-center">
-        <div className="text-6xl mb-4">🔒</div>
-        <h2 className="text-2xl font-bold text-[#0F172A] mb-2">Access Restricted</h2>
-        <p className="text-gray-500 max-w-md">You don't have permission to access Admin Tools. Contact your Business Pro administrator to request access.</p>
-      </div>
-    );
-  }
-
-  // Safety: force back to b2b if tenant mode selected but not on master workspace
+  // Safety: force back to b2b if tenant mode selected but not on master workspace.
+  // These MUST run before the `!canAccessAdmin` early return below — every
+  // hook in a component has to run unconditionally on every render. Placing
+  // them after a conditional return meant a user without admin access (or,
+  // critically, anyone in the moment right after switching users before
+  // permissions finish reloading) would skip these two hooks entirely on
+  // that render, then call them normally once access was confirmed on a
+  // later render — a hook-count mismatch between renders, which is exactly
+  // what crashed the app with "Rendered more hooks than during the previous
+  // render" on sign-out/sign-in.
   useEffect(() => {
     if (adminMode === 'tenant' && !isMasterWorkspace) setAdminMode('b2b');
   }, [adminMode, isMasterWorkspace]);
@@ -1778,6 +1777,16 @@ export default function AdminToolsPage() {
       setActive(null);
     }
   }, [adminMode, isB2BMode, isB2CMode]);
+
+  if (!canAccessAdmin) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[60vh] bg-white rounded-[28px] border border-red-100 shadow p-12 text-center">
+        <div className="text-6xl mb-4">🔒</div>
+        <h2 className="text-2xl font-bold text-[#0F172A] mb-2">Access Restricted</h2>
+        <p className="text-gray-500 max-w-md">You don't have permission to access Admin Tools. Contact your Business Pro administrator to request access.</p>
+      </div>
+    );
+  }
 
   const currentSections = adminMode==='b2c' ? B2C_SECTIONS : adminMode==='tenant' ? [] : adminMode==='import' ? [] : B2B_SECTIONS;
   const isB2CAdminTool = adminMode==='b2c';

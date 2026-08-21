@@ -46,6 +46,26 @@ export default function TenantAdminPanel() {
     process.env.NEXT_PUBLIC_SUPABASE_URL || '',
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ''
   ), []);
+
+  // All tenant reads/writes go through the secure server-side API — the
+  // `tenants` table has RLS enabled with zero client policies by design
+  // (it holds full database service-role credentials per dedicated tenant),
+  // so direct client-side Supabase calls against it can never succeed, and
+  // shouldn't: this data must never be written, or fully read, from the
+  // browser with a regular user's session regardless of admin status.
+  const authFetch = async (method: string, body?: any) => {
+    const { data: { session } } = await supabase.auth.getSession();
+    const token = session?.access_token;
+    if (!token) throw new Error('Not authenticated — please log in again.');
+    const res = await fetch('/api/admin/tenants', {
+      method,
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+      ...(body ? { body: JSON.stringify(body) } : {}),
+    });
+    const json = await res.json();
+    if (!res.ok) throw new Error(json.error || `Request failed (${res.status})`);
+    return json;
+  };
   const [tenants,  setTenants]  = useState<Tenant[]>([]);
   const [provisioning,        setProvisioning]        = useState(null);
   const [provisionForm,       setProvisionForm]       = useState({ db_service_key:'', admin_email:'', admin_name:'' });
@@ -67,14 +87,13 @@ export default function TenantAdminPanel() {
   };
 
   async function load() {
-    if (!supabase) return;
     setLoading(true);
-    const { data, error } = await supabase
-      .from('tenants')
-      .select('*')
-      .order('created_at', { ascending: false });
-    if (error) showToast('Load failed: '+error.message, true);
-    else setTenants(data || []);
+    try {
+      const json = await authFetch('GET');
+      setTenants(json.tenants || []);
+    } catch (e: any) {
+      showToast('Load failed: ' + e.message, true);
+    }
     setLoading(false);
   }
 
@@ -140,50 +159,13 @@ export default function TenantAdminPanel() {
   async function save() {
     if (!form.slug || !form.name) { showToast('Slug and Name are required', true); return; }
     setSaving(true);
-
-    const payload = {
-      slug:           form.slug.toLowerCase().replace(/[^a-z0-9-]/g,''),
-      name:           form.name,
-      plan:           form.plan,
-      status:         form.status,
-      admin_email:    form.admin_email||'',
-      admin_name:     form.admin_name||'',
-      company_size:   form.company_size||'',
-      industry:       form.industry||'',
-      country:        form.country||'India',
-      brand_color:    form.brand_color||'#0F172A',
-      accent_color:   form.accent_color||'#2563EB',
-      app_name:       form.app_name||'Umbrella Suite',
-      b2c_enabled:    !!form.b2c_enabled,
-      max_users:      Number(form.max_users)||5,
-      modules:        form.modules||['crm','invoicing'],
-      db_url:         form.db_url||null,
-      db_anon_key:    form.db_anon_key||null,
-      db_service_key: form.db_service_key||null,
-      custom_domain:  form.custom_domain||null,
-      logo_url:       form.logo_url||null,
-      trial_ends_at:  form.trial_ends_at ? new Date(form.trial_ends_at).toISOString() : null,
-      mrr_usd:        Number(form.mrr_usd)||0,
-    };
-
     try {
-      let err = null;
-      if (selected?.id) {
-        const { error } = await supabase.from('tenants')
-          .update({ ...payload, updated_at: new Date().toISOString() })
-          .eq('id', selected.id);
-        err = error;
-      } else {
-        // Use upsert on slug to handle cases where tenant was partially created
-        const { error } = await supabase.from('tenants')
-          .upsert({ ...payload, created_at: new Date().toISOString() }, { onConflict: 'slug' });
-        err = error;
-      }
-      if (err) { showToast('Save failed: ' + err.message, true); setSaving(false); return; }
+      const payload = { ...form, id: selected?.id };
+      await authFetch(selected?.id ? 'PUT' : 'POST', payload);
       showToast(selected ? '✓ Tenant updated' : '✓ Tenant created');
       await load();
       setTab('list');
-    } catch(e) {
+    } catch (e: any) {
       showToast('Save failed: ' + e.message, true);
     }
     setSaving(false);
@@ -191,9 +173,13 @@ export default function TenantAdminPanel() {
 
   async function suspend(id: string, current: string) {
     const next = current === 'suspended' ? 'active' : 'suspended';
-    await supabase.from('tenants').update({ status: next }).eq('id', id);
-    showToast(next === 'suspended' ? 'Tenant suspended' : 'Tenant reactivated');
-    await load();
+    try {
+      await authFetch('PATCH', { id, status: next });
+      showToast(next === 'suspended' ? 'Tenant suspended' : 'Tenant reactivated');
+      await load();
+    } catch (e: any) {
+      showToast('Failed: ' + e.message, true);
+    }
   }
 
   const upd = (k, v) => setForm(p => ({ ...p, [k]: v }));
@@ -525,12 +511,16 @@ export default function TenantAdminPanel() {
                     <label className={lCls}>Supabase Anon Key</label>
                     <input value={form.db_anon_key||''} onChange={e=>upd('db_anon_key',e.target.value)}
                       placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9…" className={`${iCls} font-mono text-xs`} type="password"/>
+                    {selected && <p className="text-[10px] text-gray-400 mt-1">Shown masked for security. Leave as-is to keep the existing key, or paste a new one to replace it.</p>}
                   </div>
                   <div>
                     <label className={lCls}>Supabase Service Role Key</label>
                     <input value={form.db_service_key||''} onChange={e=>upd('db_service_key',e.target.value)}
                       placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9…" className={`${iCls} font-mono text-xs`} type="password"/>
-                    <p className="text-[10px] text-gray-400 mt-1">Required to create login accounts for this tenant's users. Found in their Supabase → Project Settings → API → service_role.</p>
+                    <p className="text-[10px] text-gray-400 mt-1">
+                      {selected ? 'Shown masked for security. Leave as-is to keep the existing key, or paste a new one to replace it. ' : ''}
+                      Required to create login accounts for this tenant's users. Found in their Supabase → Project Settings → API → service_role.
+                    </p>
                   </div>
                   <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-800">
                     ⚠️ After saving, run <code className="font-mono bg-amber-100 px-1 rounded">schema_migration.sql</code> against the client's Supabase project to create all tables.

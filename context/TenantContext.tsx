@@ -43,8 +43,29 @@ export function TenantProvider({ children }: { children: React.ReactNode }) {
   const [loading,     setLoading]     = useState(true);
   const [blocked,     setBlocked]     = useState(false);
   const [blockReason, setBlockReason] = useState('');
+  // Tracks the URL's query string directly (where ?tenant= lives) so
+  // resolution correctly re-runs if it changes after mount — a plain
+  // useEffect(fn, []) only ever runs once, so if the tenant context changed
+  // via client-side navigation afterward (e.g. testing different tenants on
+  // localhost via ?tenant=), resolution would never re-run and
+  // window.__bp_tenant would silently keep pointing at whichever tenant was
+  // resolved first. Deliberately framework-independent (plain browser APIs,
+  // not Next.js's useSearchParams/usePathname) since those require a
+  // Suspense boundary that doesn't exist anywhere in this app, and this is
+  // too security-sensitive a fix to risk on an unverified build change.
+  const [urlSearch, setUrlSearch] = useState(() => typeof window !== 'undefined' ? window.location.search : '');
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const check = () => setUrlSearch(window.location.search);
+    window.addEventListener('popstate', check);
+    // pushState/replaceState (client-side navigation) fire no native browser
+    // event — poll as a reliable catch-all for those.
+    const interval = setInterval(check, 500);
+    return () => { window.removeEventListener('popstate', check); clearInterval(interval); };
+  }, []);
 
   useEffect(() => {
+    setLoading(true);
     async function resolve() {
       try {
         const slug = extractTenantSlug();
@@ -95,7 +116,7 @@ export function TenantProvider({ children }: { children: React.ReactNode }) {
       }
     }
     resolve();
-  }, []);
+  }, [urlSearch]);
 
   // Show blocked screen for suspended/expired/not found tenants
   if (blocked) {
