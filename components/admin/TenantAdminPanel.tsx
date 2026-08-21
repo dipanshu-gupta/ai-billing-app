@@ -9,7 +9,7 @@
  * Only visible when:  tenant.slug === 'demo' && user.is_super_admin === true
  */
 import { useState, useEffect , useMemo } from 'react';
-import { createClient } from '@supabase/supabase-js';
+import { useTenant } from '@/context/TenantContext';
 
 const PLANS  = ['trial','shared','dedicated','enterprise'];
 const STATUS = ['trial','active','suspended','expired'];
@@ -42,10 +42,7 @@ function Badge({ label, cls }) {
 }
 
 export default function TenantAdminPanel() {
-  const supabase = useMemo(() => createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL || '',
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ''
-  ), []);
+  const { supabase } = useTenant();
 
   // All tenant reads/writes go through the secure server-side API — the
   // `tenants` table has RLS enabled with zero client policies by design
@@ -54,6 +51,7 @@ export default function TenantAdminPanel() {
   // shouldn't: this data must never be written, or fully read, from the
   // browser with a regular user's session regardless of admin status.
   const authFetch = async (method: string, body?: any) => {
+    if (!supabase) throw new Error('Still loading — please try again in a moment.');
     const { data: { session } } = await supabase.auth.getSession();
     const token = session?.access_token;
     if (!token) throw new Error('Not authenticated — please log in again.');
