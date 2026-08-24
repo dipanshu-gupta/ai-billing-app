@@ -436,6 +436,11 @@ function RetailLineItems({ items, setItems, products, taxRegime, page }) {
   const [rentalWarnings, setRentalWarnings] = useState<Record<number,string>>({});
   const { appPreferences, checkRentalConflict } = useApp();
   const rentalModeOn = appPreferences?.business_type === 'rental' && page === 'retailOrders';
+  // Rental dates should be VISIBLE on an invoice converted from a rental
+  // order (read-only, for reference — the order already secured the
+  // booking, so invoices don't get editing or conflict-checking), even
+  // though rentalModeOn itself stays scoped to orders for those behaviors.
+  const showRentalColumns = appPreferences?.business_type === 'rental' && (page === 'retailOrders' || page === 'retailInvoices');
   const { fields: customFields } = useCustomFields(page === 'retailInvoices' ? 'retailInvoiceLineItems' : 'retailOrderLineItems');
   const updCustom = (idx, apiName, val) => setItems(p => p.map((r,i) => i!==idx ? r : { ...r, custom_data: { ...(r.custom_data||{}), [apiName]: val } }));
 
@@ -471,6 +476,11 @@ function RetailLineItems({ items, setItems, products, taxRegime, page }) {
     }
     if (row.rental_end_date < row.rental_start_date) {
       setRentalWarnings(w => ({ ...w, [idx]: 'End date must be on or after the start date.' }));
+      return;
+    }
+    const todayISO = new Date().toLocaleDateString('en-CA');
+    if (row.rental_start_date < todayISO) {
+      setRentalWarnings(w => ({ ...w, [idx]: 'Start date is in the past.' }));
       return;
     }
     conflictCheckTimers.current[idx] = setTimeout(async () => {
@@ -587,7 +597,7 @@ function RetailLineItems({ items, setItems, products, taxRegime, page }) {
           <thead>
             <tr className="bg-blue-50 border-b border-blue-100">
               <th className="px-4 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider" style={{minWidth:200}}>Product</th>
-              {rentalModeOn && <>
+              {showRentalColumns && <>
                 <th className="px-4 py-3 text-center text-xs font-bold text-purple-600 uppercase tracking-wider" style={{minWidth:130}}>Rental Start</th>
                 <th className="px-4 py-3 text-center text-xs font-bold text-purple-600 uppercase tracking-wider" style={{minWidth:130}}>Rental End</th>
               </>}
@@ -602,7 +612,7 @@ function RetailLineItems({ items, setItems, products, taxRegime, page }) {
           </thead>
           <tbody className="divide-y divide-blue-50">
             {items.length === 0
-              ? <tr><td colSpan={6 + (rentalModeOn?2:0) + taxCols.length + customFields.length} className="px-5 py-12 text-center text-gray-400 text-sm">
+              ? <tr><td colSpan={6 + (showRentalColumns?2:0) + taxCols.length + customFields.length} className="px-5 py-12 text-center text-gray-400 text-sm">
                   No items yet — click <span className="font-semibold text-[#0F172A]">+ Add Item</span> to begin.
                 </td></tr>
               : items.map((row, idx) => [
@@ -617,7 +627,7 @@ function RetailLineItems({ items, setItems, products, taxRegime, page }) {
                         sub: [
                           p.category,
                           p.sku ? `SKU: ${p.sku}` : null,
-                          rentalModeOn && p.is_rentable ? '👗 Rentable' : null,
+                          showRentalColumns && p.is_rentable ? '👗 Rentable' : null,
                           p.stock_quantity !== undefined
                             ? (Number(p.stock_quantity) === 0
                                 ? '🚫 Out of stock'
@@ -631,19 +641,25 @@ function RetailLineItems({ items, setItems, products, taxRegime, page }) {
                       emptyLabel="No active products found"
                     />
                   </td>
-                  {rentalModeOn && (() => {
+                  {showRentalColumns && (() => {
                     const selectedProduct = activeProducts.find(p => p.name === row.product_name);
                     const isRentable = !!selectedProduct?.is_rentable;
+                    const todayISO = new Date().toLocaleDateString('en-CA');
+                    // Invoices show rental dates read-only, for reference —
+                    // the order already secured the booking, so there's
+                    // nothing to edit or conflict-check here.
+                    const readOnly = page === 'retailInvoices';
+                    const isDisabled = readOnly || !isRentable;
                     return <>
                       <td className="px-3 py-3">
-                        <input type="date" value={row.rental_start_date || ''} disabled={!isRentable}
+                        <input type="date" value={row.rental_start_date || ''} disabled={isDisabled} min={todayISO}
                           onChange={e => upd(idx, 'rental_start_date', e.target.value)}
-                          className={`${iCls} text-center ${!isRentable ? 'bg-gray-50 text-gray-300 cursor-not-allowed' : ''}`}/>
+                          className={`${iCls} text-center ${isDisabled ? 'bg-gray-50 text-gray-500 cursor-not-allowed' : ''}`}/>
                       </td>
                       <td className="px-3 py-3">
-                        <input type="date" value={row.rental_end_date || ''} disabled={!isRentable} min={row.rental_start_date || undefined}
+                        <input type="date" value={row.rental_end_date || ''} disabled={isDisabled} min={row.rental_start_date || todayISO}
                           onChange={e => upd(idx, 'rental_end_date', e.target.value)}
-                          className={`${iCls} text-center ${!isRentable ? 'bg-gray-50 text-gray-300 cursor-not-allowed' : ''}`}/>
+                          className={`${iCls} text-center ${isDisabled ? 'bg-gray-50 text-gray-500 cursor-not-allowed' : ''}`}/>
                       </td>
                     </>;
                   })()}
@@ -690,7 +706,7 @@ function RetailLineItems({ items, setItems, products, taxRegime, page }) {
                 </tr>,
                 rentalWarnings[idx] ? (
                   <tr key={`warn-${row._id ?? idx}`}>
-                    <td colSpan={6 + (rentalModeOn?2:0) + taxCols.length + customFields.length} className="px-4 pb-2 -mt-1">
+                    <td colSpan={6 + (showRentalColumns?2:0) + taxCols.length + customFields.length} className="px-4 pb-2 -mt-1">
                       <div className="flex items-center gap-2 text-xs font-semibold text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-1.5">
                         <span>⚠️</span><span>{rentalWarnings[idx]}</span>
                       </div>
@@ -1377,18 +1393,34 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo, on
             // The display already falls back to matching by name; do the
             // same here and backfill the id, rather than rejecting a save
             // when the customer is visibly right there on the form.
-            const matched = retailCustomers.find(x => x.name === edited.customer);
+            // Trimmed + case-insensitive, not an exact match — a mobile
+            // record's stored name could differ in casing/whitespace from
+            // what's in the customer list.
+            const target = String(edited.customer).trim().toLowerCase();
+            const matched = retailCustomers.find(x => String(x.name || '').trim().toLowerCase() === target);
             if (matched) {
               edited.customer_id = matched._uuid || matched.id;
             }
           }
           if (!edited.customer_id) {
+            // If this still fails after the fallback above, the customer
+            // name genuinely isn't in this tenant's visible customer list at
+            // all — not just a formatting mismatch. That's most likely the
+            // same root cause already identified for the mobile app: a
+            // customer record created from mobile without tenant_id set,
+            // which means it's invisible here regardless of how the name is
+            // matched (RLS itself won't surface it). closeMatches below
+            // distinguishes "no such name anywhere" from "name exists but
+            // something else is wrong."
+            const closeMatches = retailCustomers.filter(x => String(x.name || '').toLowerCase().includes(String(edited.customer || '').toLowerCase().slice(0, 5))).map(x => x.name);
             console.error('[RetailDetailPanel Save] Customer validation failed.', {
               'edited.customer_id': edited.customer_id,
               'edited.customer': edited.customer,
               'record.customer_id': record.customer_id,
               'record.customer': record.customer,
               'record.id': record.id,
+              'retailCustomers.length': retailCustomers.length,
+              'similarly-named customers visible to this tenant': closeMatches,
             });
             showAlert(`"Customer" is required.`, { variant:'warning' }); return;
           }

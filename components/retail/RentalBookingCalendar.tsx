@@ -4,7 +4,7 @@ import { useState, useEffect, useMemo, useRef } from 'react';
 import { useApp } from '@/context/AppContext';
 import { useTenant } from '@/context/TenantContext';
 import { useAlert } from '@/components/shared/AlertProvider';
-import { formatDate } from '@/lib/utils';
+import { formatDate, formatDisplayNumber } from '@/lib/utils';
 import SearchableSelect from '@/components/shared/SearchableSelect';
 
 const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
@@ -89,7 +89,7 @@ export default function RentalBookingCalendar({ productId, productName, productP
       const orderNumbers = [...new Set((data || []).map(b => b.order_number))];
       let ordersByNumber = {};
       if (orderNumbers.length) {
-        let oq = supabase.from('retail_orders').select('order_number, status, customer_id').in('order_number', orderNumbers);
+        let oq = supabase.from('retail_orders').select('order_number, status, customer_id, customer, display_number').in('order_number', orderNumbers);
         if (tid) oq = oq.eq('tenant_id', tid);
         const { data: orders } = await oq;
         (orders || []).forEach(o => { ordersByNumber[o.order_number] = o; });
@@ -97,7 +97,16 @@ export default function RentalBookingCalendar({ productId, productName, productP
       const enriched = (data || []).map(b => {
         const order = ordersByNumber[b.order_number];
         const customer = order ? retailCustomers.find(c => c._uuid === order.customer_id || c.id === order.customer_id) : null;
-        return { ...b, order_status: order?.status, customer_name: customer?.name || 'Unknown Customer' };
+        // Fall back to the order's own stored customer name if the ID-based
+        // lookup fails — the name is genuinely there on the order record
+        // regardless of whether the id link resolved, so "Unknown Customer"
+        // was needlessly discarding information that was already available.
+        return {
+          ...b,
+          order_status: order?.status,
+          customer_name: customer?.name || order?.customer || 'Unknown Customer',
+          display_order_number: order?.display_number ? formatDisplayNumber('RORD', order.display_number) : b.order_number,
+        };
       });
       setBookings(enriched);
       setLoading(false);
@@ -189,7 +198,13 @@ export default function RentalBookingCalendar({ productId, productName, productP
     setCheckingRange(false);
     if (error) { setRangeConflict({ message: 'Could not verify availability — please try again.' }); return; }
     if (data && data.length) {
-      setRangeConflict({ message: `Already booked by order ${data[0].order_number} for an overlapping date range.` });
+      const rawOrderNumber = data[0].order_number;
+      let displayOrder = rawOrderNumber;
+      try {
+        const { data: ord } = await supabase.from('retail_orders').select('display_number').eq('order_number', rawOrderNumber).eq('tenant_id', tid).maybeSingle();
+        if (ord?.display_number) displayOrder = formatDisplayNumber('RORD', ord.display_number);
+      } catch (e) { /* fall back to raw order_number */ }
+      setRangeConflict({ message: `Already booked by order ${displayOrder} for an overlapping date range.` });
     }
   };
 
@@ -233,6 +248,18 @@ export default function RentalBookingCalendar({ productId, productName, productP
     onClose?.();
   };
 
+  const openSelectedBookingOrder = async () => {
+    if (!selectedBooking || !supabase) return;
+    const tid = tenant?.id;
+    let q = supabase.from('retail_orders').select('*').eq('order_number', selectedBooking.order_number);
+    if (tid) q = q.eq('tenant_id', tid);
+    const { data: row, error } = await q.maybeSingle();
+    if (error || !row) { showAlert('Could not open this order.', { variant:'danger' }); return; }
+    const record = { ...row, id: row.order_number, _uuid: row.id };
+    window.dispatchEvent(new CustomEvent('open-record', { detail: { page: 'retailOrders', record } }));
+    onClose?.();
+  };
+
   const bookAnother = () => {
     setSuccessResult(null);
     resetSelection();
@@ -268,14 +295,14 @@ export default function RentalBookingCalendar({ productId, productName, productP
           <div className="flex-1 flex flex-col items-center justify-center p-10 text-center">
             <div className="w-16 h-16 rounded-full bg-green-100 flex items-center justify-center text-3xl mb-4">✓</div>
             <h3 className="text-xl font-bold text-[#0F172A] mb-1">Booking Confirmed</h3>
-            <p className="text-gray-500 text-sm mb-1">Order <span className="font-mono font-bold text-purple-700">{successResult.id}</span> created for {customerName}</p>
+            <p className="text-gray-500 text-sm mb-1">Order <span className="font-mono font-bold text-purple-700">{successResult.display_number ? formatDisplayNumber('RORD', successResult.display_number) : successResult.id}</span> created for {customerName}</p>
             <p className="text-gray-400 text-xs mb-6">{formatDate(toISO(rangeStart))} – {formatDate(toISO(rangeEnd))} · {productName}</p>
             <div className="flex items-center gap-3">
               <button onClick={bookAnother} className="px-5 py-2.5 rounded-xl border border-gray-200 text-gray-600 text-sm font-semibold hover:bg-gray-50">
                 + Book Another
               </button>
               <button onClick={viewOrder} className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-purple-700 to-purple-900 text-white text-sm font-bold hover:opacity-90">
-                View Order {successResult.id} →
+                View Order {successResult.display_number ? formatDisplayNumber('RORD', successResult.display_number) : successResult.id} →
               </button>
             </div>
           </div>
@@ -359,11 +386,14 @@ export default function RentalBookingCalendar({ productId, productName, productP
                       <div>
                         <div className="font-bold text-[#0F172A] text-sm">{selectedBooking.customer_name}</div>
                         <div className="text-xs text-gray-500 mt-0.5">
-                          Order {selectedBooking.order_number} · {formatDate(selectedBooking.rental_start_date)} – {formatDate(selectedBooking.rental_end_date)}
+                          Order {selectedBooking.display_order_number || selectedBooking.order_number} · {formatDate(selectedBooking.rental_start_date)} – {formatDate(selectedBooking.rental_end_date)}
                         </div>
                       </div>
                       <div className="flex items-center gap-2">
                         <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-purple-100 text-purple-700">{selectedBooking.order_status}</span>
+                        <button onClick={openSelectedBookingOrder} className="text-xs font-bold px-3 py-1.5 rounded-full bg-purple-700 text-white hover:bg-purple-800">
+                          Open Order →
+                        </button>
                         <button onClick={() => setSelectedBooking(null)} className="text-gray-400 hover:text-gray-600 text-sm">✕</button>
                       </div>
                     </div>

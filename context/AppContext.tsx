@@ -10,7 +10,7 @@ import type {
   SLAPolicy, SLARecord, ApprovalProcess, ApprovalStep, ApprovalRequest,
   Notification, AuditLog,
 } from '@/lib/types';
-import { generateId } from '@/lib/utils';
+import { generateId, formatDisplayNumber } from '@/lib/utils';
 import { useAlert } from '@/components/shared/AlertProvider';
 
 // ─── Enterprise-scale hardening ──────────────────────────────────────────────
@@ -906,6 +906,20 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     return list.includes(status);
   };
 
+  // Validates a rental date range: no past dates, and start must be on or
+  // before end. Single source of truth for this rule across every save
+  // path — the UI also enforces this locally (disabling past dates in the
+  // date pickers, auto-correcting a backwards range selection) purely for
+  // immediate feedback, but this is the check that actually blocks a save,
+  // since UI-level restrictions alone can't be trusted (a stale page, a
+  // different client, or someone bypassing the UI entirely).
+  const validateRentalDateRange = (startISO: string, endISO: string, allowPast: boolean = false): string | null => {
+    const todayISO = new Date().toLocaleDateString('en-CA'); // YYYY-MM-DD in local time, no UTC conversion
+    if (!allowPast && startISO < todayISO) return 'Rental start date cannot be in the past.';
+    if (endISO < startISO) return 'Rental end date must be on or after the start date.';
+    return null;
+  };
+
   // The actual safety net for the rental feature — checks for an existing
   // OTHER order already holding an overlapping booking for the same product.
   // This runs before the write is attempted, giving a clear, specific error
@@ -947,7 +961,18 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     if (excludeOrderNumber) q = (q as any).neq('order_number', excludeOrderNumber);
     const { data, error } = await q;
     if (error) { console.error('[checkRentalConflict]', error.message); return { conflict: true, unresolved: true }; }
-    if (data && data.length) return { conflict: true, withOrder: data[0].order_number };
+    if (data && data.length) {
+      const rawOrderNumber = data[0].order_number;
+      // Show the clean display number (e.g. RORD-00042), not the raw
+      // timestamp-based order_number — matching how every other part of
+      // this app identifies a record to the user.
+      let withOrder = rawOrderNumber;
+      try {
+        const { data: ord } = await supabase.from('retail_orders').select('display_number').eq('order_number', rawOrderNumber).eq('tenant_id', tid).maybeSingle();
+        if (ord?.display_number) withOrder = formatDisplayNumber('RORD', ord.display_number);
+      } catch (e) { /* fall back to raw order_number below */ }
+      return { conflict: true, withOrder };
+    }
     return { conflict: false };
   };
 
@@ -974,6 +999,8 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     if (rentalModeOn && items && items.length) {
       for (const i of items) {
         if (!i.product_id || !i.rental_start_date || !i.rental_end_date) continue;
+        const dateError = validateRentalDateRange(i.rental_start_date, i.rental_end_date, true);
+        if (dateError) return { error: { message: `"${i.product_name || 'This item'}": ${dateError}` } };
         const { conflict, withOrder, unresolved } = await checkRentalConflict(i.product_id, i.rental_start_date, i.rental_end_date, id);
         if (conflict) {
           return { error: { message: rentalConflictMessage(i.product_name, withOrder, unresolved) } };
@@ -1121,6 +1148,8 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     if (page === 'retailOrders' && appPreferences?.business_type === 'rental') {
       for (const i of items) {
         if (!i.product_id || !i.rental_start_date || !i.rental_end_date) continue;
+        const dateError = validateRentalDateRange(i.rental_start_date, i.rental_end_date);
+        if (dateError) { showAlert(`"${i.product_name || 'This item'}": ${dateError}`, { variant:'warning', title:'Invalid Dates' }); return null; }
         const { conflict, withOrder, unresolved } = await checkRentalConflict(i.product_id, i.rental_start_date, i.rental_end_date);
         if (conflict) {
           showAlert(rentalConflictMessage(i.product_name, withOrder, unresolved), { variant:'danger', title:'Booking Conflict' });
@@ -1199,6 +1228,8 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     if (page === 'retailOrders' && appPreferences?.business_type === 'rental') {
       for (const i of items) {
         if (!i.product_id || !i.rental_start_date || !i.rental_end_date) continue;
+        const dateError = validateRentalDateRange(i.rental_start_date, i.rental_end_date, true);
+        if (dateError) { showAlert(`"${i.product_name || 'This item'}": ${dateError}`, { variant:'warning', title:'Invalid Dates' }); return; }
         const { conflict, withOrder, unresolved } = await checkRentalConflict(i.product_id, i.rental_start_date, i.rental_end_date, record.id);
         if (conflict) {
           showAlert(rentalConflictMessage(i.product_name, withOrder, unresolved), { variant:'danger', title:'Booking Conflict' });
@@ -1256,6 +1287,11 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     const items = await fetchRetailLineItems('retail_order_line_items', 'order_number', order.id);
     const invId = generateId('RINV');
     const dueDate = new Date(); dueDate.setDate(dueDate.getDate() + 7);
+    // Timezone-safe formatting — toISOString() converts to UTC before
+    // formatting, which can shift the date back a day for any timezone
+    // ahead of UTC (e.g. IST). Uses local date getters directly instead,
+    // same fix already applied to the booking calendar's own date handling.
+    const dueDateISO = `${dueDate.getFullYear()}-${String(dueDate.getMonth()+1).padStart(2,'0')}-${String(dueDate.getDate()).padStart(2,'0')}`;
     const payload: any = {
       ...buildSystemFields(),
       invoice_number: invId,
@@ -1281,12 +1317,22 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
       resale_certificate: order.resale_certificate || '',
       vat_registration_number: order.vat_registration_number || '',
       tax_registration_number: order.tax_registration_number || '',
-      due_date: dueDate.toISOString().split('T')[0],
+      due_date: dueDateISO,
       // Invoice status when converted from order: always Draft so it's editable
       // Staff can review and mark Paid once confirmed
       status: 'Draft',
       owner: order.owner || currentUser.email,
       owner_id: order.owner_id || currentUser.id,
+      // Previously not carried over at all, even though they exist on
+      // retail_invoices and are genuinely useful context from the order —
+      // delivery_method/delivery_address were considered too, but confirmed
+      // NOT to exist as columns on retail_invoices at all, so they're
+      // deliberately left out rather than causing an insert error.
+      notes: order.notes || '',
+      comments: order.comments || '',
+      organization_id: order.organization_id || null,
+      business_unit_id: order.business_unit_id || null,
+      custom_data: order.custom_data || {},
     };
     const { data: inserted, error } = await supabase.from('retail_invoices').insert([payload]).select().single();
     if (error) { showAlert('Failed to create invoice: ' + error.message); return null; }
@@ -3767,7 +3813,7 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     notifications, unreadCount, markNotificationRead, markAllNotificationsRead,
     retailCustomers, retailProducts, retailActivities, retailOrders, retailInvoices,
     fetchRetailCustomers, fetchRetailProducts, fetchRetailActivities, fetchRetailOrders, fetchRetailInvoices,
-    fetchRetailLineItems, upsertRetailLineItems, checkRentalConflict, isRentalBlockingStatus,
+    fetchRetailLineItems, upsertRetailLineItems, checkRentalConflict, isRentalBlockingStatus, validateRentalDateRange,
     createRetailRecord, updateRetailRecord, deleteRetailRecord, createRetailInvoiceFromOrder,
     fetchCustomers, fetchContacts, fetchProducts, fetchLeads, fetchOpportunities,
     fetchOrders, fetchInvoices, fetchActivities, fetchOrganizations, fetchBusinessUnits,
