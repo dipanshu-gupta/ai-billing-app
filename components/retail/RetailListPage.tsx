@@ -1,7 +1,7 @@
 // @ts-nocheck
 'use client';
 
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
 import { useApp } from '@/context/AppContext';
 import { getStatusColor, formatCurrency, formatDate, formatDisplayNumber, PAGE_DISPLAY_PREFIX, tenantScope } from '@/lib/utils';
 // useCustomFields hook used inline below
@@ -9,6 +9,7 @@ import { useTenant } from '@/context/TenantContext';
 import { getTaxRegime } from '@/lib/taxConfig';
 import SearchableSelect from '@/components/shared/SearchableSelect';
 import ProductImages from '@/components/products/ProductImages';
+import RentalBookingCalendar from '@/components/retail/RentalBookingCalendar';
 import { useAlert } from '@/components/shared/AlertProvider';
 import { useCustomFields } from '@/lib/useCustomFields';
 import LineItemCustomFieldInput from '@/components/shared/LineItemCustomFieldInput';
@@ -123,7 +124,7 @@ const FIELD_VALIDATORS: Record<string, (v:any)=>string|null> = {
   date_of_birth:    VALIDATORS.date_past,
 };
 
-const RETAIL_CONFIG = {
+export const RETAIL_CONFIG = {
   retailCustomers: {
     title: 'Retail Customers', icon: '🧑‍🤝‍🧑', singular: 'Customer',
     idField: 'customer_number',
@@ -193,6 +194,8 @@ const RETAIL_CONFIG = {
         { key:'cost', label:'Cost Price', type:'number' },
         { key:'stock_quantity', label:'Stock Quantity', type:'number' },
         { key:'reorder_level', label:'Reorder Level', type:'number' },
+        { key:'is_rentable', label:'Rentable Item', type:'checkbox', showIf:(prefs)=>prefs?.business_type==='rental',
+          desc:'Bookable for a date range — enables the availability calendar and prevents double-booking for this product.' },
       ]},
       { icon:'🧾', title:'Tax & Description', fields:[
         { key:'hsn_code', label:'HSN/SAC Code', type:'text' },
@@ -242,7 +245,7 @@ const RETAIL_CONFIG = {
   retailOrders: {
     title: 'Retail Orders', icon: '🛍️', singular: 'Order',
     idField: 'order_number',
-    statusOptions: ['Draft','Completed','Cancelled','Refunded'],
+    statusOptions: ['Draft','Pending','Completed','Cancelled','Refunded'],
     hasLineItems: true,
     listColumns: [
 
@@ -430,6 +433,9 @@ function buildCustomerPrefill(customer) {
 // ─── Line items table (Orders / Invoices) ──────────────────────────────────
 function RetailLineItems({ items, setItems, products, taxRegime, page }) {
   const [stockWarning, setStockWarning] = useState(null);
+  const [rentalWarnings, setRentalWarnings] = useState<Record<number,string>>({});
+  const { appPreferences, checkRentalConflict } = useApp();
+  const rentalModeOn = appPreferences?.business_type === 'rental' && page === 'retailOrders';
   const { fields: customFields } = useCustomFields(page === 'retailInvoices' ? 'retailInvoiceLineItems' : 'retailOrderLineItems');
   const updCustom = (idx, apiName, val) => setItems(p => p.map((r,i) => i!==idx ? r : { ...r, custom_data: { ...(r.custom_data||{}), [apiName]: val } }));
 
@@ -437,14 +443,46 @@ function RetailLineItems({ items, setItems, products, taxRegime, page }) {
   const activeProducts = products.filter(p => p.status !== 'Discontinued');
 
   const add = () => setItems(p => [...p, {
-    _id: Date.now(), product_name:'', description:'', quantity:1, unit_price:0, list_price:0, discount_pct:0,
-    extended_price:0, custom_data:{},
+    _id: Date.now(), product_name:'', product_id:null, description:'', quantity:1, unit_price:0, list_price:0, discount_pct:0,
+    extended_price:0, custom_data:{}, rental_start_date:'', rental_end_date:'',
     ...(taxRegime.regime==='india_gst' ? { hsn_code:'', gst_rate:18 } : {}),
     ...(taxRegime.regime==='us_sales_tax' ? { taxable:'Yes', sales_tax_rate:0 } : {}),
     ...(taxRegime.regime==='uk_vat' ? { vat_rate:20 } : {}),
     ...(taxRegime.regime==='generic' ? { tax_pct:0 } : {}),
   }]);
-  const remove = (idx) => { setStockWarning(null); setItems(p => p.filter((_,i)=>i!==idx)); };
+  const remove = (idx) => {
+    setStockWarning(null);
+    setRentalWarnings(w => { const n = { ...w }; delete n[idx]; return n; });
+    setItems(p => p.filter((_,i)=>i!==idx));
+  };
+
+  // Live conflict check — debounced per-row so rapid date typing doesn't
+  // hammer the database with a query on every keystroke. Purely advisory in
+  // the UI (the real guarantee is the server-side check at save time plus
+  // the database's own exclusion constraint) — this just gives fast, honest
+  // feedback before the user even attempts to save.
+  const conflictCheckTimers = useRef<Record<number, any>>({});
+  const runConflictCheck = (idx: number, row: any) => {
+    if (!rentalModeOn) return;
+    if (conflictCheckTimers.current[idx]) clearTimeout(conflictCheckTimers.current[idx]);
+    if (!row.product_id || !row.rental_start_date || !row.rental_end_date) {
+      setRentalWarnings(w => { const n = { ...w }; delete n[idx]; return n; });
+      return;
+    }
+    if (row.rental_end_date < row.rental_start_date) {
+      setRentalWarnings(w => ({ ...w, [idx]: 'End date must be on or after the start date.' }));
+      return;
+    }
+    conflictCheckTimers.current[idx] = setTimeout(async () => {
+      const { conflict, withOrder, unresolved } = await checkRentalConflict(row.product_id, row.rental_start_date, row.rental_end_date, row.order_number || undefined);
+      setRentalWarnings(w => ({
+        ...w,
+        ...(conflict
+          ? { [idx]: unresolved ? 'Could not verify availability — will be checked again on save.' : `Already booked by order ${withOrder} for an overlapping date range.` }
+          : (() => { const n = { ...w }; delete n[idx]; return n; })()),
+      }));
+    }, 400);
+  };
 
   const upd = (idx, field, val) => {
     // Compute stock warning OUTSIDE setItems to avoid setState-in-render error
@@ -465,6 +503,7 @@ function RetailLineItems({ items, setItems, products, taxRegime, page }) {
       }
     }
 
+    let updatedRow: any = null;
     setItems(p => p.map((r, i) => {
       if (i !== idx) return r;
       const numFields = ['quantity','unit_price','list_price','discount_pct','gst_rate','sales_tax_rate','vat_rate','tax_pct'];
@@ -473,17 +512,34 @@ function RetailLineItems({ items, setItems, products, taxRegime, page }) {
         const pr = activeProducts.find(x => x.name === val);
         if (pr) {
           u.unit_price = pr.price; u.list_price = pr.price; u.product_code = pr.sku || '';
+          u.product_id = pr._uuid || pr.id || null;
+          // Switching away from a rentable product (or to a non-rentable
+          // one) clears any stale booking dates rather than silently
+          // carrying them onto an item they no longer apply to.
+          if (!pr.is_rentable) { u.rental_start_date = ''; u.rental_end_date = ''; }
           if (taxRegime.regime==='india_gst') { u.hsn_code = pr.hsn_code || ''; u.gst_rate = pr.gst_rate ?? 18; }
           if (taxRegime.regime==='us_sales_tax') { u.taxable = pr.taxable || 'Yes'; }
           if (taxRegime.regime==='uk_vat') { u.vat_rate = pr.vat_rate ?? 20; }
           if (taxRegime.regime==='generic') { u.tax_pct = pr.tax_rate ?? 0; }
+        } else {
+          u.product_id = null;
         }
       }
       const { totalTax } = taxRegime.computeLineTax(u);
       const net = u.quantity * u.unit_price * (1 - u.discount_pct/100);
       u.extended_price = net + totalTax;
+      updatedRow = u;
       return u;
     }));
+    // Runs AFTER setItems, not inside its updater — setState updater
+    // functions must be pure (React may invoke them more than once
+    // internally), so triggering a second setState (via runConflictCheck ->
+    // setRentalWarnings) from inside this one violates that and is exactly
+    // what caused "Cannot update a component while rendering a different
+    // component."
+    if (rentalModeOn && updatedRow && ['product_name','rental_start_date','rental_end_date'].includes(field)) {
+      runConflictCheck(idx, updatedRow);
+    }
   };
 
   const subtotal  = items.reduce((s,i) => s + i.quantity*i.unit_price, 0);
@@ -531,6 +587,10 @@ function RetailLineItems({ items, setItems, products, taxRegime, page }) {
           <thead>
             <tr className="bg-blue-50 border-b border-blue-100">
               <th className="px-4 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider" style={{minWidth:200}}>Product</th>
+              {rentalModeOn && <>
+                <th className="px-4 py-3 text-center text-xs font-bold text-purple-600 uppercase tracking-wider" style={{minWidth:130}}>Rental Start</th>
+                <th className="px-4 py-3 text-center text-xs font-bold text-purple-600 uppercase tracking-wider" style={{minWidth:130}}>Rental End</th>
+              </>}
               <th className="px-4 py-3 text-center text-xs font-bold text-gray-500 uppercase tracking-wider" style={{minWidth:70}}>Qty</th>
               <th className="px-4 py-3 text-right text-xs font-bold text-gray-500 uppercase tracking-wider" style={{minWidth:100}}>Unit Price</th>
               <th className="px-4 py-3 text-center text-xs font-bold text-gray-500 uppercase tracking-wider" style={{minWidth:70}}>Disc %</th>
@@ -542,10 +602,10 @@ function RetailLineItems({ items, setItems, products, taxRegime, page }) {
           </thead>
           <tbody className="divide-y divide-blue-50">
             {items.length === 0
-              ? <tr><td colSpan={6 + taxCols.length + customFields.length} className="px-5 py-12 text-center text-gray-400 text-sm">
+              ? <tr><td colSpan={6 + (rentalModeOn?2:0) + taxCols.length + customFields.length} className="px-5 py-12 text-center text-gray-400 text-sm">
                   No items yet — click <span className="font-semibold text-[#0F172A]">+ Add Item</span> to begin.
                 </td></tr>
-              : items.map((row, idx) => (
+              : items.map((row, idx) => [
                 <tr key={row._id ?? idx} className="hover:bg-blue-50/40 transition-all">
                   <td className="px-3 py-3">
                     <SearchableSelect
@@ -557,6 +617,7 @@ function RetailLineItems({ items, setItems, products, taxRegime, page }) {
                         sub: [
                           p.category,
                           p.sku ? `SKU: ${p.sku}` : null,
+                          rentalModeOn && p.is_rentable ? '👗 Rentable' : null,
                           p.stock_quantity !== undefined
                             ? (Number(p.stock_quantity) === 0
                                 ? '🚫 Out of stock'
@@ -570,6 +631,22 @@ function RetailLineItems({ items, setItems, products, taxRegime, page }) {
                       emptyLabel="No active products found"
                     />
                   </td>
+                  {rentalModeOn && (() => {
+                    const selectedProduct = activeProducts.find(p => p.name === row.product_name);
+                    const isRentable = !!selectedProduct?.is_rentable;
+                    return <>
+                      <td className="px-3 py-3">
+                        <input type="date" value={row.rental_start_date || ''} disabled={!isRentable}
+                          onChange={e => upd(idx, 'rental_start_date', e.target.value)}
+                          className={`${iCls} text-center ${!isRentable ? 'bg-gray-50 text-gray-300 cursor-not-allowed' : ''}`}/>
+                      </td>
+                      <td className="px-3 py-3">
+                        <input type="date" value={row.rental_end_date || ''} disabled={!isRentable} min={row.rental_start_date || undefined}
+                          onChange={e => upd(idx, 'rental_end_date', e.target.value)}
+                          className={`${iCls} text-center ${!isRentable ? 'bg-gray-50 text-gray-300 cursor-not-allowed' : ''}`}/>
+                      </td>
+                    </>;
+                  })()}
                   <td className="px-3 py-3">
                     <input type="number" min={1} value={row.quantity}
                       onChange={e => { const v = Number(e.target.value); if (v < 1) return; upd(idx, 'quantity', v); }}
@@ -610,8 +687,17 @@ function RetailLineItems({ items, setItems, products, taxRegime, page }) {
                       ×
                     </button>
                   </td>
-                </tr>
-              ))
+                </tr>,
+                rentalWarnings[idx] ? (
+                  <tr key={`warn-${row._id ?? idx}`}>
+                    <td colSpan={6 + (rentalModeOn?2:0) + taxCols.length + customFields.length} className="px-4 pb-2 -mt-1">
+                      <div className="flex items-center gap-2 text-xs font-semibold text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-1.5">
+                        <span>⚠️</span><span>{rentalWarnings[idx]}</span>
+                      </div>
+                    </td>
+                  </tr>
+                ) : null,
+              ])
             }
           </tbody>
         </table>
@@ -1148,6 +1234,7 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo, on
   const { supabase } = useTenant();
   const { showAlert, showConfirm } = useAlert();
   const lang = appearance?.language || 'en';
+  const [showBookingCalendar, setShowBookingCalendar] = useState(false);
   const cfg = RETAIL_CONFIG[page];
   const taxRegime = getTaxRegime(appPreferences?.default_currency);
 
@@ -1283,7 +1370,28 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo, on
       if (f.required) {
         const empty = v === undefined || v === null || v === '' || (typeof v === 'string' && !v.trim());
         if (f.type === 'retailCustomer') {
-          if (!edited.customer_id) { showAlert(`"Customer" is required.`, { variant:'warning' }); return; }
+          if (!edited.customer_id && edited.customer) {
+            // Record has a customer NAME but no linked customer_id (UUID) —
+            // can happen with records created outside this exact save flow
+            // (e.g. mobile, before proper customer linking existed there).
+            // The display already falls back to matching by name; do the
+            // same here and backfill the id, rather than rejecting a save
+            // when the customer is visibly right there on the form.
+            const matched = retailCustomers.find(x => x.name === edited.customer);
+            if (matched) {
+              edited.customer_id = matched._uuid || matched.id;
+            }
+          }
+          if (!edited.customer_id) {
+            console.error('[RetailDetailPanel Save] Customer validation failed.', {
+              'edited.customer_id': edited.customer_id,
+              'edited.customer': edited.customer,
+              'record.customer_id': record.customer_id,
+              'record.customer': record.customer,
+              'record.id': record.id,
+            });
+            showAlert(`"Customer" is required.`, { variant:'warning' }); return;
+          }
         } else if (empty) {
           showAlert(`"${f.label.replace(' *','')}" is required and cannot be blank.`, { variant:'warning' });
           return;
@@ -1347,9 +1455,10 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo, on
 
   // Resolve TAX_PRODUCT / TAX_DOCUMENT placeholder field sets dynamically
   const resolveFields = (fields) => {
-    if (fields === 'TAX_PRODUCT') return taxRegime.productFields.map(f => ({ ...f }));
-    if (fields === 'TAX_DOCUMENT') return taxRegime.documentFields.map(f => ({ ...f }));
-    return fields;
+    let out = fields;
+    if (fields === 'TAX_PRODUCT') out = taxRegime.productFields.map(f => ({ ...f }));
+    else if (fields === 'TAX_DOCUMENT') out = taxRegime.documentFields.map(f => ({ ...f }));
+    return out.filter(f => typeof f.showIf !== 'function' || f.showIf(appPreferences));
   };
 
   const renderField = (field) => {
@@ -1622,6 +1731,21 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo, on
               onImageUrlChange={(url) => set('image_url', url)}
             />
           )}
+          {page === 'retailProducts' && appPreferences?.business_type === 'rental' && edited.is_rentable && (
+            <div className="bg-purple-50 border border-purple-200 rounded-2xl p-4 flex items-center justify-between">
+              <div>
+                <h4 className="font-bold text-[#0F172A] text-sm">👗 This item is rentable</h4>
+                <p className="text-xs text-gray-500">View its full booking calendar to see existing reservations and availability.</p>
+              </div>
+              <button onClick={() => setShowBookingCalendar(true)}
+                className="px-4 py-2 rounded-xl bg-purple-700 text-white text-sm font-bold hover:bg-purple-800 flex-shrink-0">
+                📅 View Bookings
+              </button>
+            </div>
+          )}
+          {showBookingCalendar && (
+            <RentalBookingCalendar productId={record._uuid} productName={record.name} productPrice={edited.price} onClose={() => setShowBookingCalendar(false)}/>
+          )}
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
             {cfg.sections.map(section => {
               const fields = resolveFields(section.fields);
@@ -1850,11 +1974,12 @@ function RetailCreateModal({ page, open, onClose, onCreated, prefill = null }) {
                     : section.fields;
       for (const f of fields) {
         if (['notes','comments','description','delivery_address'].includes(f.key)) continue;
+        if (typeof f.showIf === 'function' && !f.showIf(appPreferences)) continue;
         flat.push(f);
       }
     }
     return flat;
-  }, [page]);
+  }, [page, appPreferences]);
 
   if (!open) return null;
 

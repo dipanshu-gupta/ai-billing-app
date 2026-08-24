@@ -896,11 +896,91 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     return data || [];
   };
 
-  const upsertRetailLineItems = async (table: 'retail_order_line_items'|'retail_invoice_line_items', fkField: string, id: string, items: any[]) => {
-    if (!supabase || !id) return;
-    const effectiveTenantId = tenantId
-      || (typeof window !== 'undefined' ? (window as any).__bp_tenant?.id : null)
+  // Is this order status one that should hold a rental booking (block other
+  // orders from booking the same item over the same dates)? Configured by
+  // the tenant in Admin Tools → Rental Settings; falls back to a sensible
+  // default (Pending/Confirmed/Completed) if never explicitly configured.
+  const isRentalBlockingStatus = (status: string): boolean => {
+    const configured = appPreferences?.rental_blocking_statuses;
+    const list = Array.isArray(configured) && configured.length ? configured : ['Draft','Pending','Completed'];
+    return list.includes(status);
+  };
+
+  // The actual safety net for the rental feature — checks for an existing
+  // OTHER order already holding an overlapping booking for the same product.
+  // This runs before the write is attempted, giving a clear, specific error
+  // ("already booked by order X") rather than a raw database constraint
+  // violation. It is not the ONLY protection: the database's own exclusion
+  // constraint (see 12_rental_booking_mode.sql) is what actually guarantees
+  // correctness against a genuine race condition — two staff members saving
+  // overlapping bookings within the same instant. This check exists to make
+  // the common case (no race, just an honest scheduling conflict) fail with
+  // a helpful message instead of a raw constraint-violation error string.
+  const checkRentalConflict = async (
+    productId: string, startDate: string, endDate: string, excludeOrderNumber?: string
+  ): Promise<{ conflict: boolean; withOrder?: string; unresolved?: boolean }> => {
+    if (!supabase || !productId || !startDate || !endDate) return { conflict: false };
+    // Never run this query unscoped across tenants — on the shared DB that
+    // would mean checking (and potentially matching against) every other
+    // tenant's bookings. Poll briefly for tenant resolution (same reasoning
+    // as verifyTenantMembership elsewhere in this file — window.__bp_tenant
+    // is the reliable signal, never pre-populated with a placeholder) and
+    // fail CLOSED — refuse to confirm availability — if it never resolves,
+    // rather than silently proceeding without a tenant filter.
+    let tid = (typeof window !== 'undefined' ? (window as any).__bp_tenant?.id : null) || null;
+    for (let i = 0; i < 20 && !tid; i++) {
+      await new Promise(r => setTimeout(r, 100));
+      tid = (typeof window !== 'undefined' ? (window as any).__bp_tenant?.id : null) || null;
+    }
+    if (!tid) {
+      console.error('[checkRentalConflict] Tenant context never resolved — refusing to check availability unscoped');
+      return { conflict: true, unresolved: true };
+    }
+    let q = supabase.from('retail_order_line_items')
+      .select('order_number, rental_start_date, rental_end_date')
+      .eq('tenant_id', tid)
+      .eq('product_id', productId)
+      .eq('is_blocking', true)
+      .lte('rental_start_date', endDate)
+      .gte('rental_end_date', startDate)
+      .limit(5);
+    if (excludeOrderNumber) q = (q as any).neq('order_number', excludeOrderNumber);
+    const { data, error } = await q;
+    if (error) { console.error('[checkRentalConflict]', error.message); return { conflict: true, unresolved: true }; }
+    if (data && data.length) return { conflict: true, withOrder: data[0].order_number };
+    return { conflict: false };
+  };
+
+  // Builds the right message for either an actual booking conflict (name the
+  // conflicting order) or an unresolved/unverifiable check (never blame a
+  // specific order for something we couldn't actually confirm).
+  const rentalConflictMessage = (itemName: string, withOrder?: string, unresolved?: boolean) => unresolved
+    ? `Could not verify availability for "${itemName || 'this item'}" right now — please try saving again in a moment.`
+    : `"${itemName || 'This item'}" is already booked for an overlapping date range by order ${withOrder}. Choose different dates or a different item.`;
+
+  const upsertRetailLineItems = async (table: 'retail_order_line_items'|'retail_invoice_line_items', fkField: string, id: string, items: any[], orderStatus?: string) => {
+    if (!supabase || !id) return { error: null };
+    const effectiveTenantId = (typeof window !== 'undefined' ? (window as any).__bp_tenant?.id : null)
+      || tenantId
       || null;
+    const rentalModeOn = appPreferences?.business_type === 'rental' && table === 'retail_order_line_items';
+
+    // Conflict check runs BEFORE the delete+insert below — if any item would
+    // conflict, abort entirely and touch nothing, rather than partially
+    // deleting the order's existing line items and then failing partway
+    // through the insert. Runs regardless of the order's current status —
+    // see the matching comment in createRetailRecord/updateRetailRecord for
+    // why status must never gate whether to check against existing bookings.
+    if (rentalModeOn && items && items.length) {
+      for (const i of items) {
+        if (!i.product_id || !i.rental_start_date || !i.rental_end_date) continue;
+        const { conflict, withOrder, unresolved } = await checkRentalConflict(i.product_id, i.rental_start_date, i.rental_end_date, id);
+        if (conflict) {
+          return { error: { message: rentalConflictMessage(i.product_name, withOrder, unresolved) } };
+        }
+      }
+    }
+
     await supabase.from(table).delete().eq(fkField, id);
     if (items && items.length) {
       const { error } = await supabase.from(table).insert(items.map((i: any, idx: number) => ({
@@ -923,10 +1003,38 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
         )),
         sort_order:     idx,
         custom_data:    i.custom_data || {},
+        ...(rentalModeOn ? {
+          product_id:         i.product_id || null,
+          rental_start_date:  i.rental_start_date || null,
+          rental_end_date:    i.rental_end_date || null,
+          // is_blocking is deliberately NOT set here — a database trigger
+          // (see 13_rental_is_blocking_trigger.sql) computes it
+          // automatically from the order's current status and the tenant's
+          // configured blocking statuses. This is the single source of
+          // truth for that computation now, so every client that writes to
+          // this table — web, mobile, any future integration — gets
+          // correct behavior without needing to replicate this business
+          // logic itself.
+        } : (table === 'retail_invoice_line_items' && appPreferences?.business_type === 'rental' ? {
+          product_id:         i.product_id || null,
+          rental_start_date:  i.rental_start_date || null,
+          rental_end_date:    i.rental_end_date || null,
+        } : {})),
         ...(effectiveTenantId ? { tenant_id: effectiveTenantId } : {}),
       })));
-      if (error) console.error('[upsertRetailLineItems] error:', error.message, 'tenantId:', effectiveTenantId);
+      if (error) {
+        console.error('[upsertRetailLineItems] error:', error.message, 'tenantId:', effectiveTenantId);
+        // Surface a clear message if this was actually the database's own
+        // exclusion constraint catching a genuine race condition (two saves
+        // landing at almost the same instant) that slipped past the
+        // check above.
+        if (error.message?.includes('no_overlapping_rental_bookings') || error.message?.includes('exclusion')) {
+          return { error: { message: 'This item was just booked by another order for overlapping dates — please choose different dates or refresh and try again.' } };
+        }
+        return { error };
+      }
     }
+    return { error: null };
   };
 
   // ─── Retail Customer: status automation (Active on first order, VIP on loyalty milestone) ──
@@ -958,7 +1066,7 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
   // Allowed columns per retail table — prevents cross-object default fields leaking into wrong table
   const RETAIL_ALLOWED_COLS: Record<string, string[]> = {
     retail_customers:  ['name','phone','email','date_of_birth','gender','address_line1','address_line2','city','state','postal_code','country','loyalty_points','loyalty_tier','preferred_contact','marketing_opt_in','notes','comments','status','owner','owner_id','owner_name','organization_id','business_unit_id','custom_data'],
-    retail_products:   ['name','category','brand','sku','barcode','unit','price','mrp','cost','stock_quantity','reorder_level','description','hsn_code','gst_rate','taxable','tax_category','vat_rate','tax_rate','status','owner','owner_id','owner_name','comments','organization_id','business_unit_id','custom_data'],
+    retail_products:   ['name','category','brand','sku','barcode','unit','price','mrp','cost','stock_quantity','reorder_level','description','hsn_code','gst_rate','taxable','tax_category','vat_rate','tax_rate','status','owner','owner_id','owner_name','comments','organization_id','business_unit_id','custom_data','is_rentable'],
     retail_activities: ['subject','activity_type','customer','customer_id','activity_date','due_date','priority','status','description','notes','comments','owner','owner_id','owner_name','organization_id','business_unit_id','custom_data'],
     retail_orders:     ['customer','customer_id','customer_phone','order_date','channel','currency','payment_method','payment_status','delivery_method','delivery_address','delivery_date','subtotal','total_discount','total_tax','shipping_cost','amount','place_of_supply','gstin','tax_state','resale_certificate','vat_registration_number','tax_registration_number','status','notes','comments','owner','owner_id','owner_name','organization_id','business_unit_id','custom_data'],
     retail_invoices:   ['order_number','customer','customer_id','customer_phone','invoice_date','due_date','currency','subtotal','total_discount','total_tax','shipping_cost','amount','payment_method','payment_status','place_of_supply','gstin','tax_state','resale_certificate','vat_registration_number','tax_registration_number','status','notes','comments','owner','owner_id','owner_name','organization_id','business_unit_id','custom_data','invoice_template_id'],
@@ -1001,6 +1109,25 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
         if (!ok) return null;
       }
     }
+    // Rental booking conflict check — runs BEFORE the order record itself is
+    // created, not after, so a detected conflict never leaves behind an
+    // orphaned order with no line items. Runs for ANY line item with
+    // product_id+dates set, regardless of this order's own current status —
+    // matching the UI warning's own logic exactly. The status only decides
+    // whether THIS order's dates become a blocking reservation once saved
+    // (see is_blocking below); it must never decide whether to check
+    // against OTHER existing bookings, or a conflict could slip through
+    // anytime the order isn't already in a blocking status at save time.
+    if (page === 'retailOrders' && appPreferences?.business_type === 'rental') {
+      for (const i of items) {
+        if (!i.product_id || !i.rental_start_date || !i.rental_end_date) continue;
+        const { conflict, withOrder, unresolved } = await checkRentalConflict(i.product_id, i.rental_start_date, i.rental_end_date);
+        if (conflict) {
+          showAlert(rentalConflictMessage(i.product_name, withOrder, unresolved), { variant:'danger', title:'Booking Conflict' });
+          return null;
+        }
+      }
+    }
     const newId = generateId(cfg.prefix);
     const allowed = RETAIL_ALLOWED_COLS[cfg.table] || [];
     const filtered: any = {};
@@ -1017,7 +1144,8 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     const { data: inserted, error } = await supabase.from(cfg.table).insert([payload]).select().single();
     if (error) { showAlert('Save failed: ' + error.message); return null; }
     if (cfg.lineItemTable && items.length) {
-      await upsertRetailLineItems(cfg.lineItemTable as any, cfg.lineFK!, newId, items);
+      const { error: liError } = await upsertRetailLineItems(cfg.lineItemTable as any, cfg.lineFK!, newId, items, payload.status);
+      if (liError) { showAlert('Save failed: ' + liError.message, { variant:'danger', title:'Booking Conflict' }); return null; }
     }
     // Status automations
     if (page === 'retailOrders' || page === 'retailInvoices') {
@@ -1058,10 +1186,32 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     if (page === 'retailInvoices') delete filtered.order_number;
 
     const payload: any = { ...filtered, ...buildSystemFields(true) };
+
+    // Rental booking conflict check — before the order update itself, same
+    // reasoning as createRetailRecord: avoids a mismatch between the order's
+    // newly-saved status and line items that failed to save because of a
+    // conflict. Runs for ANY line item with product_id+dates set, regardless
+    // of this order's own current status — see the matching comment in
+    // createRetailRecord above for why the status must never gate this
+    // check. Excludes this order's own existing line items from the check,
+    // since re-saving an order with unchanged dates on its own existing
+    // booking is not a conflict with itself.
+    if (page === 'retailOrders' && appPreferences?.business_type === 'rental') {
+      for (const i of items) {
+        if (!i.product_id || !i.rental_start_date || !i.rental_end_date) continue;
+        const { conflict, withOrder, unresolved } = await checkRentalConflict(i.product_id, i.rental_start_date, i.rental_end_date, record.id);
+        if (conflict) {
+          showAlert(rentalConflictMessage(i.product_name, withOrder, unresolved), { variant:'danger', title:'Booking Conflict' });
+          return;
+        }
+      }
+    }
+
     const { error } = await supabase.from(cfg.table).update(payload).eq(cfg.idField, record.id);
     if (error) { console.error(`update ${cfg.table}:`, error.message); showAlert('Save failed: ' + error.message); return; }
     if (cfg.lineItemTable) {
-      await upsertRetailLineItems(cfg.lineItemTable as any, cfg.lineFK!, record.id, items);
+      const { error: liError } = await upsertRetailLineItems(cfg.lineItemTable as any, cfg.lineFK!, record.id, items, payload.status);
+      if (liError) { showAlert('Save failed: ' + liError.message, { variant:'danger', title:'Booking Conflict' }); return; }
     }
     if (page === 'retailOrders' || page === 'retailInvoices') {
       await autoSetRetailCustomerStatus(record.customer_id, 'Active');
@@ -2760,15 +2910,52 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
 
   useEffect(() => {
     if (!supabase) return;
-    supabase.auth.getSession().then(async ({ data: { session } }) => {
+    const t0 = Date.now();
+    console.log('[AppContext] Starting session restore...');
+    // Whichever of these two paths resolves FIRST wins and sets the initial
+    // auth state — the other becomes a no-op for the initial resolution.
+    // onAuthStateChange fires its own initial event (reflecting whatever
+    // session is already in local storage) independently of getSession(),
+    // and is typically much faster since it doesn't necessarily wait on a
+    // token-refresh network round-trip the way getSession() can. Previously
+    // the app always waited on getSession() (or its 25s timeout) even when
+    // onAuthStateChange had already resolved the same information sooner.
+    let initialResolved = false;
+
+    // getSession() has no built-in timeout. If it ever hangs (a known
+    // Supabase SDK behavior when a stale refresh token needs renewing and
+    // that attempt stalls, or a plain network hiccup), setAuthLoading(false)
+    // below would never fire, leaving the entire app stuck on the loading
+    // screen indefinitely — AppShell gates everything on authLoading. This
+    // races the real call against a bounded timeout so a hang here always
+    // resolves to a safe, recoverable state (treated as logged out — the
+    // user can simply log in again) rather than an infinite wait.
+    const timeoutPromise = new Promise<{ data: { session: null } }>((resolve) =>
+      setTimeout(() => { if (!initialResolved) console.error('[AppContext] getSession() timed out after 25s — treating as logged out'); resolve({ data: { session: null } }); }, 25000)
+    );
+    const realGetSession = supabase.auth.getSession();
+    realGetSession.then(({ data: { session: realSession } }) => {
+      console.log('[AppContext] REAL getSession() actually resolved after', Date.now() - t0, 'ms — session:', realSession ? 'present' : 'none');
+    }).catch((e) => {
+      console.error('[AppContext] REAL getSession() rejected after', Date.now() - t0, 'ms:', e);
+    });
+    Promise.race([realGetSession, timeoutPromise]).then(async ({ data: { session } }: any) => {
+      if (initialResolved) return; // onAuthStateChange's initial event already handled this
+      console.log('[AppContext] getSession path resolved in', Date.now() - t0, 'ms, session:', session ? 'present' : 'none');
       if (session?.user) {
         // Cross-tenant guard for restored sessions (e.g. token persisted before this fix)
         const ok = await verifyTenantMembership(session.user);
-        if (!ok) { await supabase.auth.signOut(); setSession(null); setAuthLoading(false); return; }
+        if (!ok) { await supabase.auth.signOut(); initialResolved = true; setSession(null); setAuthLoading(false); return; }
       }
+      initialResolved = true;
       setSession(session); setAuthLoading(false);
+    }).catch((e) => {
+      if (initialResolved) return;
+      console.error('[AppContext] Session restore failed:', e);
+      initialResolved = true;
+      setSession(null); setAuthLoading(false);
     });
-    const { data: listener } = supabase.auth.onAuthStateChange(async (_e, s) => {
+    const { data: listener } = supabase.auth.onAuthStateChange(async (e, s) => {
       // CRITICAL: verify tenant membership on EVERY session change, not just
       // the initial page-load restore above. Supabase fires this listener
       // directly whenever a sign-in happens (including from handleLogin's own
@@ -2783,9 +2970,15 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
         if (!ok) {
           console.error('[onAuthStateChange] Session rejected — user does not belong to this tenant');
           await supabase.auth.signOut();
+          if (!initialResolved) { initialResolved = true; setAuthLoading(false); }
           setSession(null);
           return;
         }
+      }
+      if (!initialResolved) {
+        console.log('[AppContext] onAuthStateChange resolved initial state first, after', Date.now() - t0, 'ms, event:', e, 'session:', s ? 'present' : 'none');
+        initialResolved = true;
+        setAuthLoading(false);
       }
       setSession(s);
     });
@@ -2805,30 +2998,29 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
 
   useEffect(() => {
     if (!session?.user?.id) return;
-    (async () => {
-      // fetchCurrentUser MUST complete before anything else — dozens of the
-      // functions below guard on `if (!currentUser) return`, and since React
-      // state updates are asynchronous, firing them all concurrently with
-      // fetchCurrentUser() meant every one of those guards saw currentUser
-      // as still null on every single fresh page load (not intermittently —
-      // this was 100% reproducible, since the guard check runs synchronously
-      // in the same tick fetchCurrentUser's own setCurrentUser call hasn't
-      // resolved yet). This is exactly why a saved report would vanish after
-      // a refresh but reappear the moment you saved a new one — saving
-      // happens long after this initial race window has passed, so its own
-      // fetchReports() call inside saveReport succeeds normally.
-      await fetchCurrentUser();
-      await Promise.all([
-        fetchCustomers(), fetchProducts(), fetchLeads(),
-        fetchOpportunities(), fetchOrders(), fetchInvoices(), fetchContacts(),
-        fetchActivities(), fetchQuoteTemplates(), fetchOrganizations(), fetchBusinessUnits(),
-        fetchEnterpriseUsers(), fetchUserGroups(), fetchRoles(), fetchPermissions(),
-        fetchWorkflowRules(), fetchAssignmentRules(), fetchSLAPolicies(),
-        fetchApprovalProcesses(), fetchApprovalRequests(),
-        fetchQuotations(), fetchReports(), fetchSavedSearches(), fetchInvoiceTemplates(),
-        fetchNotifications(), fetchAppPreferences(), fetchAppearance(),
-      ]);
-    })();
+    // Fully parallel — fetchCurrentUser does NOT need to complete before the
+    // rest of these fire. It used to be sequenced ahead of everything else
+    // specifically to fix a race where fetchReports/fetchSavedSearches/
+    // fetchNotifications read the (still-null-at-that-instant) currentUser
+    // React state. That race is now fixed more precisely, in those 3
+    // functions themselves, by reading session.user.email directly instead
+    // of depending on currentUser at all — so this sequential wait is no
+    // longer needed for correctness, and it introduces a real risk of its
+    // own: if fetchCurrentUser is ever slow (a network hiccup, a slow
+    // query), the entire rest of the app's bootstrap was blocked waiting on
+    // it alone, since nothing else even started until it resolved — a
+    // single point of failure that could leave the whole app stuck on
+    // loading after a refresh.
+    Promise.all([
+      fetchCurrentUser(), fetchCustomers(), fetchProducts(), fetchLeads(),
+      fetchOpportunities(), fetchOrders(), fetchInvoices(), fetchContacts(),
+      fetchActivities(), fetchQuoteTemplates(), fetchOrganizations(), fetchBusinessUnits(),
+      fetchEnterpriseUsers(), fetchUserGroups(), fetchRoles(), fetchPermissions(),
+      fetchWorkflowRules(), fetchAssignmentRules(), fetchSLAPolicies(),
+      fetchApprovalProcesses(), fetchApprovalRequests(),
+      fetchQuotations(), fetchReports(), fetchSavedSearches(), fetchInvoiceTemplates(),
+      fetchNotifications(), fetchAppPreferences(), fetchAppearance(),
+    ]);
     // Retail tables may not exist yet (SQL migration pending) — isolate so they never crash B2B init
     Promise.allSettled([
       fetchRetailCustomers(), fetchRetailProducts(), fetchRetailActivities(),
@@ -2877,8 +3069,8 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
   // ─── App Preferences (localStorage + Supabase) ────────────────────────────
   // Tenant-scoped localStorage key — prevents cross-tenant preference bleed
   const _LS_KEY = tenantId ? `bp_app_preferences_${tenantId}` : 'bp_app_preferences';
-  const _DEF_PREFS = { crm_enabled:true, cpq_enabled:true, b2c_mode:false, default_currency:'INR', date_format:'DD/MM/YYYY', fiscal_year_start:'April', global_search_enabled:false, business_mode:'B2B' };
-  const _cp = (p) => ({ crm_enabled:p?.crm_enabled??true, cpq_enabled:p?.cpq_enabled??true, b2c_mode:p?.b2c_mode??false, default_currency:p?.default_currency||'INR', date_format:p?.date_format||'DD/MM/YYYY', fiscal_year_start:p?.fiscal_year_start||'April', global_search_enabled:p?.global_search_enabled??false, business_mode:(p?.b2c_mode??false)?'B2C':'B2B' });
+  const _DEF_PREFS = { crm_enabled:true, cpq_enabled:true, b2c_mode:false, default_currency:'INR', date_format:'DD/MM/YYYY', fiscal_year_start:'April', global_search_enabled:false, business_mode:'B2B', business_type:'general', rental_blocking_statuses:['Draft','Pending','Completed'] };
+  const _cp = (p) => ({ crm_enabled:p?.crm_enabled??true, cpq_enabled:p?.cpq_enabled??true, b2c_mode:p?.b2c_mode??false, default_currency:p?.default_currency||'INR', date_format:p?.date_format||'DD/MM/YYYY', fiscal_year_start:p?.fiscal_year_start||'April', global_search_enabled:p?.global_search_enabled??false, business_mode:(p?.b2c_mode??false)?'B2C':'B2B', business_type:p?.business_type||'general', rental_blocking_statuses:p?.rental_blocking_statuses||['Draft','Pending','Completed'], company_name:p?.company_name });
   // ─── Appearance ───────────────────────────────────────────────────────────
   const _APP_KEY = tenantId ? `bp_appearance_${tenantId}` : 'bp_appearance';
   const _DEF_APP = { company_logo_url:'', company_name:'Umbrella Suite', theme:'navy', language:'en', font:'geist', font_size:'md', font_weight:'normal' };
@@ -3079,9 +3271,21 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     // Always fetch from DB to get latest
     if (!supabase) return;
     try {
-      const { data } = await supabase
-        .from('app_preferences').select('*').limit(1).maybeSingle();
+      const tid = (typeof window !== 'undefined' ? (window as any).__bp_tenant?.id : null) || tenantId || null;
+      let q = supabase.from('app_preferences').select('*');
+      // Explicit tenant scoping as defense-in-depth — RLS's tenant_isolation
+      // policy should already restrict this to the correct tenant, but this
+      // codebase's established pattern is to never rely solely on RLS for
+      // this kind of query. More importantly: without an explicit order,
+      // if more than one row ever exists for this tenant (e.g. from a past
+      // insert/update race), .limit(1) could non-deterministically return a
+      // stale row instead of the one most recently saved — exactly what
+      // "I select rental mode, save, and it reverts to general" looks like
+      // from the outside.
+      if (tid) q = (q as any).eq('tenant_id', tid);
+      const { data } = await q.order('updated_at', { ascending: false }).limit(1).maybeSingle();
       if (data) {
+        console.log('[fetchAppPreferences] Loaded business_type:', data.business_type, 'row id:', data.id);
         const p = _cp(data.settings ? { ..._cp(data), ...data.settings } : data);
         setAppPreferences(p);
         try { window.localStorage.setItem(_LS_KEY, JSON.stringify(p)); } catch(e) {}
@@ -3101,12 +3305,13 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
       }
     } catch(e: any) { console.error('[fetchAppPreferences] error:', e.message); }
   };
-  const saveAppPreferences = async (prefs) => {
+  const saveAppPreferences = async (prefs): Promise<{ success: boolean; error?: string }> => {
     const clean = _cp(prefs);
+    console.log('[saveAppPreferences] Saving with business_type:', clean.business_type);
     // Always save to localStorage immediately
     try { window.localStorage.setItem(_LS_KEY, JSON.stringify(clean)); } catch(e) {}
     setAppPreferences(clean);
-    if (!supabase) return;
+    if (!supabase) { console.log('[saveAppPreferences] No supabase client — local-only save'); return { success: true }; }
     try {
       const payload = {
         settings: clean,
@@ -3118,24 +3323,47 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
         fiscal_year_start:       clean.fiscal_year_start,
         global_search_enabled:   clean.global_search_enabled,
         company_name:            clean.company_name,
+        business_type:           clean.business_type || 'general',
         updated_at:              new Date().toISOString(),
         ...(tenantId ? { tenant_id: tenantId } : {}),
         ...(currentUser?.organization_id ? { organization_id: currentUser.organization_id } : {}),
       };
       // Find existing row for THIS tenant
       const effectiveTenantId2 = (typeof window !== 'undefined' ? (window as any).__bp_tenant?.id : null) || tenantId || null;
-      let pq = supabase.from('app_preferences').select('id').limit(1);
+      console.log('[saveAppPreferences] Effective tenant id:', effectiveTenantId2);
+      let pq = supabase.from('app_preferences').select('id').order('updated_at', { ascending: false }).limit(1);
       if (effectiveTenantId2) pq = (pq as any).eq('tenant_id', effectiveTenantId2);
       const { data: row } = await pq.maybeSingle();
+      console.log('[saveAppPreferences] Existing row found:', row?.id || 'none — will insert');
       if (row?.id) {
         const { error } = await supabase.from('app_preferences').update(payload).eq('id', row.id);
-        if (error) console.error('[saveAppPreferences] update error:', error.message);
+        if (error) {
+          console.error('[saveAppPreferences] update error:', error.message);
+          // Previously this error was only logged to the console and never
+          // shown to the user — setAppPreferences(clean) above already
+          // updated the UI regardless of whether the database write
+          // actually succeeded, so a failed save looked identical to a
+          // successful one until the next page refresh silently reverted
+          // it. Surface it clearly instead.
+          showAlert('Could not save preferences: ' + error.message, { variant:'danger', title:'Save Failed' });
+          return { success: false, error: error.message };
+        }
+        console.log('[saveAppPreferences] Update succeeded for row', row.id);
       } else {
         const { error } = await supabase.from('app_preferences').insert([{ ...payload, ...(effectiveTenantId2 ? { tenant_id: effectiveTenantId2 } : {}) }]);
-        if (error) console.error('[saveAppPreferences] insert error:', error.message);
+        if (error) {
+          console.error('[saveAppPreferences] insert error:', error.message);
+          showAlert('Could not save preferences: ' + error.message, { variant:'danger', title:'Save Failed' });
+          return { success: false, error: error.message };
+        }
       }
-    } catch(e: any) { console.error('[saveAppPreferences] error:', e.message); }
+    } catch(e: any) {
+      console.error('[saveAppPreferences] error:', e.message);
+      showAlert('Could not save preferences: ' + e.message, { variant:'danger', title:'Save Failed' });
+      return { success: false, error: e.message };
+    }
     if (prefs.default_currency) fetchExchangeRates(prefs.default_currency);
+    return { success: true };
   };
 
   // ─── Exchange Rates ────────────────────────────────────────────────────────
@@ -3539,7 +3767,7 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     notifications, unreadCount, markNotificationRead, markAllNotificationsRead,
     retailCustomers, retailProducts, retailActivities, retailOrders, retailInvoices,
     fetchRetailCustomers, fetchRetailProducts, fetchRetailActivities, fetchRetailOrders, fetchRetailInvoices,
-    fetchRetailLineItems, upsertRetailLineItems,
+    fetchRetailLineItems, upsertRetailLineItems, checkRentalConflict, isRentalBlockingStatus,
     createRetailRecord, updateRetailRecord, deleteRetailRecord, createRetailInvoiceFromOrder,
     fetchCustomers, fetchContacts, fetchProducts, fetchLeads, fetchOpportunities,
     fetchOrders, fetchInvoices, fetchActivities, fetchOrganizations, fetchBusinessUnits,

@@ -50,6 +50,23 @@ export interface TenantConfig {
 // ─── Client cache (module-level, per browser tab) ─────────────────────────────
 const _clientCache = new Map<string, SupabaseClient>();
 
+// Bypasses Supabase's default cross-tab session lock (which uses the
+// browser's navigator.locks API to coordinate token refreshes across tabs).
+// That default lock is a known source of deadlocks in supabase-js v2 if it's
+// ever left in a bad state — a tab that crashed or was killed mid-refresh, a
+// dev-mode hot-reload, or certain multi-tab timing can all leave the lock
+// held with nothing to release it, and every subsequent getSession() call
+// then hangs waiting for a lock that will never free. This is the exact
+// mechanism behind "stuck on the loading screen after refresh, only fixed by
+// clearing cookies" — clearing storage is what actually clears the stuck
+// lock state, not just the session itself. Not importing Supabase's own
+// documented workaround (the `processLock` export) here since node_modules
+// isn't available to confirm the exact export name for this installed
+// version, and an incorrect import would break the build outright — this
+// minimal, self-contained implementation achieves the same result (no
+// browser-level locking at all) without depending on any specific export.
+const noOpLock = async (_name: string, _acquireTimeout: number, fn: () => Promise<any>) => fn();
+
 // ─── Shared Supabase client (env vars) ────────────────────────────────────────
 function getSharedClient(): SupabaseClient {
   const key = '__shared__';
@@ -57,6 +74,7 @@ function getSharedClient(): SupabaseClient {
   const client = createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    { auth: { lock: noOpLock } },
   );
   _clientCache.set(key, client);
   return client;
@@ -80,6 +98,7 @@ export function getTenantSupabaseClient(tenant: Tenant): SupabaseClient {
           storageKey: `bp_auth_${tenant.slug}`, // isolate auth tokens per tenant
           autoRefreshToken: true,
           persistSession: true,
+          lock: noOpLock,
         },
         global: {
           headers: { 'x-tenant-slug': tenant.slug },
@@ -98,6 +117,7 @@ export function getTenantSupabaseClient(tenant: Tenant): SupabaseClient {
           storageKey: `bp_auth_${tenant.slug}`, // isolate auth tokens per tenant
           autoRefreshToken: true,
           persistSession: true,
+          lock: noOpLock,
         },
         global: {
           headers: { 'x-tenant-slug': tenant.slug },

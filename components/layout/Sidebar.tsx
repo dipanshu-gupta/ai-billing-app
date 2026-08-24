@@ -23,6 +23,7 @@ const RETAIL_GROUP = [
   { key:'retailCustomers',  label:'retailCustomers',  icon:'🧑‍🤝‍🧑', permission:null, requiresB2C:true },
   { key:'retailActivities', label:'retailActivities', icon:'📅',       permission:null, requiresB2C:true },
   { key:'retailProducts',   label:'retailProducts',   icon:'🏷️',       permission:null, requiresB2C:true },
+  { key:'manageBookings',   label:'manageBookings',   icon:'📆',       permission:null, requiresB2C:true, requiresRental:true },
   { key:'retailOrders',     label:'retailOrders',     icon:'🛍️',       permission:null, requiresB2C:true },
   { key:'retailInvoices',   label:'retailInvoices',   icon:'🧾',       permission:null, requiresB2C:true },
 ];
@@ -60,11 +61,13 @@ export default function Sidebar({ activePage, setActivePage, collapsed, setColla
       // B2C mode: hide CRM items, show retail
       if (item.requiresCRM && b2cMode) return false;
       if (item.requiresB2C && !b2cMode) return false;
+      if (item.requiresRental && appPreferences?.business_type !== 'rental') return false;
       return true;
     }
     // Non-admin: check mode
     if (item.requiresCRM && b2cMode) return false;
     if (item.requiresB2C && !b2cMode) return false;
+    if (item.requiresRental && appPreferences?.business_type !== 'rental') return false;
     if (item.requiresCPQ && appPreferences?.cpq_enabled === false) return false;
     // No permission required
     if (!item.permission) return true;

@@ -10,6 +10,7 @@ import Header from '@/components/layout/Header';
 import DashboardPage from '@/components/dashboard/DashboardPage';
 import CRMListPage from '@/components/crm/CRMListPage';
 import RetailListPage from '@/components/retail/RetailListPage';
+import ManageBookingsPage from '@/components/retail/ManageBookingsPage';
 import RetailDashboard from '@/components/retail/RetailDashboard';
 import AdminToolsPage from '@/components/admin/AdminToolsPage';
 import ApprovalsInboxPage from '@/components/approvals/ApprovalsInboxPage';
@@ -307,6 +308,15 @@ function AppShell() {
   }, []);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(true);
   const [profileOpen, setProfileOpen] = useState(false);
+  const [authShowRetry, setAuthShowRetry] = useState(false);
+
+  // Same failsafe as the tenant-loading gate — never leave the user stuck
+  // on a spinner indefinitely, regardless of the exact root cause.
+  useEffect(() => {
+    if (!authLoading) { setAuthShowRetry(false); return; }
+    const t = setTimeout(() => setAuthShowRetry(true), 20000);
+    return () => clearTimeout(t);
+  }, [authLoading]);
 
   if (authLoading) {
     return (
@@ -315,6 +325,15 @@ function AppShell() {
           <img src="/umbrella-logo.png" alt="Umbrella Suite" className="w-16 h-16 rounded-[20px] mx-auto animate-pulse opacity-80"/>
           <div className="font-semibold text-lg">Loading Umbrella Suite...</div>
           <div className="text-blue-300 text-sm">Initialising enterprise platform</div>
+          {authShowRetry && (
+            <div className="pt-2">
+              <p className="text-blue-300/70 text-xs mb-3">This is taking longer than expected.</p>
+              <button onClick={() => window.location.reload()}
+                className="px-5 py-2.5 rounded-xl bg-white/10 hover:bg-white/20 text-white text-sm font-semibold border border-white/20">
+                ↻ Reload Page
+              </button>
+            </div>
+          )}
         </div>
       </div>
     );
@@ -338,6 +357,7 @@ function AppShell() {
           {activePage === 'dashboard' && (appPreferences?.b2c_mode === true ? <RetailDashboard /> : <DashboardPage />)}
           {CRM_PAGES.includes(activePage) && !NON_CRM_PAGES.includes(activePage) && <CRMListPage page={activePage} />}
           {RETAIL_PAGES.includes(activePage) && <RetailListPage page={activePage} />}
+          {activePage === 'manageBookings' && appPreferences?.b2c_mode === true && appPreferences?.business_type === 'rental' && <ManageBookingsPage />}
           {activePage === 'quotations' && appPreferences?.cpq_enabled !== false && <QuotationsPage />}
           {activePage === 'reports' && <FastReportsPage />}
           {activePage === 'approvals' && <ApprovalsInboxPage />}
@@ -355,6 +375,17 @@ function AppShell() {
 
 function AppWithTenant() {
   const { supabase, tenant, loading } = useTenant();
+  const [showRetry, setShowRetry] = useState(false);
+
+  // Failsafe — regardless of the exact root cause of a hang here, the user
+  // should never be stuck on a spinner with zero recourse. If this gate is
+  // still blocking after a generous window, offer an explicit retry rather
+  // than an indefinite wait.
+  useEffect(() => {
+    if (!(loading || !supabase)) { setShowRetry(false); return; }
+    const t = setTimeout(() => setShowRetry(true), 20000);
+    return () => clearTimeout(t);
+  }, [loading, supabase]);
 
   // Wait for tenant + supabase to be ready before mounting AppProvider
   // This ensures AppContext always gets a real supabase client, never null
@@ -364,6 +395,15 @@ function AppWithTenant() {
         <div className="text-center">
           <div className="w-12 h-12 border-4 border-white/20 border-t-white rounded-full animate-spin mx-auto mb-4"/>
           <p className="text-white/60 text-sm font-medium">Loading workspace…</p>
+          {showRetry && (
+            <div className="mt-6">
+              <p className="text-white/40 text-xs mb-3">This is taking longer than expected.</p>
+              <button onClick={() => window.location.reload()}
+                className="px-5 py-2.5 rounded-xl bg-white/10 hover:bg-white/20 text-white text-sm font-semibold border border-white/20">
+                ↻ Reload Page
+              </button>
+            </div>
+          )}
         </div>
       </div>
     );

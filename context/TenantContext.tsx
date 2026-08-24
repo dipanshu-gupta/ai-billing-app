@@ -67,15 +67,34 @@ export function TenantProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     setLoading(true);
     async function resolve() {
+      const t0 = Date.now();
       try {
         const slug = extractTenantSlug();
+        console.log('[TenantContext] Resolving tenant, slug:', slug);
 
         let resolved;
         if (slug === 'demo') {
           resolved = await resolveTenantBySlug(slug);
         } else {
-          // Fetch tenant from API — handles status checks + returns full tenant object
-          const res = await fetch(`/api/tenant/${slug}`, { cache: 'no-store' });
+          // Fetch tenant from API — handles status checks + returns full tenant object.
+          // Browser fetch() has no built-in timeout, so a hung request here
+          // (a slow cold start, a stuck DB connection on that route) would
+          // leave the entire app stuck on a loading spinner indefinitely
+          // with no way to recover short of closing the tab. A bounded
+          // timeout turns that into a clear, recoverable error state.
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 15000);
+          let res;
+          try {
+            res = await fetch(`/api/tenant/${slug}`, { cache: 'no-store', signal: controller.signal });
+          } catch (fetchErr: any) {
+            clearTimeout(timeoutId);
+            if (fetchErr?.name === 'AbortError') {
+              setBlocked(true); setBlockReason('Workspace took too long to respond — please try refreshing.'); setLoading(false); return;
+            }
+            throw fetchErr;
+          }
+          clearTimeout(timeoutId);
           if (res.status === 403) { setBlocked(true); setBlockReason('Account Suspended'); setLoading(false); return; }
           if (res.status === 402) { setBlocked(true); setBlockReason('Trial Expired'); setLoading(false); return; }
           if (res.status === 404) { setBlocked(true); setBlockReason('Workspace Not Found'); setLoading(false); return; }
@@ -112,6 +131,7 @@ export function TenantProvider({ children }: { children: React.ReactNode }) {
         setTenant(DEMO_TENANT);
         setSupabase(client);
       } finally {
+        console.log('[TenantContext] Resolution finished in', Date.now() - t0, 'ms');
         setLoading(false);
       }
     }
@@ -133,6 +153,11 @@ export function TenantProvider({ children }: { children: React.ReactNode }) {
               : 'This workspace could not be found. Please check the URL and try again.'}
           </p>
           <p className="text-gray-400 text-xs mt-4">Contact support if you believe this is an error.</p>
+          {blockReason.includes('too long') && (
+            <button onClick={() => window.location.reload()} className="mt-4 px-5 py-2.5 rounded-xl bg-[#0F172A] text-white text-sm font-semibold hover:opacity-90">
+              ↻ Try Again
+            </button>
+          )}
         </div>
       </div>
     );

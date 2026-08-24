@@ -17,7 +17,7 @@ import { useTenant } from '@/context/TenantContext';
 import { formatDate, getStatusOptions, getObjectFields } from '@/lib/utils';
 import Modal from '@/components/shared/Modal';
 import { useAlert } from '@/components/shared/AlertProvider';
-import { getRetailFieldMeta } from '@/components/retail/RetailListPage';
+import { getRetailFieldMeta, RETAIL_CONFIG } from '@/components/retail/RetailListPage';
 
 // ─── Shared styles ────────────────────────────────────────────────────────────
 const iCls = 'w-full border border-blue-200 rounded-xl px-3 py-2.5 text-[#0F172A] bg-white focus:outline-none focus:ring-2 focus:ring-blue-400 text-sm placeholder:text-gray-400';
@@ -41,6 +41,62 @@ function RetailAdminWrapper({ title, icon, desc, children }) {
       </div>
       {children}
     </div>
+  );
+}
+
+// ─── Rental Settings — which order statuses count as a real booking ─────────
+// Derived directly from RETAIL_CONFIG (the single source of truth for what
+// statuses a retail order can actually have) rather than a separately
+// maintained list — a hardcoded duplicate here previously drifted out of
+// sync and was missing "Pending", which genuinely is a valid order status.
+const RETAIL_ORDER_STATUSES = RETAIL_CONFIG.retailOrders.statusOptions;
+function RentalSettingsPanel() {
+  const { appPreferences, saveAppPreferences } = useApp();
+  const { showAlert } = useAlert();
+  const [selected, setSelected] = useState<string[]>(appPreferences?.rental_blocking_statuses || ['Draft','Pending','Completed']);
+  const [saving, setSaving] = useState(false);
+  const isDirty = JSON.stringify([...selected].sort()) !== JSON.stringify([...(appPreferences?.rental_blocking_statuses || ['Draft','Pending','Completed'])].sort());
+
+  const toggle = (status: string) => setSelected(p => p.includes(status) ? p.filter(s => s !== status) : [...p, status]);
+
+  const save = async () => {
+    setSaving(true);
+    const result = await saveAppPreferences({ ...appPreferences, rental_blocking_statuses: selected });
+    setSaving(false);
+    if (result?.success !== false) showAlert('Rental settings saved.', { variant:'success' });
+  };
+
+  return (
+    <RetailAdminWrapper title="Rental Settings" icon="👗" desc="Configure which order statuses hold a booking and block other orders from renting the same item over the same dates.">
+      <div className="bg-white rounded-[20px] border border-gray-200 shadow-sm p-5 space-y-4">
+        <div>
+          <h3 className="font-bold text-[#0F172A] mb-1">Blocking Statuses</h3>
+          <p className="text-sm text-gray-500 mb-4">
+            An order in one of these statuses holds its rental dates — no other order can book the same item for an overlapping date range while it's active. Orders in any other status (e.g. Cancelled, Refunded) free up those dates immediately.
+          </p>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            {RETAIL_ORDER_STATUSES.map(status => (
+              <label key={status} className={`flex items-center gap-2.5 p-3 rounded-2xl border-2 cursor-pointer transition-all ${selected.includes(status) ? 'border-purple-500 bg-purple-50' : 'border-gray-200 hover:border-gray-300'}`}>
+                <input type="checkbox" checked={selected.includes(status)} onChange={()=>toggle(status)} className="w-4 h-4 accent-purple-600"/>
+                <span className="text-sm font-semibold text-[#0F172A]">{status}</span>
+              </label>
+            ))}
+          </div>
+        </div>
+        {selected.length === 0 && (
+          <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">
+            ⚠️ No statuses selected — with none chosen, no order will ever hold a booking, and double-booking prevention will not function at all.
+          </p>
+        )}
+        <div className="flex items-center justify-end gap-3 pt-2 border-t border-gray-100">
+          {isDirty && <span className="text-xs font-semibold text-amber-600">● Unsaved changes</span>}
+          <button onClick={save} disabled={saving || !isDirty}
+            className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-purple-700 to-purple-900 text-white text-sm font-bold hover:opacity-90 disabled:opacity-50 shadow-md">
+            {saving ? 'Saving…' : 'Save Settings'}
+          </button>
+        </div>
+      </div>
+    </RetailAdminWrapper>
   );
 }
 const RETAIL_FIELD_KEYS = ['retailCustomers','retailProducts','retailActivities','retailOrders','retailInvoices'];
@@ -1718,6 +1774,9 @@ export default function AdminToolsPage() {
     { key:'r_appPrefs',      label:'App Preferences', icon:'⚙️', desc:'Retail app settings' },
     { key:'r_appearance',    label:'Appearance',      icon:'🎨', desc:'Retail branding' },
     { key:'r_composer',      label:'App Composer',    icon:'🧩', desc:'Custom fields for retail objects' },
+    ...(appPreferences?.business_type === 'rental' ? [
+      { key:'r_rentalSettings', label:'Rental Settings', icon:'👗', desc:'Booking rules and blocking statuses' },
+    ] : []),
   ];
 
   const renderSection = ()=>{
@@ -1752,6 +1811,7 @@ export default function AdminToolsPage() {
       case 'r_appPrefs':         return <RetailAdminWrapper title="App Preferences" icon="⚙️" desc="Currency, date format and module settings"><AppPreferencesPanel/></RetailAdminWrapper>;
       case 'r_appearance':       return <RetailAdminWrapper title="Appearance" icon="🎨" desc="Theme, logo and branding — shared with B2B Enterprise"><AppearancePanel/></RetailAdminWrapper>;
       case 'r_composer':         return <AppComposer/>;
+      case 'r_rentalSettings':   return <RentalSettingsPanel/>;
       case 'b2b_composer':       return <B2BAppComposer/>;
       default:                   return null;
     }
