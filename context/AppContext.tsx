@@ -3116,7 +3116,7 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
   // Tenant-scoped localStorage key — prevents cross-tenant preference bleed
   const _LS_KEY = tenantId ? `bp_app_preferences_${tenantId}` : 'bp_app_preferences';
   const _DEF_PREFS = { crm_enabled:true, cpq_enabled:true, b2c_mode:false, default_currency:'INR', date_format:'DD/MM/YYYY', fiscal_year_start:'April', global_search_enabled:false, business_mode:'B2B', business_type:'general', rental_blocking_statuses:['Draft','Pending','Completed'] };
-  const _cp = (p) => ({ crm_enabled:p?.crm_enabled??true, cpq_enabled:p?.cpq_enabled??true, b2c_mode:p?.b2c_mode??false, default_currency:p?.default_currency||'INR', date_format:p?.date_format||'DD/MM/YYYY', fiscal_year_start:p?.fiscal_year_start||'April', global_search_enabled:p?.global_search_enabled??false, business_mode:(p?.b2c_mode??false)?'B2C':'B2B', business_type:p?.business_type||'general', rental_blocking_statuses:p?.rental_blocking_statuses||['Draft','Pending','Completed'], company_name:p?.company_name });
+  const _cp = (p) => ({ crm_enabled:p?.crm_enabled??true, cpq_enabled:p?.cpq_enabled??true, b2c_mode:p?.b2c_mode??false, default_currency:p?.default_currency||'INR', date_format:p?.date_format||'DD/MM/YYYY', fiscal_year_start:p?.fiscal_year_start||'April', global_search_enabled:p?.global_search_enabled??false, business_mode:(p?.b2c_mode??false)?'B2C':'B2B', business_type:p?.business_type||'general', rental_blocking_statuses:p?.rental_blocking_statuses||['Draft','Pending','Completed'] });
   // ─── Appearance ───────────────────────────────────────────────────────────
   const _APP_KEY = tenantId ? `bp_appearance_${tenantId}` : 'bp_appearance';
   const _DEF_APP = { company_logo_url:'', company_name:'Umbrella Suite', theme:'navy', language:'en', font:'geist', font_size:'md', font_weight:'normal' };
@@ -3368,7 +3368,6 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
         date_format:             clean.date_format,
         fiscal_year_start:       clean.fiscal_year_start,
         global_search_enabled:   clean.global_search_enabled,
-        company_name:            clean.company_name,
         business_type:           clean.business_type || 'general',
         updated_at:              new Date().toISOString(),
         ...(tenantId ? { tenant_id: tenantId } : {}),

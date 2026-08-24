@@ -720,8 +720,8 @@ export default function DocumentTemplateDesigner({ docType = 'quote' }) {
   const startNew = () => {
     setSelectedId(null);
     setForm({ name:'' });
-    // Pre-fill companyName from appPreferences if set
-    const co = appPreferences?.company_name || '';
+    // Pre-fill companyName from appearance (company_name lives there, not app_preferences)
+    const co = appearance?.company_name || '';
     setSections(DEFAULT_SECS.map(s=>({
       ...s,
       settings:{
