@@ -900,18 +900,28 @@ function AIInsightsCard({ kpis, prevPeriodKpis, rangeLabel, fmt, pctChange }) {
       ].join('\n');
       const sb = (window as any).__bp_supabase;
       const session = sb ? (await sb.auth.getSession()).data.session : null;
-      const res = await fetch('/api/ai', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(session?.access_token ? { 'Authorization': `Bearer ${session.access_token}` } : {}),
-        },
-        body: JSON.stringify({
-          system: `You are a retail business analyst. Given these dashboard figures, write a concise 2-3 sentence insight: call out what's going well, what needs attention (e.g. overdue collections, low stock, refunds), and end with one specific, actionable recommendation. Be direct and specific with numbers — no generic advice.`,
-          messages: [{ role: 'user', content: context }],
-          max_tokens: 220,
-        }),
-      });
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 45000);
+      let res;
+      try {
+        res = await fetch('/api/ai', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(session?.access_token ? { 'Authorization': `Bearer ${session.access_token}` } : {}),
+          },
+          body: JSON.stringify({
+            system: `You are a retail business analyst. Given these dashboard figures, write a concise 2-3 sentence insight: call out what's going well, what needs attention (e.g. overdue collections, low stock, refunds), and end with one specific, actionable recommendation. Be direct and specific with numbers — no generic advice.`,
+            messages: [{ role: 'user', content: context }],
+            max_tokens: 220,
+            tenantDbUrl: (window as any).__bp_tenant?.db_url || undefined,
+            tenantDbAnonKey: (window as any).__bp_tenant?.db_anon_key || undefined,
+          }),
+          signal: controller.signal,
+        });
+      } finally {
+        clearTimeout(timeoutId);
+      }
       const data = await res.json();
       if (data.error) throw new Error(data.error);
       setInsight(data.content?.[0]?.text || 'Unable to generate insight.');
@@ -923,7 +933,7 @@ function AIInsightsCard({ kpis, prevPeriodKpis, rangeLabel, fmt, pctChange }) {
       // fall back to a generic message for genuine network-level failures
       // (fetch itself failing, JSON parse errors) where there's nothing
       // more specific to show.
-      setError(e?.message || 'Insight unavailable right now — please try again.');
+      setError(e?.name === 'AbortError' ? 'Request timed out — please try again.' : (e?.message || 'Insight unavailable right now — please try again.'));
     } finally {
       setLoading(false);
     }

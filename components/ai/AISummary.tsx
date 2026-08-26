@@ -166,18 +166,28 @@ export default function AISummary({ page, record }) {
       const context = buildContext(page, record, appData);
       const sb = (window as any).__bp_supabase;
       const session = sb ? (await sb.auth.getSession()).data.session : null;
-      const res = await fetch('/api/ai', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(session?.access_token ? { 'Authorization': `Bearer ${session.access_token}` } : {}),
-        },
-        body: JSON.stringify({
-          system: `You are a senior business analyst and CRM expert. Write a concise executive summary (2-3 sentences max) for the CRM record provided. Be specific and data-driven — mention key figures, current status, notable associations, and any urgent attention items. End with one actionable insight or recommended next step. Keep it professional and brief.`,
-          messages: [{ role: 'user', content: context }],
-          max_tokens: 250,
-        }),
-      });
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 45000);
+      let res;
+      try {
+        res = await fetch('/api/ai', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(session?.access_token ? { 'Authorization': `Bearer ${session.access_token}` } : {}),
+          },
+          body: JSON.stringify({
+            system: `You are a senior business analyst and CRM expert. Write a concise executive summary (2-3 sentences max) for the CRM record provided. Be specific and data-driven — mention key figures, current status, notable associations, and any urgent attention items. End with one actionable insight or recommended next step. Keep it professional and brief.`,
+            messages: [{ role: 'user', content: context }],
+            max_tokens: 250,
+            tenantDbUrl: (window as any).__bp_tenant?.db_url || undefined,
+            tenantDbAnonKey: (window as any).__bp_tenant?.db_anon_key || undefined,
+          }),
+          signal: controller.signal,
+        });
+      } finally {
+        clearTimeout(timeoutId);
+      }
       const data = await res.json();
       if (data.error) throw new Error(data.error);
       const text = data.content?.[0]?.text || 'Unable to generate summary.';
@@ -185,10 +195,12 @@ export default function AISummary({ page, record }) {
       setGenerated(true);
       // Store in module-level cache so re-navigating to same record shows same summary
       if (cacheKey) summaryCache[cacheKey] = { summary: text, error: '' };
-    } catch (e) {
-      const msg = e.message?.includes('GROQ_API_KEY') || e.message?.includes('ANTHROPIC') || e.message?.includes('GEMINI')
-        ? 'AI not configured — add API key to .env.local'
-        : 'Summary unavailable';
+    } catch (e: any) {
+      const msg = e?.name === 'AbortError'
+        ? 'Request timed out — please try again.'
+        : (e.message?.includes('GROQ_API_KEY') || e.message?.includes('ANTHROPIC') || e.message?.includes('GEMINI')
+          ? 'AI not configured — add API key to .env.local'
+          : 'Summary unavailable');
       setError(msg);
       if (cacheKey) summaryCache[cacheKey] = { summary: '', error: msg };
     } finally {

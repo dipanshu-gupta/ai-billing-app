@@ -460,14 +460,30 @@ export default function AIAdvisorChat() {
       // Authenticated call — the API route rejects anonymous requests
       const sb = (window as any).__bp_supabase;
       const session = sb ? (await sb.auth.getSession()).data.session : null;
-      const res = await fetch('/api/ai', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(session?.access_token ? { 'Authorization': `Bearer ${session.access_token}` } : {}),
-        },
-        body: JSON.stringify({ system:systemPrompt, messages:apiMessages, max_tokens:1200 }),
-      });
+      // Client-side timeout — ensures the UI never waits indefinitely
+      // regardless of any network issue between browser and server (a
+      // dropped connection, a proxy timeout, anything) that the server's
+      // own timeout protections can't cover from this side.
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 45000);
+      let res;
+      try {
+        res = await fetch('/api/ai', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(session?.access_token ? { 'Authorization': `Bearer ${session.access_token}` } : {}),
+          },
+          body: JSON.stringify({
+            system:systemPrompt, messages:apiMessages, max_tokens:1200,
+            tenantDbUrl: (window as any).__bp_tenant?.db_url || undefined,
+            tenantDbAnonKey: (window as any).__bp_tenant?.db_anon_key || undefined,
+          }),
+          signal: controller.signal,
+        });
+      } finally {
+        clearTimeout(timeoutId);
+      }
 
       const data = await res.json();
       if (data.error) throw new Error(data.error);
@@ -481,9 +497,10 @@ export default function AIAdvisorChat() {
         speak(cleanText);
       }
     } catch(e: any) {
+      const msg = e?.name === 'AbortError' ? 'the request took too long and timed out' : e.message;
       setMessages(prev => [...prev, {
         role:'assistant',
-        content:`⚠️ I ran into a connection issue: ${e.message}. Please try again.`,
+        content:`⚠️ I ran into a connection issue: ${msg}. Please try again.`,
         timestamp: new Date(),
       }]);
     } finally {

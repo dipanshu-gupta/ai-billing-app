@@ -1103,6 +1103,7 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     if (!supabase || !currentUser) return null;
     const cfg = RETAIL_TABLE_MAP[page];
     if (!cfg) return null;
+    try {
     // Mandatory-field guard — final gate regardless of which UI called this
     if ((page === 'retailCustomers' || page === 'retailProducts') && !String(data.name || '').trim()) {
       showAlert('Name is required.'); return null;
@@ -1183,12 +1184,18 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     await runAutomations(page, newId, { ...data, id: newId }, 'on_create');
     await cfg.fetch();
     return { ...inserted, id: inserted[cfg.idField], _uuid: inserted.id };
+    } catch (e: any) {
+      console.error('[createRetailRecord]', e);
+      showAlert('Save failed: ' + (e?.message || 'An unexpected error occurred.'));
+      return null;
+    }
   };
 
   const updateRetailRecord = async (page: keyof typeof RETAIL_TABLE_MAP, record: any, items: any[] = []) => {
     if (!supabase) return;
     const cfg = RETAIL_TABLE_MAP[page];
     if (!cfg) return;
+    try {
 
     // Terminal statuses can never be reverted (checked against the DB, not stale UI state)
     const TERMINAL = ['Completed','Paid','Cancelled','Refunded'];
@@ -1249,6 +1256,10 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     }
     await runAutomations(page, record.id, record, 'on_update');
     await cfg.fetch();
+    } catch (e: any) {
+      console.error('[updateRetailRecord]', e);
+      showAlert('Save failed: ' + (e?.message || 'An unexpected error occurred.'));
+    }
   };
 
   const deleteRetailRecord = async (page: keyof typeof RETAIL_TABLE_MAP, recordId: string) => {
@@ -1256,9 +1267,14 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     if (!(await showConfirm('Delete this record?', { variant:'danger', confirmLabel:'Delete' }))) return;
     const cfg = RETAIL_TABLE_MAP[page];
     if (!cfg) return;
-    if (cfg.lineItemTable) await supabase.from(cfg.lineItemTable).delete().eq(cfg.lineFK!, recordId);
-    await supabase.from(cfg.table).delete().eq(cfg.idField, recordId);
-    await cfg.fetch();
+    try {
+      if (cfg.lineItemTable) await supabase.from(cfg.lineItemTable).delete().eq(cfg.lineFK!, recordId);
+      await supabase.from(cfg.table).delete().eq(cfg.idField, recordId);
+      await cfg.fetch();
+    } catch (e: any) {
+      console.error('[deleteRetailRecord]', e);
+      showAlert('Delete failed: ' + (e?.message || 'An unexpected error occurred.'));
+    }
   };
 
   // ─── Retail Order → Retail Invoice conversion ──────────────────────────────

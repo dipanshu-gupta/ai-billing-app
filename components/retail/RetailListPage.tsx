@@ -1443,32 +1443,38 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo, on
       return;
     }
     setSaving(true);
-    // Strip client-side computed fields that don't exist as DB columns
-    // Strip client-side computed fields — keep custom_data as it's a real DB column
-    const { displayNumber, _uuid, ...editedClean } = edited;
-    let payload = { ...editedClean, custom_data: edited.custom_data || {} };
-    // Clamp non-negative numeric fields at save time (belt-and-braces vs UI clamps)
-    for (const nk of ['stock_quantity','reorder_level','loyalty_points','price','mrp','cost','shipping_cost','quantity']) {
-      if (payload[nk] !== undefined && payload[nk] !== null && Number(payload[nk]) < 0) payload[nk] = 0;
+    try {
+      // Strip client-side computed fields that don't exist as DB columns
+      // Strip client-side computed fields — keep custom_data as it's a real DB column
+      const { displayNumber, _uuid, ...editedClean } = edited;
+      let payload = { ...editedClean, custom_data: edited.custom_data || {} };
+      // Clamp non-negative numeric fields at save time (belt-and-braces vs UI clamps)
+      for (const nk of ['stock_quantity','reorder_level','loyalty_points','price','mrp','cost','shipping_cost','quantity']) {
+        if (payload[nk] !== undefined && payload[nk] !== null && Number(payload[nk]) < 0) payload[nk] = 0;
+      }
+      if (cfg.hasLineItems) {
+        const subtotal  = items.reduce((s,i) => s + Number(i.quantity||0)*Number(i.unit_price||0), 0);
+        const totalDisc = items.reduce((s,i) => s + Number(i.quantity||0)*Number(i.unit_price||0)*Number(i.discount_pct||0)/100, 0);
+        const totalTax  = items.reduce((s,i) => s + taxRegime.computeLineTax(i).totalTax, 0);
+        const computed  = { subtotal, total_discount: totalDisc, total_tax: totalTax, amount: subtotal-totalDisc+totalTax };
+        payload = { ...payload, ...computed };
+        // Update edited state so Preview & Print immediately reflects correct totals
+        setEdited(p => ({ ...p, ...computed }));
+      }
+      await updateRetailRecord(page, payload, items);
+      if (andClose) {
+        onSaved?.();
+        if (pendingReturnTo) {
+          const rt = pendingReturnTo; setPendingReturnTo(null);
+          window.dispatchEvent(new CustomEvent('open-crm-record', { detail: rt }));
+        } else onClose();
+      } else { setSaveSuccess(true); setTimeout(()=>setSaveSuccess(false),2500); }
+    } catch (e: any) {
+      console.error('[RetailDetailPanel] handleSave', e);
+      showAlert('Save failed: ' + (e?.message || 'An unexpected error occurred.'));
+    } finally {
+      setSaving(false);
     }
-    if (cfg.hasLineItems) {
-      const subtotal  = items.reduce((s,i) => s + Number(i.quantity||0)*Number(i.unit_price||0), 0);
-      const totalDisc = items.reduce((s,i) => s + Number(i.quantity||0)*Number(i.unit_price||0)*Number(i.discount_pct||0)/100, 0);
-      const totalTax  = items.reduce((s,i) => s + taxRegime.computeLineTax(i).totalTax, 0);
-      const computed  = { subtotal, total_discount: totalDisc, total_tax: totalTax, amount: subtotal-totalDisc+totalTax };
-      payload = { ...payload, ...computed };
-      // Update edited state so Preview & Print immediately reflects correct totals
-      setEdited(p => ({ ...p, ...computed }));
-    }
-    await updateRetailRecord(page, payload, items);
-    setSaving(false);
-    if (andClose) {
-      onSaved?.();
-      if (pendingReturnTo) {
-        const rt = pendingReturnTo; setPendingReturnTo(null);
-        window.dispatchEvent(new CustomEvent('open-crm-record', { detail: rt }));
-      } else onClose();
-    } else { setSaveSuccess(true); setTimeout(()=>setSaveSuccess(false),2500); }
   };
 
   const handleClose = () => {
@@ -2048,9 +2054,15 @@ function RetailCreateModal({ page, open, onClose, onCreated, prefill = null }) {
   const handleCreate = async () => {
     if (!validate()) return;
     setSaving(true);
-    const rec = await createRetailRecord(page, form, []);
-    setSaving(false);
-    if (rec) { onCreated?.(rec); onClose(); }
+    try {
+      const rec = await createRetailRecord(page, form, []);
+      if (rec) { onCreated?.(rec); onClose(); }
+    } catch (e: any) {
+      console.error('[RetailCreateModal] handleCreate', e);
+      showAlert('Save failed: ' + (e?.message || 'An unexpected error occurred.'));
+    } finally {
+      setSaving(false);
+    }
   };
 
   const renderField = (field) => {
