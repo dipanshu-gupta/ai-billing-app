@@ -21,6 +21,7 @@ interface SearchableSelectProps {
   showEmpty?:   boolean;
   onCreateNew?: (query: string) => void;  // if provided, shows "+ Create New" button
   createLabel?: string;                   // e.g. "Create Customer"
+  fallbackLabel?: string;  // shown when value doesn't match any option (e.g. a stale/missing id but a known display name) — never leaves the field looking blank when there's genuinely a name to show
 }
 
 export default function SearchableSelect({
@@ -32,6 +33,7 @@ export default function SearchableSelect({
   showEmpty = true,
   onCreateNew,
   createLabel = 'Create New',
+  fallbackLabel,
 }: SearchableSelectProps) {
   const [open,   setOpen]   = useState(false);
   const [query,  setQuery]  = useState('');
@@ -44,7 +46,7 @@ export default function SearchableSelect({
 
   // Selected label
   const selectedOption = options.find(o => o.value === value);
-  const displayLabel   = selectedOption?.label || '';
+  const displayLabel   = selectedOption?.label || fallbackLabel || '';
 
   // Filter options
   const filtered = useMemo(() => {

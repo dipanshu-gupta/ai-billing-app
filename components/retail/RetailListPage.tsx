@@ -1531,6 +1531,7 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo, on
         options={retailCustomers.map(c=>({value:c._uuid||c.id,label:c.name,sub:[c.phone,c.email].filter(Boolean).join(' · ')}))}
         onCreateNew={name=>setQuickCreateCustomer({prefillName:name, onCreated:(id,cname,cphone)=>{ set('customer_id',id); set('customer',cname); if(cphone) set('customer_phone',cphone); }})}
         placeholder="Search customers..." emptyLabel="No customer"
+        fallbackLabel={edited.customer || undefined}
       />;
     }
     if (field.type === 'retailInvoiceTemplate') {
@@ -2074,6 +2075,7 @@ function RetailCreateModal({ page, open, onClose, onCreated, prefill = null }) {
       options={retailCustomers.map(c=>({value:c._uuid||c.id,label:c.name,sub:[c.phone,c.email].filter(Boolean).join(' · ')}))}
       onCreateNew={name=>setQuickCreateCustomer({prefillName:name, onCreated:(id,cname,cphone)=>{ s('customer_id',id); s('customer',cname); s('customer_phone',cphone||''); setQuickCreateCustomer(null); }})}
       placeholder="Search customers..." emptyLabel="No customers — type to create new"
+      fallbackLabel={form.customer || undefined}
     />;
     if (field.type === 'retailInvoiceTemplate') {
       // Only available in detail panel context where these vars are defined

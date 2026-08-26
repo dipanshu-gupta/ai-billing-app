@@ -5,6 +5,18 @@ import { useApp } from '@/context/AppContext';
 import { useTenant } from '@/context/TenantContext';
 import { tenantScope } from '@/lib/utils';
 
+// Wraps any promise with a hard timeout — no single database call in this
+// file (import or export) can hang the whole operation indefinitely
+// regardless of the underlying cause (a stalled connection, an unusually
+// slow query, anything). Always surfaces a clear, specific error instead of
+// a permanent loading state with no way out except reloading the page.
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) => setTimeout(() => reject(new Error(`${label} timed out after ${ms/1000}s — please try again.`)), ms)),
+  ]);
+}
+
 // ─── Field definitions per object ─────────────────────────────────────────────
 const IMPORT_OBJECTS = {
   // B2B
@@ -468,6 +480,13 @@ export default function ImportExportPanel() {
   const [exporting,     setExporting]    = useState(false);
   const [exportDone,    setExportDone]   = useState('');
   const [customFields,  setCustomFields] = useState<{key:string,label:string}[]>([]);
+  // Filters — previously export had none at all (always exported the
+  // entire table). A date range is the minimum useful filter for most
+  // export use cases (e.g. "this month's orders" rather than every order
+  // ever placed).
+  const [exportDateFrom, setExportDateFrom] = useState('');
+  const [exportDateTo,   setExportDateTo]   = useState('');
+  const [exportStatus,   setExportStatus]   = useState('');
 
   // Import
   const [importStep,   setImportStep]   = useState<'upload'|'map'|'validate'|'preview'|'done'>('upload');
@@ -476,6 +495,7 @@ export default function ImportExportPanel() {
   const [colMap,       setColMap]       = useState<Record<string,string>>({});  // systemField -> csvHeader
   const [validation,   setValidation]   = useState<{ valid: any[], errors: { row:number, col:string, msg:string }[] }>({ valid:[], errors:[] });
   const [importing,    setImporting]    = useState(false);
+  const [importProgress, setImportProgress] = useState<{done:number, total:number}|null>(null);
   const [importResult, setImportResult] = useState<{ created:number, updated:number, skipped:number, errors:string[] }|null>(null);
   const [importMode,   setImportMode]   = useState<'create'|'upsert'>('upsert');
   const [importDupeKey,setImportDupeKey]= useState<string>('name');
@@ -542,17 +562,38 @@ export default function ImportExportPanel() {
       const cfKeys   = exportFields.filter(f => f.startsWith('custom_data.')).map(f => f.replace('custom_data.',''));
       const hasCustom = cfKeys.length > 0;
 
-      // Select * to avoid column-not-found errors, filter client-side
-      const { data, error } = await supabase
-        .from(cfg.table)
-        .select('*')
-        .order('created_at', { ascending: false });
-
-      if (error) {
-        setExportDone('✗ Export failed: ' + (error.message || error.details || JSON.stringify(error)));
-        setExporting(false);
-        return;
+      // Paginate through ALL matching rows rather than a single query —
+      // Postgrest's default row limit (1000) meant any tenant with more
+      // records than that in this table would have had their export
+      // silently truncated with no warning at all. Applies tenantScope
+      // explicitly too — this query previously had NO tenant filter
+      // whatsoever, unlike the import path just below in this same file,
+      // which already correctly uses tenantScope. Never rely on RLS alone
+      // for a bulk-export path — the same defense-in-depth principle
+      // applied everywhere else in this codebase.
+      const PAGE_SIZE = 1000;
+      let allRows: any[] = [];
+      let page = 0;
+      console.log('[Export] Starting export for', cfg.table);
+      while (true) {
+        const t0 = Date.now();
+        let q: any = tenantScope(supabase.from(cfg.table).select('*'));
+        if (exportDateFrom) q = q.gte('created_at', exportDateFrom);
+        if (exportDateTo) q = q.lte('created_at', exportDateTo + 'T23:59:59');
+        if (exportStatus.trim()) q = q.ilike('status', exportStatus.trim());
+        q = q.order('created_at', { ascending: false })
+             .range(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE - 1);
+        console.log('[Export] Fetching page', page, '...');
+        const { data: pageData, error: pageError } = await withTimeout(q, 20000, `Export page ${page}`) as any;
+        console.log('[Export] Page', page, 'returned', pageData?.length ?? 0, 'rows in', Date.now() - t0, 'ms', pageError ? `ERROR: ${pageError.message}` : '');
+        if (pageError) throw pageError;
+        allRows = allRows.concat(pageData || []);
+        if (!pageData || pageData.length < PAGE_SIZE) break;
+        page++;
+        if (page > 200) break; // safety cap — 200k rows; prevents a runaway loop on an unexpected data shape
       }
+      const data = allRows;
+      console.log('[Export] Total rows fetched:', data.length);
 
       // Flatten custom_data fields into each row for export
       const flatData = (data || []).map((row: any) => {
@@ -679,7 +720,7 @@ export default function ImportExportPanel() {
       // Retail customers
       'Active','Inactive','VIP','Blocked',
       // Retail orders
-      'Draft','Completed','Cancelled','Refunded',
+      'Draft','Pending','Completed','Cancelled','Refunded',
       // Retail invoices
       'Sent','Paid','Overdue',
       // Retail products
@@ -826,7 +867,9 @@ export default function ImportExportPanel() {
   const handleImport = async () => {
     if (!supabase || !currentUser) return;
     setImporting(true);
+    setImportProgress({ done: 0, total: validation.valid.length });
     const result = { created:0, updated:0, skipped:0, errors:[] as string[] };
+    try {
     const now = new Date().toISOString();
     // tenant_id was previously never set on imported rows at all. On this
     // shared multi-tenant DB that meant rows could be inserted successfully
@@ -846,11 +889,11 @@ export default function ImportExportPanel() {
     // own; they're always looked up in the context of their parent record).
     let seq = 1;
     if (!cfg.noDisplayId) {
-      const { data: seqData } = await tenantScope(supabase
+      const { data: seqData } = await withTimeout(tenantScope(supabase
         .from(cfg.table)
         .select(cfg.idField))
         .order('created_at', { ascending: false })
-        .limit(1);
+        .limit(1), 15000, 'Sequence number lookup');
       if (seqData?.[0]?.[cfg.idField]) {
         const lastNum = parseInt(seqData[0][cfg.idField].split('-').pop() || '0', 10);
         seq = lastNum + 1;
@@ -939,38 +982,58 @@ export default function ImportExportPanel() {
           });
         });
         if (rows.length) {
-          const { error } = await supabase.from(cfg.table).insert(rows);
+          const { error } = await withTimeout(supabase.from(cfg.table).insert(rows), 20000, `Batch ${Math.floor(i/BATCH)+1} insert`);
           if (error) { result.errors.push(`Batch ${Math.floor(i/BATCH)+1}: ${error.message}`); }
           else result.created += rows.length;
         }
 
       } else {
-        // Upsert: check if record exists by dupe key
-        for (const rec of batch) {
+        // Upsert: check if record exists by dupe key.
+        // Previously this ran ONE existence-check query PER ROW, sequentially
+        // awaited — for a large import (hundreds/thousands of rows), that's
+        // hundreds/thousands of individually-awaited round trips, each
+        // paying full network latency, with zero progress feedback. That's
+        // exactly what "import gets stuck" looks like from the outside: it's
+        // technically still running, just far slower than it needs to be,
+        // with nothing on screen to show it's making progress.
+        //
+        // Fixed by batching the existence check into ONE query per batch
+        // (fetch every row in this batch's dupe-key values at once via
+        // .in(), rather than one .maybeSingle() per row), and running the
+        // resulting insert/update operations in parallel within the batch —
+        // each row's write is independent of every other row's, so there's
+        // no reason to force them through one at a time.
+        const validRecs = batch.filter(rec => {
           const dupeVal = rec[importDupeKey] || rec[cfg.idField];
           if (!dupeVal || String(dupeVal).trim() === '') {
             result.errors.push(`Row skipped: no value found for match field "${importDupeKey}"`);
             result.skipped++;
-            continue;
+            return false;
           }
+          return true;
+        });
 
+        const matchField = importDupeKey === cfg.idField ? cfg.idField : importDupeKey;
+        const dupeValues = [...new Set(validRecs.map(rec => String(rec[importDupeKey] || rec[cfg.idField]).trim()))];
+        // Tenant-scoped: on a shared DB, an unscoped match here could find and
+        // silently overwrite a DIFFERENT tenant's record that happens to
+        // share the same dupe-key value — a real cross-tenant data
+        // integrity risk in a multi-tenant architecture like this one.
+        const { data: existingRows } = dupeValues.length
+          ? await withTimeout(tenantScope(supabase.from(cfg.table).select(`id, ${matchField}`)).in(matchField, dupeValues), 15000, 'Existence check')
+          : { data: [] };
+        const existingByKey = new Map((existingRows || []).map((r: any) => [String(r[matchField]).trim(), r]));
+
+        await Promise.all(validRecs.map(async (rec) => {
+          const dupeVal = String(rec[importDupeKey] || rec[cfg.idField]).trim();
           const { resolved, dropKeys, rowErrors } = resolveReferenceFields(rec);
           if (rowErrors.length) {
             rowErrors.forEach(e => result.errors.push(`Row (${dupeVal}): ${e}`));
             result.skipped++;
-            continue;
+            return;
           }
 
-          // Try matching by dupe key — if dupe key is the idField, match on idField.
-          // Tenant-scoped: on a shared DB, an unscoped match here could find and
-          // silently overwrite a DIFFERENT tenant's record that happens to share
-          // the same dupe-key value (e.g. the same customer name or display ID
-          // pattern) — a real cross-tenant data integrity risk in a multi-tenant
-          // architecture like this one.
-          const matchField = importDupeKey === cfg.idField ? cfg.idField : importDupeKey;
-          const { data: existing } = await tenantScope(supabase
-            .from(cfg.table).select('id')).eq(matchField, String(dupeVal).trim()).maybeSingle();
-
+          const existing = existingByKey.get(dupeVal);
           const cfData: any = {};
           const cleaned: any = {};
           const numFields = ['amount','price','mrp','cost','probability','tax_rate','gst_rate',
@@ -984,22 +1047,41 @@ export default function ImportExportPanel() {
           if (Object.keys(cfData).length) cleaned.custom_data = cfData;
 
           if (existing) {
-            const { error } = await supabase.from(cfg.table).update({ ...cleaned, ...resolved, ...sys }).eq('id', existing.id);
-            if (error) result.errors.push(`Update "${dupeVal}": ${error.message}`);
-            else result.updated++;
+            try {
+              const { error } = await withTimeout(supabase.from(cfg.table).update({ ...cleaned, ...resolved, ...sys }).eq('id', (existing as any).id), 15000, `Update "${dupeVal}"`);
+              if (error) result.errors.push(`Update "${dupeVal}": ${error.message}`);
+              else result.updated++;
+            } catch (rowErr: any) {
+              result.errors.push(`Update "${dupeVal}": ${rowErr?.message || 'Unknown error'}`);
+            }
           } else {
-            const { error } = await supabase.from(cfg.table).insert({ ...sys, ...cleaned, ...resolved, [cfg.idField]: generateDisplayId(cfg.idPrefix, seq++) });
-            if (error) result.errors.push(`Insert "${dupeVal}": ${error.message}`);
-            else result.created++;
+            try {
+              const { error } = await withTimeout(supabase.from(cfg.table).insert({ ...sys, ...cleaned, ...resolved, [cfg.idField]: generateDisplayId(cfg.idPrefix, seq++) }), 15000, `Insert "${dupeVal}"`);
+              if (error) result.errors.push(`Insert "${dupeVal}": ${error.message}`);
+              else result.created++;
+            } catch (rowErr: any) {
+              result.errors.push(`Insert "${dupeVal}": ${rowErr?.message || 'Unknown error'}`);
+            }
           }
-        }
+        }));
       }
+      setImportProgress({ done: Math.min(i + BATCH, validation.valid.length), total: validation.valid.length });
     }
 
     setImportResult(result);
     addHistory('import', selObj, result.created + result.updated, result.errors.length ? 'error' : 'ok');
-    setImporting(false);
     setImportStep('done');
+    } catch (e: any) {
+      const msg = e?.message || e?.details || JSON.stringify(e) || 'Unknown error';
+      console.error('[Import]', msg);
+      result.errors.push(msg);
+      setImportResult(result);
+      addHistory('import', selObj, result.created + result.updated, 'error');
+      setImportStep('done');
+    } finally {
+      setImporting(false);
+      setImportProgress(null);
+    }
   };
 
   const addHistory = (action: string, obj: string, count: number, status: 'ok'|'error') => {
@@ -1121,6 +1203,33 @@ export default function ImportExportPanel() {
             )}
           </div>
 
+          {/* Filters — previously export had none at all */}
+          <div className="bg-white rounded-[20px] border border-gray-200 shadow-sm p-5">
+            <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Filters (optional)</label>
+            <div className="flex items-end gap-4 flex-wrap">
+              <div>
+                <label className="block text-[11px] text-gray-400 mb-1">Created From</label>
+                <input type="date" value={exportDateFrom} onChange={e=>setExportDateFrom(e.target.value)}
+                  className="border border-gray-200 rounded-xl px-3 py-2 text-sm text-[#0F172A] focus:outline-none focus:ring-2 focus:ring-blue-300"/>
+              </div>
+              <div>
+                <label className="block text-[11px] text-gray-400 mb-1">Created To</label>
+                <input type="date" value={exportDateTo} onChange={e=>setExportDateTo(e.target.value)}
+                  className="border border-gray-200 rounded-xl px-3 py-2 text-sm text-[#0F172A] focus:outline-none focus:ring-2 focus:ring-blue-300"/>
+              </div>
+              <div>
+                <label className="block text-[11px] text-gray-400 mb-1">Status contains</label>
+                <input type="text" value={exportStatus} onChange={e=>setExportStatus(e.target.value)} placeholder="e.g. Active, Completed..."
+                  className="border border-gray-200 rounded-xl px-3 py-2 text-sm text-[#0F172A] w-48 focus:outline-none focus:ring-2 focus:ring-blue-300"/>
+              </div>
+              {(exportDateFrom || exportDateTo || exportStatus) && (
+                <button onClick={()=>{setExportDateFrom('');setExportDateTo('');setExportStatus('');}}
+                  className="text-xs text-gray-400 hover:text-gray-600 font-semibold pb-2.5">Clear filters</button>
+              )}
+            </div>
+            <p className="text-xs text-gray-400 mt-2">Leave blank to export all records for this object.</p>
+          </div>
+
           {/* Format + action */}
           <div className="bg-white rounded-[20px] border border-gray-200 shadow-sm p-5">
             <div className="flex items-center gap-6 flex-wrap">
@@ -1136,10 +1245,6 @@ export default function ImportExportPanel() {
                 </div>
               </div>
               <div className="flex gap-3 ml-auto">
-                <button onClick={downloadTemplate}
-                  className="flex items-center gap-2 px-5 py-2.5 rounded-2xl border border-dashed border-gray-300 text-gray-600 text-sm font-semibold hover:border-blue-400 hover:text-blue-600">
-                  📋 Download Template
-                </button>
                 <button onClick={handleExport} disabled={exporting || !exportFields.length}
                   className="flex items-center gap-2 px-6 py-2.5 bg-gradient-to-r from-[#0F172A] to-emerald-800 text-white rounded-2xl text-sm font-bold shadow disabled:opacity-50">
                   {exporting ? '⏳ Exporting…' : `⬇️ Export ${cfg.label}`}
@@ -1366,14 +1471,21 @@ export default function ImportExportPanel() {
               )}
 
               <div className="flex gap-3">
-                <button onClick={()=>setImportStep('map')} className="px-5 py-2.5 rounded-2xl border border-gray-200 text-gray-600 text-sm font-semibold hover:bg-gray-50">
+                <button onClick={()=>setImportStep('map')} disabled={importing} className="px-5 py-2.5 rounded-2xl border border-gray-200 text-gray-600 text-sm font-semibold hover:bg-gray-50 disabled:opacity-50">
                   ← Back to Mapping
                 </button>
                 <button onClick={handleImport} disabled={importing || !validation.valid.length}
                   className="flex-1 py-2.5 rounded-2xl bg-gradient-to-r from-[#0F172A] to-emerald-800 text-white font-bold text-sm disabled:opacity-50 flex items-center justify-center gap-2">
-                  {importing ? '⏳ Importing…' : `🚀 Import ${validation.valid.length} records`}
+                  {importing
+                    ? `⏳ Importing… ${importProgress ? `(${importProgress.done} of ${importProgress.total})` : ''}`
+                    : `🚀 Import ${validation.valid.length} records`}
                 </button>
               </div>
+              {importing && importProgress && importProgress.total > 0 && (
+                <div className="w-full bg-gray-100 rounded-full h-1.5 mt-1 overflow-hidden">
+                  <div className="bg-emerald-600 h-full rounded-full transition-all" style={{ width: `${Math.min(100, Math.round((importProgress.done / importProgress.total) * 100))}%` }} />
+                </div>
+              )}
             </div>
           )}
 
