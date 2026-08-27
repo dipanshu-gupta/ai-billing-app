@@ -59,13 +59,42 @@ const _clientCache = new Map<string, SupabaseClient>();
 // then hangs waiting for a lock that will never free. This is the exact
 // mechanism behind "stuck on the loading screen after refresh, only fixed by
 // clearing cookies" — clearing storage is what actually clears the stuck
-// lock state, not just the session itself. Not importing Supabase's own
-// documented workaround (the `processLock` export) here since node_modules
-// isn't available to confirm the exact export name for this installed
-// version, and an incorrect import would break the build outright — this
-// minimal, self-contained implementation achieves the same result (no
-// browser-level locking at all) without depending on any specific export.
-const noOpLock = async (_name: string, _acquireTimeout: number, fn: () => Promise<any>) => fn();
+// lock state, not just the session itself.
+//
+// The original fix here removed locking entirely (a genuine no-op), which
+// solves the cross-tab deadlock but throws away same-tab serialization too —
+// and that serialization exists for a real reason: it's what prevents two
+// concurrent token-refresh attempts from racing each other. A refresh token
+// is typically single-use; if two refreshes fire near-simultaneously within
+// the same tab (e.g. a background poll and a user-initiated save, both
+// happening right as a token expires), the loser of that race can be left
+// waiting on a promise that never settles — which looks exactly like "the
+// save button hangs forever, only fixed by refreshing the page." This
+// in-memory, per-tab mutex restores that serialization (queuing concurrent
+// calls to the same lock name rather than letting them race) while never
+// touching the browser's shared, persistent navigator.locks API at all — so
+// it keeps the original fix's core property (no cross-tab deadlock is even
+// possible) while no longer creating this new, same-tab race condition.
+// A fixed safety timeout ensures a stuck prior call can never block this tab
+// indefinitely either, regardless of what acquireTimeout is passed.
+const _lockChains = new Map<string, Promise<any>>();
+export const inMemoryLock = async (name: string, _acquireTimeout: number, fn: () => Promise<any>): Promise<any> => {
+  const SAFETY_TIMEOUT_MS = 15000;
+  const prior = _lockChains.get(name) || Promise.resolve();
+  const runAfterPrior = prior.catch(() => {}).then(() =>
+    Promise.race([
+      fn(),
+      new Promise((_, reject) => setTimeout(() => reject(new Error(`[auth lock "${name}"] timed out after ${SAFETY_TIMEOUT_MS}ms`)), SAFETY_TIMEOUT_MS)),
+    ])
+  );
+  // Swallow here so the chain map itself never holds a rejected promise
+  // (which would immediately reject every subsequent caller queued behind
+  // it) — the real result/error still propagates to this call's own caller
+  // via the returned `runAfterPrior` below.
+  _lockChains.set(name, runAfterPrior.catch(() => {}));
+  return runAfterPrior;
+};
+const noOpLock = inMemoryLock; // kept as an alias — call sites below are unchanged
 
 // ─── Shared Supabase client (env vars) ────────────────────────────────────────
 function getSharedClient(): SupabaseClient {

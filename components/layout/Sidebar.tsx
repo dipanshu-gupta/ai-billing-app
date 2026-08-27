@@ -4,36 +4,11 @@
 import { useState, useRef, useEffect } from 'react';
 import { t, THEMES } from '@/lib/i18n';
 import { useApp } from '@/context/AppContext';
+import { SALES_GROUP, RETAIL_GROUP, BOTTOM_ITEMS, makeCanSee } from '@/lib/navPermissions';
 
 const TOP_ITEMS = [
-  { key:'dashboard', label:'dashboard', icon:'🏠', permission:null },
-];
-
-const SALES_GROUP = [
-  { key:'customers',     label:'customers',     icon:'👥', permission:'customers_view',     requiresCRM:true },
-  { key:'contacts',      label:'contacts',      icon:'📇', permission:'contacts_view',      requiresCRM:true },
-  { key:'leads',         label:'leads',         icon:'🎯', permission:'leads_view',          requiresCRM:true },
-  { key:'opportunities', label:'opportunities', icon:'💼', permission:'opportunities_view',  requiresCRM:true },
-  { key:'activities',    label:'activities',    icon:'📅', permission:'activities_view',     requiresCRM:true },
-  { key:'products',      label:'products',      icon:'📦', permission:'products_view',       requiresCRM:true },
-  { key:'quotations',    label:'quotations',    icon:'📄', permission:null, requiresCPQ:true, requiresCRM:true },
-];
-
-const RETAIL_GROUP = [
-  { key:'retailCustomers',  label:'retailCustomers',  icon:'🧑‍🤝‍🧑', permission:null, requiresB2C:true },
-  { key:'retailActivities', label:'retailActivities', icon:'📅',       permission:null, requiresB2C:true },
-  { key:'retailProducts',   label:'retailProducts',   icon:'🏷️',       permission:null, requiresB2C:true },
-  { key:'manageBookings',   label:'manageBookings',   icon:'📆',       permission:null, requiresB2C:true, requiresRental:true },
-  { key:'retailOrders',     label:'retailOrders',     icon:'🛍️',       permission:null, requiresB2C:true },
-  { key:'retailInvoices',   label:'retailInvoices',   icon:'🧾',       permission:null, requiresB2C:true },
-];
-
-const BOTTOM_ITEMS = [
-  { key:'orders',     label:'orders',      icon:'🛒', permission:'orders_view',   requiresCRM:true },
-  { key:'invoices',   label:'invoices',    icon:'🧾', permission:'invoices_view', requiresCRM:true },
-  { key:'reports',    label:'reports',     icon:'⚡', permission:null },
-  { key:'approvals',  label:'approvals',   icon:'✅', permission:null, requiresCRM:true },
-  { key:'adminTools', label:'adminTools',  icon:'⚙️', permission:'__admin__' },
+  { key:'home',      label:'home',          icon:'🏠', permission:null },
+  { key:'dashboard', label:'salesDashboard', icon:'📊', permission:null },
 ];
 
 export default function Sidebar({ activePage, setActivePage, collapsed, setCollapsed }) {
@@ -55,26 +30,7 @@ export default function Sidebar({ activePage, setActivePage, collapsed, setColla
   const isAdmin = currentUserPermissions.includes('__admin__') || currentUser?.is_admin === true;
   const b2cMode = appPreferences?.b2c_mode === true;
 
-  const canSee = (item) => {
-    // Admins always see everything
-    if (isAdmin) {
-      // B2C mode: hide CRM items, show retail
-      if (item.requiresCRM && b2cMode) return false;
-      if (item.requiresB2C && !b2cMode) return false;
-      if (item.requiresRental && appPreferences?.business_type !== 'rental') return false;
-      return true;
-    }
-    // Non-admin: check mode
-    if (item.requiresCRM && b2cMode) return false;
-    if (item.requiresB2C && !b2cMode) return false;
-    if (item.requiresRental && appPreferences?.business_type !== 'rental') return false;
-    if (item.requiresCPQ && appPreferences?.cpq_enabled === false) return false;
-    // No permission required
-    if (!item.permission) return true;
-    // Wait for permissions to load
-    if (!permissionsLoaded) return false;
-    return currentUserPermissions.includes(item.permission);
-  };
+  const canSee = makeCanSee({ isAdmin, b2cMode, appPreferences, currentUserPermissions, permissionsLoaded });
 
   const NavItem = ({ item }) => {
     if (!canSee(item)) return null;

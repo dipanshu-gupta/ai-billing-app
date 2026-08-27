@@ -2,11 +2,13 @@
 'use client';
 import { useState, useMemo } from 'react';
 import { useApp } from '@/context/AppContext';
+import { THEMES } from '@/lib/i18n';
 import RentalBookingCalendar from '@/components/retail/RentalBookingCalendar';
 import SearchableSelect from '@/components/shared/SearchableSelect';
 
 export default function ManageBookingsPage() {
-  const { retailProducts } = useApp();
+  const { retailProducts, appearance } = useApp();
+  const themeObj = THEMES.find(th => th.id === (appearance?.theme || 'navy')) || THEMES[0];
   const rentableProducts = useMemo(() => (retailProducts || []).filter(p => p.is_rentable && p.status !== 'Discontinued'), [retailProducts]);
   const [selectedProductId, setSelectedProductId] = useState('');
 
@@ -14,7 +16,7 @@ export default function ManageBookingsPage() {
 
   return (
     <div className="space-y-5">
-      <div className="bg-gradient-to-r from-purple-900 to-purple-700 rounded-[24px] p-6 text-white">
+      <div className="rounded-[24px] p-6 text-white" style={{background:`linear-gradient(to right,${themeObj.colors[0]},${themeObj.colors[1]})`}}>
         <h2 className="text-2xl font-bold flex items-center gap-2">📆 Manage Bookings</h2>
         <p className="text-purple-200 text-sm mt-1">View and create rental bookings for any rentable product, without opening its record first.</p>
       </div>

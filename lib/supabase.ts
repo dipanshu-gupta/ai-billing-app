@@ -7,6 +7,7 @@
  * For server-side code, use createClient() directly with env vars.
  */
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import { inMemoryLock } from './tenant';
 
 // Returns the tenant-aware Supabase client set by TenantContext
 // Falls back to a basic anon client if window client not available (SSR, etc.)
@@ -16,7 +17,7 @@ function getClient(): SupabaseClient | null {
   }
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-  if (url && key) return createClient(url, key, { auth: { lock: async (_n: string, _t: number, fn: () => Promise<any>) => fn() } });
+  if (url && key) return createClient(url, key, { auth: { lock: inMemoryLock } });
   return null;
 }
 

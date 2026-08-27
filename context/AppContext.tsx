@@ -10,7 +10,7 @@ import type {
   SLAPolicy, SLARecord, ApprovalProcess, ApprovalStep, ApprovalRequest,
   Notification, AuditLog,
 } from '@/lib/types';
-import { generateId, formatDisplayNumber } from '@/lib/utils';
+import { generateId, formatDisplayNumber, withTimeout } from '@/lib/utils';
 import { useAlert } from '@/components/shared/AlertProvider';
 
 // ─── Enterprise-scale hardening ──────────────────────────────────────────────
@@ -1171,7 +1171,7 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
       ...(tenantId ? { tenant_id: tenantId } : {}),
     };
     delete payload.id; delete payload._uuid;
-    const { data: inserted, error } = await supabase.from(cfg.table).insert([payload]).select().single();
+    const { data: inserted, error } = await withTimeout(supabase.from(cfg.table).insert([payload]).select().single(), 20000, 'Save');
     if (error) { showAlert('Save failed: ' + error.message); return null; }
     if (cfg.lineItemTable && items.length) {
       const { error: liError } = await upsertRetailLineItems(cfg.lineItemTable as any, cfg.lineFK!, newId, items, payload.status);
@@ -1245,7 +1245,7 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
       }
     }
 
-    const { error } = await supabase.from(cfg.table).update(payload).eq(cfg.idField, record.id);
+    const { error } = await withTimeout(supabase.from(cfg.table).update(payload).eq(cfg.idField, record.id), 20000, 'Save');
     if (error) { console.error(`update ${cfg.table}:`, error.message); showAlert('Save failed: ' + error.message); return; }
     if (cfg.lineItemTable) {
       const { error: liError } = await upsertRetailLineItems(cfg.lineItemTable as any, cfg.lineFK!, record.id, items, payload.status);
@@ -2809,7 +2809,7 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
             if (cfg.due_in_days) {
               const d = new Date();
               d.setDate(d.getDate() + parseInt(cfg.due_in_days, 10));
-              dueDate = d.toISOString().slice(0, 10);
+              dueDate = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
             }
             // Resolve assignee: specific user or falls back to record owner
             const assignee = cfg.assignee_user_id

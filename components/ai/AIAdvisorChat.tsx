@@ -22,7 +22,8 @@ const buildSystemPrompt = (user, data, prefs, isB2C) => {
 
   if (isB2C) {
     const { retailCustomers=[], retailProducts=[], retailOrders=[], retailInvoices=[], retailActivities=[] } = data;
-    const todaySales = retailInvoices.filter(i => i.invoice_date?.slice(0,10) === new Date().toISOString().slice(0,10)).reduce((s,i) => s+Number(i.amount||0), 0);
+    const todayLocal = new Date().toLocaleDateString('en-CA');
+    const todaySales = retailInvoices.filter(i => i.invoice_date?.slice(0,10) === todayLocal).reduce((s,i) => s+Number(i.amount||0), 0);
     const topProducts = [...retailProducts].sort((a,b) => Number(b.price||0)-Number(a.price||0)).slice(0,5).map(p=>`${p.name} (${fmt(p.price)})`).join(', ');
     const lowStock = retailProducts.filter(p => Number(p.stock_quantity||0) <= Number(p.reorder_level||5)).length;
     const vipCustomers = retailCustomers.filter(c => c.status==='VIP').length;

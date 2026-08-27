@@ -4,6 +4,7 @@
 import { useState, useMemo, useEffect } from 'react';
 import { useApp } from '@/context/AppContext';
 import { getStatusColor, roundPercentagesTo100 } from '@/lib/utils';
+import { THEMES } from '@/lib/i18n';
 import {
   BarChart, Bar, LineChart, Line, PieChart, Pie, Cell,
   AreaChart, Area,
@@ -98,6 +99,7 @@ export default function RetailDashboard() {
     currentUser, appPreferences, appearance,
     fetchListViewPrefs, saveListViewPrefs,
   } = useApp();
+  const themeObj = THEMES.find(th => th.id === (appearance?.theme || 'navy')) || THEMES[0];
 
   const [visibleWidgets, setVisibleWidgets] = useState<string[]>(DEFAULT_WIDGETS);
   const [customizeOpen, setCustomizeOpen] = useState(false);
@@ -459,7 +461,7 @@ export default function RetailDashboard() {
             </button>
             {customizeOpen && (
               <div className="absolute right-0 top-12 w-80 bg-white rounded-[24px] shadow-2xl border border-blue-100 z-50 overflow-hidden" style={{maxHeight:'70vh',overflowY:'auto'}}>
-                <div className="bg-gradient-to-r from-[#0F172A] to-blue-900 px-5 py-3 flex items-center justify-between">
+                <div className="px-5 py-3 flex items-center justify-between" style={{background:`linear-gradient(to right,${themeObj.colors[0]},${themeObj.colors[1]})`}}>
                   <h3 className="text-white font-bold text-sm">Customize Dashboard</h3>
                   <button onClick={()=>setCustomizeOpen(false)} className="text-white/70 hover:text-white">✕</button>
                 </div>
@@ -486,8 +488,8 @@ export default function RetailDashboard() {
           narrative integrated right alongside it rather than a separate
           block below the fold ── */}
       <div className="grid grid-cols-1 lg:grid-cols-5 gap-5">
-        <div className="lg:col-span-2 relative rounded-[28px] p-7 overflow-hidden shadow-xl dashboard-fade-in text-white" style={{background:'linear-gradient(135deg,#0F172A,#1e3a8a 65%,#312e81)'}}>
-          <div className="absolute -top-12 -right-12 w-48 h-48 rounded-full bg-blue-500/20 blur-3xl"/>
+        <div className="lg:col-span-2 relative rounded-[28px] p-7 overflow-hidden shadow-xl dashboard-fade-in text-white" style={{background:`linear-gradient(135deg,${themeObj.colors[0]},${themeObj.colors[1]} 65%,${themeObj.colors[2]})`}}>
+          <div className="absolute -top-12 -right-12 w-48 h-48 rounded-full blur-3xl opacity-20" style={{background:themeObj.accent}}/>
           <div className="relative">
             <div className="text-white/60 text-xs font-bold uppercase tracking-widest mb-2">Revenue · {rangeLabel}</div>
             <div className="text-5xl font-bold leading-none mb-3 tabular-nums">{fmt(kpis.totalRevenue)}</div>
@@ -512,7 +514,7 @@ export default function RetailDashboard() {
           </div>
         </div>
         <div className="lg:col-span-3">
-          {show('ai_insights') && <AIInsightsCard kpis={kpis} prevPeriodKpis={prevPeriodKpis} rangeLabel={rangeLabel} fmt={fmt} pctChange={pctChange}/>}
+          {show('ai_insights') && <AIInsightsCard kpis={kpis} prevPeriodKpis={prevPeriodKpis} rangeLabel={rangeLabel} fmt={fmt} pctChange={pctChange} themeObj={themeObj}/>}
         </div>
       </div>
 
@@ -878,7 +880,7 @@ function RecentInvoicesTable({ recentInvoices, fmt }) {
 // key figures into 2-3 sentences of plain-English business insight, with an
 // actionable recommendation, rather than just repeating the numbers already
 // shown on the KPI cards above.
-function AIInsightsCard({ kpis, prevPeriodKpis, rangeLabel, fmt, pctChange }) {
+function AIInsightsCard({ kpis, prevPeriodKpis, rangeLabel, fmt, pctChange, themeObj }) {
   const [insight, setInsight]   = useState('');
   const [loading, setLoading]   = useState(false);
   const [error, setError]       = useState('');
@@ -940,9 +942,9 @@ function AIInsightsCard({ kpis, prevPeriodKpis, rangeLabel, fmt, pctChange }) {
   };
 
   return (
-    <div className="relative rounded-[24px] p-6 overflow-hidden shadow-lg dashboard-fade-in transition-all duration-300 hover:shadow-xl" style={{background:'linear-gradient(135deg,#0F172A,#1e3a8a 60%,#312e81)'}}>
-      <div className="absolute -top-10 -right-10 w-40 h-40 rounded-full bg-blue-500/20 blur-3xl"/>
-      <div className="absolute -bottom-8 -left-8 w-32 h-32 rounded-full bg-purple-500/20 blur-3xl"/>
+    <div className="relative rounded-[24px] p-6 overflow-hidden shadow-lg dashboard-fade-in transition-all duration-300 hover:shadow-xl" style={{background:`linear-gradient(135deg,${themeObj.colors[0]},${themeObj.colors[1]} 60%,${themeObj.colors[2]})`}}>
+      <div className="absolute -top-10 -right-10 w-40 h-40 rounded-full blur-3xl opacity-20" style={{background:themeObj.accent}}/>
+      <div className="absolute -bottom-8 -left-8 w-32 h-32 rounded-full blur-3xl opacity-20" style={{background:themeObj.colors[1]}}/>
       <div className="relative flex items-start justify-between gap-4">
         <div className="flex-1">
           <div className="flex items-center gap-2 mb-2">

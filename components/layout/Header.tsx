@@ -280,7 +280,7 @@ export default function Header({ activePage, onNavigate }) {
     : '?';
 
   const PAGE_LABELS = {
-    dashboard:'Dashboard', customers:'Customers', contacts:'Contacts',
+    home:'Home', dashboard:'Dashboard', customers:'Customers', contacts:'Contacts',
     leads:'Leads', opportunities:'Opportunities', activities:'Activities',
     quotations:'Quotations', orders:'Orders', invoices:'Invoices',
     products:'Products', reports:'Fast Reports', approvals:'My Approvals',

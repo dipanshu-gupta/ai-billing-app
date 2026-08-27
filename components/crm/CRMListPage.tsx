@@ -7,6 +7,7 @@ import { getPageLabel, getStatusOptions, getStatusColor, formatCurrency, formatD
 import RecordDetailPanel from '@/components/crm/RecordDetailPanel';
 import CreateRecordModal from '@/components/crm/CreateRecordModal';
 import CPQRecordDetail from '@/components/crm/CPQRecordDetail';
+import KanbanBoard from '@/components/shared/KanbanBoard';
 import { useAlert } from '@/components/shared/AlertProvider';
 import { t } from '@/lib/i18n';
 
@@ -280,6 +281,67 @@ function SavedSearchPanel({ page, currentFilters, onApply, onClose }) {
   );
 }
 
+// ─── Board (Kanban) view for CRM list pages ────────────────────────────────
+// Builds each card generically from the object's own known field
+// conventions (every CRM object has 'name', or falls back to 'subject' for
+// activities, matching the table's own existing fallback) rather than a
+// separate, hand-maintained field map that could drift from the table.
+const CRM_DATE_FIELDS = ['expectedCloseDate','closeDate','dueDate','deliveryDate','activityDate'];
+function CRMBoardView({ page, records, onCardClick, updateRecord }) {
+  const objectFields = getObjectFields(page);
+  const hasField = (f) => objectFields.includes(f);
+  const dateField = CRM_DATE_FIELDS.find(f => hasField(f));
+
+  const handleStatusChange = async (record, newStatus) => {
+    // updateRecord's lineItems parameter defaults to null, which its own
+    // implementation explicitly treats as "leave line items untouched" —
+    // confirmed by reading the function itself before wiring this up. A
+    // status-only change here never risks an order/invoice/quotation's
+    // line items the way a naive empty-array default could have.
+    await updateRecord(page, { ...record, status: newStatus });
+  };
+
+  return (
+    <KanbanBoard
+      records={records}
+      statusOptions={getStatusOptions(page)}
+      getStatus={r => r.status}
+      getId={r => r.id}
+      onStatusChange={handleStatusChange}
+      onCardClick={onCardClick}
+      renderCard={r => (
+        <div>
+          <div className="font-bold text-sm text-[#0F172A] mb-1.5 truncate">{r.name || r.subject || '—'}</div>
+          {hasField('customer') && r.customer && (
+            <div className="text-xs text-gray-500 flex items-center justify-between gap-2 py-0.5">
+              <span className="text-gray-400 flex-shrink-0">Customer</span>
+              <span className="truncate text-right text-gray-700">{r.customer}</span>
+            </div>
+          )}
+          {hasField('amount') && r.amount != null && (
+            <div className="text-xs text-gray-500 flex items-center justify-between gap-2 py-0.5">
+              <span className="text-gray-400 flex-shrink-0">Amount</span>
+              <span className="truncate text-right text-gray-700 font-semibold">{formatCurrency(r.amount)}</span>
+            </div>
+          )}
+          {dateField && r[dateField] && (
+            <div className="text-xs text-gray-500 flex items-center justify-between gap-2 py-0.5">
+              <span className="text-gray-400 flex-shrink-0">Date</span>
+              <span className="truncate text-right text-gray-700">{formatDate(r[dateField])}</span>
+            </div>
+          )}
+          {hasField('owner') && r.owner && (
+            <div className="text-xs text-gray-500 flex items-center justify-between gap-2 py-0.5">
+              <span className="text-gray-400 flex-shrink-0">Owner</span>
+              <span className="truncate text-right text-gray-700">{r.owner}</span>
+            </div>
+          )}
+        </div>
+      )}
+    />
+  );
+}
+
 export default function CRMListPage({ page }) {
   const {
     customers, products, leads, opportunities, orders, invoices, contacts, activities,
@@ -289,6 +351,7 @@ export default function CRMListPage({ page }) {
     currentUserPermissions, permissionsLoaded, appPreferences, appearance, hasPermission,
     fetchOrders, pendingReturnTo, setPendingReturnTo, pendingRecord, setPendingRecord,
     fetchListCount, listViewPrefs, fetchListViewPrefs, saveListViewPrefs,
+    updateRecord,
   } = useApp();
   const { showAlert, showConfirm } = useAlert();
   const lang = appearance?.language || 'en';
@@ -367,6 +430,16 @@ export default function CRMListPage({ page }) {
     return () => { cancelled = true; };
   }, [page]);
   const [selectedRecord, setSelectedRecord] = useState(null);
+  const [viewMode, setViewMode] = useState(() => {
+    if (typeof window !== 'undefined') return sessionStorage.getItem(`bp_view_mode_${page}`) || 'table';
+    return 'table';
+  });
+  useEffect(() => {
+    if (typeof window !== 'undefined') setViewMode(sessionStorage.getItem(`bp_view_mode_${page}`) || 'table');
+  }, [page]);
+  useEffect(() => {
+    if (typeof window !== 'undefined') sessionStorage.setItem(`bp_view_mode_${page}`, viewMode);
+  }, [viewMode, page]);
   const [createOpen,   setCreateOpen]   = useState(false);
   const [searchPanelOpen, setSearchPanelOpen] = useState(false);
   const [menuOpenId,   setMenuOpenId]   = useState(null);
@@ -637,10 +710,29 @@ export default function CRMListPage({ page }) {
               </button>
               {searchPanelOpen && <SavedSearchPanel page={page} currentFilters={currentFilters} onApply={applyFilters} onClose={()=>setSearchPanelOpen(false)}/>}
             </div>
+            <div className="flex items-center bg-gray-100 rounded-xl p-1">
+              <button onClick={()=>setViewMode('table')} title="Table view"
+                className={`px-3 py-1.5 rounded-lg text-sm font-semibold transition-all ${viewMode==='table' ? 'bg-white shadow-sm text-[#0F172A]' : 'text-gray-500 hover:text-gray-700'}`}>
+                ☰ Table
+              </button>
+              <button onClick={()=>setViewMode('board')} title="Board view"
+                className={`px-3 py-1.5 rounded-lg text-sm font-semibold transition-all ${viewMode==='board' ? 'bg-white shadow-sm text-[#0F172A]' : 'text-gray-500 hover:text-gray-700'}`}>
+                🗂️ Board
+              </button>
+            </div>
           </div>
         </div>
       </div>
 
+      {viewMode === 'board' ? (
+        <CRMBoardView
+          page={page}
+          records={sorted}
+          onCardClick={setSelectedRecord}
+          updateRecord={updateRecord}
+        />
+      ) : (
+      <>
       {/* Table */}
       <div className="bg-white rounded-[24px] border border-blue-100 shadow-lg overflow-hidden">
         <div className="overflow-x-auto">
@@ -780,6 +872,8 @@ export default function CRMListPage({ page }) {
           </div>
         )}
       </div>
+      </>
+      )}
 
       {selectedRecord && (() => {
         const isCPQPage = ['orders','invoices'].includes(page);

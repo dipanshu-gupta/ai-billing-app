@@ -3,13 +3,14 @@
 
 import { useState, useMemo, useEffect, useRef } from 'react';
 import { useApp } from '@/context/AppContext';
-import { getStatusColor, formatCurrency, formatDate, formatDisplayNumber, PAGE_DISPLAY_PREFIX, tenantScope } from '@/lib/utils';
+import { getStatusColor, formatCurrency, formatDate, formatDisplayNumber, PAGE_DISPLAY_PREFIX, tenantScope, todayLocalISO } from '@/lib/utils';
 // useCustomFields hook used inline below
 import { useTenant } from '@/context/TenantContext';
 import { getTaxRegime } from '@/lib/taxConfig';
 import SearchableSelect from '@/components/shared/SearchableSelect';
 import ProductImages from '@/components/products/ProductImages';
 import RentalBookingCalendar from '@/components/retail/RentalBookingCalendar';
+import KanbanBoard from '@/components/shared/KanbanBoard';
 import { useAlert } from '@/components/shared/AlertProvider';
 import { useCustomFields } from '@/lib/useCustomFields';
 import LineItemCustomFieldInput from '@/components/shared/LineItemCustomFieldInput';
@@ -1108,9 +1109,9 @@ function RetailCustomer360({ customer, onNavigate, onOpenCreate }) {
     const pageMap  = { order: 'retailOrders', invoice: 'retailInvoices', activity: 'retailActivities' };
     const prefill  = {
       ...(type !== 'activity' ? buildCustomerPrefill(customer) : { customer: custName, customer_id: customer._uuid || customer.id || '' }),
-      ...(type === 'order'    ? { order_date:    new Date().toISOString().slice(0,10), status: 'Open',  channel: 'In-Store' } : {}),
-      ...(type === 'invoice'  ? { invoice_date:  new Date().toISOString().slice(0,10), status: 'Draft', payment_status: 'Pending' } : {}),
-      ...(type === 'activity' ? { activity_date: new Date().toISOString().slice(0,10), subject: 'Follow up with '+custName, activity_type: 'Call', status: 'Planned' } : {}),
+      ...(type === 'order'    ? { order_date:    todayLocalISO(), status: 'Open',  channel: 'In-Store' } : {}),
+      ...(type === 'invoice'  ? { invoice_date:  todayLocalISO(), status: 'Draft', payment_status: 'Pending' } : {}),
+      ...(type === 'activity' ? { activity_date: todayLocalISO(), subject: 'Follow up with '+custName, activity_type: 'Call', status: 'Planned' } : {}),
     };
     if (onOpenCreate) onOpenCreate(pageMap[type], prefill);
   };
@@ -1963,9 +1964,9 @@ function RetailCreateModal({ page, open, onClose, onCreated, prefill = null }) {
     owner_name: (`${currentUser?.first_name||''} ${currentUser?.last_name||''}`.trim()) || currentUser?.email || '',
     created_by: currentUser?.email,
     created_at: new Date().toISOString(),
-    invoice_date: new Date().toISOString().slice(0,10),
-    order_date: new Date().toISOString().slice(0,10),
-    activity_date: new Date().toISOString().slice(0,10),
+    invoice_date: todayLocalISO(),
+    order_date: todayLocalISO(),
+    activity_date: todayLocalISO(),
     loyalty_points: 0, loyalty_tier: 'Standard', preferred_contact: 'Phone',
     country: 'India', unit: 'pc', price: 0, mrp: 0, cost: 0, stock_quantity: 0, reorder_level: 10,
     quantity: 1, payment_method: 'Cash', payment_status: 'Pending', channel: 'In-Store', delivery_method: 'Pickup', place_of_supply: 'Tamil Nadu',
@@ -2394,6 +2395,59 @@ function RetailSavedSearchPanel({ page, currentFilters, onApply, onClose }) {
   );
 }
 
+// ─── Board (Kanban) view for retail list pages ─────────────────────────────
+// Wires RETAIL_CONFIG's existing statusOptions and listColumns into the
+// generic KanbanBoard component, so cards show the same key fields the
+// table already does — no separate, hand-maintained field mapping that
+// could drift out of sync with the table's own column config.
+function RetailBoardView({ page, cfg, records, onCardClick, updateRetailRecord }) {
+  const { fetchRetailLineItems } = useApp();
+  const { showAlert } = useAlert();
+
+  const handleStatusChange = async (record, newStatus) => {
+    let items = [];
+    if (cfg.hasLineItems) {
+      // Fetch the record's EXISTING line items first — updateRetailRecord's
+      // line-item save does a full delete-then-reinsert based on whatever's
+      // passed in. Passing an empty array here for what should be a
+      // status-only change would silently delete every line item on this
+      // order or invoice. This mirrors exactly how RetailDetailPanel loads
+      // line items before any edit, so a board-driven status change is just
+      // as safe as one made from the detail view.
+      const table = page === 'retailOrders' ? 'retail_order_line_items' : 'retail_invoice_line_items';
+      try {
+        items = (await fetchRetailLineItems(table, cfg.idField, record.id)) || [];
+      } catch (e) {
+        showAlert('Could not load this record\'s line items — status not changed.', { variant: 'danger' });
+        return;
+      }
+    }
+    await updateRetailRecord(page, { ...record, status: newStatus }, items);
+  };
+
+  return (
+    <KanbanBoard
+      records={records}
+      statusOptions={cfg.statusOptions || []}
+      getStatus={r => r.status}
+      getId={r => r.id}
+      onStatusChange={handleStatusChange}
+      onCardClick={onCardClick}
+      renderCard={r => (
+        <div>
+          <div className="font-bold text-sm text-[#0F172A] mb-1.5 truncate">{cfg.listColumns[0]?.v(r) ?? r.id}</div>
+          {cfg.listColumns.slice(1, 4).map((col, i) => (
+            <div key={i} className="text-xs text-gray-500 flex items-center justify-between gap-2 py-0.5">
+              <span className="text-gray-400 flex-shrink-0">{col.h}</span>
+              <span className="truncate text-right text-gray-700">{col.v(r)}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    />
+  );
+}
+
 export default function RetailListPage({ page }) {
   const {
     retailCustomers, retailProducts, retailActivities, retailOrders, retailInvoices,
@@ -2403,6 +2457,7 @@ export default function RetailListPage({ page }) {
     deleteSavedSearch, setDefaultSavedSearch, currentUser, appPreferences,
     createRetailInvoiceFromOrder, currentUserPermissions, permissionsLoaded,
     fetchListCount, listViewPrefs, fetchListViewPrefs, saveListViewPrefs, appearance,
+    updateRetailRecord,
   } = useApp();
   const lang = appearance?.language || 'en';
 
@@ -2444,6 +2499,27 @@ export default function RetailListPage({ page }) {
   const [pageSize,       setPageSize]       = useState(25);
   const [currentPage,    setCurrentPage]    = useState(1);
   const [selectedRecord, setSelectedRecord] = useState(null);
+  // Table vs. board (Kanban) view — persisted per-page via sessionStorage.
+  // Deliberately not using the server-side list_view_prefs table for this
+  // first version (that table currently only stores columns/sort, and
+  // adding a new field there is a larger, separate change); a session-level
+  // preference is a reasonable starting point that can be upgraded to
+  // server-persisted later if wanted.
+  const [viewMode, setViewMode] = useState(() => {
+    if (typeof window !== 'undefined') return sessionStorage.getItem(`bp_view_mode_${page}`) || 'table';
+    return 'table';
+  });
+  // Re-read on page change — if this component instance is reused across
+  // different retail pages rather than remounted, the useState initializer
+  // above only ran once for whichever page was visited first, and viewMode
+  // would otherwise incorrectly carry over to every other page instead of
+  // reading that page's own stored preference.
+  useEffect(() => {
+    if (typeof window !== 'undefined') setViewMode(sessionStorage.getItem(`bp_view_mode_${page}`) || 'table');
+  }, [page]);
+  useEffect(() => {
+    if (typeof window !== 'undefined') sessionStorage.setItem(`bp_view_mode_${page}`, viewMode);
+  }, [viewMode, page]);
   const [createOpen,     setCreateOpen]     = useState(false);
   const [createPrefill,  setCreatePrefill]  = useState(null);
   const [c360Record,     setC360Record]     = useState(null); // {page, data} for cross-object creates
@@ -2792,10 +2868,31 @@ export default function RetailListPage({ page }) {
                 <RetailSavedSearchPanel page={page} currentFilters={currentFilters} onApply={applyFilters} onClose={()=>setSearchPanel(false)}/>
               )}
             </div>
+            {/* Table / Board view toggle */}
+            <div className="flex items-center bg-gray-100 rounded-xl p-1">
+              <button onClick={()=>setViewMode('table')} title="Table view"
+                className={`px-3 py-1.5 rounded-lg text-sm font-semibold transition-all ${viewMode==='table' ? 'bg-white shadow-sm text-[#0F172A]' : 'text-gray-500 hover:text-gray-700'}`}>
+                ☰ Table
+              </button>
+              <button onClick={()=>setViewMode('board')} title="Board view"
+                className={`px-3 py-1.5 rounded-lg text-sm font-semibold transition-all ${viewMode==='board' ? 'bg-white shadow-sm text-[#0F172A]' : 'text-gray-500 hover:text-gray-700'}`}>
+                🗂️ Board
+              </button>
+            </div>
           </div>
         </div>
       </div>
 
+      {viewMode === 'board' ? (
+        <RetailBoardView
+          page={page}
+          cfg={cfg}
+          records={sorted}
+          onCardClick={setSelectedRecord}
+          updateRetailRecord={updateRetailRecord}
+        />
+      ) : (
+      <>
       {/* Table */}
       <div className="bg-white rounded-[24px] border border-blue-100 shadow-lg overflow-hidden">
         <div className="overflow-x-auto">
@@ -2861,8 +2958,8 @@ export default function RetailListPage({ page }) {
                           <button onClick={()=>{setSelectedRecord(r);setMenuOpenId(null);}} className="w-full text-left px-4 py-3 rounded-xl text-sm font-medium hover:bg-blue-800 text-white">📄 Open Details</button>
                           {page==='retailCustomers' && (<>
                             <div className="border-t border-blue-800 my-1"/>
-                            <button onClick={()=>{setMenuOpenId(null);setCreatePrefill({page:'retailOrders',data:{...buildCustomerPrefill(r),order_date:new Date().toISOString().slice(0,10),status:'Draft',channel:'In-Store'}});}} className="w-full text-left px-4 py-3 rounded-xl text-sm font-medium hover:bg-blue-800 text-white">🛒 Create Order</button>
-                            <button onClick={()=>{setMenuOpenId(null);setCreatePrefill({page:'retailInvoices',data:{...buildCustomerPrefill(r),invoice_date:new Date().toISOString().slice(0,10),status:'Draft',payment_status:'Pending'}});}} className="w-full text-left px-4 py-3 rounded-xl text-sm font-medium hover:bg-blue-800 text-white">🧾 Create Invoice</button>
+                            <button onClick={()=>{setMenuOpenId(null);setCreatePrefill({page:'retailOrders',data:{...buildCustomerPrefill(r),order_date:todayLocalISO(),status:'Draft',channel:'In-Store'}});}} className="w-full text-left px-4 py-3 rounded-xl text-sm font-medium hover:bg-blue-800 text-white">🛒 Create Order</button>
+                            <button onClick={()=>{setMenuOpenId(null);setCreatePrefill({page:'retailInvoices',data:{...buildCustomerPrefill(r),invoice_date:todayLocalISO(),status:'Draft',payment_status:'Pending'}});}} className="w-full text-left px-4 py-3 rounded-xl text-sm font-medium hover:bg-blue-800 text-white">🧾 Create Invoice</button>
                           </>)}
                           {page==='retailOrders' && r.status==='Completed' && (
                             <button onClick={()=>{createRetailInvoiceFromOrder(r);setMenuOpenId(null);}} className="w-full text-left px-4 py-3 rounded-xl text-sm font-medium hover:bg-blue-800 text-white">🧾 Create Invoice</button>
@@ -2904,6 +3001,8 @@ export default function RetailListPage({ page }) {
           </div>
         )}
       </div>
+      </>
+      )}
 
       {selectedRecord && (
         <RetailDetailPanel

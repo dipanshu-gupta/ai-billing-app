@@ -5,6 +5,7 @@ import { useApp } from '@/context/AppContext';
 import { useTenant } from '@/context/TenantContext';
 import { useAlert } from '@/components/shared/AlertProvider';
 import { formatDate, formatDisplayNumber } from '@/lib/utils';
+import { THEMES } from '@/lib/i18n';
 import SearchableSelect from '@/components/shared/SearchableSelect';
 
 const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
@@ -29,7 +30,8 @@ function daysBetween(startISO, endISO) {
 }
 
 export default function RentalBookingCalendar({ productId, productName, productPrice, onClose, variant = 'modal' }) {
-  const { retailCustomers, createRetailRecord, currentUser } = useApp();
+  const { retailCustomers, createRetailRecord, currentUser, appearance } = useApp();
+  const themeObj = THEMES.find(th => th.id === (appearance?.theme || 'navy')) || THEMES[0];
   const { supabase, tenant } = useTenant();
   const { showAlert } = useAlert();
   const [monthCursor, setMonthCursor] = useState(() => { const d = new Date(); d.setDate(1); return d; });
@@ -266,26 +268,27 @@ export default function RentalBookingCalendar({ productId, productName, productP
   };
 
   const isModal = variant === 'modal';
+  const themeVars = { '--theme-c0': themeObj.colors[0], '--theme-c1': themeObj.colors[1], '--theme-c2': themeObj.colors[2], '--theme-accent': themeObj.accent };
   const Wrapper = isModal
     ? ({ children }) => (
-        <div className="fixed inset-0 bg-black/50 z-[9999] flex items-center justify-center p-4" onClick={onClose}>
+        <div className="fixed inset-0 bg-black/50 z-[9999] flex items-center justify-center p-4" onClick={onClose} style={themeVars}>
           <div className="bg-white rounded-[28px] shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col" onClick={e => e.stopPropagation()}>
             {children}
           </div>
         </div>
       )
     : ({ children }) => (
-        <div className="bg-white rounded-[28px] border border-gray-200 shadow-sm w-full overflow-hidden flex flex-col">
+        <div className="bg-white rounded-[28px] border border-gray-200 shadow-sm w-full overflow-hidden flex flex-col" style={themeVars}>
           {children}
         </div>
       );
 
   return (
     <Wrapper>
-        <div className="bg-gradient-to-r from-purple-900 to-purple-700 px-6 py-4 flex items-center justify-between flex-shrink-0">
+        <div className="px-6 py-4 flex items-center justify-between flex-shrink-0" style={{background:`linear-gradient(to right,${themeObj.colors[0]},${themeObj.colors[1]})`}}>
           <div>
             <h3 className="text-white font-bold text-lg">📅 Booking Calendar</h3>
-            <p className="text-purple-200 text-sm">{productName}</p>
+            <p className="text-white/70 text-sm">{productName}</p>
           </div>
           {isModal && <button onClick={onClose} className="text-white/70 hover:text-white text-2xl leading-none">×</button>}
         </div>
@@ -295,13 +298,13 @@ export default function RentalBookingCalendar({ productId, productName, productP
           <div className="flex-1 flex flex-col items-center justify-center p-10 text-center">
             <div className="w-16 h-16 rounded-full bg-green-100 flex items-center justify-center text-3xl mb-4">✓</div>
             <h3 className="text-xl font-bold text-[#0F172A] mb-1">Booking Confirmed</h3>
-            <p className="text-gray-500 text-sm mb-1">Order <span className="font-mono font-bold text-purple-700">{successResult.display_number ? formatDisplayNumber('RORD', successResult.display_number) : successResult.id}</span> created for {customerName}</p>
+            <p className="text-gray-500 text-sm mb-1">Order <span className="font-mono font-bold" style={{color:themeObj.accent}}>{successResult.display_number ? formatDisplayNumber('RORD', successResult.display_number) : successResult.id}</span> created for {customerName}</p>
             <p className="text-gray-400 text-xs mb-6">{formatDate(toISO(rangeStart))} – {formatDate(toISO(rangeEnd))} · {productName}</p>
             <div className="flex items-center gap-3">
               <button onClick={bookAnother} className="px-5 py-2.5 rounded-xl border border-gray-200 text-gray-600 text-sm font-semibold hover:bg-gray-50">
                 + Book Another
               </button>
-              <button onClick={viewOrder} className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-purple-700 to-purple-900 text-white text-sm font-bold hover:opacity-90">
+              <button onClick={viewOrder} className="px-5 py-2.5 rounded-xl text-white text-sm font-bold hover:opacity-90" style={{background:`linear-gradient(to right,${themeObj.colors[1]},${themeObj.colors[0]})`}}>
                 View Order {successResult.display_number ? formatDisplayNumber('RORD', successResult.display_number) : successResult.id} →
               </button>
             </div>
@@ -352,7 +355,7 @@ export default function RentalBookingCalendar({ productId, productName, productP
                                     isPast ? 'text-gray-300 cursor-not-allowed' :
                                     isRangeEdge ? 'bg-blue-600 text-white rounded-full mx-0.5' :
                                     inRange ? 'bg-blue-100 text-blue-800' :
-                                    isToday ? 'text-blue-700' : 'text-gray-500 hover:bg-gray-50 hover:text-purple-700'
+                                    isToday ? 'text-blue-700' : 'text-gray-500 hover:bg-gray-50 hover:text-[var(--theme-accent)]'
                                   }`}>
                                   {day?.getDate()}
                                 </button>
@@ -364,8 +367,8 @@ export default function RentalBookingCalendar({ productId, productName, productP
                               <div key={bi} style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)' }}>
                                 <button
                                   onClick={() => setSelectedBooking(booking)}
-                                  className={`flex items-center h-6 text-[11px] font-semibold text-white bg-purple-600 hover:bg-purple-700 transition-all px-2 truncate ${isStart ? 'rounded-l-md' : ''} ${isEnd ? 'rounded-r-md' : ''}`}
-                                  style={{ gridColumn: `${startCol + 1} / span ${span}` }}>
+                                  className={`flex items-center h-6 text-[11px] font-semibold text-white hover:bg-[var(--theme-c1)] transition-all px-2 truncate ${isStart ? 'rounded-l-md' : ''} ${isEnd ? 'rounded-r-md' : ''}`}
+                                  style={{ gridColumn: `${startCol + 1} / span ${span}`, background: themeObj.accent }}>
                                   <span className="truncate">{isStart ? `👤 ${booking.customer_name}` : '···'}</span>
                                 </button>
                               </div>
@@ -377,12 +380,12 @@ export default function RentalBookingCalendar({ productId, productName, productP
                   </div>
 
                   <div className="flex items-center gap-4 mt-4 text-xs text-gray-500">
-                    <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded bg-purple-600 inline-block"/> Confirmed booking</span>
+                    <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded inline-block" style={{background:themeObj.accent}}/> Confirmed booking</span>
                     <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full bg-blue-600 inline-block"/> Your selection</span>
                   </div>
 
                   {selectedBooking && (
-                    <div className="mt-5 bg-purple-50 border border-purple-100 rounded-2xl p-4 flex items-center justify-between">
+                    <div className="mt-5 rounded-2xl p-4 flex items-center justify-between border" style={{background:`${themeObj.accent}1a`, borderColor:`${themeObj.accent}33`}}>
                       <div>
                         <div className="font-bold text-[#0F172A] text-sm">{selectedBooking.customer_name}</div>
                         <div className="text-xs text-gray-500 mt-0.5">
@@ -390,8 +393,8 @@ export default function RentalBookingCalendar({ productId, productName, productP
                         </div>
                       </div>
                       <div className="flex items-center gap-2">
-                        <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-purple-100 text-purple-700">{selectedBooking.order_status}</span>
-                        <button onClick={openSelectedBookingOrder} className="text-xs font-bold px-3 py-1.5 rounded-full bg-purple-700 text-white hover:bg-purple-800">
+                        <span className="text-xs font-bold px-2.5 py-1 rounded-full" style={{background:`${themeObj.accent}22`, color:themeObj.accent}}>{selectedBooking.order_status}</span>
+                        <button onClick={openSelectedBookingOrder} className="text-xs font-bold px-3 py-1.5 rounded-full text-white hover:opacity-90" style={{background:themeObj.accent}}>
                           Open Order →
                         </button>
                         <button onClick={() => setSelectedBooking(null)} className="text-gray-400 hover:text-gray-600 text-sm">✕</button>
@@ -434,7 +437,8 @@ export default function RentalBookingCalendar({ productId, productName, productP
                     />
                   </div>
                   <button onClick={submitBooking} disabled={creating || checkingRange || !!rangeConflict || !customerId}
-                    className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-purple-700 to-purple-900 text-white text-sm font-bold hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed flex-shrink-0">
+                    className="px-6 py-2.5 rounded-xl text-white text-sm font-bold hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed flex-shrink-0"
+                    style={{background:`linear-gradient(to right,${themeObj.colors[1]},${themeObj.colors[0]})`}}>
                     {creating ? 'Creating…' : 'Create Booking'}
                   </button>
                 </div>

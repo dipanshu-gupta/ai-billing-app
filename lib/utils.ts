@@ -150,7 +150,7 @@ export const getStatusOptions = (page: string, hasApproval = false): string[] =>
     case 'retailActivities':
       return ['Open','In Progress','Completed','Cancelled'];
     case 'retailOrders':
-      return ['Draft','Completed','Cancelled','Refunded'];
+      return ['Draft','Pending','Completed','Cancelled','Refunded'];
     case 'retailInvoices':
       return ['Draft','Sent','Paid','Overdue','Refunded','Cancelled'];
     default:
@@ -263,4 +263,24 @@ export function tenantScope(q: any) {
   if (!tid || t.db_url) return q; // dedicated DB or unresolved — no filter needed
   if (tid === DEMO_TENANT_ID) return q.or(`tenant_id.eq.${tid},tenant_id.is.null`);
   return q.eq('tenant_id', tid);
+}
+
+// ─── Timeout protection ──────────────────────────────────────────────────────
+// Wraps any promise (a database call, a fetch, anything) with a hard timeout.
+// No single async call anywhere in the app should be able to hang an
+// operation indefinitely — always surfaces a clear, specific error instead
+// of a permanent loading state with no way out except reloading the page.
+export function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) => setTimeout(() => reject(new Error(`${label} timed out after ${ms/1000}s — please try again.`)), ms)),
+  ]);
+}
+
+// Timezone-safe "today" as YYYY-MM-DD in LOCAL time. Plain new Date().toISOString().slice(0,10)
+// converts to UTC first, which silently shows yesterday's date for any timezone ahead of UTC
+// (e.g. IST) during the hours between local midnight and the UTC offset — a recurring, easy-to-
+// reintroduce bug wherever a date field is defaulted to "today." Always use this instead.
+export function todayLocalISO(): string {
+  return new Date().toLocaleDateString('en-CA');
 }

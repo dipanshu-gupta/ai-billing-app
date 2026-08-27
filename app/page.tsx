@@ -11,6 +11,7 @@ import DashboardPage from '@/components/dashboard/DashboardPage';
 import CRMListPage from '@/components/crm/CRMListPage';
 import RetailListPage from '@/components/retail/RetailListPage';
 import ManageBookingsPage from '@/components/retail/ManageBookingsPage';
+import SpringboardPage from '@/components/layout/SpringboardPage';
 import RetailDashboard from '@/components/retail/RetailDashboard';
 import AdminToolsPage from '@/components/admin/AdminToolsPage';
 import ApprovalsInboxPage from '@/components/approvals/ApprovalsInboxPage';
@@ -255,18 +256,18 @@ function ProfileModal({ open, onClose }) {
 // ─── App Shell ────────────────────────────────────────────────────────────────
 
 const CRM_PAGES = ['customers', 'products', 'leads', 'opportunities', 'activities', 'contacts', 'orders', 'invoices'];
-const NON_CRM_PAGES = ['dashboard', 'approvals', 'adminTools', 'quotations', 'reports'];
+const NON_CRM_PAGES = ['home', 'dashboard', 'approvals', 'adminTools', 'quotations', 'reports'];
 const RETAIL_PAGES = ['retailCustomers', 'retailProducts', 'retailActivities', 'retailOrders', 'retailInvoices'];
 
 function AppShell() {
   const { session, authLoading, appPreferences, setPendingReturnTo, setPendingRecord } = useApp();
   const { tenant } = useTenant();
-  // Persist active page in sessionStorage so refresh doesn't reset to dashboard
+  // Persist active page in sessionStorage so refresh doesn't reset to home
   const [activePage, setActivePage] = useState(() => {
     if (typeof window !== 'undefined') {
-      return sessionStorage.getItem('bp_active_page') || 'dashboard';
+      return sessionStorage.getItem('bp_active_page') || 'home';
     }
-    return 'dashboard';
+    return 'home';
   });
   // Save to sessionStorage on every page change
   React.useEffect(() => {
@@ -354,6 +355,7 @@ function AppShell() {
       <div className="flex-1 flex flex-col min-w-0">
         <Header activePage={activePage} onNavigate={(page) => setActivePage(page)} />
         <main className="flex-1 p-6 overflow-y-auto">
+          {activePage === 'home' && <SpringboardPage onNavigate={(page) => setActivePage(page)} />}
           {activePage === 'dashboard' && (appPreferences?.b2c_mode === true ? <RetailDashboard /> : <DashboardPage />)}
           {CRM_PAGES.includes(activePage) && !NON_CRM_PAGES.includes(activePage) && <CRMListPage page={activePage} />}
           {RETAIL_PAGES.includes(activePage) && <RetailListPage page={activePage} />}

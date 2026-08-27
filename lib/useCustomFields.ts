@@ -7,6 +7,7 @@
  */
 import { useState, useEffect } from 'react';
 import { createClient } from '@supabase/supabase-js';
+import { inMemoryLock } from './tenant';
 
 export interface CustomField {
   id: string;
@@ -50,7 +51,7 @@ function getClient() {
     // Fall back to env vars
     const url  = process.env.NEXT_PUBLIC_SUPABASE_URL;
     const key  = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-    if (url && key) return createClient(url, key, { auth: { lock: async (_n: string, _t: number, fn: () => Promise<any>) => fn() } });
+    if (url && key) return createClient(url, key, { auth: { lock: inMemoryLock } });
   } catch(e) {}
   return null;
 }

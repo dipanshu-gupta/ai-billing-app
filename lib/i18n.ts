@@ -25,7 +25,7 @@ export const THEMES = [
 
 const dict: Record<string, Record<string,string>> = {
   en: {
-    dashboard:'Dashboard', customers:'Customers', contacts:'Contacts',
+    home:'Home', salesDashboard:'Sales Dashboard', dashboard:'Dashboard', customers:'Customers', contacts:'Contacts',
     leads:'Leads', opportunities:'Opportunities', activities:'Activities',
     products:'Products', quotations:'Quotations', orders:'Orders',
     invoices:'Invoices', reports:'Fast Reports', approvals:'My Approvals',
@@ -60,7 +60,7 @@ const dict: Record<string, Record<string,string>> = {
     required:'Required', optional:'Optional', selectField:'Select field...', selectValue:'Select value',
   },
   hi: {
-    dashboard:'डैशबोर्ड', customers:'ग्राहक', contacts:'संपर्क',
+    home:'होम', salesDashboard:'सेल्स डैशबोर्ड', dashboard:'डैशबोर्ड', customers:'ग्राहक', contacts:'संपर्क',
     leads:'लीड', opportunities:'अवसर', activities:'गतिविधियाँ',
     retail:'रिटेल', retailCustomers:'ग्राहक', retailActivities:'गतिविधियाँ',
     retailProducts:'उत्पाद', manageBookings:'बुकिंग प्रबंधन', retailOrders:'ऑर्डर', retailInvoices:'चालान',
@@ -95,7 +95,7 @@ const dict: Record<string, Record<string,string>> = {
     required:'आवश्यक', optional:'वैकल्पिक', selectField:'फ़ील्ड चुनें...', selectValue:'मान चुनें',
   },
   ar: {
-    dashboard:'لوحة التحكم', customers:'العملاء', contacts:'جهات الاتصال',
+    home:'الرئيسية', salesDashboard:'لوحة المبيعات', dashboard:'لوحة التحكم', customers:'العملاء', contacts:'جهات الاتصال',
     leads:'العملاء المحتملون', opportunities:'الفرص', activities:'الأنشطة',
     retail:'التجزئة', retailCustomers:'العملاء', retailActivities:'الأنشطة',
     retailProducts:'المنتجات', manageBookings:'إدارة الحجوزات', retailOrders:'الطلبات', retailInvoices:'الفواتير',
@@ -130,7 +130,7 @@ const dict: Record<string, Record<string,string>> = {
     required:'مطلوب', optional:'اختياري', selectField:'اختر حقلاً...', selectValue:'اختر قيمة',
   },
   es: {
-    dashboard:'Panel', customers:'Clientes', contacts:'Contactos',
+    home:'Inicio', salesDashboard:'Panel de Ventas', dashboard:'Panel', customers:'Clientes', contacts:'Contactos',
     leads:'Prospectos', opportunities:'Oportunidades', activities:'Actividades',
     retail:'Minorista', retailCustomers:'Clientes', retailActivities:'Actividades',
     retailProducts:'Productos', manageBookings:'Gestionar Reservas', retailOrders:'Pedidos', retailInvoices:'Facturas',
@@ -165,7 +165,7 @@ const dict: Record<string, Record<string,string>> = {
     required:'Requerido', optional:'Opcional', selectField:'Seleccionar campo...', selectValue:'Seleccionar valor',
   },
   fr: {
-    dashboard:'Tableau de bord', customers:'Clients', contacts:'Contacts',
+    home:'Accueil', salesDashboard:'Tableau des Ventes', dashboard:'Tableau de bord', customers:'Clients', contacts:'Contacts',
     leads:'Prospects', opportunities:'Opportunités', activities:'Activités',
     retail:'Commerce de Détail', retailCustomers:'Clients', retailActivities:'Activités',
     retailProducts:'Produits', manageBookings:'Gérer les Réservations', retailOrders:'Commandes', retailInvoices:'Factures',
@@ -200,7 +200,7 @@ const dict: Record<string, Record<string,string>> = {
     required:'Requis', optional:'Facultatif', selectField:'Sélectionner un champ...', selectValue:'Sélectionner une valeur',
   },
   de: {
-    dashboard:'Dashboard', customers:'Kunden', contacts:'Kontakte',
+    home:'Startseite', salesDashboard:'Verkaufs-Dashboard', dashboard:'Dashboard', customers:'Kunden', contacts:'Kontakte',
     leads:'Interessenten', opportunities:'Chancen', activities:'Aktivitäten',
     retail:'Einzelhandel', retailCustomers:'Kunden', retailActivities:'Aktivitäten',
     retailProducts:'Produkte', manageBookings:'Buchungen Verwalten', retailOrders:'Bestellungen', retailInvoices:'Rechnungen',
@@ -235,7 +235,7 @@ const dict: Record<string, Record<string,string>> = {
     required:'Erforderlich', optional:'Optional', selectField:'Feld auswählen...', selectValue:'Wert auswählen',
   },
   pt: {
-    dashboard:'Painel', customers:'Clientes', contacts:'Contatos',
+    home:'Início', salesDashboard:'Painel de Vendas', dashboard:'Painel', customers:'Clientes', contacts:'Contatos',
     leads:'Leads', opportunities:'Oportunidades', activities:'Atividades',
     retail:'Varejo', retailCustomers:'Clientes', retailActivities:'Atividades',
     retailProducts:'Produtos', manageBookings:'Gerenciar Reservas', retailOrders:'Pedidos', retailInvoices:'Faturas',
@@ -270,7 +270,7 @@ const dict: Record<string, Record<string,string>> = {
     required:'Obrigatório', optional:'Opcional', selectField:'Selecionar campo...', selectValue:'Selecionar valor',
   },
   ja: {
-    dashboard:'ダッシュボード', customers:'顧客', contacts:'連絡先',
+    home:'ホーム', salesDashboard:'販売ダッシュボード', dashboard:'ダッシュボード', customers:'顧客', contacts:'連絡先',
     leads:'リード', opportunities:'商談', activities:'活動',
     retail:'小売', retailCustomers:'顧客', retailActivities:'活動',
     retailProducts:'製品', manageBookings:'予約管理', retailOrders:'注文', retailInvoices:'請求書',
@@ -305,7 +305,7 @@ const dict: Record<string, Record<string,string>> = {
     required:'必須', optional:'任意', selectField:'フィールドを選択...', selectValue:'値を選択',
   },
   zh: {
-    dashboard:'仪表板', customers:'客户', contacts:'联系人',
+    home:'首页', salesDashboard:'销售仪表板', dashboard:'仪表板', customers:'客户', contacts:'联系人',
     leads:'潜在客户', opportunities:'商机', activities:'活动',
     retail:'零售', retailCustomers:'客户', retailActivities:'活动',
     retailProducts:'产品', manageBookings:'管理预订', retailOrders:'订单', retailInvoices:'发票',
@@ -340,7 +340,7 @@ const dict: Record<string, Record<string,string>> = {
     required:'必填', optional:'可选', selectField:'选择字段...', selectValue:'选择值',
   },
   ko: {
-    dashboard:'대시보드', customers:'고객', contacts:'연락처',
+    home:'홈', salesDashboard:'영업 대시보드', dashboard:'대시보드', customers:'고객', contacts:'연락처',
     leads:'리드', opportunities:'기회', activities:'활동',
     retail:'소매', retailCustomers:'고객', retailActivities:'활동',
     retailProducts:'제품', manageBookings:'예약 관리', retailOrders:'주문', retailInvoices:'청구서',
