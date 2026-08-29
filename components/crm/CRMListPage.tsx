@@ -368,7 +368,7 @@ export default function CRMListPage({ page }) {
     currentUserPermissions, permissionsLoaded, appPreferences, appearance, hasPermission,
     fetchOrders, pendingReturnTo, setPendingReturnTo, pendingRecord, setPendingRecord,
     fetchListCount, listViewPrefs, fetchListViewPrefs, saveListViewPrefs,
-    updateRecord,
+    updateRecord, applyDataSecurity,
   } = useApp();
   const { showAlert, showConfirm } = useAlert();
   const lang = appearance?.language || 'en';
@@ -535,7 +535,8 @@ export default function CRMListPage({ page }) {
       if (error) { console.error('[CRMListPage server fetch]', error.message); setServerRows([]); setServerTotal(0); }
       else {
         const idFieldMap = { customers:'customer_number', contacts:'contact_number', products:'product_number', leads:'lead_number', opportunities:'opportunity_number', orders:'order_number', invoices:'invoice_number', activities:'activity_number' };
-        setServerRows(data.map((r) => ({
+        const secured = applyDataSecurity ? applyDataSecurity(data) : data;
+        setServerRows(secured.map((r) => ({
           ...r,
           id: r[idFieldMap[page]] || r.id, displayNumber: r.display_number,
           customerId: r.customer_id, contactId: r.contact_id, primaryContactId: r.primary_contact_id, primaryContact: r.primary_contact,
@@ -632,7 +633,8 @@ export default function CRMListPage({ page }) {
       if (error) { console.error('[CRMListPage board fetch]', error.message); setBoardRows([]); setBoardTotal(0); }
       else {
         const idFieldMap = { customers:'customer_number', contacts:'contact_number', products:'product_number', leads:'lead_number', opportunities:'opportunity_number', orders:'order_number', invoices:'invoice_number', activities:'activity_number' };
-        setBoardRows(data.map((r) => ({
+        const securedBoard = applyDataSecurity ? applyDataSecurity(data) : data;
+        setBoardRows(securedBoard.map((r) => ({
           ...r,
           id: r[idFieldMap[page]] || r.id, displayNumber: r.display_number,
           customerId: r.customer_id, contactId: r.contact_id,

@@ -11,6 +11,7 @@ import SearchableSelect from '@/components/shared/SearchableSelect';
 import ProductImages from '@/components/products/ProductImages';
 import RentalBookingCalendar from '@/components/retail/RentalBookingCalendar';
 import KanbanBoard from '@/components/shared/KanbanBoard';
+import { RetailQuickCreateCustomer } from '@/components/retail/RetailQuickCreateCustomer';
 import { fetchServerPage, timePeriodToRange } from '@/lib/serverList';
 import { useAlert } from '@/components/shared/AlertProvider';
 import { useCustomFields } from '@/lib/useCustomFields';
@@ -198,6 +199,8 @@ export const RETAIL_CONFIG = {
         { key:'reorder_level', label:'Reorder Level', type:'number' },
         { key:'is_rentable', label:'Rentable Item', type:'checkbox', showIf:(prefs)=>prefs?.business_type==='rental',
           desc:'Bookable for a date range — enables the availability calendar and prevents double-booking for this product.' },
+        { key:'rent_per_day', label:'Rent Per Day', type:'number', showIf:(prefs)=>prefs?.business_type==='rental',
+          desc:'The daily rental rate for this item — used to price rental orders instead of the regular sale price above.' },
       ]},
       { icon:'🧾', title:'Tax & Description', fields:[
         { key:'hsn_code', label:'HSN/SAC Code', type:'text' },
@@ -216,7 +219,7 @@ export const RETAIL_CONFIG = {
     listColumns: [
       { h: 'Subject', v: r => r.subject },
       { h: 'Type', v: r => r.activity_type || '-' },
-      { h: 'Customer', v: r => r.customer || '-' },
+      { h: 'Customer', v: r => r.customer_name_resolved || r.customer || '-' },
       { h: 'Date', v: r => r.activity_date || '-' },
       { h: 'Priority', v: r => r.priority || 'Medium' },
     ],
@@ -251,7 +254,7 @@ export const RETAIL_CONFIG = {
     hasLineItems: true,
     listColumns: [
 
-      { h: 'Customer', v: r => r.customer || '-' },
+      { h: 'Customer', v: r => r.customer_name_resolved || r.customer || '-' },
       { h: 'Channel', v: r => r.channel || '-' },
       { h: 'Date', v: r => r.order_date || '-' },
       { h: 'Total', v: r => formatCurrency(r.amount||0), align:'right' },
@@ -290,7 +293,7 @@ export const RETAIL_CONFIG = {
     hasLineItems: true,
     listColumns: [
 
-      { h: 'Customer', v: r => r.customer || '-' },
+      { h: 'Customer', v: r => r.customer_name_resolved || r.customer || '-' },
       { h: 'Order #', v: r => r.order_number || '-', mono:true },
       { h: 'Date', v: r => r.invoice_date || '-' },
       { h: 'Total', v: r => formatCurrency(r.amount||0), align:'right' },
@@ -523,7 +526,12 @@ function RetailLineItems({ items, setItems, products, taxRegime, page }) {
       if (field === 'product_name') {
         const pr = activeProducts.find(x => x.name === val);
         if (pr) {
-          u.unit_price = pr.price; u.list_price = pr.price; u.product_code = pr.sku || '';
+          // Rentable products price by the day, not the regular sale price —
+          // rent_per_day is the per-day rate; falls back to the normal price
+          // if rent_per_day isn't set (e.g. marked rentable before a rate
+          // was configured), so this never silently prices at 0.
+          u.unit_price = (pr.is_rentable && pr.rent_per_day) ? Number(pr.rent_per_day) : pr.price;
+          u.list_price = pr.price; u.product_code = pr.sku || '';
           u.product_id = pr._uuid || pr.id || null;
           // Switching away from a rentable product (or to a non-rentable
           // one) clears any stale booking dates rather than silently
@@ -538,8 +546,20 @@ function RetailLineItems({ items, setItems, products, taxRegime, page }) {
         }
       }
       const { totalTax } = taxRegime.computeLineTax(u);
-      const net = u.quantity * u.unit_price * (1 - u.discount_pct/100);
+      // Rental pricing: for a rentable product with both rental dates set,
+      // the line total is rent_per_day × number of days × quantity — not
+      // just quantity × unit_price the way a normal sale works. Falls back
+      // to the standard calculation for any non-rental line or a rentable
+      // item whose dates aren't both set yet.
+      const rentalDays = (u.rental_start_date && u.rental_end_date)
+        ? Math.max(1, Math.round((new Date(u.rental_end_date+'T00:00:00') - new Date(u.rental_start_date+'T00:00:00')) / 86400000) + 1)
+        : 1;
+      const isRentalPricedLine = !!(u.product_id && activeProducts.find(x => (x._uuid||x.id) === u.product_id)?.is_rentable && u.rental_start_date && u.rental_end_date);
+      const net = isRentalPricedLine
+        ? u.quantity * u.unit_price * rentalDays * (1 - u.discount_pct/100)
+        : u.quantity * u.unit_price * (1 - u.discount_pct/100);
       u.extended_price = net + totalTax;
+      u.rental_days = isRentalPricedLine ? rentalDays : undefined; // surfaced in the grid for transparency, not a DB column
       updatedRow = u;
       return u;
     }));
@@ -697,6 +717,9 @@ function RetailLineItems({ items, setItems, products, taxRegime, page }) {
                   ))}
                   <td className="px-3 py-3 text-right font-bold text-[#0F172A] text-sm">
                     {formatCurrency(row.extended_price || 0)}
+                    {row.rental_days > 0 && (
+                      <div className="text-[10px] font-normal text-purple-500">× {row.rental_days} day{row.rental_days!==1?'s':''}</div>
+                    )}
                   </td>
                   {customFields.map(f=><td key={f.id} className="px-3 py-3"><LineItemCustomFieldInput field={f} value={(row.custom_data||{})[f.api_name]} onChange={v=>updCustom(idx,f.api_name,v)}/></td>)}
                   <td className="px-3 py-3 text-center">
@@ -804,7 +827,7 @@ function buildRetailPrintHTML(t, record, items, products) {
     return `<tr style="background:${rowBg}">
       ${t.col_sno ? `<td style="padding:3px 4px;font-size:${fs(10)}px">${i+1}</td>` : ''}
       ${showImages ? `<td style="padding:3px 4px">${findProductImage(item) ? `<img src="${findProductImage(item)}" style="width:28px;height:28px;object-fit:cover;border-radius:4px;border:1px solid #E5E7EB"/>` : ''}</td>` : ''}
-      ${t.col_item!==false ? `<td style="padding:3px 4px;font-size:${fs(11)}px">${item.product_name||item.product||''}</td>` : ''}
+      ${t.col_item!==false ? `<td style="padding:3px 4px;font-size:${fs(11)}px">${item.product_name||item.product||''}${item.rental_start_date && item.rental_end_date ? `<div style="font-size:${fs(8)}px;color:${accent};margin-top:2px">📅 ${item.rental_start_date} to ${item.rental_end_date}</div>` : ''}</td>` : ''}
       ${t.col_unit ? `<td style="padding:3px 4px;text-align:center;font-size:${fs(10)}px">${item.unit||''}</td>` : ''}
       ${t.col_qty!==false ? `<td style="padding:3px 4px;text-align:right;font-size:${fs(11)}px">${qty}</td>` : ''}
       ${t.col_price!==false ? `<td style="padding:3px 4px;text-align:right;font-size:${fs(11)}px">${fmt(price)}</td>` : ''}
@@ -1198,51 +1221,8 @@ function RetailCustomer360({ customer, onNavigate, onOpenCreate }) {
 }
 
 // ─── Retail Quick Create Customer ────────────────────────────────────────────
-function RetailQuickCreateCustomer({ prefillName, onCreated, onClose }) {
-  const { createRetailRecord, retailCustomers, appearance } = useApp();
-  const { showAlert, showConfirm } = useAlert();
-  const lang = appearance?.language || 'en';
-  const [form, setForm] = useState({ name: prefillName||'', phone:'', email:'' });
-  const [saving, setSaving] = useState(false);
-
-  async function save() {
-    if (!form.name.trim()) { showAlert('Name is required', { variant:'warning' }); return; }
-    // Duplicate check now happens centrally in createRetailRecord — covers
-    // this quick-create flow and every other retail customer creation path
-    // consistently, without prompting twice.
-    setSaving(true);
-    const rec = await createRetailRecord('retailCustomers', {
-      ...form, status:'Active', loyalty_points:0, loyalty_tier:'Standard',
-    }, []);
-    setSaving(false);
-    if (rec) onCreated(rec._uuid || rec.id, rec.name, rec.phone || form.phone || '');
-  }
-
-  const iCls = 'w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm text-[#0F172A] focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white';
-
-  return (
-    <div className="space-y-3">
-      <div>
-        <label className="block text-xs font-bold uppercase tracking-wider text-gray-400 mb-1.5">Full Name *</label>
-        <input value={form.name} onChange={e=>setForm(p=>({...p,name:e.target.value}))} className={iCls} placeholder="Customer name" autoFocus/>
-      </div>
-      <div>
-        <label className="block text-xs font-bold uppercase tracking-wider text-gray-400 mb-1.5">Phone</label>
-        <input value={form.phone} onChange={e=>setForm(p=>({...p,phone:e.target.value}))} className={iCls} placeholder="+91 98765 43210"/>
-      </div>
-      <div>
-        <label className="block text-xs font-bold uppercase tracking-wider text-gray-400 mb-1.5">Email</label>
-        <input value={form.email} onChange={e=>setForm(p=>({...p,email:e.target.value}))} className={iCls} placeholder="customer@example.com"/>
-      </div>
-      <div className="flex gap-3 pt-2">
-        <button onClick={onClose} className="flex-1 border border-gray-200 text-gray-600 py-2.5 rounded-xl text-sm font-semibold hover:bg-gray-50">{t(lang,'cancel')}</button>
-        <button onClick={save} disabled={saving} className="flex-2 bg-gradient-to-r from-[#0F172A] to-blue-800 text-white px-6 py-2.5 rounded-xl text-sm font-bold disabled:opacity-50 shadow hover:opacity-90">
-          {saving ? t(lang,'loading') : `+ ${t(lang,'create')} ${t(lang,'customer')}`}
-        </button>
-      </div>
-    </div>
-  );
-}
+// RetailQuickCreateCustomer now lives in its own file (see import above) —
+// shared with RentalBookingCalendar.tsx without a circular import.
 
 // ─── Detail Panel ───────────────────────────────────────────────────────────
 function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo, onC360Navigate, onC360Create }) {
@@ -1375,6 +1355,8 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo, on
   };
 
   const handleSave = async (andClose=false) => {
+    setSaving(true);
+    try {
     // Fix 11a: Retail invoice status 'Paid' requires payment_status = 'Paid'
     if (page==='retailInvoices' && edited.status==='Paid' && edited.payment_status!=='Paid') {
       showAlert('Cannot mark invoice as Paid until Payment Status is set to Paid.', { variant:'warning' });
@@ -1444,8 +1426,6 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo, on
       showAlert(`Please fix the following: ${activeErrors.map(([,e])=>e).join(', ')}`, { variant:'warning', title:'Fix Required' });
       return;
     }
-    setSaving(true);
-    try {
       // Strip client-side computed fields that don't exist as DB columns
       // Strip client-side computed fields — keep custom_data as it's a real DB column
       const { displayNumber, _uuid, ...editedClean } = edited;
@@ -2469,7 +2449,7 @@ export default function RetailListPage({ page }) {
     deleteSavedSearch, setDefaultSavedSearch, currentUser, appPreferences,
     createRetailInvoiceFromOrder, currentUserPermissions, permissionsLoaded,
     fetchListCount, listViewPrefs, fetchListViewPrefs, saveListViewPrefs, appearance,
-    updateRetailRecord,
+    updateRetailRecord, applyDataSecurity,
   } = useApp();
   const lang = appearance?.language || 'en';
 
@@ -2660,7 +2640,35 @@ export default function RetailListPage({ page }) {
       if (cancelled) return;
       if (error) { console.error('[RetailListPage server fetch]', error.message); setServerRows([]); setServerTotal(0); }
       else {
-        setServerRows(data.map((r) => ({ ...r, id: r[cfg.idField], _uuid: r.id, displayNumber: r.display_number })));
+        const secured = applyDataSecurity ? applyDataSecurity(data) : data;
+        setServerRows(secured.map((r) => {
+          // Fallback: some records (mobile-created, quick-created, etc.)
+          // only ever set customer_id, never the raw customer name field —
+          // the same root cause already found and fixed for the booking
+          // calendar's "Unknown Customer" issue. Resolves the name from the
+          // still-loaded retailCustomers list when the raw field is empty,
+          // rather than leaving the list view blank while detail views
+          // (which already have similar fallback logic) show it correctly.
+          let customerName = r.customer;
+          if (!customerName && r.customer_id) {
+            const match = retailCustomers.find(c => c._uuid === r.customer_id || c.id === r.customer_id);
+            if (match) customerName = match.name;
+          }
+          // Second fallback: match by phone number, which is reliably
+          // captured on these records even when customer_id never got
+          // linked (e.g. a walk-in sale where phone was typed directly).
+          if (!customerName && r.customer_phone) {
+            const normalizedPhone = String(r.customer_phone).replace(/\D/g,'');
+            const match = normalizedPhone && retailCustomers.find(c => c.phone && String(c.phone).replace(/\D/g,'') === normalizedPhone);
+            if (match) customerName = match.name;
+          }
+          // Last resort: if no name can be resolved anywhere, show the
+          // phone number itself rather than a bare dash — genuinely more
+          // useful than nothing when a walk-in customer's phone was
+          // captured but no customer record was ever created/linked.
+          const displayCustomer = customerName || r.customer || (r.customer_phone ? `📞 ${r.customer_phone}` : '');
+          return { ...r, id: r[cfg.idField], _uuid: r.id, displayNumber: r.display_number, customer: displayCustomer, customer_name_resolved: displayCustomer };
+        }));
         setServerTotal(totalCount);
       }
       setServerLoading(false);
@@ -2752,7 +2760,21 @@ export default function RetailListPage({ page }) {
       if (cancelled) return;
       if (error) { console.error('[RetailListPage board fetch]', error.message); setBoardRows([]); setBoardTotal(0); }
       else {
-        setBoardRows(data.map((r) => ({ ...r, id: r[cfg.idField], _uuid: r.id, displayNumber: r.display_number })));
+        const securedBoard = applyDataSecurity ? applyDataSecurity(data) : data;
+        setBoardRows(securedBoard.map((r) => {
+          let customerName = r.customer;
+          if (!customerName && r.customer_id) {
+            const match = retailCustomers.find(c => c._uuid === r.customer_id || c.id === r.customer_id);
+            if (match) customerName = match.name;
+          }
+          if (!customerName && r.customer_phone) {
+            const normalizedPhone = String(r.customer_phone).replace(/\D/g,'');
+            const match = normalizedPhone && retailCustomers.find(c => c.phone && String(c.phone).replace(/\D/g,'') === normalizedPhone);
+            if (match) customerName = match.name;
+          }
+          const displayCustomer = customerName || r.customer || (r.customer_phone ? `📞 ${r.customer_phone}` : '');
+          return { ...r, id: r[cfg.idField], _uuid: r.id, displayNumber: r.display_number, customer: displayCustomer, customer_name_resolved: displayCustomer };
+        }));
         setBoardTotal(totalCount);
       }
       setBoardLoading(false);

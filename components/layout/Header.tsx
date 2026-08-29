@@ -11,6 +11,7 @@ function NotificationBell() {
     notifications, markNotificationRead, markAllNotificationsRead,
     leads, opportunities, customers, contacts, orders,
     invoices, quotations, activities, products,
+    retailOrders, retailInvoices, retailCustomers, retailProducts, retailActivities,
     appPreferences,
   } = useApp();
   const isB2C = appPreferences?.b2c_mode === true;
@@ -54,6 +55,10 @@ function NotificationBell() {
     activity: 'activities', activities: 'activities',
     product: 'products', products: 'products',
     workflow: null, assignment: null, sla: null, approval: 'approvals',
+    // Previously missing — a retail order/invoice notification (like the
+    // rental return reminder) had no page to navigate to when clicked.
+    retailOrders: 'retailOrders', retailInvoices: 'retailInvoices',
+    retailCustomers: 'retailCustomers', retailProducts: 'retailProducts', retailActivities: 'retailActivities',
   };
 
   const TYPE_ICONS = {
@@ -80,6 +85,7 @@ function NotificationBell() {
     const RECORD_ARRAYS: Record<string, any[]> = {
       leads, opportunities, customers, contacts, orders,
       invoices, quotations, activities, products,
+      retailOrders, retailInvoices, retailCustomers, retailProducts, retailActivities,
     };
     const arr = RECORD_ARRAYS[page] || [];
     const fullRecord = arr.find(r =>

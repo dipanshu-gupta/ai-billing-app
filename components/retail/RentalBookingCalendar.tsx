@@ -7,6 +7,7 @@ import { useAlert } from '@/components/shared/AlertProvider';
 import { formatDate, formatDisplayNumber } from '@/lib/utils';
 import { THEMES } from '@/lib/i18n';
 import SearchableSelect from '@/components/shared/SearchableSelect';
+import { RetailQuickCreateCustomer } from '@/components/retail/RetailQuickCreateCustomer';
 
 const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 
@@ -50,6 +51,7 @@ export default function RentalBookingCalendar({ productId, productName, productP
   const [customerName, setCustomerName] = useState('');
   const [creating, setCreating] = useState(false);
   const [successResult, setSuccessResult] = useState(null); // created order record, once created
+  const [quickCreateCustomer, setQuickCreateCustomer] = useState(false);
 
   const monthStart = monthCursor;
   const monthEnd = new Date(monthCursor.getFullYear(), monthCursor.getMonth() + 1, 0);
@@ -114,7 +116,7 @@ export default function RentalBookingCalendar({ productId, productName, productP
       setLoading(false);
     })();
     return () => { cancelled = true; };
-  }, [supabase, productId, monthStart.getTime()]);
+  }, [supabase, productId, monthStart.getTime(), tenant?.id]);
 
   // Build the calendar as WEEK ROWS (not a flat day grid) — this is what
   // makes spanning multi-day bars possible, the same technique Google
@@ -284,6 +286,7 @@ export default function RentalBookingCalendar({ productId, productName, productP
       );
 
   return (
+    <>
     <Wrapper>
         <div className="px-6 py-4 flex items-center justify-between flex-shrink-0" style={{background:`linear-gradient(to right,${themeObj.colors[0]},${themeObj.colors[1]})`}}>
           <div>
@@ -433,6 +436,8 @@ export default function RentalBookingCalendar({ productId, productName, productP
                         setCustomerName(c?.name || ''); setCustomerId(v);
                       }}
                       options={retailCustomers.map(c => ({ value: c._uuid || c.id, label: c.name, sub: c.phone || c.email || '' }))}
+                      onCreateNew={(name) => setQuickCreateCustomer(name || true)}
+                      createLabel="Create Customer"
                       placeholder="Search customers to complete the booking..."
                     />
                   </div>
@@ -447,5 +452,18 @@ export default function RentalBookingCalendar({ productId, productName, productP
           </>
         )}
     </Wrapper>
+    {quickCreateCustomer && (
+      <div className="fixed inset-0 bg-black/60 z-[10000] flex items-center justify-center p-4" onClick={()=>setQuickCreateCustomer(false)}>
+        <div className="bg-white rounded-[24px] shadow-2xl w-full max-w-md p-6" onClick={e=>e.stopPropagation()}>
+          <h3 className="font-bold text-lg text-[#0F172A] mb-4">+ New Customer</h3>
+          <RetailQuickCreateCustomer
+            prefillName={typeof quickCreateCustomer === 'string' ? quickCreateCustomer : ''}
+            onCreated={(id, name) => { setCustomerId(id); setCustomerName(name); setQuickCreateCustomer(false); }}
+            onClose={() => setQuickCreateCustomer(false)}
+          />
+        </div>
+      </div>
+    )}
+    </>
   );
 }

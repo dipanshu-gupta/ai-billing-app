@@ -326,6 +326,7 @@ function UsersPanel() {
       if (password.length < 6) { showAlert('Password must be at least 6 characters.', { variant:'warning' }); return; }
     }
     setSaving(true);
+    try {
     if (editing) {
       if (editing.auth_user_id && password && password.length >= 6) {
         // Has auth — reset password only
@@ -352,7 +353,7 @@ function UsersPanel() {
           if (json.success && json.auth_user_id) {
             // Update enterprise_user with auth_user_id
             await saveEnterpriseUser({ ...form, auth_user_id: json.auth_user_id }, editing.id, undefined);
-            setSaving(false); setOpen(false); setPassword(''); setConfirmPassword('');
+            setOpen(false); setPassword(''); setConfirmPassword('');
             return;
           } else {
             showAlert('Failed to create auth: ' + (json.error || 'Unknown'), { variant:'danger', title:'Error' });
@@ -364,7 +365,6 @@ function UsersPanel() {
     } else {
       await saveEnterpriseUser(form, undefined, password);
     }
-    setSaving(false);
     setOpen(false);
     setPassword('');
     setConfirmPassword('');
@@ -384,6 +384,12 @@ function UsersPanel() {
           }
         } catch(e) { console.warn('user_roles save:', e); }
       }
+    }
+    } catch (e: any) {
+      console.error('[AdminToolsPage] Create/Save User', e);
+      showAlert('Save failed: ' + (e?.message || 'An unexpected error occurred.'), { variant:'danger', title:'Save Failed' });
+    } finally {
+      setSaving(false);
     }
   };
 
