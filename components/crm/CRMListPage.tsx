@@ -3,6 +3,8 @@
 
 import { useState, useMemo, useEffect, useRef } from 'react';
 import { useApp } from '@/context/AppContext';
+import { useTenant } from '@/context/TenantContext';
+import { fetchServerPage, timePeriodToRange } from '@/lib/serverList';
 import { getPageLabel, getStatusOptions, getStatusColor, formatCurrency, formatDate, formatDisplayNumber, PAGE_DISPLAY_PREFIX, getObjectFields } from '@/lib/utils';
 import RecordDetailPanel from '@/components/crm/RecordDetailPanel';
 import CreateRecordModal from '@/components/crm/CreateRecordModal';
@@ -342,7 +344,22 @@ function CRMBoardView({ page, records, onCardClick, updateRecord }) {
   );
 }
 
+// Converts a camelCase JS field name to its snake_case database column name
+// — verified against the actual fetchXxx()/updateRecord() mappings already
+// in AppContext.tsx (gstNumber->gst_number, activityType->activity_type,
+// expectedCloseDate->expected_close_date, linkedIn->linked_in, and others)
+// before relying on this generically; the conversion is consistent across
+// every CRM field checked. Fields already snake_case or single-word (name,
+// status, owner, amount, ...) pass through unchanged either way.
+const camelToSnakeCol = (s) => s.replace(/([A-Z])/g, '_$1').toLowerCase();
+
+// A CRM table's real database table name is identical to its page key for
+// every object CRMListPage handles (confirmed against LIST_PAGE_TABLE in
+// AppContext.tsx) — no separate mapping needed here, unlike retail objects.
+const CRM_SEARCH_CANDIDATES = ['name', 'customer', 'email', 'phone', 'subject'];
+
 export default function CRMListPage({ page }) {
+  const { supabase } = useTenant();
   const {
     customers, products, leads, opportunities, orders, invoices, contacts, activities,
     enterpriseUsers, savedSearches, fetchSavedSearches,
@@ -478,14 +495,65 @@ export default function CRMListPage({ page }) {
     return () => clearTimeout(t);
   }, [search]);
 
-  // Server-side exact row count — accurate even though only LIST_FETCH_LIMIT
-  // rows are loaded into `customers`/`orders`/etc. client-side (see the
-  // pagination TODO in AppContext.tsx).
+  // ── Server-side search, filter, sort, and pagination ────────────────────
+  // Replaces filtering/sorting/paginating the fixed, capped client-side
+  // snapshot (customers/leads/opportunities/etc. from the global fetchXxx()
+  // functions) in JavaScript, which silently hid any record beyond the load
+  // cap from search and filters entirely. Queries the database fresh with
+  // the CURRENT search/filter/sort/page state every time any of them
+  // changes, so results stay correct regardless of total record count.
+  const [serverRows, setServerRows] = useState([]);
+  const [serverLoading, setServerLoading] = useState(false);
   useEffect(() => {
+    if (!supabase || !page) return;
     let cancelled = false;
-    fetchListCount(page).then(c => { if (!cancelled) setServerTotal(c); });
+    setServerLoading(true);
+    const { from: dateFrom, to: dateTo } = timePeriodToRange(timePeriod);
+    const objectFields = getObjectFields(page);
+    const searchColumns = CRM_SEARCH_CANDIDATES.filter(f => objectFields.includes(f) || f === 'name');
+    const mappedAdvFilters = advFilters
+      .filter(c => c.field && (['is_empty','is_not_empty','is_true','is_false'].includes(c.op) || (c.value !== undefined && c.value !== '')))
+      .map(c => ({ column: camelToSnakeCol(c.field), op: c.op, value: c.value }));
+    fetchServerPage(supabase, {
+      table: page, // CRM table names match their page keys exactly (confirmed against LIST_PAGE_TABLE)
+      searchTerm: debouncedSearch,
+      searchColumns,
+      statusColumn: 'status',
+      statusFilter,
+      ownerColumn: 'owner',
+      ownerIdColumn: 'owner_id',
+      ownerFilter,
+      dateColumn: 'created_at', // CRM's own time-period filter always used created_at, no per-object variation
+      dateFrom, dateTo,
+      advFilters: mappedAdvFilters,
+      sortColumn: sortField ? camelToSnakeCol(sortField) : 'created_at',
+      sortAscending: sortDir === 'asc',
+      page: currentPage,
+      pageSize,
+    }).then(({ data, error, totalCount }) => {
+      if (cancelled) return;
+      if (error) { console.error('[CRMListPage server fetch]', error.message); setServerRows([]); setServerTotal(0); }
+      else {
+        const idFieldMap = { customers:'customer_number', contacts:'contact_number', products:'product_number', leads:'lead_number', opportunities:'opportunity_number', orders:'order_number', invoices:'invoice_number', activities:'activity_number' };
+        setServerRows(data.map((r) => ({
+          ...r,
+          id: r[idFieldMap[page]] || r.id, displayNumber: r.display_number,
+          customerId: r.customer_id, contactId: r.contact_id, primaryContactId: r.primary_contact_id, primaryContact: r.primary_contact,
+          isPrimary: r.is_primary, billingAddress: r.billing_address, shippingAddress: r.shipping_address,
+          postalCode: r.postal_code, gstNumber: r.gst_number, linkedIn: r.linked_in,
+          productFamily: r.product_family, taxRate: r.tax_rate,
+          expectedCloseDate: r.expected_close_date, closeDate: r.close_date,
+          paymentTerms: r.payment_terms, deliveryDate: r.delivery_date, dueDate: r.due_date,
+          activityType: r.activity_type, activityDate: r.activity_date,
+        })));
+        setServerTotal(totalCount);
+      }
+      setServerLoading(false);
+    });
     return () => { cancelled = true; };
-  }, [page]);
+  }, [supabase, page, debouncedSearch, statusFilter, timePeriod, advFilters, ownerFilter, sortField, sortDir, currentPage, pageSize]);
+
+  useEffect(() => { setCurrentPage(1); }, [debouncedSearch, statusFilter, timePeriod, advFilters, ownerFilter, sortField, sortDir]);
 
   useEffect(() => {
     if (!defaultLoaded || !savedSearches.length) return;
@@ -519,53 +587,64 @@ export default function CRMListPage({ page }) {
     }
   };
 
-  const filtered = useMemo(() => {
-    let data = getData();
-    if (debouncedSearch.trim()) {
-      const q = debouncedSearch.toLowerCase();
-      const fmtNum = r => r.displayNumber ? formatDisplayNumber(PAGE_DISPLAY_PREFIX[page]||'REC', r.displayNumber) : '';
-      data = data.filter(r => [r.name, r.id, r.customer, r.email, r.subject, r.phone, fmtNum(r)].some(v => String(v||'').toLowerCase().includes(q)));
-    }
-    if (statusFilter !== 'All') data = data.filter(r => r.status === statusFilter);
-    data = applyTimePeriod(data, timePeriod);
-    // Advanced filters — every condition must match (AND), covering any field
-    // on the object (not a single hardcoded field like before).
-    advFilters.forEach(cond => {
-      if (!cond.field) return;
-      const needsValue = !['is_empty','is_not_empty','is_true','is_false'].includes(cond.op);
-      if (needsValue && (cond.value===undefined || cond.value==='')) return;
-      data = data.filter(r => matchesCondition(r, cond));
-    });
-    if (ownerFilter) data = data.filter(r => r.owner === ownerFilter || r.owner_id === ownerFilter);
-    return data;
-  }, [page, customers, products, leads, opportunities, orders, invoices, contacts, activities, debouncedSearch, statusFilter, timePeriod, advFilters, ownerFilter]);
-
-  // Sorting — applied after filtering, before pagination.
-  const sorted = useMemo(() => {
-    if (!sortField) return filtered;
-    const meta = fieldMeta.find(f => f.key === sortField);
-    const dir = sortDir === 'desc' ? -1 : 1;
-    return [...filtered].sort((a, b) => {
-      const av = a[sortField], bv = b[sortField];
-      if (av == null && bv == null) return 0;
-      if (av == null) return 1; if (bv == null) return -1;
-      if (meta?.type === 'number') return (Number(av) - Number(bv)) * dir;
-      if (meta?.type === 'date')   return (new Date(av).getTime() - new Date(bv).getTime()) * dir;
-      return String(av).localeCompare(String(bv)) * dir;
-    });
-  }, [filtered, sortField, sortDir, fieldMeta]);
-
   const toggleSort = (key) => {
     if (sortField !== key) { setSortField(key); setSortDir('asc'); }
     else if (sortDir === 'asc') setSortDir('desc');
     else { setSortField(''); setSortDir('asc'); }
   };
 
-  // Pagination
-  const totalRecords = sorted.length;
+  // Pagination — server-driven; see the fetch effect above.
+  const totalRecords = serverTotal ?? 0;
   const totalPages   = Math.max(1, Math.ceil(totalRecords / pageSize));
   const safePage     = Math.min(currentPage, totalPages);
-  const pagedRecords = sorted.slice((safePage - 1) * pageSize, safePage * pageSize);
+  const pagedRecords = serverRows;
+
+  // Board (Kanban) view needs a larger, unpaginated set grouped by status
+  // rather than one table page — fetched separately, same search/filter
+  // criteria, capped for practical drag-and-drop UX.
+  const CRM_BOARD_FETCH_CAP = 2000;
+  const [boardRows, setBoardRows] = useState([]);
+  const [boardTotal, setBoardTotal] = useState(0);
+  useEffect(() => {
+    if (viewMode !== 'board' || !supabase || !page) return;
+    let cancelled = false;
+    const { from: dateFrom, to: dateTo } = timePeriodToRange(timePeriod);
+    const objectFields = getObjectFields(page);
+    const searchColumns = CRM_SEARCH_CANDIDATES.filter(f => objectFields.includes(f) || f === 'name');
+    const mappedAdvFilters = advFilters
+      .filter(c => c.field && (['is_empty','is_not_empty','is_true','is_false'].includes(c.op) || (c.value !== undefined && c.value !== '')))
+      .map(c => ({ column: camelToSnakeCol(c.field), op: c.op, value: c.value }));
+    fetchServerPage(supabase, {
+      table: page,
+      searchTerm: debouncedSearch,
+      searchColumns,
+      statusFilter: 'All', // board itself splits by status into columns
+      ownerFilter,
+      dateColumn: 'created_at',
+      dateFrom, dateTo,
+      advFilters: mappedAdvFilters,
+      sortColumn: 'created_at',
+      sortAscending: false,
+      page: 1,
+      pageSize: CRM_BOARD_FETCH_CAP,
+    }).then(({ data, error, totalCount }) => {
+      if (cancelled) return;
+      if (error) { console.error('[CRMListPage board fetch]', error.message); setBoardRows([]); setBoardTotal(0); }
+      else {
+        const idFieldMap = { customers:'customer_number', contacts:'contact_number', products:'product_number', leads:'lead_number', opportunities:'opportunity_number', orders:'order_number', invoices:'invoice_number', activities:'activity_number' };
+        setBoardRows(data.map((r) => ({
+          ...r,
+          id: r[idFieldMap[page]] || r.id, displayNumber: r.display_number,
+          customerId: r.customer_id, contactId: r.contact_id,
+          activityType: r.activity_type, activityDate: r.activity_date,
+          expectedCloseDate: r.expected_close_date, closeDate: r.close_date,
+          deliveryDate: r.delivery_date, dueDate: r.due_date,
+        })));
+        setBoardTotal(totalCount);
+      }
+    });
+    return () => { cancelled = true; };
+  }, [viewMode, supabase, page, debouncedSearch, timePeriod, advFilters, ownerFilter]);
 
   const pageLabel    = getPageLabel(page);
   const activeCount  = (search?1:0) + (statusFilter!=='All'?1:0) + (timePeriod?1:0) + advFilters.filter(c=>c.field).length + (ownerFilter?1:0);
@@ -593,7 +672,7 @@ export default function CRMListPage({ page }) {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-[#0F172A] capitalize">{page}</h1>
-          <p className="text-gray-500 text-sm mt-0.5">{filtered.length} of {getData().length} record{getData().length!==1?'s':''}</p>
+          <p className="text-gray-500 text-sm mt-0.5">{serverLoading ? 'Loading…' : `${totalRecords.toLocaleString()} record${totalRecords!==1?'s':''}`}</p>
         </div>
         <div className="flex items-center gap-3">
           {activeCount > 0 && (
@@ -725,12 +804,19 @@ export default function CRMListPage({ page }) {
       </div>
 
       {viewMode === 'board' ? (
-        <CRMBoardView
-          page={page}
-          records={sorted}
-          onCardClick={setSelectedRecord}
-          updateRecord={updateRecord}
-        />
+        <div>
+          {boardTotal > CRM_BOARD_FETCH_CAP && (
+            <p className="text-xs text-amber-600 font-semibold mb-2">
+              Showing the {CRM_BOARD_FETCH_CAP.toLocaleString()} most recent of {boardTotal.toLocaleString()} matching records — narrow with search or filters to see others on the board.
+            </p>
+          )}
+          <CRMBoardView
+            page={page}
+            records={boardRows}
+            onCardClick={setSelectedRecord}
+            updateRecord={updateRecord}
+          />
+        </div>
       ) : (
       <>
       {/* Table */}
@@ -753,7 +839,7 @@ export default function CRMListPage({ page }) {
               </tr>
             </thead>
             <tbody>
-              {filtered.length === 0 ? (
+              {pagedRecords.length === 0 ? (
                 <tr>
                   <td colSpan={visibleColumns.length+1} className="px-5 py-16 text-center">
                     <div className="text-5xl mb-3">🔍</div>
@@ -828,14 +914,6 @@ export default function CRMListPage({ page }) {
             </tbody>
           </table>
         </div>
-
-        {/* Truncation warning — loaded rows capped at LIST_FETCH_LIMIT but the table has more */}
-        {serverTotal !== null && getData().length >= 500 && serverTotal > getData().length && (
-          <div className="px-6 py-2.5 bg-amber-50 border-t border-amber-100 flex items-center gap-2 text-xs text-amber-700">
-            <span>⚠️</span>
-            <span>Showing the {getData().length.toLocaleString()} most recent {pageLabel.toLowerCase()}s of <strong>{serverTotal.toLocaleString()}</strong> total — search and filters only apply to loaded records. Use search to find specific older records.</span>
-          </div>
-        )}
 
         {/* Pagination footer */}
         {totalRecords > 0 && (

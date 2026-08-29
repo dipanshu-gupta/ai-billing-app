@@ -11,6 +11,7 @@ import SearchableSelect from '@/components/shared/SearchableSelect';
 import ProductImages from '@/components/products/ProductImages';
 import RentalBookingCalendar from '@/components/retail/RentalBookingCalendar';
 import KanbanBoard from '@/components/shared/KanbanBoard';
+import { fetchServerPage, timePeriodToRange } from '@/lib/serverList';
 import { useAlert } from '@/components/shared/AlertProvider';
 import { useCustomFields } from '@/lib/useCustomFields';
 import LineItemCustomFieldInput from '@/components/shared/LineItemCustomFieldInput';
@@ -2448,7 +2449,18 @@ function RetailBoardView({ page, cfg, records, onCardClick, updateRetailRecord }
   );
 }
 
+// RETAIL_CONFIG (above) doesn't carry the actual database table name — that
+// lives in a separate map inside AppContext.tsx (RETAIL_TABLE_MAP) that
+// isn't exported. This is the same table names, just accessible from here
+// for the server-side query.
+const RETAIL_TABLE_NAME = {
+  retailCustomers: 'retail_customers', retailProducts: 'retail_products',
+  retailActivities: 'retail_activities', retailOrders: 'retail_orders',
+  retailInvoices: 'retail_invoices',
+};
+
 export default function RetailListPage({ page }) {
+  const { supabase } = useTenant();
   const {
     retailCustomers, retailProducts, retailActivities, retailOrders, retailInvoices,
     fetchRetailCustomers, fetchRetailProducts, fetchRetailActivities, fetchRetailOrders, fetchRetailInvoices,
@@ -2609,13 +2621,57 @@ export default function RetailListPage({ page }) {
     return () => clearTimeout(t);
   }, [search]);
 
-  // Server-side exact row count — accurate even though only LIST_FETCH_LIMIT
-  // rows are loaded into retailCustomers/retailOrders/etc. client-side.
+  // ── Server-side search, filter, sort, and pagination ────────────────────
+  // Replaces the old approach of filtering/sorting/paginating the fixed,
+  // capped client-side snapshot (data, from the global fetchRetailXxx()
+  // functions) in JavaScript. That approach silently hid any record beyond
+  // the load cap from search and filters entirely. This queries the
+  // database fresh, with the CURRENT search/filter/sort/page state, every
+  // time any of them changes — correct regardless of how many total
+  // records the tenant has.
+  const [serverRows, setServerRows] = useState([]);
+  const [serverLoading, setServerLoading] = useState(false);
+  const dateFieldForPage = DATE_FIELD[page] || 'created_at';
   useEffect(() => {
+    if (!supabase || !cfg) return;
     let cancelled = false;
-    fetchListCount(page).then(c => { if (!cancelled) setServerTotal(c); });
+    setServerLoading(true);
+    const { from: dateFrom, to: dateTo } = timePeriodToRange(timePeriod);
+    const mappedAdvFilters = advFilters
+      .filter(c => c.field && (['is_empty','is_not_empty','is_true','is_false'].includes(c.op) || (c.value !== undefined && c.value !== '')))
+      .map(c => ({ column: c.field, op: c.op, value: c.value }));
+    fetchServerPage(supabase, {
+      table: RETAIL_TABLE_NAME[page],
+      searchTerm: debouncedSearch,
+      searchColumns: cfg.searchFields || [],
+      statusColumn: 'status',
+      statusFilter,
+      ownerColumn: 'owner',
+      ownerIdColumn: 'owner_id',
+      ownerFilter,
+      dateColumn: dateFieldForPage,
+      dateFrom, dateTo,
+      advFilters: mappedAdvFilters,
+      sortColumn: sortField || 'created_at',
+      sortAscending: sortDir === 'asc',
+      page: currentPage,
+      pageSize,
+    }).then(({ data, error, totalCount }) => {
+      if (cancelled) return;
+      if (error) { console.error('[RetailListPage server fetch]', error.message); setServerRows([]); setServerTotal(0); }
+      else {
+        setServerRows(data.map((r) => ({ ...r, id: r[cfg.idField], _uuid: r.id, displayNumber: r.display_number })));
+        setServerTotal(totalCount);
+      }
+      setServerLoading(false);
+    });
     return () => { cancelled = true; };
-  }, [page]);
+  }, [supabase, page, cfg, debouncedSearch, statusFilter, timePeriod, advFilters, ownerFilter, sortField, sortDir, currentPage, pageSize]);
+
+  // Reset to page 1 whenever a filter/search/sort actually changes the
+  // result set — otherwise a user could land on a now-empty page 4 after
+  // narrowing a filter that only has 2 pages of results.
+  useEffect(() => { setCurrentPage(1); }, [debouncedSearch, statusFilter, timePeriod, advFilters, ownerFilter, sortField, sortDir]);
 
   useEffect(() => {
     if (!defaultLoaded || !savedSearches?.length) return;
@@ -2650,60 +2706,59 @@ export default function RetailListPage({ page }) {
 
   const currentFilters = { search, status: statusFilter, timePeriod, advFilters, owner: ownerFilter, sortField, sortDir };
 
-  const filtered = useMemo(() => {
-    let rows = data;
-    if (debouncedSearch.trim()) {
-      const q = debouncedSearch.trim().toLowerCase();
-      const fmtDisplayNum = r => r.displayNumber
-        ? formatDisplayNumber(PAGE_DISPLAY_PREFIX[page]||'REC', r.displayNumber)
-        : (r.display_number ? formatDisplayNumber(PAGE_DISPLAY_PREFIX[page]||'REC', r.display_number) : '');
-      rows = rows.filter(r => [
-        r.display_number, r[cfg?.idField], fmtDisplayNum(r),
-        r.name, r.email, r.phone,
-        r.customer, r.customer_phone, r.subject, r.sku, r.barcode,
-        r.brand, r.category, r.channel,
-      ].some(v => String(v||'').toLowerCase().includes(q)));
-    }
-    if (statusFilter !== 'All') rows = rows.filter(r => r.status === statusFilter);
-    rows = applyTimePeriodFilter(rows);
-    // Advanced filters — every condition must match (AND), covering any field
-    // on the object (not a small hardcoded subset like before).
-    advFilters.forEach(cond => {
-      if (!cond.field) return;
-      const needsValue = !['is_empty','is_not_empty','is_true','is_false'].includes(cond.op);
-      if (needsValue && (cond.value===undefined || cond.value==='')) return;
-      rows = rows.filter(r => retailMatchesCondition(r, cond));
-    });
-    if (ownerFilter) rows = rows.filter(r => r.owner === ownerFilter || r.owner_id === ownerFilter);
-    return rows;
-  }, [data, debouncedSearch, statusFilter, timePeriod, advFilters, ownerFilter]);
-
-  // Sorting — applied after filtering, before pagination.
-  const sorted = useMemo(() => {
-    if (!sortField) return filtered;
-    const meta = fieldMeta.find(f => f.key === sortField);
-    const dir = sortDir === 'desc' ? -1 : 1;
-    return [...filtered].sort((a, b) => {
-      const av = a[sortField], bv = b[sortField];
-      if (av == null && bv == null) return 0;
-      if (av == null) return 1; if (bv == null) return -1;
-      if (meta?.type === 'number') return (Number(av) - Number(bv)) * dir;
-      if (meta?.type === 'date')   return (new Date(av).getTime() - new Date(bv).getTime()) * dir;
-      return String(av).localeCompare(String(bv)) * dir;
-    });
-  }, [filtered, sortField, sortDir, fieldMeta]);
-
   const toggleSort = (key) => {
     if (sortField !== key) { setSortField(key); setSortDir('asc'); }
     else if (sortDir === 'asc') setSortDir('desc');
     else { setSortField(''); setSortDir('asc'); }
   };
 
-  const totalRecords = sorted.length;
+  const totalRecords = serverTotal ?? 0;
   const totalPages   = Math.max(1, Math.ceil(totalRecords / pageSize));
   const safePage     = Math.min(currentPage, totalPages);
-  const pagedRows    = sorted.slice((safePage-1)*pageSize, safePage*pageSize);
+  const pagedRows    = serverRows;
   const activeCount  = (debouncedSearch?1:0) + (statusFilter!=='All'?1:0) + (timePeriod?1:0) + advFilters.filter(c=>c.field).length + (ownerFilter?1:0);
+
+  // Board (Kanban) view needs a larger, unpaginated set grouped by status
+  // rather than one table page — fetched separately, with the same search/
+  // filter criteria, capped at a few thousand rows for practical drag-and-
+  // drop UX. showBoardCap flags when there are more matching records than
+  // fit, so the UI can be honest about it rather than silently truncating.
+  const BOARD_FETCH_CAP = 2000;
+  const [boardRows, setBoardRows] = useState([]);
+  const [boardLoading, setBoardLoading] = useState(false);
+  const [boardTotal, setBoardTotal] = useState(0);
+  useEffect(() => {
+    if (viewMode !== 'board' || !supabase || !cfg) return;
+    let cancelled = false;
+    setBoardLoading(true);
+    const { from: dateFrom, to: dateTo } = timePeriodToRange(timePeriod);
+    const mappedAdvFilters = advFilters
+      .filter(c => c.field && (['is_empty','is_not_empty','is_true','is_false'].includes(c.op) || (c.value !== undefined && c.value !== '')))
+      .map(c => ({ column: c.field, op: c.op, value: c.value }));
+    fetchServerPage(supabase, {
+      table: RETAIL_TABLE_NAME[page],
+      searchTerm: debouncedSearch,
+      searchColumns: cfg.searchFields || [],
+      statusFilter: 'All', // board itself splits by status into columns
+      ownerFilter,
+      dateColumn: dateFieldForPage,
+      dateFrom, dateTo,
+      advFilters: mappedAdvFilters,
+      sortColumn: 'created_at',
+      sortAscending: false,
+      page: 1,
+      pageSize: BOARD_FETCH_CAP,
+    }).then(({ data, error, totalCount }) => {
+      if (cancelled) return;
+      if (error) { console.error('[RetailListPage board fetch]', error.message); setBoardRows([]); setBoardTotal(0); }
+      else {
+        setBoardRows(data.map((r) => ({ ...r, id: r[cfg.idField], _uuid: r.id, displayNumber: r.display_number })));
+        setBoardTotal(totalCount);
+      }
+      setBoardLoading(false);
+    });
+    return () => { cancelled = true; };
+  }, [viewMode, supabase, page, cfg, debouncedSearch, timePeriod, advFilters, ownerFilter]);
   const clearFilters = () => { setSearch(''); setStatusFilter('All'); setTimePeriod(''); setAdvFilters([]); setOwnerFilter(''); setCurrentPage(1); };
   const addFilterRow = () => { const f = fieldMeta.find(f=>f.key!=='id')||fieldMeta[0]; setAdvFilters(p=>[...p,{field:f.key,type:f.type,op:RETAIL_OPERATORS[f.type][0].v,value:''}]); };
   const updateFilterRow = (idx, patch) => setAdvFilters(p => p.map((c,i) => i===idx ? {...c,...patch} : c));
@@ -2736,10 +2791,7 @@ export default function RetailListPage({ page }) {
         <div>
           <h1 className="text-2xl font-bold text-[#0F172A]">{cfg.icon} {cfg.title}</h1>
           <p className="text-gray-400 text-sm mt-0.5">
-            {totalRecords} of {(serverTotal !== null ? serverTotal : data.length).toLocaleString()} record{data.length!==1?'s':''}
-            {serverTotal !== null && data.length >= 500 && serverTotal > data.length && (
-              <span className="text-amber-600 font-semibold"> · showing {data.length.toLocaleString()} most recent (search covers loaded records only)</span>
-            )}
+            {serverLoading ? 'Loading…' : `${totalRecords.toLocaleString()} record${totalRecords!==1?'s':''}`}
             {activeCount > 0 && <span className="text-blue-600 font-semibold"> · {activeCount} filter{activeCount>1?'s':''} active</span>}
           </p>
         </div>
@@ -2884,13 +2936,20 @@ export default function RetailListPage({ page }) {
       </div>
 
       {viewMode === 'board' ? (
-        <RetailBoardView
-          page={page}
-          cfg={cfg}
-          records={sorted}
-          onCardClick={setSelectedRecord}
-          updateRetailRecord={updateRetailRecord}
-        />
+        <div>
+          {boardTotal > BOARD_FETCH_CAP && (
+            <p className="text-xs text-amber-600 font-semibold mb-2">
+              Showing the {BOARD_FETCH_CAP.toLocaleString()} most recent of {boardTotal.toLocaleString()} matching records — narrow with search or filters to see others on the board.
+            </p>
+          )}
+          <RetailBoardView
+            page={page}
+            cfg={cfg}
+            records={boardRows}
+            onCardClick={setSelectedRecord}
+            updateRetailRecord={updateRetailRecord}
+          />
+        </div>
       ) : (
       <>
       {/* Table */}
