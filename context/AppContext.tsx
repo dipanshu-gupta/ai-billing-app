@@ -983,6 +983,88 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     ? `Could not verify availability for "${itemName || 'this item'}" right now — please try saving again in a moment.`
     : `"${itemName || 'This item'}" is already booked for an overlapping date range by order ${withOrder}. Choose different dates or a different item.`;
 
+  // ─── Rental return reminders (rental mode only) ────────────────────────────
+  // Checks for active rental bookings ending in exactly 2 days and creates an
+  // in-app notification for the order's owner, plus a WhatsApp message to
+  // both the customer and the owner when WhatsApp API sending is configured
+  // and active for this tenant. This is a client-triggered check (runs when
+  // someone has the app open) rather than a true server-side scheduled job —
+  // a guarantee that fires even with nobody logged in would need a scheduled
+  // Supabase Edge Function, separate infrastructure from this. Runs once on
+  // load and periodically while the app stays open, which covers a business
+  // actively being used during the day.
+  const checkRentalReturnReminders = async () => {
+    if (!supabase) return;
+    if (appPreferences?.business_type !== 'rental') return;
+
+    const target = new Date();
+    target.setDate(target.getDate() + 2);
+    const targetISO = `${target.getFullYear()}-${String(target.getMonth()+1).padStart(2,'0')}-${String(target.getDate()).padStart(2,'0')}`;
+
+    const tid = (typeof window !== 'undefined' ? (window as any).__bp_tenant : null) || {};
+    let q = supabase.from('retail_order_line_items')
+      .select('order_number, product_name, rental_end_date')
+      .eq('rental_end_date', targetISO)
+      .eq('is_blocking', true);
+    if (tid.id && !tid.db_url) q = q.eq('tenant_id', tid.id);
+    const { data: bookings, error } = await q;
+    if (error || !bookings?.length) return;
+
+    for (const b of bookings) {
+      const { data: existing } = await supabase.from('notifications')
+        .select('id').eq('record_type', 'retailOrders').eq('record_id', b.order_number)
+        .eq('type', 'rental_reminder')
+        .gte('created_at', new Date(Date.now() - 3*86400000).toISOString())
+        .limit(1);
+      if (existing?.length) continue; // already reminded for this booking recently — see dedup note above
+
+      let orderQ = supabase.from('retail_orders').select('owner, owner_id, customer, customer_phone, display_number').eq('order_number', b.order_number);
+      if (tid.id && !tid.db_url) orderQ = orderQ.eq('tenant_id', tid.id);
+      const { data: order } = await orderQ.maybeSingle();
+      if (!order) continue;
+
+      let recipientEmail = order.owner && order.owner.includes('@') ? order.owner : null;
+      if (!recipientEmail && order.owner_id) {
+        const u = enterpriseUsers.find((u: any) => u.id === order.owner_id);
+        recipientEmail = u?.email || null;
+      }
+
+      const displayNum = order.display_number ? `RORD-${String(order.display_number).padStart(5,'0')}` : b.order_number;
+
+      if (recipientEmail) {
+        await supabase.from('notifications').insert({
+          recipient_email: recipientEmail,
+          type: 'rental_reminder',
+          title: 'Rental Return Due Soon',
+          body: `${b.product_name || 'Item'} for ${order.customer || 'customer'} is due back in 2 days (${targetISO}) — Order ${displayNum}.`,
+          record_type: 'retailOrders',
+          record_id: b.order_number,
+        });
+      }
+
+      // WhatsApp — only attempted if the tenant has API sending configured,
+      // active, and a template mapped for this key. Silently skipped
+      // otherwise (the in-app notification above is unconditional and
+      // always the baseline), never blocking or erroring the reminder loop
+      // if WhatsApp isn't set up.
+      try {
+        const { data: waConfig } = await supabase.from('whatsapp_config').select('is_active').eq('tenant_id', tid.id || null).maybeSingle();
+        if (waConfig?.is_active) {
+          const params = [order.customer || 'Customer', b.product_name || 'your item', targetISO, displayNum];
+          if (order.customer_phone) {
+            const rawPhone = String(order.customer_phone).replace(/\D/g, '');
+            const phone = rawPhone.length === 10 ? '91' + rawPhone : rawPhone;
+            fetch('/api/whatsapp/send', {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ db_url: tid.db_url, tenantId: tid.id, to: phone, recordType: 'retailOrders', recordId: b.order_number, recipientType: 'customer', sendMode: 'automatic', templateKey: 'rental_return_reminder', templateParams: params }),
+            }).catch(() => {}); // fire-and-forget — a failed WhatsApp send should never break the reminder loop or surface as a UI error for an automatic background check
+          }
+        }
+      } catch (e) { /* WhatsApp not configured or unreachable — the in-app notification above already covers the reminder */ }
+    }
+    fetchNotifications();
+  };
+
   const upsertRetailLineItems = async (table: 'retail_order_line_items'|'retail_invoice_line_items', fkField: string, id: string, items: any[], orderStatus?: string) => {
     if (!supabase || !id) return { error: null };
     const effectiveTenantId = (typeof window !== 'undefined' ? (window as any).__bp_tenant?.id : null)
@@ -3324,6 +3406,22 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
   useEffect(() => {
     if (typeof window !== 'undefined') (window as any).__bp_prefs = appPreferences || {};
   }, [appPreferences]);
+
+  // Rental return reminders — checked once on load and every 4 hours while
+  // the app stays open (see checkRentalReturnReminders, defined earlier in
+  // this file, for why this is a client-triggered check rather than a
+  // guaranteed server-side cron). This effect has to live here, after
+  // appPreferences is declared above — its dependency array reads
+  // appPreferences directly, which is evaluated immediately during render,
+  // unlike the checkRentalReturnReminders function body itself, which only
+  // runs later when actually called and is safe wherever it's defined.
+  useEffect(() => {
+    if (!session?.user?.id || appPreferences?.business_type !== 'rental') return;
+    checkRentalReturnReminders();
+    const interval = setInterval(() => { checkRentalReturnReminders(); }, 4 * 60 * 60 * 1000);
+    return () => clearInterval(interval);
+  }, [session?.user?.id, appPreferences?.business_type]);
+
   const fetchAppPreferences = async () => {
     // Try localStorage first (fast path)
     try {

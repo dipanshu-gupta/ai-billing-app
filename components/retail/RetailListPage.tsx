@@ -12,6 +12,8 @@ import ProductImages from '@/components/products/ProductImages';
 import RentalBookingCalendar from '@/components/retail/RentalBookingCalendar';
 import KanbanBoard from '@/components/shared/KanbanBoard';
 import { RetailQuickCreateCustomer } from '@/components/retail/RetailQuickCreateCustomer';
+import LoadingSpinner from '@/components/shared/LoadingSpinner';
+import { useFieldLayout } from '@/lib/useFieldLayout';
 import { fetchServerPage, timePeriodToRange } from '@/lib/serverList';
 import { useAlert } from '@/components/shared/AlertProvider';
 import { useCustomFields } from '@/lib/useCustomFields';
@@ -1229,12 +1231,22 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo, on
   const { updateRetailRecord, deleteRetailRecord, retailCustomers, retailProducts, retailOrders, enterpriseUsers, currentUser,
           fetchRetailLineItems, fetchRetailCustomers, createRetailRecord, appPreferences, appearance, setPendingReturnTo, createRetailInvoiceFromOrder,
           checkMatchingApprovalProcess, submitForApproval, currentUserPermissions, permissionsLoaded } = useApp();
-  const { supabase } = useTenant();
+  const { supabase, tenant } = useTenant();
   const { showAlert, showConfirm } = useAlert();
   const lang = appearance?.language || 'en';
   const [showBookingCalendar, setShowBookingCalendar] = useState(false);
   const cfg = RETAIL_CONFIG[page];
   const taxRegime = getTaxRegime(appPreferences?.default_currency);
+  // WhatsApp API availability — only checked on the invoice page, where the
+  // Send WhatsApp button lives. Determines whether to offer the instant
+  // API-based send alongside the always-available wa.me link.
+  const [waConfig, setWaConfig] = useState<any>(null);
+  const [waSending, setWaSending] = useState(false);
+  useEffect(() => {
+    if (page !== 'retailInvoices') return;
+    const qs = new URLSearchParams({ ...(tenant?.db_url ? { db_url: tenant.db_url } : {}), ...(tenant?.id ? { tenantId: tenant.id } : {}) });
+    fetch(`/api/whatsapp/config?${qs}`).then(r => r.json()).then(d => setWaConfig(d.config)).catch(() => setWaConfig(null));
+  }, [page, tenant?.db_url, tenant?.id]);
 
   const [edited, setEdited] = useState({ ...record });
   const [activeTab, setActiveTab] = useState('details');
@@ -1474,11 +1486,18 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo, on
   };
 
   // Resolve TAX_PRODUCT / TAX_DOCUMENT placeholder field sets dynamically
+  const fieldLayout = useFieldLayout(page);
   const resolveFields = (fields) => {
     let out = fields;
     if (fields === 'TAX_PRODUCT') out = taxRegime.productFields.map(f => ({ ...f }));
     else if (fields === 'TAX_DOCUMENT') out = taxRegime.documentFields.map(f => ({ ...f }));
-    return out.filter(f => typeof f.showIf !== 'function' || f.showIf(appPreferences));
+    return out
+      .filter(f => typeof f.showIf !== 'function' || f.showIf(appPreferences))
+      .map(f => {
+        const resolved = fieldLayout.resolve(f.key, f.label, edited);
+        return { ...f, label: resolved.label, _layoutHidden: !resolved.visible, _layoutReadOnly: !resolved.editable };
+      })
+      .filter(f => !f._layoutHidden);
   };
 
   const renderField = (field) => {
@@ -1664,13 +1683,47 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo, on
                   🖨️ Print
                 </button>
                 {/* Fix 12: Share via WhatsApp or Email */}
+                {waConfig?.is_active && (
+                  <button disabled={waSending} onClick={async ()=>{
+                    const rawPhone = String(edited.customer_phone || '').replace(/\D/g, '');
+                    if (!rawPhone) { showAlert('No phone number on file for this customer — add one to the Customer Phone field first.', { variant:'warning' }); return; }
+                    const phone = rawPhone.length === 10 ? '91' + rawPhone : rawPhone;
+                    const invNum = record?.displayNumber ? 'RINV-'+String(record.displayNumber).padStart(5,'0') : (edited.id||'');
+                    setWaSending(true);
+                    try {
+                      const res = await fetch('/api/whatsapp/send', {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                          db_url: tenant?.db_url, tenantId: tenant?.id, to: phone,
+                          recordType: 'retailInvoices', recordId: invNum, recipientType: 'customer', sendMode: 'manual',
+                          templateKey: 'invoice_notice', templateParams: [edited.customer || 'Customer', invNum, String(edited.amount || 0)],
+                        }),
+                      });
+                      const data = await res.json();
+                      if (!res.ok) throw new Error(data.error || 'Send failed');
+                      showAlert('WhatsApp message sent.', { variant:'success' });
+                    } catch (e:any) {
+                      showAlert('Could not send via WhatsApp API: ' + (e?.message || 'Unknown error') + ' — you can still use "Open in WhatsApp" below.', { variant:'danger' });
+                    } finally { setWaSending(false); }
+                  }} className="bg-[#25D366] hover:bg-[#128C7E] text-white px-3 py-2 rounded-xl text-sm font-bold transition-all flex items-center gap-1.5 disabled:opacity-50">
+                    <svg viewBox="0 0 24 24" className="w-4 h-4 fill-current"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/></svg>
+                    {waSending ? 'Sending…' : 'Send Instantly'}
+                  </button>
+                )}
                 <button onClick={()=>{
                   const invNum = record?.displayNumber ? 'RINV-'+String(record.displayNumber).padStart(5,'0') : (edited.id||'');
                   const msg = encodeURIComponent(`Dear ${edited.customer||'Customer'}, please find your invoice ${invNum}. Total: ₹${edited.amount||0}. Thank you!`);
-                  window.open('https://wa.me/?text='+msg,'_blank');
-                }} className="bg-[#25D366] hover:bg-[#128C7E] text-white px-3 py-2 rounded-xl text-sm font-bold transition-all flex items-center gap-1.5">
+                  const rawPhone = String(edited.customer_phone || '').replace(/\D/g, '');
+                  if (!rawPhone) { showAlert('No phone number on file for this customer — add one to the Customer Phone field first.', { variant:'warning' }); return; }
+                  // wa.me expects a full international number with no leading 0/+.
+                  // A 10-digit number with no country code is assumed domestic
+                  // (India, 91) per this tenant's default currency/locale —
+                  // adjust here if targeting a different primary market.
+                  const phone = rawPhone.length === 10 ? '91' + rawPhone : rawPhone;
+                  window.open(`https://wa.me/${phone}?text=${msg}`, '_blank');
+                }} className={waConfig?.is_active ? "bg-white border-2 border-[#25D366] text-[#128C7E] hover:bg-green-50 px-3 py-2 rounded-xl text-sm font-bold transition-all flex items-center gap-1.5" : "bg-[#25D366] hover:bg-[#128C7E] text-white px-3 py-2 rounded-xl text-sm font-bold transition-all flex items-center gap-1.5"}>
                   <svg viewBox="0 0 24 24" className="w-4 h-4 fill-current"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/></svg>
-                  WhatsApp
+                  {waConfig?.is_active ? 'Open in WhatsApp' : 'WhatsApp'}
                 </button>
                 <button onClick={()=>{
                   const invNum = record?.displayNumber ? 'RINV-'+String(record.displayNumber).padStart(5,'0') : (edited.id||'');
@@ -1784,7 +1837,11 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo, on
                             {field.helpText && <span className="ml-1 text-gray-300 font-normal" title={field.helpText}>ⓘ</span>}
                           </label>
                         )}
-                        {renderField(field)}
+                        {field._layoutReadOnly ? (
+                          <div className={`${sCls} bg-gray-50 text-gray-500 cursor-not-allowed flex items-center`} title="Made read-only by this tenant's Page Layout Designer settings">
+                            {String(edited[field.key] ?? '') || <span className="text-gray-300">—</span>}
+                          </div>
+                        ) : renderField(field)}
                       </div>
                     ))}
                   </div>
@@ -2440,7 +2497,7 @@ const RETAIL_TABLE_NAME = {
 };
 
 export default function RetailListPage({ page }) {
-  const { supabase } = useTenant();
+  const { supabase, tenant } = useTenant();
   const {
     retailCustomers, retailProducts, retailActivities, retailOrders, retailInvoices,
     fetchRetailCustomers, fetchRetailProducts, fetchRetailActivities, fetchRetailOrders, fetchRetailInvoices,
@@ -2674,7 +2731,7 @@ export default function RetailListPage({ page }) {
       setServerLoading(false);
     });
     return () => { cancelled = true; };
-  }, [supabase, page, cfg, debouncedSearch, statusFilter, timePeriod, advFilters, ownerFilter, sortField, sortDir, currentPage, pageSize]);
+  }, [supabase, page, cfg, debouncedSearch, statusFilter, timePeriod, advFilters, ownerFilter, sortField, sortDir, currentPage, pageSize, tenant?.id, currentUser, permissionsLoaded]);
 
   // Reset to page 1 whenever a filter/search/sort actually changes the
   // result set — otherwise a user could land on a now-empty page 4 after
@@ -2780,7 +2837,7 @@ export default function RetailListPage({ page }) {
       setBoardLoading(false);
     });
     return () => { cancelled = true; };
-  }, [viewMode, supabase, page, cfg, debouncedSearch, timePeriod, advFilters, ownerFilter]);
+  }, [viewMode, supabase, page, cfg, debouncedSearch, timePeriod, advFilters, ownerFilter, tenant?.id, currentUser, permissionsLoaded]);
   const clearFilters = () => { setSearch(''); setStatusFilter('All'); setTimePeriod(''); setAdvFilters([]); setOwnerFilter(''); setCurrentPage(1); };
   const addFilterRow = () => { const f = fieldMeta.find(f=>f.key!=='id')||fieldMeta[0]; setAdvFilters(p=>[...p,{field:f.key,type:f.type,op:RETAIL_OPERATORS[f.type][0].v,value:''}]); };
   const updateFilterRow = (idx, patch) => setAdvFilters(p => p.map((c,i) => i===idx ? {...c,...patch} : c));
@@ -2964,6 +3021,9 @@ export default function RetailListPage({ page }) {
               Showing the {BOARD_FETCH_CAP.toLocaleString()} most recent of {boardTotal.toLocaleString()} matching records — narrow with search or filters to see others on the board.
             </p>
           )}
+          {boardLoading && boardRows.length === 0 ? (
+            <div className="py-20"><LoadingSpinner size={44} label="Loading board..." /></div>
+          ) : (
           <RetailBoardView
             page={page}
             cfg={cfg}
@@ -2971,6 +3031,7 @@ export default function RetailListPage({ page }) {
             onCardClick={setSelectedRecord}
             updateRetailRecord={updateRetailRecord}
           />
+          )}
         </div>
       ) : (
       <>
@@ -2994,7 +3055,11 @@ export default function RetailListPage({ page }) {
               </tr>
             </thead>
             <tbody>
-              {pagedRows.length === 0 ? (
+              {serverLoading && pagedRows.length === 0 ? (
+                <tr><td colSpan={visibleColumns.length+1} className="px-5 py-20 text-center">
+                  <LoadingSpinner size={44} label="Loading records..." />
+                </td></tr>
+              ) : pagedRows.length === 0 ? (
                 <tr><td colSpan={visibleColumns.length+1} className="px-5 py-16 text-center">
                   <div className="text-5xl mb-3">{activeCount>0?'🔍':cfg.icon}</div>
                   <div className="font-bold text-[#0F172A] text-lg mb-1">{activeCount>0?t(lang,'noRecordsFound'):`No ${cfg.title.toLowerCase()} yet`}</div>

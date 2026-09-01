@@ -79,14 +79,24 @@ const _clientCache = new Map<string, SupabaseClient>();
 // indefinitely either, regardless of what acquireTimeout is passed.
 const _lockChains = new Map<string, Promise<any>>();
 export const inMemoryLock = async (name: string, _acquireTimeout: number, fn: () => Promise<any>): Promise<any> => {
-  const SAFETY_TIMEOUT_MS = 15000;
   const prior = _lockChains.get(name) || Promise.resolve();
-  const runAfterPrior = prior.catch(() => {}).then(() =>
-    Promise.race([
-      fn(),
-      new Promise((_, reject) => setTimeout(() => reject(new Error(`[auth lock "${name}"] timed out after ${SAFETY_TIMEOUT_MS}ms`)), SAFETY_TIMEOUT_MS)),
-    ])
-  );
+  // Deliberately NOT racing fn() against a timeout here. Promise.race()
+  // doesn't cancel the losing side — if the real Supabase auth operation
+  // ran past a timeout, this wrapper would "give up" and report a timeout
+  // while the actual refresh kept running uncancelled in the background.
+  // Supabase's own client tracks "is a refresh in progress" internally,
+  // separately from this wrapper — abandoning it here while Supabase still
+  // considers it active can desync the two, leaving every subsequent
+  // auth-dependent call stuck waiting on a refresh Supabase never
+  // considered finished. That's a worse failure mode than just waiting:
+  // a timeout message followed by the whole app freezing until reload.
+  // The queuing itself (serializing concurrent calls to the same lock name)
+  // is what actually matters here and remains — that's what prevents two
+  // concurrent refresh attempts from racing and invalidating each other's
+  // tokens. Just letting the real operation run to completion, however
+  // long that takes, is safer than second-guessing it with an artificial
+  // deadline.
+  const runAfterPrior = prior.catch(() => {}).then(() => fn());
   // Swallow here so the chain map itself never holds a rejected promise
   // (which would immediately reject every subsequent caller queued behind
   // it) — the real result/error still propagates to this call's own caller

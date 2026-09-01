@@ -11,9 +11,10 @@ import CreateRecordModal from '@/components/crm/CreateRecordModal';
 import CPQRecordDetail from '@/components/crm/CPQRecordDetail';
 import KanbanBoard from '@/components/shared/KanbanBoard';
 import { useAlert } from '@/components/shared/AlertProvider';
+import LoadingSpinner from '@/components/shared/LoadingSpinner';
 import { t } from '@/lib/i18n';
 
-const FIELD_LABELS = {
+export const FIELD_LABELS = {
   name:'Name', customer:'Customer', contact:'Contact', owner:'Owner', status:'Status',
   amount:'Amount', price:'Price', cost:'Cost', stage:'Stage', source:'Source',
   industry:'Industry', phone:'Phone', email:'Email', website:'Website', gstNumber:'GST Number',
@@ -359,13 +360,13 @@ const camelToSnakeCol = (s) => s.replace(/([A-Z])/g, '_$1').toLowerCase();
 const CRM_SEARCH_CANDIDATES = ['name', 'customer', 'email', 'phone', 'subject'];
 
 export default function CRMListPage({ page }) {
-  const { supabase } = useTenant();
+  const { supabase, tenant } = useTenant();
   const {
     customers, products, leads, opportunities, orders, invoices, contacts, activities,
     enterpriseUsers, savedSearches, fetchSavedSearches,
     convertLeadToOpportunity, createOrderFromOpportunity, createInvoiceFromOrder,
     createQuotationFromOpportunity, fetchQuotations,
-    currentUserPermissions, permissionsLoaded, appPreferences, appearance, hasPermission,
+    currentUserPermissions, permissionsLoaded, appPreferences, appearance, hasPermission, currentUser,
     fetchOrders, pendingReturnTo, setPendingReturnTo, pendingRecord, setPendingRecord,
     fetchListCount, listViewPrefs, fetchListViewPrefs, saveListViewPrefs,
     updateRecord, applyDataSecurity,
@@ -552,7 +553,7 @@ export default function CRMListPage({ page }) {
       setServerLoading(false);
     });
     return () => { cancelled = true; };
-  }, [supabase, page, debouncedSearch, statusFilter, timePeriod, advFilters, ownerFilter, sortField, sortDir, currentPage, pageSize]);
+  }, [supabase, page, debouncedSearch, statusFilter, timePeriod, advFilters, ownerFilter, sortField, sortDir, currentPage, pageSize, tenant?.id, currentUser, permissionsLoaded]);
 
   useEffect(() => { setCurrentPage(1); }, [debouncedSearch, statusFilter, timePeriod, advFilters, ownerFilter, sortField, sortDir]);
 
@@ -646,7 +647,7 @@ export default function CRMListPage({ page }) {
       }
     });
     return () => { cancelled = true; };
-  }, [viewMode, supabase, page, debouncedSearch, timePeriod, advFilters, ownerFilter]);
+  }, [viewMode, supabase, page, debouncedSearch, timePeriod, advFilters, ownerFilter, tenant?.id, currentUser, permissionsLoaded]);
 
   const pageLabel    = getPageLabel(page);
   const activeCount  = (search?1:0) + (statusFilter!=='All'?1:0) + (timePeriod?1:0) + advFilters.filter(c=>c.field).length + (ownerFilter?1:0);
@@ -841,7 +842,13 @@ export default function CRMListPage({ page }) {
               </tr>
             </thead>
             <tbody>
-              {pagedRecords.length === 0 ? (
+              {serverLoading && pagedRecords.length === 0 ? (
+                <tr>
+                  <td colSpan={visibleColumns.length+1} className="px-5 py-20 text-center">
+                    <LoadingSpinner size={44} label="Loading records..." />
+                  </td>
+                </tr>
+              ) : pagedRecords.length === 0 ? (
                 <tr>
                   <td colSpan={visibleColumns.length+1} className="px-5 py-16 text-center">
                     <div className="text-5xl mb-3">🔍</div>

@@ -4,6 +4,7 @@
 import { useState, useEffect } from 'react';
 import AppearancePanel from '@/components/admin/AppearancePanel';
 import AppComposer from '@/components/admin/AppComposer';
+import FieldLayoutDesigner from '@/components/admin/FieldLayoutDesigner';
 import SecurityConsole from '@/components/admin/SecurityConsole';
 import B2BAppComposer from '@/components/admin/B2BAppComposer';
 import TenantAdminPanel from '@/components/admin/TenantAdminPanel';
@@ -95,6 +96,205 @@ function RentalSettingsPanel() {
             {saving ? 'Saving…' : 'Save Settings'}
           </button>
         </div>
+      </div>
+    </RetailAdminWrapper>
+  );
+}
+const WHATSAPP_TEMPLATE_KEYS = [
+  { key: 'rental_return_reminder', label: 'Rental Return Reminder', desc: 'Sent 2 days before a rental booking ends.', placeholders: ['Customer name', 'Item name', 'Return date', 'Order number'] },
+  { key: 'booking_confirmation',   label: 'Booking Confirmation',   desc: 'Sent when a new booking or order is created.', placeholders: ['Customer name', 'Order number', 'Amount'] },
+  { key: 'invoice_notice',         label: 'Invoice Notice',         desc: 'Used by the manual "Send WhatsApp" button on invoices.', placeholders: ['Customer name', 'Invoice number', 'Amount'] },
+];
+
+function WhatsAppSettingsPanel() {
+  const { tenant } = useTenant();
+  const { showAlert } = useAlert();
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<any>(null);
+  const [config, setConfig] = useState<any>({ is_active: false, phone_number_id: '', business_account_id: '', access_token: '', display_phone_number: '' });
+  const [templates, setTemplates] = useState<Record<string, any>>({});
+
+  const dbUrl = tenant?.db_url || undefined;
+  const tenantId = tenant?.id || undefined;
+
+  useEffect(() => {
+    (async () => {
+      setLoading(true);
+      try {
+        const qs = new URLSearchParams({ ...(dbUrl ? { db_url: dbUrl } : {}), ...(tenantId ? { tenantId } : {}) });
+        const res = await fetch(`/api/whatsapp/config?${qs}`);
+        const data = await res.json();
+        if (data.config) setConfig(data.config);
+        const tplMap: Record<string, any> = {};
+        (data.templates || []).forEach((t: any) => { tplMap[t.template_key] = t; });
+        setTemplates(tplMap);
+      } catch (e) {
+        console.error('[WhatsAppSettingsPanel] load', e);
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, [dbUrl, tenantId]);
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      const res = await fetch('/api/whatsapp/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          db_url: dbUrl, tenantId, config,
+          templates: WHATSAPP_TEMPLATE_KEYS.map(t => ({
+            template_key: t.key,
+            meta_template_name: templates[t.key]?.meta_template_name || '',
+            language_code: templates[t.key]?.language_code || 'en_US',
+            is_active: templates[t.key]?.is_active !== false,
+            param_count: templates[t.key]?.param_count ?? t.placeholders.length,
+          })),
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Save failed');
+      showAlert('WhatsApp settings saved.', { variant: 'success' });
+    } catch (e: any) {
+      showAlert('Could not save WhatsApp settings: ' + (e?.message || 'Unknown error'), { variant: 'danger' });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const testConnection = async () => {
+    if (config.access_token?.startsWith('••••')) {
+      showAlert('Enter your Access Token again to test — it needs to be the real value, not the saved placeholder.', { variant: 'warning' });
+      return;
+    }
+    setTesting(true);
+    setTestResult(null);
+    try {
+      const res = await fetch('/api/whatsapp/test-connection', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone_number_id: config.phone_number_id, access_token: config.access_token }),
+      });
+      const data = await res.json();
+      setTestResult(res.ok ? { success: true, ...data } : { success: false, error: data.error });
+    } catch (e: any) {
+      setTestResult({ success: false, error: e?.message });
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  const iCls = 'w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm text-[#0F172A] focus:outline-none focus:ring-2 focus:ring-purple-400 bg-white';
+
+  if (loading) return (
+    <RetailAdminWrapper title="WhatsApp Integration" icon="💬" desc="Loading…"><div className="text-center py-10 text-gray-400">Loading…</div></RetailAdminWrapper>
+  );
+
+  return (
+    <RetailAdminWrapper
+      title="WhatsApp Integration"
+      icon="💬"
+      desc="Send booking reminders and updates automatically, and give staff a one-tap way to message customers directly."
+    >
+      <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 text-sm text-amber-800 space-y-1.5">
+        <p className="font-bold">Before you start</p>
+        <p>Automatic sending requires a WhatsApp Business Platform account with Meta (or a provider like Twilio/360dialog), a verified business phone number, and message templates approved by Meta — free-form messages can only be sent within 24 hours of a customer messaging you first. This is a setup step on Meta's side, not something toggled on here alone.</p>
+        <a href="https://developers.facebook.com/docs/whatsapp/cloud-api/get-started" target="_blank" rel="noopener noreferrer" className="text-amber-900 font-semibold underline">Meta's setup guide →</a>
+      </div>
+
+      <div className="bg-white rounded-[20px] border border-gray-200 shadow-sm p-5 space-y-4">
+        <div className="flex items-center justify-between">
+          <div>
+            <h3 className="font-bold text-[#0F172A]">Connection</h3>
+            <p className="text-sm text-gray-500">Credentials from your Meta Business account (WhatsApp → API Setup).</p>
+          </div>
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input type="checkbox" checked={!!config.is_active} onChange={e => setConfig((p: any) => ({ ...p, is_active: e.target.checked }))} className="w-5 h-5 accent-purple-600" />
+            <span className="text-sm font-semibold text-[#0F172A]">Enabled</span>
+          </label>
+        </div>
+
+        <div className="grid sm:grid-cols-2 gap-4">
+          <div>
+            <label className="block text-xs font-bold uppercase tracking-wider text-gray-400 mb-1.5">Phone Number ID</label>
+            <input value={config.phone_number_id || ''} onChange={e => setConfig((p: any) => ({ ...p, phone_number_id: e.target.value }))} className={iCls} placeholder="e.g. 109876543210987" />
+          </div>
+          <div>
+            <label className="block text-xs font-bold uppercase tracking-wider text-gray-400 mb-1.5">WhatsApp Business Account ID</label>
+            <input value={config.business_account_id || ''} onChange={e => setConfig((p: any) => ({ ...p, business_account_id: e.target.value }))} className={iCls} placeholder="e.g. 123456789012345" />
+          </div>
+          <div>
+            <label className="block text-xs font-bold uppercase tracking-wider text-gray-400 mb-1.5">Access Token</label>
+            <input type="password" value={config.access_token || ''} onChange={e => setConfig((p: any) => ({ ...p, access_token: e.target.value }))} className={iCls} placeholder="Paste your permanent access token" />
+          </div>
+          <div>
+            <label className="block text-xs font-bold uppercase tracking-wider text-gray-400 mb-1.5">Business Number (for display)</label>
+            <input value={config.display_phone_number || ''} onChange={e => setConfig((p: any) => ({ ...p, display_phone_number: e.target.value }))} className={iCls} placeholder="+91 98765 43210" />
+          </div>
+        </div>
+
+        <div className="flex items-center gap-3 pt-1">
+          <button onClick={testConnection} disabled={testing || !config.phone_number_id || !config.access_token}
+            className="px-5 py-2.5 rounded-xl border-2 border-purple-600 text-purple-700 text-sm font-bold hover:bg-purple-50 disabled:opacity-40">
+            {testing ? 'Testing…' : 'Test Connection'}
+          </button>
+          {testResult && (
+            testResult.success
+              ? <span className="text-sm text-green-700 font-semibold">✓ Connected — {testResult.verifiedName || testResult.displayPhoneNumber || 'credentials verified'}</span>
+              : <span className="text-sm text-red-600 font-semibold">✗ {testResult.error}</span>
+          )}
+        </div>
+      </div>
+
+      <div className="bg-white rounded-[20px] border border-gray-200 shadow-sm p-5 space-y-4">
+        <div>
+          <h3 className="font-bold text-[#0F172A]">Message Templates</h3>
+          <p className="text-sm text-gray-500">Match each reminder type to the exact template name you got approved in Meta Business Manager.</p>
+        </div>
+        <div className="space-y-3">
+          {WHATSAPP_TEMPLATE_KEYS.map(t => (
+            <div key={t.key} className="border border-gray-100 rounded-2xl p-4">
+              <div className="flex items-center justify-between mb-2">
+                <div>
+                  <p className="font-semibold text-sm text-[#0F172A]">{t.label}</p>
+                  <p className="text-xs text-gray-400">{t.desc} Placeholders in order: {t.placeholders.join(', ')}.</p>
+                </div>
+                <label className="flex items-center gap-2 cursor-pointer flex-shrink-0">
+                  <input type="checkbox" checked={templates[t.key]?.is_active !== false} onChange={e => setTemplates(p => ({ ...p, [t.key]: { ...p[t.key], is_active: e.target.checked } }))} className="w-4 h-4 accent-purple-600" />
+                  <span className="text-xs font-semibold text-gray-500">Active</span>
+                </label>
+              </div>
+              <div className="grid sm:grid-cols-2 gap-3">
+                <input value={templates[t.key]?.meta_template_name || ''} onChange={e => setTemplates(p => ({ ...p, [t.key]: { ...p[t.key], meta_template_name: e.target.value } }))} className={iCls} placeholder="Meta template name" />
+                <input value={templates[t.key]?.language_code || 'en_US'} onChange={e => setTemplates(p => ({ ...p, [t.key]: { ...p[t.key], language_code: e.target.value } }))} className={iCls} placeholder="Language code (e.g. en_US)" />
+              </div>
+              <div className="mt-3">
+                <label className="text-[10px] font-bold uppercase tracking-wider text-gray-400 block mb-1">Placeholders in your approved template</label>
+                <select
+                  value={templates[t.key]?.param_count ?? t.placeholders.length}
+                  onChange={e => setTemplates(p => ({ ...p, [t.key]: { ...p[t.key], param_count: Number(e.target.value) } }))}
+                  className={iCls + ' max-w-xs'}
+                >
+                  <option value={0}>None — plain static message</option>
+                  {t.placeholders.map((_, i) => (
+                    <option key={i} value={i + 1}>{i + 1} — through "{t.placeholders[i]}"</option>
+                  ))}
+                </select>
+                <p className="text-[11px] text-gray-400 mt-1">Must match the number of {'{{n}}'} placeholders Meta actually approved for this template — a mismatch causes error #132000.</p>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="flex items-center justify-end gap-3 pt-2 border-t border-gray-100">
+        <button onClick={save} disabled={saving}
+          className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-purple-700 to-purple-900 text-white text-sm font-bold hover:opacity-90 disabled:opacity-50 shadow-md">
+          {saving ? 'Saving…' : 'Save Settings'}
+        </button>
       </div>
     </RetailAdminWrapper>
   );
@@ -1764,6 +1964,7 @@ export default function AdminToolsPage() {
     { key:'appPrefs',       label:'App Preferences',  icon:'⚙️', desc:'Currency, date format, modules' },
     { key:'appearance',     label:'Appearance',       icon:'🎨', desc:'Theme, logo and branding' },
     { key:'b2b_composer',   label:'App Composer',     icon:'🧩', desc:'Add custom fields to CRM objects' },
+    { key:'layoutDesigner', label:'Page Layout Designer', icon:'🧱', desc:'Relabel, hide, lock, and reorder standard fields' },
   ];
 
   const B2C_SECTIONS = [
@@ -1780,6 +1981,8 @@ export default function AdminToolsPage() {
     { key:'r_appPrefs',      label:'App Preferences', icon:'⚙️', desc:'Retail app settings' },
     { key:'r_appearance',    label:'Appearance',      icon:'🎨', desc:'Retail branding' },
     { key:'r_composer',      label:'App Composer',    icon:'🧩', desc:'Custom fields for retail objects' },
+    { key:'layoutDesigner',  label:'Page Layout Designer', icon:'🧱', desc:'Relabel, hide, lock, and reorder standard fields' },
+    { key:'r_whatsapp',      label:'WhatsApp Integration', icon:'💬', desc:'Automatic reminders and one-tap customer messaging' },
     ...(appPreferences?.business_type === 'rental' ? [
       { key:'r_rentalSettings', label:'Rental Settings', icon:'👗', desc:'Booking rules and blocking statuses' },
     ] : []),
@@ -1817,7 +2020,9 @@ export default function AdminToolsPage() {
       case 'r_appPrefs':         return <RetailAdminWrapper title="App Preferences" icon="⚙️" desc="Currency, date format and module settings"><AppPreferencesPanel/></RetailAdminWrapper>;
       case 'r_appearance':       return <RetailAdminWrapper title="Appearance" icon="🎨" desc="Theme, logo and branding — shared with B2B Enterprise"><AppearancePanel/></RetailAdminWrapper>;
       case 'r_composer':         return <AppComposer/>;
+      case 'layoutDesigner':     return <FieldLayoutDesigner/>;
       case 'r_rentalSettings':   return <RentalSettingsPanel/>;
+      case 'r_whatsapp':        return <WhatsAppSettingsPanel/>;
       case 'b2b_composer':       return <B2BAppComposer/>;
       default:                   return null;
     }

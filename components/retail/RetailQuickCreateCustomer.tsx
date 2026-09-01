@@ -18,15 +18,21 @@ export function RetailQuickCreateCustomer({ prefillName, onCreated, onClose }) {
 
   async function save() {
     if (!form.name.trim()) { showAlert('Name is required', { variant:'warning' }); return; }
-    // Duplicate check now happens centrally in createRetailRecord — covers
-    // this quick-create flow and every other retail customer creation path
-    // consistently, without prompting twice.
     setSaving(true);
-    const rec = await createRetailRecord('retailCustomers', {
-      ...form, status:'Active', loyalty_points:0, loyalty_tier:'Standard',
-    }, []);
-    setSaving(false);
-    if (rec) onCreated(rec._uuid || rec.id, rec.name, rec.phone || form.phone || '');
+    try {
+      // Duplicate check now happens centrally in createRetailRecord — covers
+      // this quick-create flow and every other retail customer creation path
+      // consistently, without prompting twice.
+      const rec = await createRetailRecord('retailCustomers', {
+        ...form, status:'Active', loyalty_points:0, loyalty_tier:'Standard',
+      }, []);
+      if (rec) onCreated(rec._uuid || rec.id, rec.name, rec.phone || form.phone || '');
+    } catch (e) {
+      console.error('[RetailQuickCreateCustomer] save', e);
+      showAlert('Could not create customer: ' + (e?.message || 'An unexpected error occurred.'), { variant:'danger' });
+    } finally {
+      setSaving(false);
+    }
   }
 
   const iCls = 'w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm text-[#0F172A] focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white';
