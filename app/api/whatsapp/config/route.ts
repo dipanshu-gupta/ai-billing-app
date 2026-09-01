@@ -77,6 +77,7 @@ export async function POST(request: Request) {
           meta_template_name: tpl.meta_template_name || null,
           language_code: tpl.language_code || 'en_US',
           is_active: tpl.is_active !== false,
+          param_count: tpl.param_count ?? 3,
         }, { onConflict: 'tenant_id,template_key' });
       }
     }
