@@ -1177,7 +1177,7 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
   const RETAIL_ALLOWED_COLS: Record<string, string[]> = {
     retail_customers:  ['name','phone','email','date_of_birth','gender','address_line1','address_line2','city','state','postal_code','country','loyalty_points','loyalty_tier','preferred_contact','marketing_opt_in','notes','comments','status','owner','owner_id','owner_name','organization_id','business_unit_id','custom_data'],
     retail_products:   ['name','category','brand','sku','barcode','unit','price','mrp','cost','stock_quantity','reorder_level','description','hsn_code','gst_rate','taxable','tax_category','vat_rate','tax_rate','status','owner','owner_id','owner_name','comments','organization_id','business_unit_id','custom_data','is_rentable','rent_per_day'],
-    retail_activities: ['subject','activity_type','customer','customer_id','customer_phone','activity_date','due_date','priority','status','description','notes','comments','owner','owner_id','owner_name','organization_id','business_unit_id','custom_data'],
+    retail_activities: ['subject','activity_type','customer','customer_id','customer_phone','related_order_number','activity_date','due_date','priority','status','description','notes','comments','owner','owner_id','owner_name','organization_id','business_unit_id','custom_data'],
     retail_orders:     ['customer','customer_id','customer_phone','order_date','channel','currency','payment_method','payment_status','delivery_method','delivery_address','delivery_date','subtotal','total_discount','total_tax','header_discount_pct','header_discount_amount','shipping_cost','amount','place_of_supply','gstin','tax_state','resale_certificate','vat_registration_number','tax_registration_number','status','notes','comments','owner','owner_id','owner_name','organization_id','business_unit_id','custom_data'],
     retail_invoices:   ['order_number','customer','customer_id','customer_phone','invoice_date','due_date','currency','subtotal','total_discount','total_tax','header_discount_pct','header_discount_amount','shipping_cost','amount','payment_method','payment_status','place_of_supply','gstin','tax_state','resale_certificate','vat_registration_number','tax_registration_number','status','notes','comments','owner','owner_id','owner_name','organization_id','business_unit_id','custom_data','invoice_template_id'],
   };
@@ -1484,7 +1484,15 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
 
   const fetchRoles = async () => {
     if (!supabase) return;
-    const { data } = await supabase.from('roles').select('*').order('created_at', { ascending: false });
+    const tid = getScopeTenantId();
+    // Every shared-DB tenant's roles have historically had tenant_id=NULL
+    // (there was no per-tenant role seeding until now) - so unlike most
+    // other tables, ANY shared-DB tenant needs the NULL fallback here, not
+    // just the demo tenant. A dedicated-DB tenant has no tid at all
+    // (getScopeTenantId returns null for those), so the query runs
+    // unfiltered - correct, since their whole database is already isolated.
+    const q = tid ? supabase.from('roles').select('*').or(`tenant_id.eq.${tid},tenant_id.is.null`) : supabase.from('roles').select('*');
+    const { data } = await q.order('created_at', { ascending: false });
     if (data) setRoles(data);
   };
 
@@ -1810,7 +1818,7 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
       const { error } = await supabase.from('roles').update(data).eq('id', editingId);
       if (error) { showAlert('Failed to update role'); return; }
     } else {
-      const { data: newRole, error } = await supabase.from('roles').insert([data]).select().single();
+      const { data: newRole, error } = await supabase.from('roles').insert([{ ...data, ...(getScopeTenantId() ? { tenant_id: getScopeTenantId() } : {}) }]).select().single();
       if (error || !newRole) { showAlert(error?.message || 'Unable to create role'); return; }
       roleId = newRole.id;
     }

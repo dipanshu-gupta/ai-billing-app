@@ -981,7 +981,10 @@ function SecurityConsolePanel() {
           <div key={role.id} className="bg-white rounded-[24px] border border-blue-100 shadow-lg p-5">
             <div className="flex items-start justify-between mb-3">
               <div><h3 className="font-bold text-[#0F172A] text-lg">{role.role_name}</h3><p className="text-gray-400 text-xs mt-0.5">{role.role_code}</p></div>
-              <span className={`px-3 py-1 rounded-full text-xs font-semibold ${role.status==='Active'?'bg-green-100 text-green-700':'bg-gray-100 text-gray-600'}`}>{role.status}</span>
+              <div className="flex flex-col items-end gap-1">
+                <span className={`px-3 py-1 rounded-full text-xs font-semibold ${role.status==='Active'?'bg-green-100 text-green-700':'bg-gray-100 text-gray-600'}`}>{role.status}</span>
+                {!role.tenant_id && <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-700" title="This role may be shared with other workspaces on this database — edits here could affect them too">🌐 Shared</span>}
+              </div>
             </div>
             <p className="text-sm text-gray-400">{role.description||'No description'}</p>
             <div className="flex gap-2 mt-4">
@@ -995,6 +998,11 @@ function SecurityConsolePanel() {
       <Modal open={open} onClose={()=>setOpen(false)} title={editing?'Edit Role':'New Role'} size="xl"
         footer={<><button onClick={()=>setOpen(false)} className="px-5 py-2.5 rounded-2xl border border-blue-200 text-sm font-semibold">Cancel</button><button onClick={async()=>{await saveRole(form,editing?.id||null,selectedPerms);setOpen(false);}} className="px-5 py-2.5 bg-gradient-to-r from-[#0F172A] to-blue-800 text-white rounded-2xl text-sm font-semibold">Save Role</button></>}>
         <div className="space-y-6">
+          {editing && !editing.tenant_id && (
+            <div className="bg-amber-50 border border-amber-200 rounded-2xl px-4 py-3 text-sm text-amber-800">
+              🌐 <strong>This is a shared role</strong> — it may currently be used by other workspaces on this same database (this happens with roles created before per-workspace roles existed). Changes you make here could affect them too. If you need a version customized just for this workspace, consider creating a new role instead.
+            </div>
+          )}
           <div className="grid grid-cols-2 gap-4">
             {[['Role Name','role_name'],['Role Code','role_code']].map(([label,field])=>(
               <div key={field}><L t={label}/><input value={form[field]||''} onChange={e=>s(field,e.target.value)} className={iCls}/></div>

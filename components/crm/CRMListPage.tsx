@@ -425,8 +425,8 @@ export default function CRMListPage({ page }) {
   const [timePeriod,   setTimePeriod]   = useState('');
   const [advFilters,   setAdvFilters]   = useState([]); // [{field, op, value, type}]
   const [ownerFilter,  setOwnerFilter]  = useState('');
-  const [sortField,    setSortField]    = useState('');
-  const [sortDir,      setSortDir]      = useState('asc'); // 'asc' | 'desc'
+  const [sortField,    setSortField]    = useState('display_number');
+  const [sortDir,      setSortDir]      = useState('desc'); // 'asc' | 'desc'
   const [columnsOpen,  setColumnsOpen]  = useState(false);
   const crmFieldLayout = useFieldLayout(page);
   const fieldMeta = useMemo(() => {
@@ -516,6 +516,7 @@ export default function CRMListPage({ page }) {
   // changes, so results stay correct regardless of total record count.
   const [serverRows, setServerRows] = useState([]);
   const [serverLoading, setServerLoading] = useState(false);
+  const [refreshTick, setRefreshTick] = useState(0);
   useEffect(() => {
     if (!supabase || !page) return;
     let cancelled = false;
@@ -564,7 +565,7 @@ export default function CRMListPage({ page }) {
       setServerLoading(false);
     });
     return () => { cancelled = true; };
-  }, [supabase, page, debouncedSearch, statusFilter, timePeriod, advFilters, ownerFilter, sortField, sortDir, currentPage, pageSize, tenant?.id, currentUser, permissionsLoaded]);
+  }, [supabase, page, debouncedSearch, statusFilter, timePeriod, advFilters, ownerFilter, sortField, sortDir, currentPage, pageSize, tenant?.id, currentUser, permissionsLoaded, refreshTick]);
 
   useEffect(() => { setCurrentPage(1); }, [debouncedSearch, statusFilter, timePeriod, advFilters, ownerFilter, sortField, sortDir]);
 
@@ -1009,7 +1010,10 @@ export default function CRMListPage({ page }) {
           </div>
         </div>
       )}
-      <CreateRecordModal page={page} open={createOpen} onClose={()=>setCreateOpen(false)}/>
+      <CreateRecordModal page={page} open={createOpen} onClose={()=>setCreateOpen(false)} onCreated={(rec)=>{
+        setCurrentPage(1); setRefreshTick(t=>t+1);
+        if (rec) setSelectedRecord(rec);
+      }}/>
     </div>
   );
 }

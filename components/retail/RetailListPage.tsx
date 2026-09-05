@@ -1294,6 +1294,22 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo, on
   const { fields: retailInvoiceCustomFieldsMeta } = useCustomFields('retailInvoices');
   const lang = appearance?.language || 'en';
   const [showBookingCalendar, setShowBookingCalendar] = useState(false);
+  const [relatedOrderDisplay, setRelatedOrderDisplay] = useState('');
+  const [relatedActivities, setRelatedActivities] = useState<any[]>([]);
+  useEffect(() => {
+    if (page !== 'retailActivities' || !edited.related_order_number || !supabase) { setRelatedOrderDisplay(''); return; }
+    let cancelled = false;
+    tenantScope(supabase.from('retail_orders').select('display_number')).eq('order_number', edited.related_order_number).maybeSingle()
+      .then(({ data }) => { if (!cancelled && data) setRelatedOrderDisplay(formatDisplayNumber('RORD', data.display_number)); });
+    return () => { cancelled = true; };
+  }, [page, edited.related_order_number, supabase]);
+  useEffect(() => {
+    if (page !== 'retailOrders' || !edited.id || !supabase) { setRelatedActivities([]); return; }
+    let cancelled = false;
+    tenantScope(supabase.from('retail_activities').select('*')).eq('related_order_number', edited.id).order('created_at', { ascending: false })
+      .then(({ data }) => { if (!cancelled) setRelatedActivities(data || []); });
+    return () => { cancelled = true; };
+  }, [page, edited.id, supabase]);
   const cfg = RETAIL_CONFIG[page];
   const taxRegime = getTaxRegime(appPreferences?.default_currency);
   // WhatsApp API availability — only checked on the invoice page, where the
@@ -1742,6 +1758,18 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo, on
                 {creatingInvoice?t(lang,'loading'):`🧾 ${t(lang,'create')} ${t(lang,'invoices')}`}
               </button>
             )}
+            {page==='retailOrders' && appPreferences?.business_type === 'rental' && (
+              <button onClick={() => {
+                setPendingRecord({ page: 'retailActivities', openCreate: true, prefill: {
+                  customer_id: edited.customer_id, customer: edited.customer, related_order_number: edited.id,
+                  subject: `Follow-up: Order ${record?.displayNumber ? 'RORD-'+String(record.displayNumber).padStart(5,'0') : edited.id}`,
+                } });
+                setPendingReturnTo({ page: 'retailOrders', record: record });
+                window.dispatchEvent(new CustomEvent('retail-navigate', { detail: { page: 'retailActivities' } }));
+              }} className="bg-amber-500 text-white px-4 py-2 rounded-xl text-sm font-bold hover:bg-amber-600">
+                📋 Create Activity
+              </button>
+            )}
             {page==='retailOrders' && (() => {
               const rawPhone = String(edited.customer_phone || '').replace(/\D/g, '');
               const phone = rawPhone.length === 10 ? '91' + rawPhone : rawPhone;
@@ -2046,6 +2074,38 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo, on
           )}
           {showBookingCalendar && (
             <RentalBookingCalendar productId={record._uuid} productName={record.name} productPrice={edited.price} onClose={() => setShowBookingCalendar(false)}/>
+          )}
+          {page==='retailActivities' && edited.related_order_number && (
+            <div className="bg-amber-50 border border-amber-200 rounded-2xl px-4 py-3 flex items-center gap-2">
+              <span className="text-amber-700 text-sm font-semibold">🔗 Related Order:</span>
+              <button onClick={async () => {
+                const { data: orderRow } = await supabase.from('retail_orders').select('*').eq('order_number', edited.related_order_number).maybeSingle();
+                if (!orderRow) { showAlert('That order could not be found — it may have been deleted.', { variant:'warning' }); return; }
+                const orderRecord = { ...orderRow, id: orderRow.order_number, _uuid: orderRow.id, displayNumber: orderRow.display_number };
+                setPendingRecord({ page: 'retailOrders', record: orderRecord });
+                setPendingReturnTo({ page: 'retailActivities', record: record });
+                window.dispatchEvent(new CustomEvent('retail-navigate', { detail: { page: 'retailOrders' } }));
+              }} className="text-blue-600 hover:text-blue-800 font-bold text-sm underline underline-offset-2">
+                {relatedOrderDisplay || edited.related_order_number}
+              </button>
+            </div>
+          )}
+          {page==='retailOrders' && relatedActivities.length > 0 && (
+            <div className="bg-amber-50 border border-amber-200 rounded-2xl px-4 py-3">
+              <span className="text-amber-700 text-sm font-semibold block mb-1.5">🔗 Related Activities:</span>
+              <div className="flex flex-wrap gap-2">
+                {relatedActivities.map(act => (
+                  <button key={act.id} onClick={() => {
+                    const actRecord = { ...act, id: act.activity_number, _uuid: act.id, displayNumber: act.display_number };
+                    setPendingRecord({ page: 'retailActivities', record: actRecord });
+                    setPendingReturnTo({ page: 'retailOrders', record: record });
+                    window.dispatchEvent(new CustomEvent('retail-navigate', { detail: { page: 'retailActivities' } }));
+                  }} className="text-blue-600 hover:text-blue-800 font-bold text-sm underline underline-offset-2 bg-white px-2.5 py-1 rounded-lg border border-amber-200">
+                    {formatDisplayNumber('RACT', act.display_number)} — {act.subject}
+                  </button>
+                ))}
+              </div>
+            </div>
           )}
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
             {cfg.sections.map(section => {
@@ -2793,8 +2853,8 @@ export default function RetailListPage({ page }) {
   const [timePeriod,     setTimePeriod]     = useState('');
   const [advFilters,     setAdvFilters]     = useState([]); // [{field, op, value, type}]
   const [ownerFilter,    setOwnerFilter]    = useState('');
-  const [sortField,      setSortField]      = useState('');
-  const [sortDir,        setSortDir]        = useState('asc');
+  const [sortField,      setSortField]      = useState('display_number');
+  const [sortDir,        setSortDir]        = useState('desc');
   const [columnsOpen,    setColumnsOpen]    = useState(false);
   const listFieldLayout = useFieldLayout(page);
   const fieldMeta = useMemo(() => {
@@ -2930,6 +2990,7 @@ export default function RetailListPage({ page }) {
   // records the tenant has.
   const [serverRows, setServerRows] = useState([]);
   const [serverLoading, setServerLoading] = useState(false);
+  const [refreshTick, setRefreshTick] = useState(0);
   const dateFieldForPage = DATE_FIELD[page] || 'created_at';
   useEffect(() => {
     if (!supabase || !cfg) return;
@@ -2993,7 +3054,7 @@ export default function RetailListPage({ page }) {
       setServerLoading(false);
     });
     return () => { cancelled = true; };
-  }, [supabase, page, cfg, debouncedSearch, statusFilter, timePeriod, advFilters, ownerFilter, sortField, sortDir, currentPage, pageSize, tenant?.id, currentUser, permissionsLoaded]);
+  }, [supabase, page, cfg, debouncedSearch, statusFilter, timePeriod, advFilters, ownerFilter, sortField, sortDir, currentPage, pageSize, tenant?.id, currentUser, permissionsLoaded, refreshTick]);
 
   // Reset to page 1 whenever a filter/search/sort actually changes the
   // result set — otherwise a user could land on a now-empty page 4 after
@@ -3427,9 +3488,11 @@ export default function RetailListPage({ page }) {
       <RetailCreateModal page={page} open={createOpen} onClose={()=>{
         setCreateOpen(false); setPendingRecord(null);
         if (pendingReturnTo) { const rt = pendingReturnTo; setPendingReturnTo(null); window.dispatchEvent(new CustomEvent('open-crm-record', { detail: rt })); }
-      }} onCreated={()=>{
-        fetchMap[page]?.(); setPendingRecord(null);
+      }} onCreated={(rec)=>{
+        setPendingRecord(null);
         if (pendingReturnTo) { const rt = pendingReturnTo; setPendingReturnTo(null); window.dispatchEvent(new CustomEvent('open-crm-record', { detail: rt })); }
+        else if (rec) { setCurrentPage(1); setRefreshTick(t=>t+1); setSelectedRecord(rec); }
+        else { setCurrentPage(1); setRefreshTick(t=>t+1); }
       }} prefill={pendingRecord?.openCreate ? pendingRecord.prefill : null}/>
       {/* Cross-object create modal — for Create Order/Invoice from customer list/360 */}
       {/* c360 navigation handled by effect below (was an in-render setTimeout) */}

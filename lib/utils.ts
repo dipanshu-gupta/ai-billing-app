@@ -77,7 +77,7 @@ export const formatFileSize = (bytes: number): string => {
 
 // ─── ID generation ─────────────────────────────────────────────────────────────
 
-export const generateId = (prefix: string): string => `${prefix}-${Date.now()}`;
+export const generateId = (prefix: string): string => `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
 // ─── Sequential Display Number ───────────────────────────────────────────────
 // Formats the clean sequential number for display (e.g. CUST-00001)

@@ -4,7 +4,7 @@
 import { useState, useEffect } from 'react';
 import { useApp } from '@/context/AppContext';
 import { useCustomFields, invalidateCustomFieldCache } from '@/lib/useCustomFields';
-import { useFieldLayout } from '@/lib/useFieldLayout';
+import { useFieldLayout, resolveFieldRow } from '@/lib/useFieldLayout';
 import SearchableSelect from '@/components/shared/SearchableSelect';
 import QuickCreateModal from '@/components/shared/QuickCreateModal';
 import { t } from '@/lib/i18n';
@@ -163,8 +163,8 @@ export default function CreateRecordModal({ page, open, prefillCustomer, onClose
   // before its own declaration would throw a temporal-dead-zone error.
   const displayFields = fields
     .map((f, idx) => {
-      const resolved = fieldLayout.resolve(f.key, f.label, form);
-      const savedRow = fieldLayout.fields.find(r => r.field_key === f.key);
+      const resolved = fieldLayout.resolve(f.key, f.label, form, 'create');
+      const savedRow = resolveFieldRow(f.key, fieldLayout.fields, 'create');
       const sortOrder = savedRow ? savedRow.display_order : 10000 + idx;
       return { ...f, label: resolved.label, _layoutHidden: !resolved.visible, _sortOrder: sortOrder };
     })
@@ -240,7 +240,7 @@ export default function CreateRecordModal({ page, open, prefillCustomer, onClose
     setSaving(false);
     if (!result) return; // cancelled (e.g. declined the duplicate warning) or failed — keep the form open so the user can adjust and retry
     setForm(defaultForm());
-    onCreated?.();
+    onCreated?.(result);
     onClose();
   };
 

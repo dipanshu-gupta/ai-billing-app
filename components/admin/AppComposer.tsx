@@ -148,51 +148,63 @@ export default function AppComposer() {
     if (dupes.length) { showAlert(`Duplicate field names: ${dupes.join(', ')}. Each field must have a unique name.`, { variant:'warning' }); return; }
 
     setSaving(true);
-
-    // Delete rows that were removed (only rows with IDs not in current list)
-    const existingIds = fields.filter(f => f.id).map(f => f.id);
-    if (existingIds.length) {
-      // Delete DB rows that are no longer in the editor
-      const { data: allRows } = await supabase.from('app_custom_fields')
-        .select('id').eq('object_type', selectedObj);
-      const toDelete = (allRows||[]).map(r=>r.id).filter(id => !existingIds.includes(id));
-      if (toDelete.length) {
-        await supabase.from('app_custom_fields').delete().in('id', toDelete);
+    try {
+      // Delete rows that were removed (only rows with IDs not in current list)
+      const existingIds = fields.filter(f => f.id).map(f => f.id);
+      if (existingIds.length) {
+        // Delete DB rows that are no longer in the editor
+        const { data: allRows, error: fetchErr } = await supabase.from('app_custom_fields')
+          .select('id').eq('object_type', selectedObj);
+        if (fetchErr) throw new Error(`Could not check existing fields: ${fetchErr.message}`);
+        const toDelete = (allRows||[]).map(r=>r.id).filter(id => !existingIds.includes(id));
+        if (toDelete.length) {
+          const { error: delErr } = await supabase.from('app_custom_fields').delete().in('id', toDelete);
+          if (delErr) throw new Error(`Could not remove deleted field(s): ${delErr.message}`);
+        }
       }
-    }
-    // If no existing IDs at all, don't delete anything (user is creating first field)
+      // If no existing IDs at all, don't delete anything (user is creating first field)
 
-    // Upsert each field — NEVER reset is_published (preserve published state)
-    for (let i = 0; i < fields.length; i++) {
-      const f = fields[i];
-      const row = {
-        object_type:  selectedObj,
-        label:        f.label.trim(),
-        api_name:     f.api_name || slugify(f.label),
-        field_type:   f.field_type,
-        options:      f.options || [],
-        required:     f.required || false,
-        show_on:      f.show_on || 'both',
-        is_active:    f.is_active === false ? false : true,  // default true
-        // CRITICAL: preserve is_published — do NOT reset it to false on save
-        sort_order:   i,
-        updated_at:   new Date().toISOString(),
-      };
-      if (f.id) {
-        // Update but never touch is_published — that's only changed via publish/unpublish
-        await supabase.from('app_custom_fields').update(row).eq('id', f.id);
-      } else {
-        // New field — starts unpublished
-        const { data } = await supabase.from('app_custom_fields')
-          .insert({ ...row, is_published: false, created_at: new Date().toISOString(), ...(tenant?.id ? { tenant_id: tenant.id } : {}) })
-          .select().single();
-        if (data) setFields(p => p.map((ff, fi) => fi === i ? { ...ff, id: data.id, _key: data.id } : ff));
+      // Upsert each field — NEVER reset is_published (preserve published state)
+      for (let i = 0; i < fields.length; i++) {
+        const f = fields[i];
+        const row = {
+          object_type:  selectedObj,
+          label:        f.label.trim(),
+          api_name:     f.api_name || slugify(f.label),
+          field_type:   f.field_type,
+          options:      f.options || [],
+          required:     f.required || false,
+          show_on:      f.show_on || 'both',
+          is_active:    f.is_active === false ? false : true,  // default true
+          // CRITICAL: preserve is_published — do NOT reset it to false on save
+          sort_order:   i,
+          updated_at:   new Date().toISOString(),
+        };
+        if (f.id) {
+          // Update but never touch is_published — that's only changed via publish/unpublish
+          const { error: updErr } = await supabase.from('app_custom_fields').update(row).eq('id', f.id);
+          if (updErr) throw new Error(`Could not save "${f.label}": ${updErr.message}`);
+        } else {
+          // New field — starts unpublished
+          const { data, error: insErr } = await supabase.from('app_custom_fields')
+            .insert({ ...row, is_published: false, created_at: new Date().toISOString(), ...(tenant?.id ? { tenant_id: tenant.id } : {}) })
+            .select().single();
+          if (insErr) throw new Error(`Could not create "${f.label}": ${insErr.message}`);
+          if (data) setFields(p => p.map((ff, fi) => fi === i ? { ...ff, id: data.id, _key: data.id } : ff));
+        }
       }
-    }
 
-    setSaving(false);
-    showToast('✓ Draft saved');
-    await load();
+      showToast('✓ Draft saved');
+      // Only reload from the database once every operation above has
+      // actually succeeded — reloading after a partial failure would
+      // overwrite the user's unsaved edits with the database's
+      // now-inconsistent state, which is exactly what was happening before.
+      await load();
+    } catch (e: any) {
+      showAlert('Save failed: ' + (e?.message || 'Unknown error') + ' — your changes are still shown below; nothing was lost, but please retry.', { variant: 'danger' });
+    } finally {
+      setSaving(false);
+    }
   }
 
   // ── Publish ───────────────────────────────────────────────────────────────
