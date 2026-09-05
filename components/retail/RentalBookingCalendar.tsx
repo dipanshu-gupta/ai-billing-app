@@ -53,6 +53,22 @@ export default function RentalBookingCalendar({ productId, productName, productP
   const [successResult, setSuccessResult] = useState(null); // created order record, once created
   const [quickCreateCustomer, setQuickCreateCustomer] = useState(false);
 
+  // Prefill customer if one was handed off from another flow (e.g. "Create
+  // Booking" from a completed activity's detail page) — read once on mount
+  // and cleared immediately after, so it never leaks into a later,
+  // unrelated booking session opened from a different entry point.
+  useEffect(() => {
+    try {
+      const pending = typeof window !== 'undefined' ? sessionStorage.getItem('bp_pending_booking_customer') : null;
+      if (pending) {
+        const { customerId: pid, customerName: pname } = JSON.parse(pending);
+        if (pid) setCustomerId(pid);
+        if (pname) setCustomerName(pname);
+        sessionStorage.removeItem('bp_pending_booking_customer');
+      }
+    } catch (e) { /* malformed or absent — ignore, calendar works fine with no prefill */ }
+  }, []);
+
   const monthStart = monthCursor;
   const monthEnd = new Date(monthCursor.getFullYear(), monthCursor.getMonth() + 1, 0);
   const hasRange = !!(rangeStart && rangeEnd);
@@ -452,10 +468,17 @@ export default function RentalBookingCalendar({ productId, productName, productP
           </>
         )}
     </Wrapper>
+    {/* Kept as the lightweight quick-create here specifically (not the full
+        RetailCreateModal used elsewhere) - importing RetailCreateModal from
+        RetailListPage.tsx into this file would create a circular import,
+        since RetailListPage.tsx already imports RentalBookingCalendar the
+        other way. Properly resolving this would need RetailCreateModal
+        extracted into its own standalone file, which touches enough shared
+        dependencies (RETAIL_CONFIG, tax helpers, etc.) to be worth doing
+        as its own careful pass rather than inside this fix. */}
     {quickCreateCustomer && (
       <div className="fixed inset-0 bg-black/60 z-[10000] flex items-center justify-center p-4" onClick={()=>setQuickCreateCustomer(false)}>
-        <div className="bg-white rounded-[24px] shadow-2xl w-full max-w-md p-6" onClick={e=>e.stopPropagation()}>
-          <h3 className="font-bold text-lg text-[#0F172A] mb-4">+ New Customer</h3>
+        <div onClick={e=>e.stopPropagation()}>
           <RetailQuickCreateCustomer
             prefillName={typeof quickCreateCustomer === 'string' ? quickCreateCustomer : ''}
             onCreated={(id, name) => { setCustomerId(id); setCustomerName(name); setQuickCreateCustomer(false); }}

@@ -4,6 +4,7 @@ import { useState, useRef, useEffect } from 'react';
 import { useApp } from '@/context/AppContext';
 import { useTenant } from '@/context/TenantContext';
 import { tenantScope } from '@/lib/utils';
+import { useObjectLabels } from '@/lib/useObjectLabels';
 
 // Wraps any promise with a hard timeout — no single database call in this
 // file (import or export) can hang the whole operation indefinitely
@@ -463,6 +464,7 @@ export default function ImportExportPanel() {
   const { currentUser, appPreferences, customers, retailCustomers, enterpriseUsers, orders, invoices, quotations, retailOrders, retailInvoices } = useApp() as any;
   const PARENT_LOOKUP: Record<string, any[]> = { orders, invoices, quotations, retail_orders: retailOrders, retail_invoices: retailInvoices };
   const { supabase }  = useTenant();
+  const { getObjectLabel } = useObjectLabels();
   const isB2C         = appPreferences?.b2c_mode === true;
   const isCRMEnabled  = appPreferences?.crm_enabled !== false;
   const availableObjects = Object.entries(IMPORT_OBJECTS).filter(([, cfg]) => {
@@ -1146,7 +1148,7 @@ export default function ImportExportPanel() {
                 {items.map(([key, ocfg]) => (
                   <button key={key} onClick={()=>{ setSelObj(key); resetImport(key); setExportDone(''); }}
                     className={`flex items-center gap-2 px-4 py-2 rounded-2xl text-sm font-semibold border transition-all ${selObj===key ? 'bg-[#0F172A] text-white border-transparent shadow' : 'bg-white text-gray-600 border-gray-200 hover:border-blue-400'}`}>
-                    <span>{ocfg.icon}</span> {ocfg.label}
+                    <span>{ocfg.icon}</span> {getObjectLabel(key, ocfg.label)}
                   </button>
                 ))}
               </div>
@@ -1247,7 +1249,7 @@ export default function ImportExportPanel() {
               <div className="flex gap-3 ml-auto">
                 <button onClick={handleExport} disabled={exporting || !exportFields.length}
                   className="flex items-center gap-2 px-6 py-2.5 bg-gradient-to-r from-[#0F172A] to-emerald-800 text-white rounded-2xl text-sm font-bold shadow disabled:opacity-50">
-                  {exporting ? '⏳ Exporting…' : `⬇️ Export ${cfg.label}`}
+                  {exporting ? '⏳ Exporting…' : `⬇️ Export ${getObjectLabel(selObj, cfg.label)}`}
                 </button>
               </div>
             </div>
@@ -1311,7 +1313,7 @@ export default function ImportExportPanel() {
               <div className="text-center space-y-4">
                 <div className="text-5xl">📁</div>
                 <h3 className="font-bold text-[#0F172A] text-lg">Upload CSV File</h3>
-                <p className="text-sm text-gray-400">Upload a .csv file to import {cfg.label}. The first row must be headers.</p>
+                <p className="text-sm text-gray-400">Upload a .csv file to import {getObjectLabel(selObj, cfg.label)}. The first row must be headers.</p>
                 <div className="flex items-center justify-center gap-3">
                   <button onClick={downloadTemplate}
                     className="flex items-center gap-2 px-4 py-2.5 rounded-2xl border border-dashed border-emerald-300 text-emerald-700 text-sm font-semibold hover:bg-emerald-50">

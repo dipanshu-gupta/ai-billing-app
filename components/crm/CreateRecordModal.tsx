@@ -4,6 +4,7 @@
 import { useState, useEffect } from 'react';
 import { useApp } from '@/context/AppContext';
 import { useCustomFields, invalidateCustomFieldCache } from '@/lib/useCustomFields';
+import { useFieldLayout } from '@/lib/useFieldLayout';
 import SearchableSelect from '@/components/shared/SearchableSelect';
 import QuickCreateModal from '@/components/shared/QuickCreateModal';
 import { t } from '@/lib/i18n';
@@ -130,6 +131,7 @@ export default function CreateRecordModal({ page, open, prefillCustomer, onClose
 
   const fields     = OBJECT_FIELDS[page] || [];
   const statusOpts = STATUS_OPTS[page]   || ['Active','Inactive'];
+  const fieldLayout = useFieldLayout(page);
 
   const defaultForm = () => {
     const base: any = { status: statusOpts[0], currency: appPreferences?.default_currency || 'INR', priority:'Medium' };
@@ -154,6 +156,20 @@ export default function CreateRecordModal({ page, open, prefillCustomer, onClose
   }, [open, page]);
   const [customData, setCustomData] = useState({});
     const [form, setForm]     = useState(defaultForm);
+  // Separate from `fields` (used for validation, left untouched) - this is
+  // what actually renders, with the tenant's custom labels, hidden fields
+  // removed, and ordering applied. Declared after `form` since conditional
+  // rules evaluate against it, and a dependency array referencing `form`
+  // before its own declaration would throw a temporal-dead-zone error.
+  const displayFields = fields
+    .map((f, idx) => {
+      const resolved = fieldLayout.resolve(f.key, f.label, form);
+      const savedRow = fieldLayout.fields.find(r => r.field_key === f.key);
+      const sortOrder = savedRow ? savedRow.display_order : 10000 + idx;
+      return { ...f, label: resolved.label, _layoutHidden: !resolved.visible, _sortOrder: sortOrder };
+    })
+    .filter(f => !f._layoutHidden)
+    .sort((a, b) => a._sortOrder - b._sortOrder);
   const [saving, setSaving] = useState(false);
   const [errors, setErrors] = useState<Record<string,string>>({});
   const [quickCreate, setQuickCreate] = useState(null);
@@ -331,7 +347,7 @@ export default function CreateRecordModal({ page, open, prefillCustomer, onClose
         {/* Fields */}
         <div className="overflow-y-auto flex-1 p-6 space-y-5">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            {fields.map(f => renderField(f))}
+            {displayFields.map(f => renderField(f))}
           </div>
 
           {/* Additional Information — custom fields for create */}

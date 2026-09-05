@@ -13,7 +13,10 @@ import AddressSelector from '@/components/shared/AddressSelector';
 import BalanceConversionModal from '@/components/shared/BalanceConversionModal';
 import { useAlert } from '@/components/shared/AlertProvider';
 import { useCustomFields } from '@/lib/useCustomFields';
+import { useFieldLayout } from '@/lib/useFieldLayout';
+import { fetchServerPage, timePeriodToRange } from '@/lib/serverList';
 import LineItemCustomFieldInput from '@/components/shared/LineItemCustomFieldInput';
+import LoadingSpinner from '@/components/shared/LoadingSpinner';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const QUOTE_STATUSES = ['Draft','Submitted','Pending Approval','Approved','Sent to Customer','Accepted','Partially Ordered','Ordered','Rejected','Expired','Cancelled'];
@@ -759,7 +762,9 @@ function QuotationDetail({ quote, onClose, onSaved }) {
 
 // ─── Quotations List Page ──────────────────────────────────────────────────────
 export default function QuotationsPage() {
-  const { quotations, fetchQuotations, customers, createQuotation, deleteQuotation, appPreferences, fetchListCount } = useApp();
+  const { quotations, fetchQuotations, customers, createQuotation, deleteQuotation, appPreferences, fetchListCount, currentUser, permissionsLoaded, applyDataSecurity } = useApp();
+  const { supabase, tenant } = useTenant();
+  const fieldLayout = useFieldLayout('quotations');
   const { showAlert, showConfirm } = useAlert();
   const [selectedQuote, setSelectedQuote] = useState(null);
   const [createOpen,    setCreateOpen]    = useState(false);
@@ -791,29 +796,50 @@ export default function QuotationsPage() {
     return () => clearTimeout(t);
   }, [search]);
 
-  // Server-side exact row count — accurate even though `quotations` is capped
-  // at LIST_FETCH_LIMIT client-side (see the pagination TODO in AppContext.tsx).
+  // Server-side search/filter/pagination — replaces filtering a capped,
+  // client-side snapshot of `quotations` in JavaScript, which silently hid
+  // any quotation beyond the load cap from search and filters entirely
+  // (the same root-cause bug already found and fixed for CRM and Retail
+  // list pages this session). Also applies applyDataSecurity here — and
+  // critically, re-runs once currentUser/permissionsLoaded are actually
+  // ready, since that function deliberately returns [] until then and an
+  // effect that never re-checks would show a permanently empty table on a
+  // fresh load, exactly like the bug already found and fixed elsewhere.
+  const [serverRows, setServerRows] = useState([]);
+  const [serverLoading, setServerLoading] = useState(false);
   useEffect(() => {
-    let cancelled = false;
-    fetchListCount('quotations').then(c => { if (!cancelled) setServerTotal(c); });
-    return () => { cancelled = true; };
-  }, []);
+    if (!supabase) return;
+    setServerLoading(true);
+    fetchServerPage(supabase, {
+      table: 'quotations',
+      searchTerm: debouncedSearch,
+      searchColumns: ['name', 'customer'],
+      statusColumn: 'status',
+      statusFilter,
+      dateColumn: 'created_at',
+      sortColumn: 'created_at',
+      sortAscending: false,
+      page: currentPage,
+      pageSize,
+    }).then(({ data, error, totalCount }) => {
+      if (error) { console.error('[QuotationsPage server fetch]', error.message); setServerRows([]); setServerTotal(0); }
+      else {
+        const secured = applyDataSecurity ? applyDataSecurity(data) : data;
+        setServerRows(secured.map(r => ({ ...r, id: r.quote_number })));
+        setServerTotal(totalCount);
+      }
+      setServerLoading(false);
+    });
+  }, [supabase, debouncedSearch, statusFilter, currentPage, pageSize, tenant?.id, currentUser, permissionsLoaded]);
 
   const sf = (k,v) => setForm(p => ({...p,[k]:v}));
   const iCls = 'w-full border border-blue-200 rounded-xl px-3 py-2.5 text-[#0F172A] bg-white focus:outline-none focus:ring-2 focus:ring-blue-400 text-sm placeholder:text-gray-400';
   const sCls = 'w-full border border-blue-200 rounded-xl px-3 py-2.5 text-[#0F172A] bg-white focus:outline-none focus:ring-2 focus:ring-blue-400 text-sm';
 
-  const filtered = useMemo(() => {
-    let data = quotations;
-    if (debouncedSearch.trim()) { const q=debouncedSearch.toLowerCase(); data=data.filter(r=>[r.name,r.quote_number,r.customer].some(v=>String(v||'').toLowerCase().includes(q))); }
-    if (statusFilter !== 'All') data = data.filter(r => r.status === statusFilter);
-    return data;
-  }, [quotations, debouncedSearch, statusFilter]);
-
-  const totalRecords = filtered.length;
+  const totalRecords = serverTotal ?? 0;
   const totalPages   = Math.max(1, Math.ceil(totalRecords / pageSize));
   const safePage      = Math.min(currentPage, totalPages);
-  const pagedQuotes   = filtered.slice((safePage-1)*pageSize, safePage*pageSize);
+  const pagedQuotes   = serverRows;
 
   useEffect(() => { setCurrentPage(1); }, [debouncedSearch, statusFilter]);
 
@@ -849,23 +875,20 @@ export default function QuotationsPage() {
         </select>
       </div>
 
-      {/* Truncation warning — loaded rows capped but the table has more */}
-      {serverTotal !== null && quotations.length >= 500 && serverTotal > quotations.length && (
-        <div className="px-5 py-2.5 bg-amber-50 border border-amber-100 rounded-2xl flex items-center gap-2 text-xs text-amber-700">
-          <span>⚠️</span>
-          <span>Showing the {quotations.length.toLocaleString()} most recent quotations of <strong>{serverTotal.toLocaleString()}</strong> total — search and filters only apply to loaded records.</span>
-        </div>
-      )}
-
       {/* Table */}
       <div className="bg-white rounded-[24px] border border-blue-100 shadow-lg overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="bg-gradient-to-r from-[#0F172A] to-blue-900 text-white">
-              <tr>{['Quote #','Name','Customer','Version','Status','Grand Total','Validity','Actions'].map(h=><th key={h} className="px-5 py-3.5 text-left font-semibold">{h}</th>)}</tr>
+              <tr>{[{h:'Quote #',k:'quote_number'},{h:'Name',k:'name'},{h:'Customer',k:'customer'},{h:'Version',k:'version'},{h:'Status',k:'status'},{h:'Grand Total',k:'grand_total'},{h:'Validity',k:'valid_until'},{h:'Actions',k:null}].map(({h,k})=>{
+                const savedRow = k ? fieldLayout.fields.find(r => r.field_key === k) : null;
+                return <th key={h} className="px-5 py-3.5 text-left font-semibold">{savedRow?.custom_label || h}</th>;
+              })}</tr>
             </thead>
             <tbody>
-              {filtered.length===0
+              {serverLoading && pagedQuotes.length===0
+                ? <tr><td colSpan={8} className="px-5 py-20 text-center"><LoadingSpinner size={44} label="Loading quotations..." /></td></tr>
+                : pagedQuotes.length===0
                 ? <tr><td colSpan={8} className="px-5 py-16 text-center"><div className="text-5xl mb-3">📄</div><div className="font-bold text-[#0F172A] text-lg mb-2">No quotations yet</div><p className="text-gray-400">Create a quotation or generate one from an Opportunity.</p></td></tr>
                 : pagedQuotes.map(q => {
                     const sm = STATUS_META[q.status] || STATUS_META['Draft'];

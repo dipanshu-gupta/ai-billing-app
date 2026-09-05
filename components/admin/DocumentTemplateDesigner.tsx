@@ -5,6 +5,8 @@ import React from 'react';
 import { useState, useRef, useCallback } from 'react';
 import { useApp } from '@/context/AppContext';
 import { useAlert } from '@/components/shared/AlertProvider';
+import SimpleRichTextEditor from '@/components/shared/SimpleRichTextEditor';
+import { useCustomFields } from '@/lib/useCustomFields';
 
 // ─── Shared constants ─────────────────────────────────────────────────────────
 const FONTS = [
@@ -216,6 +218,7 @@ function LogoUploader({ logoUrl, onUrlChange, logoHeight, onHeightChange, logoPo
 
 // ─── Section Settings Panels ──────────────────────────────────────────────────
 function SectionSettings({ section, onUpdate, docType }) {
+  const { fields: docCustomFields } = useCustomFields(docType === 'quote' ? 'quotations' : 'invoices');
   const st = section.settings || {};
   const upd = (k, v) => onUpdate({ ...section, settings: { ...st, [k]: v } });
 
@@ -268,7 +271,7 @@ function SectionSettings({ section, onUpdate, docType }) {
             {(st.fields||[]).map((f,i)=>(
               <div key={f} className="flex items-center gap-2 bg-white border border-blue-100 rounded-lg px-3 py-1.5">
                 <span className="text-xs text-gray-400 cursor-move">⠿</span>
-                <span className="flex-1 text-xs text-[#0F172A] capitalize">{f.replace(/_/g,' ')}</span>
+                <span className="flex-1 text-xs text-[#0F172A] capitalize">{f.startsWith('custom:') ? (docCustomFields.find(cf=>cf.api_name===f.slice(7))?.label || f.slice(7)) : f.replace(/_/g,' ')}</span>
                 <button onClick={()=>upd('fields',(st.fields||[]).filter((_,xi)=>xi!==i))} className="text-red-400 text-xs hover:text-red-600">✕</button>
               </div>
             ))}
@@ -276,7 +279,14 @@ function SectionSettings({ section, onUpdate, docType }) {
           <div className="flex gap-2 mt-2">
             <select className={sCls} onChange={e=>{if(e.target.value&&!(st.fields||[]).includes(e.target.value)){upd('fields',[...(st.fields||[]),e.target.value]);e.target.value='';}}} defaultValue="">
               <option value="">+ Add field...</option>
-              {['quote_number','invoice_number','date','invoice_date','valid_until','due_date','po_number','version','currency','payment_terms','reference'].filter(f=>!(st.fields||[]).includes(f)).map(f=><option key={f} value={f}>{f.replace(/_/g,' ')}</option>)}
+              <optgroup label="Standard Fields">
+                {['quote_number','invoice_number','date','invoice_date','valid_until','due_date','po_number','version','currency','payment_terms','reference'].filter(f=>!(st.fields||[]).includes(f)).map(f=><option key={f} value={f}>{f.replace(/_/g,' ')}</option>)}
+              </optgroup>
+              {docCustomFields.length > 0 && (
+                <optgroup label="Custom Fields">
+                  {docCustomFields.filter(f=>!(st.fields||[]).includes(`custom:${f.api_name}`)).map(f=><option key={f.api_name} value={`custom:${f.api_name}`}>{f.label}</option>)}
+                </optgroup>
+              )}
             </select>
           </div>
         </div>
@@ -393,7 +403,7 @@ function SectionSettings({ section, onUpdate, docType }) {
         <ColorPicker label="Background"  value={st.bgColor}    onChange={v=>upd('bgColor',v)}/>
         <ColorPicker label="Text Color"  value={st.textColor}  onChange={v=>upd('textColor',v)}/>
         <ColorPicker label="Title Color" value={st.titleColor} onChange={v=>upd('titleColor',v)}/>
-        <div><L t="Terms Content"/><textarea rows={8} value={st.content||''} onChange={e=>upd('content',e.target.value)} className={tCls}/></div>
+        <div><L t="Terms Content"/><SimpleRichTextEditor value={st.content||''} onChange={v=>upd('content',v)} minHeight={160}/></div>
         <div className="grid grid-cols-2 gap-2">
           <div><L t="Font Size"/><input type="number" min={8} max={14} value={st.fontSize||10} onChange={e=>upd('fontSize',Number(e.target.value))} className={iCls}/></div>
           <div><L t="Columns"/><select value={st.columns||1} onChange={e=>upd('columns',Number(e.target.value))} className={sCls}><option value={1}>1 Column</option><option value={2}>2 Columns</option></select></div>
@@ -439,6 +449,7 @@ function SectionSettings({ section, onUpdate, docType }) {
 
 // ─── Live Preview ─────────────────────────────────────────────────────────────
 function LivePreview({ sections, pageSettings, globalSettings, docType }) {
+  const { fields: previewCustomFields } = useCustomFields(docType === 'quote' ? 'quotations' : 'invoices');
   const enabled = [...sections].filter(s=>s.enabled).sort((a,b)=>a.order-b.order);
   const font = pageSettings?.fontFamily || 'Arial, sans-serif';
   const isThermal = (pageSettings?.paperSize||'A4').startsWith('Thermal');
@@ -501,9 +512,12 @@ function LivePreview({ sections, pageSettings, globalSettings, docType }) {
         const fields = s.fields || [];
         return (
           <div key={sec.id} style={{background:s.bgColor,color:s.textColor,padding:'10px 24px',borderBottom:borderStyle,display:'grid',gridTemplateColumns:`repeat(${Math.min(fields.length,4)},1fr)`,gap:8,fontSize:11}}>
-            {fields.map(f=>(
-              <div key={f}><div style={{opacity:0.5,textTransform:'uppercase',fontSize:8,marginBottom:2,letterSpacing:0.5}}>{DOC_LABELS[f]||f}</div><div style={{fontWeight:600}}>{DOC_VALUES[f]||'—'}</div></div>
-            ))}
+            {fields.map(f=>{
+              const isCustom = f.startsWith('custom:');
+              const label = isCustom ? (previewCustomFields.find(cf=>cf.api_name===f.slice(7))?.label || f.slice(7)) : (activeDOCLabels[f]||f);
+              const value = isCustom ? 'Sample value' : (DOC_VALUES[f]||'—');
+              return <div key={f}><div style={{opacity:0.5,textTransform:'uppercase',fontSize:8,marginBottom:2,letterSpacing:0.5}}>{label}</div><div style={{fontWeight:600}}>{value}</div></div>;
+            })}
           </div>
         );
       }
@@ -624,9 +638,8 @@ function LivePreview({ sections, pageSettings, globalSettings, docType }) {
       case 'terms': return (
         <div key={sec.id} style={{background:s.bgColor||'#FFFFFF',padding:'10px 24px',borderTop:`1px solid ${s.borderColor||'#E2E8F0'}`}}>
           <div style={{fontWeight:700,textTransform:'uppercase',fontSize:8,color:s.titleColor||'#0F172A',marginBottom:6,letterSpacing:0.5}}>Terms & Conditions</div>
-          <div style={{fontSize:s.fontSize||10,color:s.textColor||'#475569',lineHeight:1.6,whiteSpace:'pre-line',columns:s.columns===2?'2':'1',columnGap:20}}>
-            {s.content}
-          </div>
+          <div style={{fontSize:s.fontSize||10,color:s.textColor||'#475569',lineHeight:1.6,columns:s.columns===2?'2':'1',columnGap:20}}
+            dangerouslySetInnerHTML={{__html: /<[a-z][\s\S]*>/i.test(s.content||'') ? s.content : (s.content||'').replace(/\n/g,'<br/>')}} />
         </div>
       );
 

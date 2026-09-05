@@ -1,10 +1,13 @@
 // @ts-nocheck
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import AppearancePanel from '@/components/admin/AppearancePanel';
 import AppComposer from '@/components/admin/AppComposer';
 import FieldLayoutDesigner from '@/components/admin/FieldLayoutDesigner';
+import FieldMappingPanel from '@/components/admin/FieldMappingPanel';
+import { useObjectLabels } from '@/lib/useObjectLabels';
+import { useCustomFields } from '@/lib/useCustomFields';
 import SecurityConsole from '@/components/admin/SecurityConsole';
 import B2BAppComposer from '@/components/admin/B2BAppComposer';
 import TenantAdminPanel from '@/components/admin/TenantAdminPanel';
@@ -30,6 +33,10 @@ const RETAIL_OBJECTS_LIST = ['retailCustomers','retailProducts','retailActivitie
 const RETAIL_OBJECT_LABELS: Record<string,string> = {
   retailCustomers: 'Retail Customers', retailProducts: 'Retail Products',
   retailActivities: 'Retail Activities', retailOrders: 'Retail Orders', retailInvoices: 'Retail Invoices',
+};
+const CRM_OBJECT_LABELS: Record<string,string> = {
+  customers: 'Customers', contacts: 'Contacts', products: 'Products', leads: 'Leads',
+  opportunities: 'Opportunities', orders: 'Orders', invoices: 'Invoices', activities: 'Activities', quotations: 'Quotations',
 };
 
 // ─── Retail Admin Wrapper — provides consistent header for B2C admin panels ──
@@ -68,7 +75,7 @@ function RentalSettingsPanel() {
   };
 
   return (
-    <RetailAdminWrapper title="Rental Settings" icon="👗" desc="Configure which order statuses hold a booking and block other orders from renting the same item over the same dates.">
+    <RetailAdminWrapper title="Rental Settings" icon="🔑" desc="Configure which order statuses hold a booking and block other orders from renting the same item over the same dates.">
       <div className="bg-white rounded-[20px] border border-gray-200 shadow-sm p-5 space-y-4">
         <div>
           <h3 className="font-bold text-[#0F172A] mb-1">Blocking Statuses</h3>
@@ -101,10 +108,19 @@ function RentalSettingsPanel() {
   );
 }
 const WHATSAPP_TEMPLATE_KEYS = [
-  { key: 'rental_return_reminder', label: 'Rental Return Reminder', desc: 'Sent 2 days before a rental booking ends.', placeholders: ['Customer name', 'Item name', 'Return date', 'Order number'] },
-  { key: 'booking_confirmation',   label: 'Booking Confirmation',   desc: 'Sent when a new booking or order is created.', placeholders: ['Customer name', 'Order number', 'Amount'] },
-  { key: 'invoice_notice',         label: 'Invoice Notice',         desc: 'Used by the manual "Send WhatsApp" button on invoices.', placeholders: ['Customer name', 'Invoice number', 'Amount'] },
+  { key: 'rental_return_reminder', label: 'Rental Return Reminder', desc: 'Sent 2 days before a rental booking ends.', placeholders: ['Customer name', 'Item name', 'Return date', 'Order number'], defaultObject: 'retailOrders' },
+  { key: 'booking_confirmation',   label: 'Booking Confirmation',   desc: 'Sent when a new booking or order is created, and via the manual "Send Confirmation" button on orders.', placeholders: ['Customer name', 'Order number', 'Amount'], defaultObject: 'retailOrders' },
+  { key: 'invoice_notice',         label: 'Invoice Notice',         desc: 'Used by the manual "Send WhatsApp" button on invoices.', placeholders: ['Customer name', 'Invoice number', 'Amount'], defaultObject: 'retailInvoices' },
+  { key: 'activity_followup',      label: 'Activity Follow-up',     desc: 'Used by the manual "Send WhatsApp" button on activities.', placeholders: ['Customer name', 'Subject', 'Activity date'], defaultObject: 'retailActivities' },
 ];
+// Standard field options offered per object in the field-mapping picker -
+// a small, curated set of the fields actually useful in a WhatsApp
+// message, not every column on the table.
+const WHATSAPP_STANDARD_FIELDS: Record<string, {v:string,l:string}[]> = {
+  retailOrders:     [{v:'customer',l:'Customer Name'},{v:'id',l:'Order Number'},{v:'amount',l:'Amount'},{v:'status',l:'Status'},{v:'order_date',l:'Order Date'},{v:'delivery_date',l:'Delivery Date'}],
+  retailInvoices:   [{v:'customer',l:'Customer Name'},{v:'id',l:'Invoice Number'},{v:'amount',l:'Amount'},{v:'status',l:'Status'},{v:'due_date',l:'Due Date'}],
+  retailActivities: [{v:'customer',l:'Customer Name'},{v:'subject',l:'Subject'},{v:'activity_date',l:'Activity Date'},{v:'status',l:'Status'}],
+};
 
 function WhatsAppSettingsPanel() {
   const { tenant } = useTenant();
@@ -113,8 +129,12 @@ function WhatsAppSettingsPanel() {
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<any>(null);
-  const [config, setConfig] = useState<any>({ is_active: false, phone_number_id: '', business_account_id: '', access_token: '', display_phone_number: '' });
+  const [config, setConfig] = useState<any>({ is_active: false, phone_number_id: '', business_account_id: '', access_token: '', display_phone_number: '', business_notify_phone: '' });
   const [templates, setTemplates] = useState<Record<string, any>>({});
+  const { fields: ordersCustomFields } = useCustomFields('retailOrders');
+  const { fields: invoicesCustomFields } = useCustomFields('retailInvoices');
+  const { fields: activitiesCustomFields } = useCustomFields('retailActivities');
+  const customFieldsByObject: Record<string, any[]> = { retailOrders: ordersCustomFields, retailInvoices: invoicesCustomFields, retailActivities: activitiesCustomFields };
 
   const dbUrl = tenant?.db_url || undefined;
   const tenantId = tenant?.id || undefined;
@@ -152,6 +172,8 @@ function WhatsAppSettingsPanel() {
             language_code: templates[t.key]?.language_code || 'en_US',
             is_active: templates[t.key]?.is_active !== false,
             param_count: templates[t.key]?.param_count ?? t.placeholders.length,
+            object_type: templates[t.key]?.object_type || t.defaultObject,
+            param_mappings: (templates[t.key]?.param_mappings || []).map((m: any) => m || null),
           })),
         }),
       });
@@ -234,6 +256,11 @@ function WhatsAppSettingsPanel() {
             <label className="block text-xs font-bold uppercase tracking-wider text-gray-400 mb-1.5">Business Number (for display)</label>
             <input value={config.display_phone_number || ''} onChange={e => setConfig((p: any) => ({ ...p, display_phone_number: e.target.value }))} className={iCls} placeholder="+91 98765 43210" />
           </div>
+          <div>
+            <label className="block text-xs font-bold uppercase tracking-wider text-gray-400 mb-1.5">Business Notify Number</label>
+            <input value={config.business_notify_phone || ''} onChange={e => setConfig((p: any) => ({ ...p, business_notify_phone: e.target.value }))} className={iCls} placeholder="+91 98765 43210" />
+            <p className="text-[11px] text-gray-400 mt-1">Receives "notify business" automated messages from workflows (e.g. staff alerts) — different from the number above, which is just shown to customers.</p>
+          </div>
         </div>
 
         <div className="flex items-center gap-3 pt-1">
@@ -284,7 +311,54 @@ function WhatsAppSettingsPanel() {
                   ))}
                 </select>
                 <p className="text-[11px] text-gray-400 mt-1">Must match the number of {'{{n}}'} placeholders Meta actually approved for this template — a mismatch causes error #132000.</p>
+                {(templates[t.key]?.param_count ?? t.placeholders.length) === 0 && (
+                  <p className="text-[11px] text-amber-600 mt-1 bg-amber-50 rounded-lg px-2.5 py-1.5">
+                    ⚠️ Set to 0 (no placeholders) — this only works for a genuinely static template like Meta's built-in "hello_world" test template. Select a placeholder count above once you have your own approved template with real {'{{n}}'} slots, and a field-mapping picker will appear here.
+                  </p>
+                )}
               </div>
+              {(templates[t.key]?.param_count ?? t.placeholders.length) > 0 && (
+                <div className="mt-3 bg-purple-50/50 rounded-2xl p-3">
+                  <label className="text-[10px] font-bold uppercase tracking-wider text-purple-700 block mb-2">Which field fills each placeholder</label>
+                  {(() => {
+                    const objType = templates[t.key]?.object_type || t.defaultObject;
+                    const paramCount = templates[t.key]?.param_count ?? t.placeholders.length;
+                    const mappings = templates[t.key]?.param_mappings || [];
+                    const standardOpts = WHATSAPP_STANDARD_FIELDS[objType] || [];
+                    const customOpts = customFieldsByObject[objType] || [];
+                    return Array.from({ length: paramCount }).map((_, i) => {
+                      const current = mappings[i];
+                      const currentVal = current ? `${current.field_type}:${current.field_key}` : '';
+                      return (
+                        <div key={i} className="flex items-center gap-2 mb-1.5">
+                          <span className="text-xs font-mono text-purple-600 w-8 flex-shrink-0">{`{{${i+1}}}`}</span>
+                          <select
+                            value={currentVal}
+                            onChange={e => {
+                              const [field_type, field_key] = e.target.value.split(':');
+                              const newMappings = [...mappings];
+                              newMappings[i] = e.target.value ? { field_type, field_key } : undefined;
+                              setTemplates(p => ({ ...p, [t.key]: { ...p[t.key], object_type: objType, param_mappings: newMappings } }));
+                            }}
+                            className={iCls + ' flex-1'}
+                          >
+                            <option value="">Leave unmapped (manual value at send time)</option>
+                            <optgroup label="Standard Fields">
+                              {standardOpts.map(f => <option key={f.v} value={`standard:${f.v}`}>{f.l}</option>)}
+                            </optgroup>
+                            {customOpts.length > 0 && (
+                              <optgroup label="Custom Fields">
+                                {customOpts.map(f => <option key={f.api_name} value={`custom:${f.api_name}`}>{f.label}</option>)}
+                              </optgroup>
+                            )}
+                          </select>
+                        </div>
+                      );
+                    });
+                  })()}
+                  <p className="text-[11px] text-purple-600 mt-1">Leave a placeholder unmapped to keep passing its value manually from wherever this template is sent — useful for values that can't come from a single record field.</p>
+                </div>
+              )}
             </div>
           ))}
         </div>
@@ -371,6 +445,7 @@ const ACTION_TYPES = [
   {v:'update_field',l:'✏️ Update Field'},
   {v:'assign_owner',l:'👤 Assign Owner'},
   {v:'create_task',l:'📋 Create Task'},
+  {v:'send_whatsapp',l:'💬 Send WhatsApp'},
 ];
 
 const NUMERIC_FIELDS = ['amount','probability','price','grand_total','cost','quantity',
@@ -382,6 +457,7 @@ const TRIGGER_EVENTS = [
   {v:'on_delete',       l:'When record is Deleted'},
   {v:'on_status_change',l:'When Status changes'},
   {v:'on_field_change', l:'When Field changes'},
+  {v:'before_date',     l:'Before a date is reached'},
 ];
 
 // ─── Label helper ─────────────────────────────────────────────────────────────
@@ -952,36 +1028,100 @@ function SecurityConsolePanel() {
 // ═══════════════════════════ WORKFLOW BUILDER ══════════════════════════════════
 // ── Shared condition builder ─────────────────────────────────────────────────
 
-function ConditionRow({ fields, condition, onChange, onRemove, users, objType }) {
+// Line-item field registry — which fields the condition builder can offer
+// once "Line Item" scope is selected, per object. Mirrors the actual line-
+// item table schemas in AppContext.tsx (LINE_ITEM_TABLE_CONFIG there).
+const LINE_ITEM_FIELDS: Record<string, {v:string,l:string,type?:string}[]> = {
+  retailOrders:   [{v:'product_name',l:'Product'},{v:'quantity',l:'Quantity',type:'number'},{v:'unit_price',l:'Unit Price',type:'number'},{v:'discount_pct',l:'Discount %',type:'number'},{v:'extended_price',l:'Line Total',type:'number'}],
+  retailInvoices: [{v:'product_name',l:'Product'},{v:'quantity',l:'Quantity',type:'number'},{v:'unit_price',l:'Unit Price',type:'number'},{v:'discount_pct',l:'Discount %',type:'number'},{v:'extended_price',l:'Line Total',type:'number'}],
+  leads:          [{v:'product_name',l:'Product'},{v:'quantity',l:'Quantity',type:'number'},{v:'price',l:'Price',type:'number'}],
+  opportunities:  [{v:'product_name',l:'Product'},{v:'quantity',l:'Quantity',type:'number'},{v:'price',l:'Price',type:'number'}],
+  orders:         [{v:'product_name',l:'Product'},{v:'quantity',l:'Quantity',type:'number'},{v:'price',l:'Price',type:'number'}],
+  invoices:       [{v:'product_name',l:'Product'},{v:'quantity',l:'Quantity',type:'number'},{v:'price',l:'Price',type:'number'}],
+  quotations:     [{v:'product_name',l:'Product'},{v:'quantity',l:'Quantity',type:'number'},{v:'unit_price',l:'Unit Price',type:'number'},{v:'discount_pct',l:'Discount %',type:'number'},{v:'extended_price',l:'Line Total',type:'number'}],
+};
+// Rental-only line-item fields, kept separate rather than always included —
+// only merged into the picker when the tenant is actually in rental mode,
+// since these fields are meaningless (always empty) otherwise.
+const RENTAL_LINE_ITEM_FIELDS: Record<string, {v:string,l:string,type?:string}[]> = {
+  retailOrders:   [{v:'rental_start_date',l:'Rental Start Date',type:'date'},{v:'rental_end_date',l:'Rental End Date',type:'date'}],
+  retailInvoices: [{v:'rental_start_date',l:'Rental Start Date',type:'date'},{v:'rental_end_date',l:'Rental End Date',type:'date'}],
+};
+// Returns the correct line-item field list for an object, including rental
+// date fields only when the tenant's business_type is actually 'rental'.
+const getLineItemFieldsFor = (objType: string, appPreferences: any): {v:string,l:string}[] => {
+  const base = LINE_ITEM_FIELDS[objType] || [];
+  if (appPreferences?.business_type === 'rental' && RENTAL_LINE_ITEM_FIELDS[objType]) {
+    return [...base, ...RENTAL_LINE_ITEM_FIELDS[objType]];
+  }
+  return base;
+};
+const AGGREGATION_MODES = [
+  { v:'any', l:'Any line item matches' },
+  { v:'all', l:'Every line item matches' },
+  { v:'sum', l:'Sum across line items' },
+];
+
+function ConditionRow({ fields, condition, onChange, onRemove, users, objType, appPreferences }) {
   const opts = getFieldOptions(objType, condition.field);
   const noValue = ['is_empty','is_not_empty'].includes(condition.operator);
+  const lineItemFields = getLineItemFieldsFor(objType, appPreferences);
+  const isLineItem = condition.scope === 'line_item';
+  const activeFieldOptions = isLineItem ? lineItemFields : fields;
+
   return (
     <div className="flex items-center gap-2 flex-wrap">
+      {lineItemFields.length > 0 && (
+        <select
+          value={condition.scope || 'header'}
+          onChange={e => onChange({ ...condition, scope: e.target.value, field: '', value: '', aggregation: e.target.value === 'line_item' ? 'any' : undefined })}
+          className="border border-purple-200 bg-purple-50 rounded-xl px-2.5 py-2 text-xs font-semibold text-purple-700 focus:outline-none focus:ring-1 focus:ring-purple-400"
+        >
+          <option value="header">Header Field</option>
+          <option value="line_item">Line Item Field</option>
+        </select>
+      )}
+      {isLineItem && (
+        <select value={condition.aggregation || 'any'} onChange={e => onChange({ ...condition, aggregation: e.target.value })}
+          className="border border-gray-200 rounded-xl px-2.5 py-2 text-xs text-gray-700 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400">
+          {AGGREGATION_MODES.map(a => <option key={a.v} value={a.v}>{a.l}</option>)}
+        </select>
+      )}
       <select value={condition.field||''} onChange={e=>onChange({...condition,field:e.target.value,value:''})}
         className="border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-900 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400 min-w-[140px]">
         <option value="">Select field...</option>
-        {fields.map(f=><option key={f.v} value={f.v}>{f.l}</option>)}
+        {activeFieldOptions.map(f=><option key={f.v} value={f.v}>{f.l}</option>)}
       </select>
       <select value={condition.operator||'equals'} onChange={e=>onChange({...condition,operator:e.target.value})}
         className="border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-900 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400">
         {OPERATORS.map(o=><option key={o.v} value={o.v}>{o.l}</option>)}
       </select>
-      {!noValue && (
-        opts
-          ? <select value={condition.value||''} onChange={e=>onChange({...condition,value:e.target.value})}
-              className="border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-900 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400 min-w-[140px]">
+      {!noValue && (() => {
+        const selectedFieldMeta = activeFieldOptions.find(f => f.v === condition.field);
+        const fieldType = (selectedFieldMeta as any)?.type;
+        const inputCls = "border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-900 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400 min-w-[140px]";
+        if (opts && !isLineItem) {
+          return (
+            <select value={condition.value||''} onChange={e=>onChange({...condition,value:e.target.value})} className={inputCls}>
               <option value="">Select value...</option>
               {opts.map(o=><option key={o} value={o}>{o}</option>)}
             </select>
-          : <input value={condition.value||''} onChange={e=>onChange({...condition,value:e.target.value})}
-              placeholder="Value..." className="border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-900 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400 min-w-[140px]"/>
-      )}
+          );
+        }
+        if (fieldType === 'date') {
+          return <input type="date" value={condition.value||''} onChange={e=>onChange({...condition,value:e.target.value})} className={inputCls}/>;
+        }
+        if (fieldType === 'number') {
+          return <input type="number" value={condition.value||''} onChange={e=>onChange({...condition,value:e.target.value})} placeholder="0" className={inputCls}/>;
+        }
+        return <input value={condition.value||''} onChange={e=>onChange({...condition,value:e.target.value})} placeholder="Value..." className={inputCls}/>;
+      })()}
       <button onClick={onRemove} className="w-7 h-7 flex items-center justify-center text-red-400 hover:text-red-600 hover:bg-red-50 rounded-lg text-lg">×</button>
     </div>
   );
 }
 
-function ConditionBuilder({ fields, conditions, logic, onChange, objType }) {
+function ConditionBuilder({ fields, conditions, logic, onChange, objType, appPreferences }) {
   const addCond = () => onChange({ logic, conditions: [...conditions, {field:'',operator:'equals',value:''}] });
   const updCond = (i,c) => onChange({ logic, conditions: conditions.map((x,j)=>j===i?c:x) });
   const remCond = (i) => onChange({ logic, conditions: conditions.filter((_,j)=>j!==i) });
@@ -998,7 +1138,7 @@ function ConditionBuilder({ fields, conditions, logic, onChange, objType }) {
         <span className="text-sm text-gray-400">of these conditions</span>
       </div>
       {conditions.map((c,i)=>(
-        <ConditionRow key={i} fields={fields} condition={c} objType={objType}
+        <ConditionRow key={i} fields={fields} condition={c} objType={objType} appPreferences={appPreferences}
           onChange={nc=>updCond(i,nc)} onRemove={()=>remCond(i)} />
       ))}
       <button onClick={addCond} className="text-sm text-blue-600 hover:text-blue-800 font-semibold flex items-center gap-1">
@@ -1130,17 +1270,52 @@ function ActionBuilder({ action, idx, users, fields, objectType, onChange, onRem
           </div>
         </div>
       )}
+
+      {action.action_type === 'send_whatsapp' && (
+        <div className="space-y-2 ml-9">
+          <select value={cfg.template_key||''} onChange={e=>setcfg('template_key',e.target.value)}
+            className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-900 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400">
+            <option value="">Select WhatsApp template... *</option>
+            {(() => {
+              const matching = WHATSAPP_TEMPLATE_KEYS.filter(t => t.defaultObject === objectType);
+              // Falls back to showing every template if none match this
+              // rule's object exactly — all templates today are
+              // retail-specific, so a CRM workflow rule would otherwise see
+              // zero options here at all.
+              return (matching.length > 0 ? matching : WHATSAPP_TEMPLATE_KEYS).map(t => <option key={t.key} value={t.key}>{t.label}</option>);
+            })()}
+          </select>
+          <div>
+            <label className="block text-xs font-bold text-gray-400 mb-1">Send to</label>
+            <div className="flex gap-2">
+              <button type="button" onClick={()=>setcfg('recipient_type','customer')}
+                className={`flex-1 px-3 py-2 rounded-xl text-xs font-semibold border transition-all ${(cfg.recipient_type||'customer')==='customer' ? 'bg-[#0F172A] text-white border-transparent' : 'bg-white text-gray-600 border-gray-200'}`}>
+                👤 Customer
+              </button>
+              <button type="button" onClick={()=>setcfg('recipient_type','business')}
+                className={`flex-1 px-3 py-2 rounded-xl text-xs font-semibold border transition-all ${cfg.recipient_type==='business' ? 'bg-[#0F172A] text-white border-transparent' : 'bg-white text-gray-600 border-gray-200'}`}>
+                🏢 Business
+              </button>
+            </div>
+            <p className="text-[11px] text-gray-400 mt-1">
+              {cfg.recipient_type==='business'
+                ? 'Sends to the Business Notify Number configured in WhatsApp Settings.'
+                : "Sends to the record's Customer Phone field."}
+            </p>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
 // ── Workflow Builder Panel ────────────────────────────────────────────────────
 function WorkflowBuilderPanel({ objectList = ALL_OBJECTS, conditionFields = CONDITION_FIELDS, objectLabels = null }) {
-  const { workflowRules, enterpriseUsers, saveWorkflowRule, deleteWorkflowRule } = useApp();
+  const { workflowRules, enterpriseUsers, saveWorkflowRule, deleteWorkflowRule, appPreferences } = useApp();
   const { showAlert } = useAlert();
   const [open, setOpen]         = useState(false);
   const [editing, setEditing]   = useState(null);
-  const [form, setForm]         = useState({ name:'', object_type:objectList[0], trigger_event:'on_create', trigger_field:'', trigger_value:'', is_active:true });
+  const [form, setForm]         = useState({ name:'', object_type:objectList[0], trigger_event:'on_create', trigger_field:'', trigger_value:'', is_active:true, schedule_date_field:'', schedule_date_scope:'header', schedule_offset_value:1, schedule_offset_unit:'days', schedule_due_time:'18:00' });
   const [conditions, setCond]   = useState({ logic:'AND', conditions:[] });
   const [actions, setActions]   = useState([{ action_type:'send_notification', action_config:{} }]);
   const [saving, setSaving]     = useState(false);
@@ -1151,7 +1326,7 @@ function WorkflowBuilderPanel({ objectList = ALL_OBJECTS, conditionFields = COND
 
   const openNew = () => {
     setEditing(null);
-    setForm({name:'',object_type:objectList[0],trigger_event:'on_create',trigger_field:'',trigger_value:'',is_active:true});
+    setForm({name:'',object_type:objectList[0],trigger_event:'on_create',trigger_field:'',trigger_value:'',is_active:true,schedule_date_field:'',schedule_date_scope:'header',schedule_offset_value:1,schedule_offset_unit:'days',schedule_due_time:'18:00'});
     setCond({logic:'AND',conditions:[]});
     setActions([{action_type:'send_notification',action_config:{}}]);
     setOpen(true);
@@ -1160,7 +1335,10 @@ function WorkflowBuilderPanel({ objectList = ALL_OBJECTS, conditionFields = COND
   const openEdit = async (rule) => {
     setEditing(rule);
     setForm({ name:rule.name, object_type:rule.object_type, trigger_event:rule.trigger_event,
-      trigger_field:rule.trigger_field||'', trigger_value:rule.trigger_value||'', is_active:rule.is_active });
+      trigger_field:rule.trigger_field||'', trigger_value:rule.trigger_value||'', is_active:rule.is_active,
+      schedule_date_field:rule.schedule_date_field||'', schedule_date_scope:rule.schedule_date_scope||'header',
+      schedule_offset_value:rule.schedule_offset_value||1, schedule_offset_unit:rule.schedule_offset_unit||'days',
+      schedule_due_time:rule.schedule_due_time||'18:00' });
     setCond(rule.conditions || {logic:'AND',conditions:[]});
     const { data: acts } = await (window as any).__bp_supabase
       ?.from('workflow_actions').select('*').eq('workflow_rule_id', rule.id).order('execution_order') || {data:[]};
@@ -1317,12 +1495,69 @@ function WorkflowBuilderPanel({ objectList = ALL_OBJECTS, conditionFields = COND
                 </div>
               </div>
             )}
+            {form.trigger_event==='before_date' && (() => {
+              const lineItemFieldsForObj = getLineItemFieldsFor(form.object_type, appPreferences);
+              const isLineItemField = lineItemFieldsForObj.some(f => f.v === form.schedule_date_field);
+              const offsetUnit = form.schedule_offset_unit || 'days';
+              return (
+                <div className="space-y-3 bg-purple-50/50 rounded-2xl p-3 border border-purple-100">
+                  <div>
+                    <label className="block text-xs font-bold text-gray-500 mb-1">Date field to watch</label>
+                    <select
+                      value={form.schedule_date_field || ''}
+                      onChange={e => {
+                        const field = e.target.value;
+                        const isLI = lineItemFieldsForObj.some(f => f.v === field);
+                        setForm(f => ({ ...f, schedule_date_field: field, schedule_date_scope: isLI ? 'line_item' : 'header' }));
+                      }}
+                      className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-900 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400"
+                    >
+                      <option value="">Select date field...</option>
+                      {fields.filter(f => f.v.toLowerCase().includes('date')).length > 0 && (
+                        <optgroup label="Header Fields">
+                          {fields.filter(f => f.v.toLowerCase().includes('date')).map(f => <option key={f.v} value={f.v}>{f.l}</option>)}
+                        </optgroup>
+                      )}
+                      {lineItemFieldsForObj.filter(f => f.v.toLowerCase().includes('date')).length > 0 && (
+                        <optgroup label="Line Item Fields">
+                          {lineItemFieldsForObj.filter(f => f.v.toLowerCase().includes('date')).map(f => <option key={f.v} value={f.v}>{f.l}</option>)}
+                        </optgroup>
+                      )}
+                    </select>
+                    {isLineItemField && <p className="text-[11px] text-purple-600 mt-1">This checks each line item individually, not just the record header.</p>}
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-bold text-gray-500 mb-1">Send this far before</label>
+                      <input type="number" min={1} value={form.schedule_offset_value || 1}
+                        onChange={e => s('schedule_offset_value', Number(e.target.value))}
+                        className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-900 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400" />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-gray-500 mb-1">Unit</label>
+                      <select value={offsetUnit} onChange={e => s('schedule_offset_unit', e.target.value)}
+                        className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-900 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400">
+                        <option value="days">Days</option>
+                        <option value="hours">Hours</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-gray-500 mb-1">Treat the date as due at</label>
+                    <input type="time" value={form.schedule_due_time || '18:00'} onChange={e => s('schedule_due_time', e.target.value)}
+                      className="w-40 border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-900 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400" />
+                    <p className="text-[11px] text-gray-400 mt-1">This field stores a date only, with no time of day — this sets what time on that date counts as "due," which matters for hour-based offsets. Defaults to 6:00 PM.</p>
+                  </div>
+                  <p className="text-[11px] text-gray-500">Checked periodically while the app is in use, not by an exact-second server clock — expect the notification within about 10 minutes of the exact requested offset, not to the second.</p>
+                </div>
+              );
+            })()}
           </div>
 
           {/* Conditions */}
           <div className="bg-gray-50 rounded-[16px] p-4">
             <h4 className="text-sm font-bold text-[#0F172A] mb-3">🔍 Additional Conditions (optional)</h4>
-            <ConditionBuilder fields={fields} conditions={conditions.conditions||[]} logic={conditions.logic||'AND'} onChange={setCond} objType={form.object_type}/>
+            <ConditionBuilder fields={fields} conditions={conditions.conditions||[]} logic={conditions.logic||'AND'} onChange={setCond} objType={form.object_type} appPreferences={appPreferences}/>
           </div>
 
           {/* Actions */}
@@ -1534,11 +1769,12 @@ function AssignmentRulesPanel({ objectList = ALL_OBJECTS, conditionFields = COND
 
 // ── SLA Panel ──────────────────────────────────────────────────────────────
 function SLAPanel({ objectList = ALL_OBJECTS, conditionFields = CONDITION_FIELDS, objectLabels = null }) {
-  const { slaPolicies, enterpriseUsers, userGroups, saveSLAPolicy, deleteSLAPolicy } = useApp();
+  const { slaPolicies, enterpriseUsers, userGroups, saveSLAPolicy, deleteSLAPolicy, appPreferences } = useApp();
   const { showAlert } = useAlert();
   const [open, setOpen]       = useState(false);
   const [editing, setEditing] = useState(null);
   const [form, setForm]       = useState({ name:'', object_type:objectList[0], condition_field:'status', condition_value:'', response_time_hours:24, resolution_time_hours:72, warning_threshold_pct:80, escalate_to_user_id:'', is_active:true });
+  const [conditions, setCond] = useState({ logic:'AND', conditions:[] });
   const [saving, setSaving]   = useState(false);
   const s = (k,v)=>setForm(f=>({...f,[k]:v}));
 
@@ -1549,6 +1785,7 @@ function SLAPanel({ objectList = ALL_OBJECTS, conditionFields = CONDITION_FIELDS
   const openNew = () => {
     setEditing(null);
     setForm({name:'',object_type:objectList[0],condition_field:'status',condition_value:'',response_time_hours:24,resolution_time_hours:72,warning_threshold_pct:80,escalate_to_user_id:'',is_active:true});
+    setCond({logic:'AND',conditions:[]});
     setOpen(true);
   };
 
@@ -1591,7 +1828,7 @@ function SLAPanel({ objectList = ALL_OBJECTS, conditionFields = CONDITION_FIELDS
                   </div>
                 </div>
                 <div className="flex gap-2 flex-shrink-0">
-                  <button onClick={()=>{setEditing(policy);setForm({...policy});setOpen(true);}} className="px-3 py-1.5 bg-blue-50 text-blue-700 hover:bg-blue-100 rounded-xl text-xs font-semibold border border-blue-200">Edit</button>
+                  <button onClick={()=>{setEditing(policy);setForm({...policy});setCond(policy.conditions||{logic:'AND',conditions:[]});setOpen(true);}} className="px-3 py-1.5 bg-blue-50 text-blue-700 hover:bg-blue-100 rounded-xl text-xs font-semibold border border-blue-200">Edit</button>
                   <button onClick={()=>deleteSLAPolicy(policy.id)} className="px-3 py-1.5 bg-red-50 text-red-600 hover:bg-red-100 rounded-xl text-xs font-semibold border border-red-200">Delete</button>
                 </div>
               </div>
@@ -1606,7 +1843,7 @@ function SLAPanel({ objectList = ALL_OBJECTS, conditionFields = CONDITION_FIELDS
           <button onClick={async()=>{
             if(!form.name?.trim()){showAlert('Name required', { variant:'warning' });return;}
             setSaving(true);
-            try{await saveSLAPolicy(form,editing?.id);setOpen(false);}catch(e:any){showAlert(e.message, { variant:'danger', title:'Save Failed' });}
+            try{await saveSLAPolicy({...form, conditions},editing?.id);setOpen(false);}catch(e:any){showAlert(e.message, { variant:'danger', title:'Save Failed' });}
             setSaving(false);
           }} disabled={saving} className="px-5 py-2.5 rounded-2xl bg-gradient-to-r from-[#0F172A] to-blue-800 text-white text-sm font-bold shadow disabled:opacity-50">
             {saving?'Saving…':(editing?'Update Policy':'Create Policy')}
@@ -1629,30 +1866,8 @@ function SLAPanel({ objectList = ALL_OBJECTS, conditionFields = CONDITION_FIELDS
           </div>
 
           <div className="bg-teal-50 rounded-[16px] p-4 space-y-3">
-            <h4 className="text-sm font-bold text-[#0F172A]">🔍 Apply When (optional condition)</h4>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="block text-xs font-bold text-gray-500 mb-1">Field</label>
-                <select value={form.condition_field||''} onChange={e=>s('condition_field',e.target.value)}
-                  className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-900 bg-white focus:outline-none focus:ring-1 focus:ring-teal-400">
-                  <option value="">All records</option>
-                  {fields.map(f=><option key={f.v} value={f.v}>{f.l}</option>)}
-                </select>
-              </div>
-              <div>
-                <label className="block text-xs font-bold text-gray-500 mb-1">Value</label>
-                {valueOpts
-                  ? <select value={form.condition_value||''} onChange={e=>s('condition_value',e.target.value)}
-                      className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-900 bg-white focus:outline-none focus:ring-1 focus:ring-teal-400">
-                      <option value="">Any</option>
-                      {valueOpts.map(o=><option key={o} value={o}>{o}</option>)}
-                    </select>
-                  : <input value={form.condition_value||''} onChange={e=>s('condition_value',e.target.value)}
-                      placeholder="Value..."
-                      className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-900 bg-white focus:outline-none focus:ring-1 focus:ring-teal-400"/>
-                }
-              </div>
-            </div>
+            <h4 className="text-sm font-bold text-[#0F172A]">🔍 Apply When (optional conditions)</h4>
+            <ConditionBuilder fields={fields} conditions={conditions.conditions||[]} logic={conditions.logic||'AND'} onChange={setCond} objType={form.object_type} appPreferences={appPreferences}/>
           </div>
 
           <div className="grid grid-cols-3 gap-4">
@@ -1697,7 +1912,7 @@ function SLAPanel({ objectList = ALL_OBJECTS, conditionFields = CONDITION_FIELDS
 
 // ── Approval Process Panel ─────────────────────────────────────────────────
 function ApprovalProcessPanel({ objectList = ALL_OBJECTS, conditionFields = CONDITION_FIELDS, objectLabels = null }) {
-  const { approvalProcesses, approvalRequests, enterpriseUsers, userGroups, saveApprovalProcess, deleteApprovalProcess, fetchApprovalProcesses } = useApp();
+  const { approvalProcesses, approvalRequests, enterpriseUsers, userGroups, saveApprovalProcess, deleteApprovalProcess, fetchApprovalProcesses, appPreferences } = useApp();
   const { showAlert } = useAlert();
   const [open, setOpen]         = useState(false);
   const [editing, setEditing]   = useState(null);
@@ -1847,7 +2062,7 @@ function ApprovalProcessPanel({ objectList = ALL_OBJECTS, conditionFields = COND
 
           <div className="bg-purple-50 rounded-[16px] p-4">
             <h4 className="text-sm font-bold text-[#0F172A] mb-3">🔍 Entry Conditions (when to trigger)</h4>
-            <ConditionBuilder fields={fields} conditions={conditions.conditions||[]} logic={conditions.logic||'AND'} onChange={setCond} objType={form.object_type}/>
+            <ConditionBuilder fields={fields} conditions={conditions.conditions||[]} logic={conditions.logic||'AND'} onChange={setCond} objType={form.object_type} appPreferences={appPreferences}/>
           </div>
 
           <div>
@@ -1937,6 +2152,18 @@ export default function AdminToolsPage() {
   const [adminMode, setAdminMode] = useState('b2b'); // 'b2b' | 'b2c' | 'tenant' | 'import'
   const { hasPermission, currentUserPermissions, permissionsLoaded, currentUser, appPreferences } = useApp();
   const { tenant } = useTenant();
+  const { getObjectLabel } = useObjectLabels();
+  // One merged labels map (static defaults + any published rename)
+  // covering every object, used by every admin panel below instead of the
+  // previously static RETAIL_OBJECT_LABELS/CRM_OBJECT_LABELS constants
+  // directly — this is what makes a rename like Customers → Patients
+  // actually show up in Workflow Rules, Approvals, SLA Policies, and
+  // Assignment Rules' object pickers, for both Retail and CRM.
+  const dynamicObjectLabels = useMemo(() => {
+    const merged: Record<string,string> = { ...RETAIL_OBJECT_LABELS, ...CRM_OBJECT_LABELS };
+    Object.keys(merged).forEach(k => { merged[k] = getObjectLabel(k, merged[k]); });
+    return merged;
+  }, [getObjectLabel]);
   const isB2CMode = appPreferences?.b2c_mode === true;
   const isB2BMode = appPreferences?.crm_enabled !== false && !isB2CMode;
   // Tenant Admin tab only visible on the master/demo workspace — never on client tenants
@@ -1965,6 +2192,7 @@ export default function AdminToolsPage() {
     { key:'appearance',     label:'Appearance',       icon:'🎨', desc:'Theme, logo and branding' },
     { key:'b2b_composer',   label:'App Composer',     icon:'🧩', desc:'Add custom fields to CRM objects' },
     { key:'layoutDesigner', label:'Page Layout Designer', icon:'🧱', desc:'Relabel, hide, lock, and reorder standard fields' },
+    { key:'fieldMapping',   label:'Field Mapping (Copy Maps)', icon:'🔗', desc:'Auto-copy a field onto a line item or a converted record' },
   ];
 
   const B2C_SECTIONS = [
@@ -1982,9 +2210,10 @@ export default function AdminToolsPage() {
     { key:'r_appearance',    label:'Appearance',      icon:'🎨', desc:'Retail branding' },
     { key:'r_composer',      label:'App Composer',    icon:'🧩', desc:'Custom fields for retail objects' },
     { key:'layoutDesigner',  label:'Page Layout Designer', icon:'🧱', desc:'Relabel, hide, lock, and reorder standard fields' },
+    { key:'fieldMapping',    label:'Field Mapping (Copy Maps)', icon:'🔗', desc:'Auto-copy a field onto a line item or a converted record' },
     { key:'r_whatsapp',      label:'WhatsApp Integration', icon:'💬', desc:'Automatic reminders and one-tap customer messaging' },
     ...(appPreferences?.business_type === 'rental' ? [
-      { key:'r_rentalSettings', label:'Rental Settings', icon:'👗', desc:'Booking rules and blocking statuses' },
+      { key:'r_rentalSettings', label:'Rental Settings', icon:'🔑', desc:'Booking rules and blocking statuses' },
     ] : []),
   ];
 
@@ -1995,10 +2224,10 @@ export default function AdminToolsPage() {
       case 'users':         return <UsersPanel/>;
       case 'groups':        return <UserGroupsPanel/>;
       case 'security':      return <SecurityConsole/>;
-      case 'workflow':      return <WorkflowBuilderPanel/>;
-      case 'assignment':    return <AssignmentRulesPanel/>;
-      case 'sla':           return <SLAPanel/>;
-      case 'approvals':     return <ApprovalProcessPanel/>;
+      case 'workflow':      return <WorkflowBuilderPanel objectLabels={dynamicObjectLabels}/>;
+      case 'assignment':    return <AssignmentRulesPanel objectLabels={dynamicObjectLabels}/>;
+      case 'sla':           return <SLAPanel objectLabels={dynamicObjectLabels}/>;
+      case 'approvals':     return <ApprovalProcessPanel objectLabels={dynamicObjectLabels}/>;
       case 'templates':        return <DocumentTemplateDesigner docType="quote"/>;
       case 'invoiceTemplates': return <DocumentTemplateDesigner docType="invoice"/>;
       case 'warehouses':       return <WarehousesPanel/>;
@@ -2013,14 +2242,15 @@ export default function AdminToolsPage() {
       case 'r_groups':           return <RetailAdminWrapper title="User Groups" icon="👥" desc="Retail user group access and assignment"><UserGroupsPanel/></RetailAdminWrapper>;
       case 'r_security':         return <RetailAdminWrapper title="Security Console" icon="🔐" desc="Retail roles, permissions and data access — shared with B2B Enterprise"><SecurityConsole/></RetailAdminWrapper>;
       case 'r_invoiceTemplates': return <RetailInvoiceDesigner/>;
-      case 'r_approvals':        return <RetailAdminWrapper title="Approval Processes" icon="✅" desc="Multi-step approvals for Retail Orders and Invoices"><ApprovalProcessPanel objectList={RETAIL_OBJECTS_LIST} conditionFields={RETAIL_CONDITION_FIELDS} objectLabels={RETAIL_OBJECT_LABELS}/></RetailAdminWrapper>;
-      case 'r_workflow':         return <RetailAdminWrapper title="Workflow Builder" icon="⚙️" desc="Auto-trigger actions on Retail data object events"><WorkflowBuilderPanel objectList={RETAIL_OBJECTS_LIST} conditionFields={RETAIL_CONDITION_FIELDS} objectLabels={RETAIL_OBJECT_LABELS}/></RetailAdminWrapper>;
-      case 'r_assignment':       return <RetailAdminWrapper title="Assignment Rules" icon="📋" desc="Auto-assign Retail records to users"><AssignmentRulesPanel objectList={RETAIL_OBJECTS_LIST} conditionFields={RETAIL_CONDITION_FIELDS} objectLabels={RETAIL_OBJECT_LABELS}/></RetailAdminWrapper>;
-      case 'r_sla':              return <RetailAdminWrapper title="SLA Policies" icon="⏱️" desc="Response and resolution SLA for Retail objects"><SLAPanel objectList={RETAIL_OBJECTS_LIST} conditionFields={RETAIL_CONDITION_FIELDS} objectLabels={RETAIL_OBJECT_LABELS}/></RetailAdminWrapper>;
+      case 'r_approvals':        return <RetailAdminWrapper title="Approval Processes" icon="✅" desc="Multi-step approvals for Retail Orders and Invoices"><ApprovalProcessPanel objectList={RETAIL_OBJECTS_LIST} conditionFields={RETAIL_CONDITION_FIELDS} objectLabels={dynamicObjectLabels}/></RetailAdminWrapper>;
+      case 'r_workflow':         return <RetailAdminWrapper title="Workflow Builder" icon="⚙️" desc="Auto-trigger actions on Retail data object events"><WorkflowBuilderPanel objectList={RETAIL_OBJECTS_LIST} conditionFields={RETAIL_CONDITION_FIELDS} objectLabels={dynamicObjectLabels}/></RetailAdminWrapper>;
+      case 'r_assignment':       return <RetailAdminWrapper title="Assignment Rules" icon="📋" desc="Auto-assign Retail records to users"><AssignmentRulesPanel objectList={RETAIL_OBJECTS_LIST} conditionFields={RETAIL_CONDITION_FIELDS} objectLabels={dynamicObjectLabels}/></RetailAdminWrapper>;
+      case 'r_sla':              return <RetailAdminWrapper title="SLA Policies" icon="⏱️" desc="Response and resolution SLA for Retail objects"><SLAPanel objectList={RETAIL_OBJECTS_LIST} conditionFields={RETAIL_CONDITION_FIELDS} objectLabels={dynamicObjectLabels}/></RetailAdminWrapper>;
       case 'r_appPrefs':         return <RetailAdminWrapper title="App Preferences" icon="⚙️" desc="Currency, date format and module settings"><AppPreferencesPanel/></RetailAdminWrapper>;
       case 'r_appearance':       return <RetailAdminWrapper title="Appearance" icon="🎨" desc="Theme, logo and branding — shared with B2B Enterprise"><AppearancePanel/></RetailAdminWrapper>;
       case 'r_composer':         return <AppComposer/>;
       case 'layoutDesigner':     return <FieldLayoutDesigner/>;
+      case 'fieldMapping':       return <FieldMappingPanel/>;
       case 'r_rentalSettings':   return <RentalSettingsPanel/>;
       case 'r_whatsapp':        return <WhatsAppSettingsPanel/>;
       case 'b2b_composer':       return <B2BAppComposer/>;

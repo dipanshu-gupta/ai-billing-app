@@ -39,6 +39,41 @@ export interface TaxRegimeConfig {
   shortLabel: string;
 }
 
+// Shared, rental-aware net calculation used by every regime below.
+// Previously each regime computed net as quantity × unit_price × (1 -
+// discount%) with no awareness of rental days at all - correct for a
+// normal sale, but wrong for a rental line, where unit_price is a
+// per-day rate that needs multiplying by how many days the item is
+// booked for. rental_start_date/rental_end_date are only ever set on a
+// line item for an actual rentable product (cleared otherwise upstream),
+// so their presence here is a reliable signal this is a rental-priced
+// line, without needing to cross-reference the products list from
+// within this tax-agnostic utility.
+export function computeLineNet(line: any): number {
+  const base = Number(line.quantity || 1) * Number(line.unit_price ?? line.price ?? 0) * (1 - Number(line.discount_pct ?? line.discount ?? 0) / 100);
+  if (line.rental_start_date && line.rental_end_date) {
+    const start = new Date(line.rental_start_date + 'T00:00:00');
+    const end = new Date(line.rental_end_date + 'T00:00:00');
+    const days = Math.max(1, Math.round((end.getTime() - start.getTime()) / 86400000) + 1);
+    return base * days;
+  }
+  return base;
+}
+// Companion to computeLineNet — the pre-discount gross amount, for
+// contexts (like a "Subtotal" line before its own "Discount" line) that
+// need the rental-day-adjusted total before discount is subtracted, rather
+// than the discount already baked in.
+export function computeLineGross(line: any): number {
+  const base = Number(line.quantity || 1) * Number(line.unit_price ?? line.price ?? 0);
+  if (line.rental_start_date && line.rental_end_date) {
+    const start = new Date(line.rental_start_date + 'T00:00:00');
+    const end = new Date(line.rental_end_date + 'T00:00:00');
+    const days = Math.max(1, Math.round((end.getTime() - start.getTime()) / 86400000) + 1);
+    return base * days;
+  }
+  return base;
+}
+
 const INDIA_STATES = [
   'Andhra Pradesh','Arunachal Pradesh','Assam','Bihar','Chhattisgarh','Goa','Gujarat','Haryana',
   'Himachal Pradesh','Jharkhand','Karnataka','Kerala','Madhya Pradesh','Maharashtra','Manipur',
@@ -71,7 +106,7 @@ const REGIMES: Record<TaxRegime, Omit<TaxRegimeConfig, 'currency'>> = {
       { key: 'gstin', label: 'Customer GSTIN', type: 'text', placeholder: '22AAAAA0000A1Z5' },
     ],
     computeLineTax: (line, ctx) => {
-      const net = Number(line.quantity || 1) * Number(line.unit_price ?? line.price ?? 0) * (1 - Number(line.discount_pct ?? line.discount ?? 0) / 100);
+      const net = computeLineNet(line);
       const rate = Number(line.gst_rate ?? 18);
       const sameState = ctx?.sameState !== false; // default: intra-state (CGST+SGST)
       if (sameState) {
@@ -100,7 +135,7 @@ const REGIMES: Record<TaxRegime, Omit<TaxRegimeConfig, 'currency'>> = {
       { key: 'resale_certificate', label: 'Resale Certificate #', type: 'text', placeholder: 'Optional — for tax-exempt resale' },
     ],
     computeLineTax: (line) => {
-      const net = Number(line.quantity || 1) * Number(line.unit_price ?? line.price ?? 0) * (1 - Number(line.discount_pct ?? line.discount ?? 0) / 100);
+      const net = computeLineNet(line);
       const taxable = (line.taxable ?? 'Yes') === 'Yes';
       const rate = Number(line.sales_tax_rate ?? 0);
       const tax = taxable ? (net * rate) / 100 : 0;
@@ -122,7 +157,7 @@ const REGIMES: Record<TaxRegime, Omit<TaxRegimeConfig, 'currency'>> = {
       { key: 'vat_registration_number', label: 'VAT Registration Number', type: 'text', placeholder: 'GB123456789' },
     ],
     computeLineTax: (line) => {
-      const net = Number(line.quantity || 1) * Number(line.unit_price ?? line.price ?? 0) * (1 - Number(line.discount_pct ?? line.discount ?? 0) / 100);
+      const net = computeLineNet(line);
       const rate = Number(line.vat_rate ?? 20);
       const vat = (net * rate) / 100;
       return { breakdown: { vat }, totalTax: vat };
@@ -143,7 +178,7 @@ const REGIMES: Record<TaxRegime, Omit<TaxRegimeConfig, 'currency'>> = {
       { key: 'tax_registration_number', label: 'Tax Registration Number', type: 'text', placeholder: 'Optional' },
     ],
     computeLineTax: (line) => {
-      const net = Number(line.quantity || 1) * Number(line.unit_price ?? line.price ?? 0) * (1 - Number(line.discount_pct ?? line.discount ?? 0) / 100);
+      const net = computeLineNet(line);
       const rate = Number(line.tax_pct ?? 0);
       const tax = (net * rate) / 100;
       return { breakdown: { tax }, totalTax: tax };

@@ -18,6 +18,7 @@ import { RETAIL_CONFIG } from '@/components/retail/RetailListPage';
 import { FIELD_LABELS as CRM_FIELD_LABELS } from '@/components/crm/CRMListPage';
 import { getObjectFields, withTimeout } from '@/lib/utils';
 import { invalidateFieldLayoutCache } from '@/lib/useFieldLayout';
+import { invalidateObjectLabelCache } from '@/lib/useObjectLabels';
 
 // ─── Object registry — spans both Retail and CRM from the start ───────────
 const RETAIL_OBJECTS = [
@@ -71,20 +72,59 @@ function emptyRule() {
   return { condition_field: '', operator: 'equals', condition_value: '', then_visibility: '', then_editability: '' };
 }
 
+const PAGE_SCOPES = [
+  { v: 'both',   l: 'Both Pages', desc: 'Applies to Detail and Create' },
+  { v: 'detail', l: 'Detail Page Only', desc: 'Only overrides the record detail page' },
+  { v: 'create', l: 'Create Page Only', desc: 'Only overrides the new-record form' },
+];
+
 export default function FieldLayoutDesigner() {
   const { supabase, tenant } = useTenant();
   const { showAlert, showConfirm } = useAlert();
   const [selectedObj, setSelectedObj] = useState('retailOrders');
+  const [pageScope, setPageScope] = useState('both');
   const [rows, setRows] = useState<any[]>([]); // one row per standard field, merged with any saved override
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [publishing, setPublishing] = useState(false);
   const [dragIdx, setDragIdx] = useState<number | null>(null);
   const [expandedRules, setExpandedRules] = useState<Record<string, boolean>>({});
+  const [objectLabelForm, setObjectLabelForm] = useState({ singular: '', plural: '', is_published: false, id: null });
+  const [savingObjectLabel, setSavingObjectLabel] = useState(false);
 
   const standardFields = getStandardFields(selectedObj);
 
-  useEffect(() => { load(); }, [selectedObj]);
+  useEffect(() => { load(); loadObjectLabel(); }, [selectedObj, pageScope]);
+
+  async function loadObjectLabel() {
+    if (!supabase) return;
+    const { data } = await supabase.from('object_label_overrides').select('*').eq('object_type', selectedObj).eq('tenant_id', tenant?.id || null).maybeSingle();
+    setObjectLabelForm({ singular: data?.custom_label_singular || '', plural: data?.custom_label_plural || '', is_published: data?.is_published || false, id: data?.id || null });
+  }
+
+  async function saveObjectLabel(publish: boolean) {
+    if (!supabase) return;
+    setSavingObjectLabel(true);
+    try {
+      const payload = {
+        tenant_id: tenant?.id || null,
+        object_type: selectedObj,
+        custom_label_singular: objectLabelForm.singular || null,
+        custom_label_plural: objectLabelForm.plural || null,
+        is_published: publish ? true : objectLabelForm.is_published,
+        updated_at: new Date().toISOString(),
+      };
+      const { error } = await supabase.from('object_label_overrides').upsert(payload, { onConflict: 'tenant_id,object_type' });
+      if (error) throw new Error(error.message);
+      invalidateObjectLabelCache();
+      await loadObjectLabel();
+      showAlert(publish ? 'Object name published — now shown throughout the nav and page headers.' : 'Draft saved.', { variant: 'success' });
+    } catch (e: any) {
+      showAlert('Could not save: ' + (e?.message || 'Unknown error'), { variant: 'danger' });
+    } finally {
+      setSavingObjectLabel(false);
+    }
+  }
 
   async function load() {
     if (!supabase) return;
@@ -92,7 +132,7 @@ export default function FieldLayoutDesigner() {
     try {
       const { data } = await withTimeout(
         supabase.from('field_layout_config').select('*')
-          .eq('object_type', selectedObj).eq('tenant_id', tenant?.id || null),
+          .eq('object_type', selectedObj).eq('tenant_id', tenant?.id || null).eq('page_scope', pageScope),
         15000, 'Load field layout'
       );
       const overrideMap: Record<string, any> = {};
@@ -158,6 +198,7 @@ export default function FieldLayoutDesigner() {
             tenant_id: tenant?.id || null,
             object_type: selectedObj,
             field_key: row.field_key,
+            page_scope: pageScope,
             custom_label: row.custom_label || null,
             visibility_mode: row.visibility_mode,
             editability_mode: row.editability_mode,
@@ -165,7 +206,7 @@ export default function FieldLayoutDesigner() {
             conditional_rules: row.conditional_rules || [],
             is_published: publish ? true : row.is_published,
             updated_at: new Date().toISOString(),
-          }, { onConflict: 'tenant_id,object_type,field_key' }),
+          }, { onConflict: 'tenant_id,object_type,field_key,page_scope' }),
           15000, 'Save field layout'
         );
         if (error) throw new Error(error.message);
@@ -193,6 +234,50 @@ export default function FieldLayoutDesigner() {
           <optgroup label="Retail">{RETAIL_OBJECTS.map(o => <option key={o.v} value={o.v}>{o.l}</option>)}</optgroup>
           <optgroup label="CRM">{CRM_OBJECTS.map(o => <option key={o.v} value={o.v}>{o.l}</option>)}</optgroup>
         </select>
+
+        <label className="block text-xs font-bold uppercase tracking-wider text-gray-400 mb-2 mt-4">Which page</label>
+        <div className="flex gap-2 flex-wrap">
+          {PAGE_SCOPES.map(p => (
+            <button key={p.v} onClick={() => setPageScope(p.v)}
+              className={`px-4 py-2 rounded-xl text-xs font-semibold border transition-all ${pageScope===p.v ? 'bg-purple-700 text-white border-transparent' : 'bg-gray-50 text-gray-600 border-gray-200 hover:border-purple-300'}`}>
+              {p.l}
+            </button>
+          ))}
+        </div>
+        <p className="text-[11px] text-gray-400 mt-2">
+          Each tab manages its own independent set of overrides. A field with a rule under "Both Pages" won't show it here on "Detail Page Only" or "Create Page Only" — switch tabs to see or edit each one. A page-specific rule always takes priority over a "Both Pages" rule for the same field.
+        </p>
+      </div>
+
+      <div className="bg-white rounded-[20px] border border-gray-200 shadow-sm p-5">
+        <h3 className="text-sm font-bold text-[#0F172A] mb-1">🏷️ Object Display Name</h3>
+        <div className="inline-block bg-purple-50 border border-purple-200 rounded-lg px-3 py-1 mb-2">
+          <span className="text-xs text-purple-700">Editing: <strong>{[...RETAIL_OBJECTS, ...CRM_OBJECTS].find(o => o.v === selectedObj)?.l}</strong></span>
+        </div>
+        <p className="text-xs text-gray-400 mb-3">Rename this entire object throughout the app's nav and page headers — e.g. "Customers" → "Patients" for a healthcare tenant. Independent of the field overrides above.</p>
+        <div className="grid sm:grid-cols-2 gap-3 mb-3">
+          <div>
+            <label className="text-[10px] font-bold uppercase tracking-wider text-gray-400 block mb-1">Singular (e.g. "Create ___")</label>
+            <input value={objectLabelForm.singular} onChange={e => setObjectLabelForm(p => ({ ...p, singular: e.target.value }))}
+              placeholder="Customer" className={iCls} />
+          </div>
+          <div>
+            <label className="text-[10px] font-bold uppercase tracking-wider text-gray-400 block mb-1">Plural (nav & page header)</label>
+            <input value={objectLabelForm.plural} onChange={e => setObjectLabelForm(p => ({ ...p, plural: e.target.value }))}
+              placeholder="Customers" className={iCls} />
+          </div>
+        </div>
+        <div className="flex items-center justify-end gap-3">
+          {objectLabelForm.is_published && <span className="bg-green-100 text-green-700 text-[10px] font-bold px-2 py-0.5 rounded-full mr-auto">LIVE</span>}
+          <button onClick={() => saveObjectLabel(false)} disabled={savingObjectLabel}
+            className="px-4 py-2 rounded-xl border-2 border-purple-600 text-purple-700 text-xs font-bold hover:bg-purple-50 disabled:opacity-40">
+            Save Draft
+          </button>
+          <button onClick={() => saveObjectLabel(true)} disabled={savingObjectLabel}
+            className="px-5 py-2 rounded-xl bg-gradient-to-r from-purple-700 to-purple-900 text-white text-xs font-bold hover:opacity-90 disabled:opacity-50 shadow-md">
+            {savingObjectLabel ? 'Publishing…' : 'Publish'}
+          </button>
+        </div>
       </div>
 
       {loading ? (

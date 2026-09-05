@@ -3,6 +3,7 @@
 
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { useApp } from '@/context/AppContext';
+import { useObjectLabels } from '@/lib/useObjectLabels';
 import { formatCurrency } from '@/lib/utils';
 import { useAlert } from '@/components/shared/AlertProvider';
 
@@ -16,7 +17,7 @@ type Message = {
 };
 
 // ─── System Prompt Builder ────────────────────────────────────────────────────
-const buildSystemPrompt = (user, data, prefs, isB2C) => {
+const buildSystemPrompt = (user, data, prefs, isB2C, getObjLabel = (k, fallback) => fallback) => {
   const cur = prefs?.default_currency || 'INR';
   const fmt = n => new Intl.NumberFormat('en-IN', { style:'currency', currency:cur, maximumFractionDigits:0 }).format(n||0);
 
@@ -33,7 +34,7 @@ const buildSystemPrompt = (user, data, prefs, isB2C) => {
 USER: ${user?.first_name||''} ${user?.last_name||''} | Role: ${user?.role_name||'Retail User'} | Access: ${user?.data_scope==='all'?'All records':user?.data_scope==='org'?'Organisation only':'Own records only'}
 
 LIVE RETAIL DATA
-Customers: ${retailCustomers.length} total | ${vipCustomers} VIP
+${getObjLabel('retailCustomers', 'Customers')}: ${retailCustomers.length} total | ${vipCustomers} VIP
 Products: ${retailProducts.length} | ${lowStock} low/out of stock  
 Orders: ${retailOrders.length} | ${retailOrders.filter(o=>o.status==='Completed').length} completed | ${retailOrders.filter(o=>o.status==='Draft').length} pending
 Invoices: ${retailInvoices.length} | Today: ${fmt(todaySales)}
@@ -75,7 +76,7 @@ WHEN GENERATING A CHART:
 USER: ${user?.first_name||''} ${user?.last_name||''} | Role: ${user?.role_name||'Sales User'} | Access: ${user?.data_scope==='all'?'All records':user?.data_scope==='org'?'Organisation only':'Own records only'}
 
 LIVE CRM DATA
-Customers: ${customers.length} | Contacts: ${contacts.length}
+${getObjLabel('customers', 'Customers')}: ${customers.length} | Contacts: ${contacts.length}
 Leads: ${leads.length} | ${openLeads} active
 Pipeline: ${fmt(pipeline)} | Won: ${fmt(won)} | Opportunities: ${opportunities.length}
 Quotations: ${quotations.length} | Orders: ${orders.length} | Invoices: ${invoices.length} (${overdueInv} overdue)
@@ -178,14 +179,15 @@ function MessageBubble({ msg, onActionExecuted }) {
   const [executed,  setExecuted]  = useState(false);
   const [actionMsg, setActionMsg] = useState('');
   const { createRecord, updateRecord, createRetailRecord } = useApp();
+  const { getObjectLabel } = useObjectLabels();
 
   const { cleanText, action, chart } = parseResponse(msg.content);
 
   const OBJECT_LABELS = {
-    customers:'Customer', leads:'Lead', opportunities:'Opportunity', contacts:'Contact',
+    customers:getObjectLabel('customers','Customer','singular'), leads:'Lead', opportunities:'Opportunity', contacts:'Contact',
     activities:'Activity', orders:'Order', invoices:'Invoice', quotations:'Quotation',
-    products:'Product', retailCustomers:'Retail Customer', retailProducts:'Product',
-    retailOrders:'Order', retailInvoices:'Invoice', retailActivities:'Activity',
+    products:'Product', retailCustomers:getObjectLabel('retailCustomers','Retail Customer','singular'), retailProducts:getObjectLabel('retailProducts','Product','singular'),
+    retailOrders:getObjectLabel('retailOrders','Order','singular'), retailInvoices:getObjectLabel('retailInvoices','Invoice','singular'), retailActivities:getObjectLabel('retailActivities','Activity','singular'),
   };
 
   const escapeHtml = (t) => t
@@ -347,6 +349,7 @@ export default function AIAdvisorChat() {
     contacts, activities, quotations, products, appPreferences,
     retailCustomers, retailProducts, retailOrders, retailInvoices, retailActivities,
   } = useApp();
+  const { getObjectLabel } = useObjectLabels();
 
   const isB2C = appPreferences?.b2c_mode === true;
 
@@ -450,7 +453,7 @@ export default function AIAdvisorChat() {
     setLoading(true);
 
     try {
-      const systemPrompt = buildSystemPrompt(userWithRole, crmData, appPreferences, isB2C)
+      const systemPrompt = buildSystemPrompt(userWithRole, crmData, appPreferences, isB2C, getObjectLabel)
         + findRelevantRecords(userText);
       // Cap history to the last 12 turns — keeps the model sharp and within context
       const apiMessages = newMessages

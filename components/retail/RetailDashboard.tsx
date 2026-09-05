@@ -5,6 +5,7 @@ import { useState, useMemo, useEffect } from 'react';
 import { useApp } from '@/context/AppContext';
 import { getStatusColor, roundPercentagesTo100 } from '@/lib/utils';
 import { THEMES } from '@/lib/i18n';
+import { useObjectLabels } from '@/lib/useObjectLabels';
 import {
   BarChart, Bar, LineChart, Line, PieChart, Pie, Cell,
   AreaChart, Area,
@@ -100,6 +101,7 @@ export default function RetailDashboard() {
     fetchListViewPrefs, saveListViewPrefs,
   } = useApp();
   const themeObj = THEMES.find(th => th.id === (appearance?.theme || 'navy')) || THEMES[0];
+  const { getObjectLabel } = useObjectLabels();
 
   const [visibleWidgets, setVisibleWidgets] = useState<string[]>(DEFAULT_WIDGETS);
   const [customizeOpen, setCustomizeOpen] = useState(false);
@@ -522,13 +524,13 @@ export default function RetailDashboard() {
           rows of equal-sized cards, condensed into one scannable row ── */}
       <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3">
         {[
-          { label:'Invoices Issued',   value:kpis.invoicesIssued,               icon:'🧾' },
+          { label:`${getObjectLabel('retailInvoices', 'Invoices')} Issued`,   value:kpis.invoicesIssued,               icon:'🧾' },
           { label:'Refunds',           value:fmt(kpis.refundAmount),            icon:'↩️' },
-          { label:'Total Customers',   value:kpis.totalCustomers,               icon:'🧑‍🤝‍🧑' },
-          { label:'New Customers',     value:kpis.newCustomers,                 icon:'✨' },
-          { label:'Active Products',   value:kpis.activeProducts,               icon:'🏷️' },
+          { label:`Total ${getObjectLabel('retailCustomers', 'Customers')}`,   value:kpis.totalCustomers,               icon:'🧑‍🤝‍🧑' },
+          { label:`New ${getObjectLabel('retailCustomers', 'Customers')}`,     value:kpis.newCustomers,                 icon:'✨' },
+          { label:`Active ${getObjectLabel('retailProducts', 'Products')}`,   value:kpis.activeProducts,               icon:'🏷️' },
           { label:'Low Stock',         value:kpis.lowStockCount,                icon:'⚠️', warn:kpis.lowStockCount>0 },
-          { label:'Open Activities',   value:kpis.openActivities,               icon:'📅' },
+          { label:`Open ${getObjectLabel('retailActivities', 'Activities')}`,   value:kpis.openActivities,               icon:'📅' },
         ].map(s => (
           <div key={s.label} className={`bg-white rounded-2xl border p-3.5 shadow-sm dashboard-fade-in transition-all hover:shadow-md hover:-translate-y-0.5 ${s.warn?'border-amber-200 bg-amber-50/50':'border-gray-100'}`}>
             <div className="flex items-center justify-between mb-1">
@@ -881,6 +883,7 @@ function RecentInvoicesTable({ recentInvoices, fmt }) {
 // actionable recommendation, rather than just repeating the numbers already
 // shown on the KPI cards above.
 function AIInsightsCard({ kpis, prevPeriodKpis, rangeLabel, fmt, pctChange, themeObj }) {
+  const { getObjectLabel } = useObjectLabels();
   const [insight, setInsight]   = useState('');
   const [loading, setLoading]   = useState(false);
   const [error, setError]       = useState('');
@@ -896,8 +899,8 @@ function AIInsightsCard({ kpis, prevPeriodKpis, rangeLabel, fmt, pctChange, them
         `Pending collections: ${fmt(kpis.pendingAmount)} across ${kpis.pendingCount} invoices, ${kpis.overdueCount} overdue`,
         `Orders completed: ${kpis.ordersCount}, average order value ${fmt(kpis.avgOrderValue)}`,
         `Refunds: ${fmt(kpis.refundAmount)} across ${kpis.refundCount} orders`,
-        `Customers: ${kpis.totalCustomers} total, ${kpis.newCustomers} new this period, ${kpis.vipCount} VIP`,
-        `Products: ${kpis.activeProducts} active, ${kpis.lowStockCount} low on stock`,
+        `${getObjectLabel('retailCustomers', 'Customers')}: ${kpis.totalCustomers} total, ${kpis.newCustomers} new this period, ${kpis.vipCount} VIP`,
+        `${getObjectLabel('retailProducts', 'Products')}: ${kpis.activeProducts} active, ${kpis.lowStockCount} low on stock`,
         `Open activities: ${kpis.openActivities}`,
       ].join('\n');
       const sb = (window as any).__bp_supabase;

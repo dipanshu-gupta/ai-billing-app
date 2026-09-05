@@ -32,6 +32,7 @@ export interface FieldLayoutRow {
   display_order: number;
   conditional_rules: ConditionalRule[];
   is_published: boolean;
+  page_scope: 'both' | 'detail' | 'create';
 }
 
 export interface SectionLayoutRow {
@@ -80,13 +81,14 @@ export function evaluateFieldCondition(rule: ConditionalRule, record: any): bool
   }
 }
 
-// Resolves the effective label/visible/editable for one field. Conditional
-// rules are checked in array order; a matching rule's non-null then_*
-// values override the row's own base visibility_mode/editability_mode —
-// later matching rules can still independently set whichever property an
-// earlier rule left untouched.
-export function resolveFieldDisplay(fieldKey: string, defaultLabel: string, layout: FieldLayoutRow[], record: any) {
-  const row = layout.find(r => r.field_key === fieldKey && r.is_published);
+// Resolves the effective label/visible/editable for one field, for a
+// specific page (detail or create). If both a page-specific row and a
+// 'both' row exist for the same field, the page-specific one wins - an
+// admin overriding just the Create page for a field shouldn't need to
+// also duplicate whatever the 'both' row already says.
+export function resolveFieldDisplay(fieldKey: string, defaultLabel: string, layout: FieldLayoutRow[], record: any, pageScope: 'detail' | 'create' = 'detail') {
+  const candidates = layout.filter(r => r.field_key === fieldKey && r.is_published && (r.page_scope === pageScope || r.page_scope === 'both' || !r.page_scope));
+  const row = candidates.find(r => r.page_scope === pageScope) || candidates.find(r => r.page_scope === 'both' || !r.page_scope);
   if (!row) return { label: defaultLabel, visible: true, editable: true };
 
   let visible = row.visibility_mode !== 'hidden';
@@ -101,6 +103,17 @@ export function resolveFieldDisplay(fieldKey: string, defaultLabel: string, layo
   }
 
   return { label, visible, editable };
+}
+
+// Companion to resolveFieldDisplay — resolves just the saved row for a
+// field at a given page scope (same precedence: page-specific row wins
+// over a 'both' row), for callers that need display_order directly for
+// reordering rather than the label/visible/editable resolved above.
+// Returns undefined if no row matches, letting the caller fall back to a
+// field's original position.
+export function resolveFieldRow(fieldKey: string, layout: FieldLayoutRow[], pageScope: 'detail' | 'create' = 'detail'): FieldLayoutRow | undefined {
+  const candidates = layout.filter(r => r.field_key === fieldKey && r.is_published && (r.page_scope === pageScope || r.page_scope === 'both' || !r.page_scope));
+  return candidates.find(r => r.page_scope === pageScope) || candidates.find(r => r.page_scope === 'both' || !r.page_scope);
 }
 
 export function useFieldLayout(objectType: string) {
@@ -148,8 +161,8 @@ export function useFieldLayout(objectType: string) {
     return () => { cancelled = true; };
   }, [objectType, cacheKey]);
 
-  const resolve = useCallback((fieldKey: string, defaultLabel: string, record: any) => {
-    return resolveFieldDisplay(fieldKey, defaultLabel, fields, record);
+  const resolve = useCallback((fieldKey: string, defaultLabel: string, record: any, pageScope: 'detail' | 'create' = 'detail') => {
+    return resolveFieldDisplay(fieldKey, defaultLabel, fields, record, pageScope);
   }, [fields]);
 
   return { fields, sections, loading, resolve };

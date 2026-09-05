@@ -78,8 +78,21 @@ const _clientCache = new Map<string, SupabaseClient>();
 // A fixed safety timeout ensures a stuck prior call can never block this tab
 // indefinitely either, regardless of what acquireTimeout is passed.
 const _lockChains = new Map<string, Promise<any>>();
+const _lockChainStartedAt = new Map<string, number>();
+const LOCK_QUEUE_MAX_AGE_MS = 12000; // if a queued-ahead call has been pending longer than this, treat it as abandoned
 export const inMemoryLock = async (name: string, _acquireTimeout: number, fn: () => Promise<any>): Promise<any> => {
-  const prior = _lockChains.get(name) || Promise.resolve();
+  const startedAt = _lockChainStartedAt.get(name);
+  const priorIsStale = startedAt !== undefined && (Date.now() - startedAt) > LOCK_QUEUE_MAX_AGE_MS;
+  // If the prior call in this chain has been pending too long, don't make
+  // this new, unrelated call wait on it — it's very likely genuinely stuck
+  // (network issue, a throttled inactive tab, etc.), and forcing every
+  // subsequent operation to queue behind a probably-dead promise is exactly
+  // what caused every save and data load to time out. Critically, this does
+  // NOT touch or cancel the stale prior operation itself — it keeps running
+  // (or not) entirely on its own, and whatever originally called it still
+  // gets its real, eventual result. This only stops treating it as a valid
+  // reason to block something new and unrelated.
+  const prior = priorIsStale ? Promise.resolve() : (_lockChains.get(name) || Promise.resolve());
   // Deliberately NOT racing fn() against a timeout here. Promise.race()
   // doesn't cancel the losing side — if the real Supabase auth operation
   // ran past a timeout, this wrapper would "give up" and report a timeout
@@ -95,7 +108,9 @@ export const inMemoryLock = async (name: string, _acquireTimeout: number, fn: ()
   // concurrent refresh attempts from racing and invalidating each other's
   // tokens. Just letting the real operation run to completion, however
   // long that takes, is safer than second-guessing it with an artificial
-  // deadline.
+  // deadline — the max-age check above handles the case where "however
+  // long that takes" turns out to be "forever."
+  _lockChainStartedAt.set(name, Date.now());
   const runAfterPrior = prior.catch(() => {}).then(() => fn());
   // Swallow here so the chain map itself never holds a rejected promise
   // (which would immediately reject every subsequent caller queued behind

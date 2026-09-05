@@ -3,6 +3,7 @@
 
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { useApp } from '@/context/AppContext';
+import { useObjectLabels } from '@/lib/useObjectLabels';
 import { getStatusColor } from '@/lib/utils';
 
 const B2B_SEARCH_CONFIG = [
@@ -33,6 +34,7 @@ export default function GlobalSearch({ onNavigate }) {
     appPreferences,
   } = useApp();
   const isB2C = appPreferences?.b2c_mode === true;
+  const { getObjectLabel } = useObjectLabels();
   const SEARCH_CONFIG = isB2C ? B2C_SEARCH_CONFIG : B2B_SEARCH_CONFIG;
 
   const [query,   setQuery]   = useState('');
@@ -59,7 +61,7 @@ export default function GlobalSearch({ onNavigate }) {
           cfg.fields.some(f => String(r[f] || '').toLowerCase().includes(q))
         ).slice(0, 4);
         if (matches.length) {
-          found.push({ ...cfg, matches });
+          found.push({ ...cfg, label: getObjectLabel(cfg.page, cfg.label), matches });
         }
       });
       setResults(found);
@@ -67,7 +69,7 @@ export default function GlobalSearch({ onNavigate }) {
       setFocused(0);
     }, 200);
     return () => clearTimeout(timer);
-  }, [query, customers, leads, opportunities, contacts, activities, quotations, orders, invoices, products, retailCustomers, retailProducts, retailOrders, retailInvoices, retailActivities, isB2C]);
+  }, [query, customers, leads, opportunities, contacts, activities, quotations, orders, invoices, products, retailCustomers, retailProducts, retailOrders, retailInvoices, retailActivities, isB2C, getObjectLabel]);
 
   // Close on outside click
   useEffect(() => {

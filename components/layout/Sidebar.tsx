@@ -5,6 +5,7 @@ import { useState, useRef, useEffect } from 'react';
 import { t, THEMES } from '@/lib/i18n';
 import { useApp } from '@/context/AppContext';
 import { SALES_GROUP, RETAIL_GROUP, BOTTOM_ITEMS, makeCanSee } from '@/lib/navPermissions';
+import { useObjectLabels } from '@/lib/useObjectLabels';
 
 const TOP_ITEMS = [
   { key:'home',      label:'home',          icon:'🏠', permission:null },
@@ -13,6 +14,7 @@ const TOP_ITEMS = [
 
 export default function Sidebar({ activePage, setActivePage, collapsed, setCollapsed }) {
   const { currentUser, currentUserPermissions, permissionsLoaded, appPreferences, appearance } = useApp();
+  const { getObjectLabel } = useObjectLabels();
   const [salesOpen, setSalesOpen] = useState(true);
   const ref = useRef(null);
 
@@ -35,10 +37,11 @@ export default function Sidebar({ activePage, setActivePage, collapsed, setColla
   const NavItem = ({ item }) => {
     if (!canSee(item)) return null;
     const active = activePage === item.key;
+    const displayLabel = getObjectLabel(item.key, t(lang, item.label));
     return (
       <button
         onClick={() => { setActivePage(item.key); setCollapsed(true); }}
-        title={t(lang, item.label)}
+        title={displayLabel}
         className={`w-full flex items-center gap-3 rounded-2xl transition-all duration-200 py-2.5 px-3 text-sm font-medium
           ${active
             ? 'bg-white text-[#0F172A] shadow-lg'
@@ -46,7 +49,7 @@ export default function Sidebar({ activePage, setActivePage, collapsed, setColla
           }`}
       >
         <span className="text-lg flex-shrink-0">{item.icon}</span>
-        {!collapsed && <span className="truncate flex-1 text-left">{t(lang, item.label)}</span>}
+        {!collapsed && <span className="truncate flex-1 text-left">{displayLabel}</span>}
       </button>
     );
   };

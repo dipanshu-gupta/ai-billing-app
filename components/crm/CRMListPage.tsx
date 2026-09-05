@@ -12,6 +12,8 @@ import CPQRecordDetail from '@/components/crm/CPQRecordDetail';
 import KanbanBoard from '@/components/shared/KanbanBoard';
 import { useAlert } from '@/components/shared/AlertProvider';
 import LoadingSpinner from '@/components/shared/LoadingSpinner';
+import { useObjectLabels } from '@/lib/useObjectLabels';
+import { useFieldLayout } from '@/lib/useFieldLayout';
 import { t } from '@/lib/i18n';
 
 export const FIELD_LABELS = {
@@ -361,6 +363,7 @@ const CRM_SEARCH_CANDIDATES = ['name', 'customer', 'email', 'phone', 'subject'];
 
 export default function CRMListPage({ page }) {
   const { supabase, tenant } = useTenant();
+  const { getObjectLabel } = useObjectLabels();
   const {
     customers, products, leads, opportunities, orders, invoices, contacts, activities,
     enterpriseUsers, savedSearches, fetchSavedSearches,
@@ -425,7 +428,15 @@ export default function CRMListPage({ page }) {
   const [sortField,    setSortField]    = useState('');
   const [sortDir,      setSortDir]      = useState('asc'); // 'asc' | 'desc'
   const [columnsOpen,  setColumnsOpen]  = useState(false);
-  const fieldMeta = useMemo(() => getFieldMeta(page), [page]);
+  const crmFieldLayout = useFieldLayout(page);
+  const fieldMeta = useMemo(() => {
+    const base = getFieldMeta(page);
+    if (!crmFieldLayout.fields.length) return base;
+    return base.map(m => {
+      const savedRow = crmFieldLayout.fields.find(r => r.field_key === m.key);
+      return savedRow?.custom_label ? { ...m, label: savedRow.custom_label } : m;
+    });
+  }, [page, crmFieldLayout.fields]);
   const DEFAULT_COLUMNS = useMemo(() => {
     const base = ['id','name'];
     if (page !== 'products' && page !== 'customers' && fieldMeta.some(f=>f.key==='customer')) base.push('customer');
@@ -674,7 +685,7 @@ export default function CRMListPage({ page }) {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-[#0F172A] capitalize">{page}</h1>
+          <h1 className="text-2xl font-bold text-[#0F172A]">{getObjectLabel(page, pageLabel)}</h1>
           <p className="text-gray-500 text-sm mt-0.5">{serverLoading ? 'Loading…' : `${totalRecords.toLocaleString()} record${totalRecords!==1?'s':''}`}</p>
         </div>
         <div className="flex items-center gap-3">
@@ -685,7 +696,7 @@ export default function CRMListPage({ page }) {
           )}
           {canDo('create') && (
             <button onClick={() => setCreateOpen(true)} className="bg-gradient-to-r from-[#0F172A] to-blue-800 text-white px-5 py-2.5 rounded-2xl font-semibold text-sm shadow-lg hover:opacity-90 transition-all">
-              + Create {pageLabel}
+              + Create {getObjectLabel(page, pageLabel, 'singular')}
             </button>
           )}
         </div>

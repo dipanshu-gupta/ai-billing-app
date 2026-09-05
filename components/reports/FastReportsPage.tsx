@@ -3,13 +3,104 @@
 
 import { useState, useMemo, useEffect, useCallback } from 'react';
 import { useApp } from '@/context/AppContext';
-import { formatDisplayNumber, PAGE_DISPLAY_PREFIX, formatCurrency, formatDate } from '@/lib/utils';
+import { useTenant } from '@/context/TenantContext';
+import { formatDisplayNumber, PAGE_DISPLAY_PREFIX, formatCurrency, formatDate, withTimeout, tenantScope } from '@/lib/utils';
 import { useAlert } from '@/components/shared/AlertProvider';
 import { useCustomFields } from '@/lib/useCustomFields';
+import LoadingSpinner from '@/components/shared/LoadingSpinner';
+import { useObjectLabels } from '@/lib/useObjectLabels';
 import {
   BarChart, Bar, LineChart, Line, PieChart, Pie, Cell, AreaChart, Area,
   XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
 } from 'recharts';
+
+const OBJECT_TABLE_MAP = {
+  customers:'customers', leads:'leads', opportunities:'opportunities', orders:'orders',
+  invoices:'invoices', contacts:'contacts', activities:'activities', quotations:'quotations', products:'products',
+  retailCustomers:'retail_customers', retailProducts:'retail_products', retailActivities:'retail_activities',
+  retailOrders:'retail_orders', retailInvoices:'retail_invoices',
+};
+
+// Line-item table registry, mirroring LINE_ITEM_TABLE_CONFIG in
+// AppContext.tsx (kept separate here since that one is defined inside the
+// AppProvider function body, not exported as a standalone module value).
+// fk = the column on the line-item table that references the parent
+// record's own number; parentIdField = the matching column on the parent
+// table itself.
+const LINE_ITEM_TABLE_MAP = {
+  retailOrders:   { table:'retail_order_line_items',   fk:'order_number',   parentTable:'retail_orders',   parentIdField:'order_number' },
+  retailInvoices: { table:'retail_invoice_line_items', fk:'invoice_number', parentTable:'retail_invoices', parentIdField:'invoice_number' },
+  leads:          { table:'lead_line_items',           fk:'lead_number',    parentTable:'leads',           parentIdField:'lead_number' },
+  opportunities:  { table:'opportunity_line_items',    fk:'opportunity_number', parentTable:'opportunities', parentIdField:'opportunity_number' },
+  orders:         { table:'order_line_items',          fk:'order_number',   parentTable:'orders',          parentIdField:'order_number' },
+  invoices:       { table:'invoice_line_items',        fk:'invoice_number', parentTable:'invoices',        parentIdField:'invoice_number' },
+  quotations:     { table:'quotation_line_items',      fk:'quote_number',   parentTable:'quotations',      parentIdField:'quote_number' },
+};
+// Field definitions for line-item reports — a genuinely different field
+// set from the header object, since a line item describes a product/
+// quantity/price row, not the order/invoice/quote itself. Every object
+// shares the same parent-context fields (which record this line item
+// belongs to, and who the customer was) via PARENT_CONTEXT_FIELDS below,
+// since without this a line-item report has no way to say WHICH order/
+// invoice/quote each row actually came from.
+const PARENT_CONTEXT_FIELDS = [
+  { k:'parent_record',      l:'Order / Invoice #', t:'text',   filterable:true },
+  { k:'customer',           l:'Customer',          t:'text',   filterable:true },
+  { k:'parent_status',      l:'Record Status',     t:'status', filterable:true },
+  { k:'parent_created_at',  l:'Record Date',       t:'date',   filterable:true },
+];
+const LINE_ITEM_OBJECT_FIELDS = {
+  retailOrders: [
+    ...PARENT_CONTEXT_FIELDS,
+    { k:'product_name',   l:'Product',       t:'text',     filterable:true },
+    { k:'quantity',       l:'Quantity',      t:'number' },
+    { k:'unit_price',     l:'Unit Price',    t:'currency' },
+    { k:'discount_pct',   l:'Discount %',    t:'number' },
+    { k:'extended_price', l:'Line Total',    t:'currency' },
+    { k:'rental_start_date', l:'Rental Start', t:'date',   filterable:true },
+    { k:'rental_end_date',   l:'Rental End',   t:'date',   filterable:true },
+  ],
+  retailInvoices: [
+    ...PARENT_CONTEXT_FIELDS,
+    { k:'product_name',   l:'Product',       t:'text',     filterable:true },
+    { k:'quantity',       l:'Quantity',      t:'number' },
+    { k:'unit_price',     l:'Unit Price',    t:'currency' },
+    { k:'discount_pct',   l:'Discount %',    t:'number' },
+    { k:'extended_price', l:'Line Total',    t:'currency' },
+  ],
+  leads: [
+    ...PARENT_CONTEXT_FIELDS,
+    { k:'product_name', l:'Product',  t:'text', filterable:true },
+    { k:'quantity',     l:'Quantity', t:'number' },
+    { k:'price',        l:'Price',    t:'currency' },
+  ],
+  opportunities: [
+    ...PARENT_CONTEXT_FIELDS,
+    { k:'product_name', l:'Product',  t:'text', filterable:true },
+    { k:'quantity',     l:'Quantity', t:'number' },
+    { k:'price',        l:'Price',    t:'currency' },
+  ],
+  orders: [
+    ...PARENT_CONTEXT_FIELDS,
+    { k:'product_name', l:'Product',  t:'text', filterable:true },
+    { k:'quantity',     l:'Quantity', t:'number' },
+    { k:'price',        l:'Price',    t:'currency' },
+  ],
+  invoices: [
+    ...PARENT_CONTEXT_FIELDS,
+    { k:'product_name', l:'Product',  t:'text', filterable:true },
+    { k:'quantity',     l:'Quantity', t:'number' },
+    { k:'price',        l:'Price',    t:'currency' },
+  ],
+  quotations: [
+    ...PARENT_CONTEXT_FIELDS,
+    { k:'product_name',   l:'Product',       t:'text',     filterable:true },
+    { k:'quantity',       l:'Quantity',      t:'number' },
+    { k:'unit_price',     l:'Unit Price',    t:'currency' },
+    { k:'discount_pct',   l:'Discount %',    t:'number' },
+    { k:'extended_price', l:'Line Total',    t:'currency' },
+  ],
+};
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const COLORS = ['#0F172A','#3B82F6','#10B981','#F59E0B','#EF4444','#8B5CF6','#EC4899','#14B8A6','#F97316','#64748B'];
@@ -176,12 +267,15 @@ const B2C_OBJECT_FIELDS = {
     { k:'price',          l:'Price',         t:'currency' },
     { k:'mrp',            l:'MRP',           t:'currency' },
     { k:'stock_quantity', l:'Stock Qty',     t:'number' },
+    { k:'is_rentable',    l:'Rentable',      t:'text',     filterable:true },
+    { k:'rent_per_day',   l:'Rent Per Day',  t:'currency' },
     { k:'status',         l:'Status',        t:'status',   filterable:true },
     { k:'created_at',     l:'Created Date',  t:'date',     filterable:true },
   ],
   retailActivities: [
     { k:'subject',        l:'Subject',       t:'text' },
     { k:'activity_type',  l:'Type',          t:'text',     filterable:true },
+    { k:'customer_phone', l:'Customer Phone',t:'text' },
     { k:'status',         l:'Status',        t:'status',   filterable:true },
     { k:'priority',       l:'Priority',      t:'text',     filterable:true },
     { k:'activity_date',  l:'Activity Date', t:'date',     filterable:true },
@@ -327,19 +421,22 @@ export default function FastReportsPage() {
     customers, leads, opportunities, orders, invoices, contacts, activities, quotations, products,
     retailCustomers, retailProducts, retailActivities, retailOrders, retailInvoices,
     reports, saveReport, deleteReport, fetchReports,
-    currentUser, appPreferences, enterpriseUsers,
+    currentUser, appPreferences, enterpriseUsers, applyDataSecurity, permissionsLoaded,
   } = useApp();
+  const { supabase, tenant } = useTenant();
   const { showAlert } = useAlert();
 
   const currency = appPreferences?.default_currency || 'INR';
   const isB2C    = appPreferences?.b2c_mode === true;
+  const { getObjectLabel } = useObjectLabels();
 
   const ALL_FIELDS   = { ...OBJECT_FIELDS, ...B2C_OBJECT_FIELDS };
-  const ACTIVE_OBJS  = isB2C ? B2C_OBJECTS : B2B_OBJECTS;
+  const ACTIVE_OBJS  = useMemo(() => (isB2C ? B2C_OBJECTS : B2B_OBJECTS).map(o => ({ ...o, l: getObjectLabel(o.v, o.l) })), [isB2C, getObjectLabel]);
   const defaultObj   = isB2C ? 'retailOrders' : 'opportunities';
 
   // ── Config state ───────────────────────────────────────────────────────────
   const [objType,       setObjType]       = useState(defaultObj);
+  const [isLineItemMode, setIsLineItemMode] = useState(false);
   const [columns,       setColumns]       = useState([]);
   const [filters,       setFilters]       = useState([]); // [{field, operator, value}]
   const [sorts,         setSorts]         = useState([]);  // [{field, direction}]
@@ -380,32 +477,119 @@ export default function FastReportsPage() {
     apiName: f.api_name,
   })), [rawCustomFields]);
 
-  const fields = [...(ALL_FIELDS[objType] || []), ...customReportFields];
+  const fields = isLineItemMode
+    ? (LINE_ITEM_OBJECT_FIELDS[objType] || [])
+    : [...(ALL_FIELDS[objType] || []), ...customReportFields];
 
   // ── Init columns when object changes ───────────────────────────────────────
   useEffect(() => {
-    const defaultCols = (ALL_FIELDS[objType] || []).slice(0, 6).map(f => f.k);
+    if (!LINE_ITEM_TABLE_MAP[objType]) setIsLineItemMode(false);
+    if (isLineItemMode) setOwnerScope('all');
+    const activeFields = isLineItemMode ? (LINE_ITEM_OBJECT_FIELDS[objType] || []) : (ALL_FIELDS[objType] || []);
+    const defaultCols = activeFields.slice(0, 6).map(f => f.k);
     setColumns(defaultCols);
     setFilters([]);
     setSorts([]);
-    setGroupBy('status');
+    setGroupBy(isLineItemMode ? 'product_name' : 'status');
     setChartMetric('count');
     setPage(1);
-  }, [objType]);
+  }, [objType, isLineItemMode]);
 
-  // ── Raw data from context (already security-filtered by applyDataSecurity) ─
-  const rawData = useMemo(() => {
-    const map = {
-      customers, leads, opportunities, orders, invoices, contacts, activities, quotations, products,
-      retailCustomers: retailCustomers || [],
-      retailProducts:  retailProducts  || [],
-      retailActivities:retailActivities|| [],
-      retailOrders:    retailOrders    || [],
-      retailInvoices:  retailInvoices  || [],
-    };
-    return map[objType] || [];
-  }, [objType, customers, leads, opportunities, orders, invoices, contacts, activities, quotations, products,
-      retailCustomers, retailProducts, retailActivities, retailOrders, retailInvoices]);
+  // ── Raw data — fetched directly from the database, not the capped,
+  // client-side global arrays ────────────────────────────────────────────
+  // Previously this read straight from the app-wide customers/leads/etc.
+  // arrays, which are capped at 500 records for list-page performance.
+  // A reporting tool aggregating over "the first 500 records" rather than
+  // all matching ones produces silently wrong charts, KPIs, and totals for
+  // any tenant with more data than that — this fetches directly from the
+  // database instead, up to a much higher (but still bounded) cap.
+  const [rawData, setRawData] = useState([]);
+  const [rawDataLoading, setRawDataLoading] = useState(false);
+  const [rawDataProgress, setRawDataProgress] = useState(0);
+  const [rawDataTruncated, setRawDataTruncated] = useState(false);
+  // Fetches ALL matching rows in batches rather than one large request -
+  // each individual request is small and fast, so no single request can
+  // time out the way a request for up to 10,000 rows (with an exact count,
+  // which requires Postgres to precisely count every matching row - itself
+  // often the actual slow part on a large table) previously could. Loops
+  // until a batch comes back shorter than the batch size, meaning
+  // everything has been fetched - genuinely no cap on total records, per
+  // the explicit requirement that reports must cover everything.
+  const REPORT_BATCH_SIZE = 1000;
+  // A very high safety ceiling purely to prevent a runaway loop in a
+  // pathological case (e.g. a query condition that never terminates) - not
+  // a design choice to hide data. 500,000 rows is far beyond any realistic
+  // report dataset; hitting this would indicate something else is wrong,
+  // not that data was deliberately withheld.
+  const REPORT_SAFETY_CEILING = 500000;
+  useEffect(() => {
+    if (!supabase) return;
+    const liConfig = LINE_ITEM_TABLE_MAP[objType];
+    const table = isLineItemMode ? liConfig?.table : OBJECT_TABLE_MAP[objType];
+    if (!table) { setRawData([]); return; }
+    setRawDataLoading(true);
+    setRawDataProgress(0);
+    setRawDataTruncated(false);
+    let cancelled = false;
+    (async () => {
+      const allRows: any[] = [];
+      try {
+        let from = 0;
+        while (true) {
+          const { data, error } = await withTimeout(
+            tenantScope(supabase.from(table).select('*')).range(from, from + REPORT_BATCH_SIZE - 1),
+            20000, 'Report data fetch'
+          );
+          if (cancelled) return;
+          if (error) { console.error('[FastReportsPage] fetch', error.message); break; }
+          if (!data || data.length === 0) break;
+          allRows.push(...data);
+          setRawDataProgress(allRows.length);
+          if (data.length < REPORT_BATCH_SIZE) break; // short batch = reached the end
+          if (allRows.length >= REPORT_SAFETY_CEILING) { setRawDataTruncated(true); break; }
+          from += REPORT_BATCH_SIZE;
+        }
+
+        // Line-item enrichment: pull in key parent-record context so each
+        // row shows which order/invoice/quote it belongs to and who the
+        // customer was, not just the product/quantity/price - without
+        // this a line-item report is unusable, since there's no way to
+        // tell which record any given row came from.
+        if (isLineItemMode && liConfig && allRows.length > 0) {
+          const parentIds = Array.from(new Set(allRows.map(r => r[liConfig.fk]).filter(Boolean)));
+          const parentMap: Record<string, any> = {};
+          const CHUNK = 300; // stay well under any query-size limit for .in()
+          for (let i = 0; i < parentIds.length; i += CHUNK) {
+            if (cancelled) return;
+            const chunk = parentIds.slice(i, i + CHUNK);
+            const { data: parents, error: pErr } = await withTimeout(
+              tenantScope(supabase.from(liConfig.parentTable).select('*')).in(liConfig.parentIdField, chunk),
+              20000, 'Report parent record fetch'
+            );
+            if (pErr) { console.error('[FastReportsPage] parent fetch', pErr.message); continue; }
+            (parents || []).forEach(p => { parentMap[p[liConfig.parentIdField]] = p; });
+          }
+          for (const row of allRows) {
+            const parent = parentMap[row[liConfig.fk]];
+            row.parent_record = parent?.display_number != null
+              ? formatDisplayNumber(PAGE_DISPLAY_PREFIX[objType] || 'REC', parent.display_number)
+              : (row[liConfig.fk] || null);
+            row.customer = parent?.customer ?? null;
+            row.parent_status = parent?.status ?? null;
+            row.parent_created_at = parent?.created_at ?? null;
+          }
+        }
+      } catch (e) {
+        console.error('[FastReportsPage] fetch failed', e);
+      }
+      if (cancelled) return;
+      const withDisplayNumbers = allRows.map(r => ({ ...r, displayNumber: r.display_number }));
+      const secured = isLineItemMode ? withDisplayNumbers : (applyDataSecurity ? applyDataSecurity(withDisplayNumbers) : withDisplayNumbers);
+      setRawData(secured || []);
+      setRawDataLoading(false);
+    })();
+    return () => { cancelled = true; };
+  }, [objType, isLineItemMode, supabase, tenant?.id, currentUser, permissionsLoaded]);
 
   // ── Apply owner scope ──────────────────────────────────────────────────────
   const scopedData = useMemo(() => {
@@ -639,9 +823,35 @@ export default function FastReportsPage() {
                 </button>
               ))}
             </div>
+            {LINE_ITEM_TABLE_MAP[objType] && (
+              <div className="mt-3 pt-3 border-t border-gray-100">
+                <label className="text-xs font-bold uppercase tracking-wider text-gray-400 block mb-1.5">Report On</label>
+                <div className="flex gap-2">
+                  <button onClick={() => setIsLineItemMode(false)}
+                    className={`flex-1 py-2 rounded-xl text-xs font-semibold border transition-all ${!isLineItemMode ? 'bg-[#0F172A] text-white border-transparent' : 'bg-gray-50 text-gray-600 border-gray-200'}`}>
+                    📋 Records
+                  </button>
+                  <button onClick={() => setIsLineItemMode(true)}
+                    className={`flex-1 py-2 rounded-xl text-xs font-semibold border transition-all ${isLineItemMode ? 'bg-purple-700 text-white border-transparent' : 'bg-gray-50 text-gray-600 border-gray-200'}`}>
+                    🧾 Line Items
+                  </button>
+                </div>
+                {isLineItemMode && <p className="text-[11px] text-purple-600 mt-1.5">Reports on individual product/quantity/price rows across all matching records — e.g. "top products by quantity sold."</p>}
+              </div>
+            )}
           </div>
 
-          {/* Owner scope */}
+          {rawDataTruncated && (
+            <div className="bg-amber-50 border border-amber-200 rounded-2xl p-3 text-xs text-amber-700">
+              ⚠️ This report hit a {REPORT_SAFETY_CEILING.toLocaleString()}-row safety limit meant only to prevent a runaway fetch — if you're seeing this, something is likely off with your filters or data, not that data is being deliberately withheld. Narrow with filters and check with support if this persists.
+            </div>
+          )}
+
+          {/* Owner scope — hidden in line-item mode: this filters on a
+              record's own owner field, which line items don't have (only
+              their parent header record does), so it wouldn't work
+              meaningfully here. */}
+          {!isLineItemMode && (
           <div className="bg-white rounded-[24px] border border-blue-100 shadow p-5">
             <h3 className="font-bold text-[#0F172A] mb-3">👤 Data Scope</h3>
             <div className="space-y-2">
@@ -653,6 +863,7 @@ export default function FastReportsPage() {
               ))}
             </div>
           </div>
+          )}
 
           {/* Date range */}
           <div className="bg-white rounded-[24px] border border-blue-100 shadow p-5 space-y-3">
@@ -842,7 +1053,9 @@ export default function FastReportsPage() {
               </div>
             </div>
 
-            {activeTab === 'table' && (
+            {rawDataLoading ? (
+              <div className="py-20"><LoadingSpinner size={48} label={`Loading records${rawDataProgress > 0 ? ` (${rawDataProgress.toLocaleString()} so far...)` : ''}`} /></div>
+            ) : activeTab === 'table' && (
               <>
                 <div style={{overflowX:'auto', maxHeight:'55vh', overflowY:'auto'}}>
                   <table className="w-full text-sm">
@@ -933,7 +1146,7 @@ export default function FastReportsPage() {
               </>
             )}
 
-            {activeTab === 'chart' && (
+            {!rawDataLoading && activeTab === 'chart' && (
               <div className="p-6">
                 {!groupBy
                   ? <div className="text-center py-16 text-gray-400"><div className="text-4xl mb-2">📊</div><div>Set a Group By field in the left panel to generate a chart</div></div>

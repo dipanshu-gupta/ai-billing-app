@@ -4,6 +4,8 @@ import React, { useState, useEffect, useRef } from 'react';
 import { tenantScope } from '@/lib/utils';
 import { useApp } from '@/context/AppContext';
 import { useTenant } from '@/context/TenantContext';
+import SimpleRichTextEditor from '@/components/shared/SimpleRichTextEditor';
+import { useCustomFields } from '@/lib/useCustomFields';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const PAPER_SIZES = [
@@ -78,6 +80,14 @@ const defaultTpl = () => ({
   show_powered_by: false,
   // Dividers
   show_dividers: true, border_style: 'dashed',
+  // Terms & Conditions — rich text (HTML), with its own show/hide toggle.
+  terms_and_conditions: '', show_terms: false,
+  // Previously always-on in the actual print engine with no toggle here.
+  show_header_discount: true, show_rental_dates: true,
+  // Which custom fields (by api_name) to include, in order.
+  custom_field_keys: [],
+  // Which major sections appear, and in what order.
+  section_order: ['header','customer','items','totals','terms','payment','signature','footer'],
 });
 
 // ─── Sample data ──────────────────────────────────────────────────────────────
@@ -91,11 +101,12 @@ const SAMPLE = {
     { sno:3, name:'Water Bottle Pro',    hsn:'3924', unit:'Pc',   qty:1, price:599,  disc:0,  taxRate:18, taxAmt:108, total:707  },
   ],
   subtotal: 3245, discount: 200, cgst: 174.5, sgst: 174.5, totalTax: 349,
+  headerDiscountPct: 5, headerDiscountAmount: 169.7,
   total: 3394, paid: 3400, change: 6, payment: 'UPI / Google Pay',
 };
 
 // ─── Live Preview ─────────────────────────────────────────────────────────────
-function LivePreview({ t }) {
+function LivePreview({ t, customFields = [] }) {
   const ps     = PAPER_SIZES.find(p => p.v === t.paper_size) || PAPER_SIZES[0];
   const th     = ps.thermal;
   const font   = t.font_family || 'monospace';
@@ -200,7 +211,7 @@ function LivePreview({ t }) {
             {t.col_discount && <span style={{width:th?28:36,fontSize:fs(8),color:TL,fontWeight:700,textAlign:'right'}}>Disc</span>}
             {t.col_tax_rate && t.tax_regime !== 'exempt' && <span style={{width:th?32:40,fontSize:fs(8),color:TL,fontWeight:700,textAlign:'right'}}>GST%</span>}
             {t.col_hsn    && <span style={{width:th?36:44,fontSize:fs(8),color:TL,fontWeight:700,textAlign:'right'}}>HSN</span>}
-            {t.col_subtotal_line && <span style={{width:th?48:60,fontSize:fs(8),color:TL,fontWeight:700,textAlign:'right'}}>Subtotal</span>}
+            {t.col_subtotal_line && <span style={{width:th?48:60,fontSize:fs(8),color:TL,fontWeight:700,textAlign:'right'}}>Net Amt</span>}
             {t.col_total  && <span style={{width:th?48:60,fontSize:fs(8),color:TL,fontWeight:700,textAlign:'right'}}>Total</span>}
           </div>
           {/* Item rows */}
@@ -223,10 +234,13 @@ function LivePreview({ t }) {
 
         {div}
 
-        {/* Totals */}
+        {/* Totals — grouped into two visually distinct parts: line-item
+            totals (subtotal through tax) and document-level adjustments
+            (overall discount, round off), so the sequence of what's being
+            calculated is clear rather than one undifferentiated stack. */}
         <div style={{marginBottom:th?4:8}}>
           {t.show_subtotal         && <Row l="Subtotal"   v={`₹${SAMPLE.subtotal}`}/>}
-          {t.show_discount_total   && <Row l="Discount"   v={`-₹${SAMPLE.discount}`}/>}
+          {t.show_discount_total   && <Row l="Line Discount"   v={`-₹${SAMPLE.discount}`}/>}
           {/* Tax Regime actually changes what shows here: 'exempt' hides tax
               rows entirely (there's no tax to show); 'inclusive' shows a
               clarifying note instead of an additive GST/CGST/SGST line, since
@@ -241,6 +255,13 @@ function LivePreview({ t }) {
               <Row l="SGST" v={`₹${SAMPLE.sgst}`}/>
             </>
           )}
+          {/* Overall/header discount — applied after tax, on the final
+              total. Previously the actual print engine already supported
+              this, but the designer had no toggle or preview for it at
+              all, so admins couldn't see or control how it looked. */}
+          {t.show_header_discount && (
+            <Row l={`Overall Discount (${SAMPLE.headerDiscountPct}%)`} v={`-₹${SAMPLE.headerDiscountAmount}`}/>
+          )}
           {/* Round Off — the toggle existed and the real print engine already
               honored it, but this live preview never rendered a Round Off row
               at all, so the toggle appeared to do nothing here. */}
@@ -250,6 +271,33 @@ function LivePreview({ t }) {
             <span style={{color:T}}>₹{SAMPLE.total}</span>
           </div>
         </div>
+
+        {/* Terms & Conditions — rich text, shown only if enabled and
+            actually has content. */}
+        {t.show_terms && t.terms_and_conditions && (
+          <>
+            {div}
+            <div style={{marginBottom:th?4:8}}>
+              <div style={{fontSize:fs(9),fontWeight:700,color:TM,marginBottom:4,textTransform:'uppercase',letterSpacing:0.5}}>Terms &amp; Conditions</div>
+              <div style={{fontSize:fs(8),color:TL,lineHeight:1.5}} dangerouslySetInnerHTML={{__html: t.terms_and_conditions}} />
+            </div>
+          </>
+        )}
+
+        {/* Custom fields — sample placeholder values, since the designer
+            has no real record to pull actual data from. */}
+        {(t.custom_field_keys || []).length > 0 && (
+          <>
+            {div}
+            <div style={{marginBottom:th?4:8}}>
+              {(t.custom_field_keys || []).map(key => {
+                const field = customFields.find(f => f.api_name === key);
+                if (!field) return null;
+                return <Row key={key} l={field.label} v="Sample value"/>;
+              })}
+            </div>
+          </>
+        )}
 
         {/* Payment */}
         {t.show_payment && (
@@ -380,6 +428,7 @@ export default function RetailInvoiceDesigner() {
   const [zoom,       setZoom]       = useState(100);
   const [delConfirm, setDelConfirm] = useState(null);
   const [tab,        setTab]        = useState('store');
+  const { fields: availableCustomFields } = useCustomFields('retailInvoices');
   const logoRef = useRef(null);
 
   useEffect(()=>{ load(); },[]);
@@ -402,12 +451,13 @@ export default function RetailInvoiceDesigner() {
       'header_align','show_store_info','show_gst_header',
       'show_invoice_number','show_date','show_cashier','show_invoice_status','show_payment_status','show_barcode','show_qr_code',
       'show_customer','show_customer_phone','show_customer_gstin',
-      'col_sno','col_item','col_qty','col_unit','col_price','col_discount','col_hsn','col_subtotal_line','col_total','show_product_images',
-      'alt_row','alt_row_color','show_subtotal','show_discount_total','show_tax_total','show_cgst_sgst','show_round_off',
+      'col_sno','col_item','col_qty','col_unit','col_price','col_discount','col_tax_rate','col_hsn','col_subtotal_line','col_total','show_product_images',
+      'alt_row','alt_row_color','show_subtotal','show_discount_total','show_tax_total','show_cgst_sgst','show_round_off','show_header_discount','show_rental_dates',
       'tax_regime','default_gst_rate','place_of_supply',
       'show_payment','show_payment_mode','show_amount_paid','show_change','show_upi_id','upi_id',
       'show_loyalty','show_return_policy','return_policy','show_signature','signature_label',
-      'show_footer','footer_msg','show_powered_by','show_dividers','border_style'];
+      'show_footer','footer_msg','show_powered_by','show_dividers','border_style',
+      'terms_and_conditions','show_terms','custom_field_keys','section_order'];
     const payload = {updated_at: new Date().toISOString()};
     COLS.forEach(k => { if((t)[k]!==undefined) payload[k]=(t)[k]; });
     let err = null;
@@ -693,7 +743,7 @@ export default function RetailInvoiceDesigner() {
               <Toggle label="Discount %"    checked={!!t.col_discount}  onChange={()=>upd('col_discount',!t.col_discount)}/>
               <Toggle label="GST Rate %"    checked={!!t.col_tax_rate}  onChange={()=>upd('col_tax_rate',!t.col_tax_rate)}/>
               <Toggle label="HSN / SAC"     checked={!!t.col_hsn}       onChange={()=>upd('col_hsn',!t.col_hsn)}/>
-              <Toggle label="Subtotal (excl. tax)" checked={!!t.col_subtotal_line} onChange={()=>upd('col_subtotal_line',!t.col_subtotal_line)}/>
+              <Toggle label="Net Amount (excl. tax)" checked={!!t.col_subtotal_line} onChange={()=>upd('col_subtotal_line',!t.col_subtotal_line)}/>
               <Toggle label="Line Total (incl. tax)"    checked={t.col_total!==false} onChange={()=>upd('col_total',!(t.col_total!==false))}/>
             </Card>
 
@@ -735,12 +785,17 @@ export default function RetailInvoiceDesigner() {
 
             <Card title="Totals Display" icon="💰">
               <Toggle label="Show Subtotal"        checked={!!t.show_subtotal}       onChange={()=>upd('show_subtotal',!t.show_subtotal)}/>
-              <Toggle label="Show Discount Total"  checked={!!t.show_discount_total} onChange={()=>upd('show_discount_total',!t.show_discount_total)}/>
+              <Toggle label="Show Line Discount"  sub="Sum of each item's own discount %" checked={!!t.show_discount_total} onChange={()=>upd('show_discount_total',!t.show_discount_total)}/>
               <Toggle label="Show Tax Total"       checked={!!t.show_tax_total}      onChange={()=>upd('show_tax_total',!t.show_tax_total)}/>
               {t.show_tax_total && (
                 <Toggle label="Split CGST / SGST"  sub="Shows separate CGST and SGST lines instead of combined GST" checked={!!t.show_cgst_sgst} onChange={()=>upd('show_cgst_sgst',!t.show_cgst_sgst)}/>
               )}
+              <Toggle label="Show Overall Discount" sub="The order-level discount applied after tax, on the final total" checked={!!t.show_header_discount} onChange={()=>upd('show_header_discount',!t.show_header_discount)}/>
               <Toggle label="Show Round-off"       checked={!!t.show_round_off}      onChange={()=>upd('show_round_off',!t.show_round_off)}/>
+            </Card>
+
+            <Card title="Rental Bookings" icon="🔑">
+              <Toggle label="Show Rental Dates" sub="Displays the booking's start/end dates under each rental line item" checked={!!t.show_rental_dates} onChange={()=>upd('show_rental_dates',!t.show_rental_dates)}/>
             </Card>
 
             <Card title="Payment Section" icon="💳">
@@ -767,6 +822,58 @@ export default function RetailInvoiceDesigner() {
                 <div><L>Policy Text</L>
                   <TA value={t.return_policy} onChange={v=>upd('return_policy',v)} placeholder="Returns accepted within 7 days..." rows={3}/>
                 </div>
+              )}
+            </Card>
+
+            <Card title="Terms & Conditions" icon="📜">
+              <Toggle label="Show Terms & Conditions" checked={!!t.show_terms} onChange={()=>upd('show_terms',!t.show_terms)}/>
+              {t.show_terms && (
+                <div><L>Terms Text</L>
+                  <SimpleRichTextEditor
+                    value={t.terms_and_conditions}
+                    onChange={v=>upd('terms_and_conditions',v)}
+                    placeholder="e.g. Goods once sold will not be taken back. Warranty as per manufacturer terms."
+                  />
+                </div>
+              )}
+            </Card>
+
+            <Card title="Custom Fields" icon="🧩">
+              {availableCustomFields.length === 0 ? (
+                <p className="text-xs text-gray-400">No custom fields defined for Retail Invoices yet — add one via App Composer to make it available here.</p>
+              ) : (
+                <>
+                  <p className="text-xs text-gray-400 mb-1">Choose which custom fields appear on the printed document. Checked fields are included in the order shown — drag to reorder.</p>
+                  {availableCustomFields.map((f, idx) => {
+                    const keys: string[] = t.custom_field_keys || [];
+                    const included = keys.includes(f.api_name);
+                    return (
+                      <div key={f.api_name}
+                        draggable={included}
+                        onDragStart={e => e.dataTransfer.setData('text/plain', String(idx))}
+                        onDragOver={e => included && e.preventDefault()}
+                        onDrop={e => {
+                          const fromIdx = Number(e.dataTransfer.getData('text/plain'));
+                          const fromKey = availableCustomFields[fromIdx]?.api_name;
+                          if (!fromKey || fromKey === f.api_name) return;
+                          const newKeys = [...keys];
+                          const fi = newKeys.indexOf(fromKey), ti = newKeys.indexOf(f.api_name);
+                          if (fi === -1 || ti === -1) return;
+                          newKeys.splice(fi, 1); newKeys.splice(ti, 0, fromKey);
+                          upd('custom_field_keys', newKeys);
+                        }}
+                        className="flex items-center gap-2 py-1.5">
+                        {included && <span className="text-gray-300 cursor-grab">⠿</span>}
+                        <label className="flex items-center gap-2 text-sm text-gray-700 flex-1">
+                          <input type="checkbox" checked={included} onChange={() => {
+                            upd('custom_field_keys', included ? keys.filter(k=>k!==f.api_name) : [...keys, f.api_name]);
+                          }} />
+                          {f.label}
+                        </label>
+                      </div>
+                    );
+                  })}
+                </>
               )}
             </Card>
 
@@ -800,7 +907,7 @@ export default function RetailInvoiceDesigner() {
             </div>
             <div className="p-6 overflow-auto bg-gray-100" style={{minHeight:500,maxHeight:'80vh'}}>
               <div style={{transform:`scale(${zoom/100})`,transformOrigin:'top center',transition:'transform 0.15s',paddingBottom: zoom<80 ? `${(1-zoom/100)*500}px` : 0}}>
-                <LivePreview t={t}/>
+                <LivePreview t={t} customFields={availableCustomFields}/>
               </div>
             </div>
           </div>

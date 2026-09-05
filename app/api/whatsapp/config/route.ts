@@ -55,6 +55,7 @@ export async function POST(request: Request) {
         phone_number_id: config.phone_number_id || null,
         business_account_id: config.business_account_id || null,
         display_phone_number: config.display_phone_number || null,
+        business_notify_phone: config.business_notify_phone || null,
         updated_at: new Date().toISOString(),
       };
       // Only overwrite the access token if a new, real value was actually
@@ -78,6 +79,11 @@ export async function POST(request: Request) {
           language_code: tpl.language_code || 'en_US',
           is_active: tpl.is_active !== false,
           param_count: tpl.param_count ?? 3,
+          object_type: tpl.object_type || null,
+          param_mappings: tpl.param_mappings || [],
+          attach_document: !!tpl.attach_document,
+          document_source: tpl.document_source || null,
+          send_conditions: tpl.send_conditions || { logic: 'AND', conditions: [] },
         }, { onConflict: 'tenant_id,template_key' });
       }
     }

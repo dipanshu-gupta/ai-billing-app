@@ -4,15 +4,27 @@ import { useState, useMemo } from 'react';
 import { useApp } from '@/context/AppContext';
 import { THEMES } from '@/lib/i18n';
 import RentalBookingCalendar from '@/components/retail/RentalBookingCalendar';
+import BookingsDashboard from '@/components/retail/BookingsDashboard';
 import SearchableSelect from '@/components/shared/SearchableSelect';
 
 export default function ManageBookingsPage() {
-  const { retailProducts, appearance } = useApp();
+  const { retailProducts, appearance, setPendingRecord } = useApp();
   const themeObj = THEMES.find(th => th.id === (appearance?.theme || 'navy')) || THEMES[0];
   const rentableProducts = useMemo(() => (retailProducts || []).filter(p => p.is_rentable && p.status !== 'Discontinued'), [retailProducts]);
   const [selectedProductId, setSelectedProductId] = useState('');
 
   const selectedProduct = rentableProducts.find(p => (p._uuid || p.id) === selectedProductId);
+
+  const openOrderRecord = (orderRecord) => {
+    console.log('[ManageBookingsPage] openOrderRecord called with:', orderRecord);
+    if (!orderRecord) { console.warn('[ManageBookingsPage] orderRecord is missing — the dashboard could not resolve this booking\'s parent order.'); return; }
+    // Same cross-page handoff mechanism already used for the Create Booking
+    // button on activities - navigates to Retail Orders with this specific
+    // record already set, so it opens directly in the detail panel there
+    // instead of just jumping to the product's calendar.
+    setPendingRecord({ page: 'retailOrders', record: orderRecord });
+    window.dispatchEvent(new CustomEvent('retail-navigate', { detail: { page: 'retailOrders' } }));
+  };
 
   return (
     <div className="space-y-5">
@@ -39,7 +51,7 @@ export default function ManageBookingsPage() {
         )}
       </div>
 
-      {selectedProduct && (
+      {selectedProduct ? (
         <RentalBookingCalendar
           key={selectedProductId /* remount cleanly when switching products, rather than reusing stale month/selection state */}
           productId={selectedProductId}
@@ -47,6 +59,8 @@ export default function ManageBookingsPage() {
           productPrice={selectedProduct.price}
           variant="inline"
         />
+      ) : (
+        <BookingsDashboard onSelectProduct={setSelectedProductId} onOpenRecord={openOrderRecord} />
       )}
     </div>
   );

@@ -3,6 +3,7 @@
 import { useState, useMemo } from 'react';
 import { useApp } from '@/context/AppContext';
 import { t, THEMES } from '@/lib/i18n';
+import { useObjectLabels } from '@/lib/useObjectLabels';
 import { SALES_GROUP, RETAIL_GROUP, BOTTOM_ITEMS, DASHBOARD_ITEM, makeCanSee } from '@/lib/navPermissions';
 
 // Tile gradients are derived from the tenant's OWN selected theme (the same
@@ -84,6 +85,7 @@ export default function SpringboardPage({ onNavigate }) {
   const isAdmin = currentUserPermissions.includes('__admin__') || currentUser?.is_admin === true;
   const b2cMode = appPreferences?.b2c_mode === true;
   const lang = appearance?.language || 'en';
+  const { getObjectLabel } = useObjectLabels();
   const themeObj = THEMES.find(th => th.id === (appearance?.theme || 'navy')) || THEMES[0];
   const tileGradients = useMemo(() => getThemeTileGradients(themeObj), [themeObj]);
   const lowPolyMesh = useMemo(() => generateLowPolyMesh(themeObj), [themeObj]);
@@ -211,7 +213,7 @@ export default function SpringboardPage({ onNavigate }) {
               <div className="relative w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center group-hover:scale-110 transition-transform duration-200">
                 <span className="text-3xl drop-shadow-md">{item.icon}</span>
               </div>
-              <span className="relative text-sm font-bold text-center leading-tight drop-shadow-sm">{t(lang, item.label)}</span>
+              <span className="relative text-sm font-bold text-center leading-tight drop-shadow-sm">{getObjectLabel(item.key, t(lang, item.label))}</span>
             </button>
           ))}
         </div>

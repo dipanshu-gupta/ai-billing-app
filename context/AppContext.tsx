@@ -10,7 +10,8 @@ import type {
   SLAPolicy, SLARecord, ApprovalProcess, ApprovalStep, ApprovalRequest,
   Notification, AuditLog,
 } from '@/lib/types';
-import { generateId, formatDisplayNumber, withTimeout } from '@/lib/utils';
+import { generateId, formatDisplayNumber, withTimeout, todayLocalISO } from '@/lib/utils';
+import { fetchFieldMappingRules, applyFieldMapping } from '@/lib/useFieldMappingRules';
 import { useAlert } from '@/components/shared/AlertProvider';
 
 // ─── Enterprise-scale hardening ──────────────────────────────────────────────
@@ -1176,9 +1177,9 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
   const RETAIL_ALLOWED_COLS: Record<string, string[]> = {
     retail_customers:  ['name','phone','email','date_of_birth','gender','address_line1','address_line2','city','state','postal_code','country','loyalty_points','loyalty_tier','preferred_contact','marketing_opt_in','notes','comments','status','owner','owner_id','owner_name','organization_id','business_unit_id','custom_data'],
     retail_products:   ['name','category','brand','sku','barcode','unit','price','mrp','cost','stock_quantity','reorder_level','description','hsn_code','gst_rate','taxable','tax_category','vat_rate','tax_rate','status','owner','owner_id','owner_name','comments','organization_id','business_unit_id','custom_data','is_rentable','rent_per_day'],
-    retail_activities: ['subject','activity_type','customer','customer_id','activity_date','due_date','priority','status','description','notes','comments','owner','owner_id','owner_name','organization_id','business_unit_id','custom_data'],
-    retail_orders:     ['customer','customer_id','customer_phone','order_date','channel','currency','payment_method','payment_status','delivery_method','delivery_address','delivery_date','subtotal','total_discount','total_tax','shipping_cost','amount','place_of_supply','gstin','tax_state','resale_certificate','vat_registration_number','tax_registration_number','status','notes','comments','owner','owner_id','owner_name','organization_id','business_unit_id','custom_data'],
-    retail_invoices:   ['order_number','customer','customer_id','customer_phone','invoice_date','due_date','currency','subtotal','total_discount','total_tax','shipping_cost','amount','payment_method','payment_status','place_of_supply','gstin','tax_state','resale_certificate','vat_registration_number','tax_registration_number','status','notes','comments','owner','owner_id','owner_name','organization_id','business_unit_id','custom_data','invoice_template_id'],
+    retail_activities: ['subject','activity_type','customer','customer_id','customer_phone','activity_date','due_date','priority','status','description','notes','comments','owner','owner_id','owner_name','organization_id','business_unit_id','custom_data'],
+    retail_orders:     ['customer','customer_id','customer_phone','order_date','channel','currency','payment_method','payment_status','delivery_method','delivery_address','delivery_date','subtotal','total_discount','total_tax','header_discount_pct','header_discount_amount','shipping_cost','amount','place_of_supply','gstin','tax_state','resale_certificate','vat_registration_number','tax_registration_number','status','notes','comments','owner','owner_id','owner_name','organization_id','business_unit_id','custom_data'],
+    retail_invoices:   ['order_number','customer','customer_id','customer_phone','invoice_date','due_date','currency','subtotal','total_discount','total_tax','header_discount_pct','header_discount_amount','shipping_cost','amount','payment_method','payment_status','place_of_supply','gstin','tax_state','resale_certificate','vat_registration_number','tax_registration_number','status','notes','comments','owner','owner_id','owner_name','organization_id','business_unit_id','custom_data','invoice_template_id'],
   };
 
   const createRetailRecord = async (page: keyof typeof RETAIL_TABLE_MAP, data: any, items: any[] = []) => {
@@ -1432,6 +1433,11 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
       business_unit_id: order.business_unit_id || null,
       custom_data: order.custom_data || {},
     };
+    // Copy Maps — apply any active record-conversion rules for
+    // Order → Invoice, copying mapped fields from the order onto the
+    // new invoice payload before it's saved.
+    const conversionRules = await fetchFieldMappingRules(supabase, 'record_conversion', 'retailOrders', getScopeTenantId());
+    applyFieldMapping(conversionRules.filter(r => r.conversion_context === 'retailOrder_to_retailInvoice'), order, payload);
     const { data: inserted, error } = await supabase.from('retail_invoices').insert([payload]).select().single();
     if (error) { showAlert('Failed to create invoice: ' + error.message); return null; }
     if (items.length) await upsertRetailLineItems('retail_invoice_line_items', 'invoice_number', invId, items);
@@ -1550,10 +1556,18 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     if (!supabase) return;
     const email = currentUser?.email || session?.user?.email;
     if (!email) return;
-    const { data } = await tScope(supabase
-      .from('notifications').select('*'))
-      .eq('recipient_email', email)
-      .order('created_at', { ascending: false }).limit(50);
+    // Not using the generic tScope() here deliberately — its non-demo
+    // branch is a strict .eq('tenant_id', tid) with no null fallback,
+    // which would permanently hide any notification created before
+    // tenant_id started being set on insert (see createNotification).
+    // recipient_email is the real access boundary for this table (a user
+    // only ever sees their own notifications regardless of tenant_id), so
+    // including legacy null-tenant_id rows here is safe in a way it
+    // wouldn't necessarily be for other tables.
+    const tid = getScopeTenantId();
+    let q = supabase.from('notifications').select('*').eq('recipient_email', email);
+    if (tid) q = q.or(`tenant_id.eq.${tid},tenant_id.is.null`);
+    const { data } = await q.order('created_at', { ascending: false }).limit(50);
     if (data) setNotifications(data);
   };
 
@@ -1598,6 +1612,7 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
       title: params.title, body: params.body,
       record_type: params.recordType, record_id: params.recordId,
       is_read: false, created_at: new Date().toISOString(),
+      tenant_id: getScopeTenantId(),
     }]);
     if (params.recipientEmail === currentUser?.email) await fetchNotifications();
   };
@@ -2698,6 +2713,80 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     }
   };
 
+  // Which line-item table (and its foreign-key column) belongs to each
+  // object type that actually has line items. Retail orders/invoices use
+  // their own richer line-item schema; CRM leads/opportunities/orders/
+  // invoices share a simpler one (product_name, quantity, price).
+  const LINE_ITEM_TABLE_CONFIG: Record<string, { table: string; fk: string }> = {
+    retailOrders:   { table: 'retail_order_line_items',   fk: 'order_number' },
+    retailInvoices: { table: 'retail_invoice_line_items', fk: 'invoice_number' },
+    leads:          { table: 'lead_line_items',           fk: 'lead_number' },
+    opportunities:  { table: 'opportunity_line_items',    fk: 'opportunity_number' },
+    orders:         { table: 'order_line_items',          fk: 'order_number' },
+    invoices:       { table: 'invoice_line_items',        fk: 'invoice_number' },
+    quotations:     { table: 'quotation_line_items',      fk: 'quote_number' },
+  };
+
+  // The shared condition-evaluation engine for both Workflow Rules and
+  // Approval Processes — previously each had its own separate, inconsistent
+  // logic (approvals supported multi-condition AND/OR; workflows silently
+  // ignored the conditions builder entirely and only checked a single
+  // legacy trigger_field/trigger_value pair). Now both call this directly.
+  // Adds line-item-level conditions: a condition with scope:'line_item'
+  // checks across the record's own line items rather than the header
+  // record, using one of three aggregation modes (any/all/sum).
+  const evaluateConditionsWithLineItems = async (
+    objectType: string,
+    recordData: any,
+    conditionsConfig: { logic?: 'AND'|'OR'; conditions?: any[] } | null | undefined,
+    legacyField?: string, legacyOperator?: string, legacyValue?: string
+  ): Promise<boolean> => {
+    const conds = conditionsConfig?.conditions || [];
+    if (!conds.length) {
+      // Fall back to the legacy single-condition fields, for rules/processes
+      // saved before the multi-condition builder existed. Matches the
+      // original semantics exactly: both must be set, not just the field.
+      if (legacyField && legacyValue) return evaluateCondition(recordData[legacyField], legacyOperator || 'equals', legacyValue);
+      return true; // no condition at all = always matches
+    }
+
+    const logic = conditionsConfig?.logic || 'AND';
+    const needsLineItems = conds.some((c: any) => c.scope === 'line_item');
+    let lineItems: any[] = [];
+    if (needsLineItems && supabase) {
+      const liConfig = LINE_ITEM_TABLE_CONFIG[objectType];
+      const recordNumber = recordData.id || recordData[getObjectIdField(objectType)];
+      if (liConfig && recordNumber) {
+        try {
+          const { data } = await withTimeout(
+            supabase.from(liConfig.table).select('*').eq(liConfig.fk, recordNumber),
+            10000, 'Fetch line items for condition check'
+          );
+          lineItems = data || [];
+        } catch (e) {
+          console.warn('[evaluateConditionsWithLineItems] line item fetch failed:', e);
+        }
+      }
+    }
+
+    const results = conds.map((c: any) => {
+      if (c.scope === 'line_item') {
+        if (c.aggregation === 'sum') {
+          const sum = lineItems.reduce((s, li) => s + Number(li[c.field] || 0), 0);
+          return evaluateCondition(sum, c.operator, c.value);
+        }
+        if (c.aggregation === 'all') {
+          return lineItems.length > 0 && lineItems.every(li => evaluateCondition(li[c.field], c.operator, c.value));
+        }
+        // 'any' — default aggregation for line-item conditions
+        return lineItems.some(li => evaluateCondition(li[c.field], c.operator, c.value));
+      }
+      return evaluateCondition(recordData[c.field], c.operator, c.value);
+    });
+
+    return logic === 'AND' ? results.every(Boolean) : results.some(Boolean);
+  };
+
   const getObjectTable = (objectType: string): string => {
     const map: Record<string,string> = {
       leads:'leads', opportunities:'opportunities', customers:'customers',
@@ -2780,161 +2869,193 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
   };
 
   // ── Workflow Rules ────────────────────────────────────────────────
-  const runWorkflowRules = async (objectType: string, recordId: string, recordData: any, triggerEvent: string) => {
+  // Executes a workflow rule's configured actions against a specific
+  // record — extracted from the body of runWorkflowRules so both the
+  // existing event-based engine (on_create/on_update/on_delete) and the new
+  // schedule-based engine (before_date) can share this exact logic rather
+  // than duplicating it. Behavior is unchanged from before; this is purely
+  // a code-organization change, not a logic rewrite.
+  const executeWorkflowActions = async (rule: any, objectType: string, recordId: string, recordData: any) => {
     if (!supabase) return;
     let fieldsWereMutated = false;
-    const rules = workflowRules.filter(r =>
-      r.object_type === objectType &&
-      r.trigger_event === triggerEvent &&
-      r.is_active
-    );
 
-    for (const rule of rules) {
-      // Evaluate conditions if any
-      let conditionMet = true;
-      if (rule.trigger_field && rule.trigger_value) {
-        const value = recordData[rule.trigger_field];
-        conditionMet = evaluateCondition(value, 'equals', rule.trigger_value);
-      }
-      if (!conditionMet) continue;
+    const { data: actionsData } = await supabase
+      .from('workflow_actions')
+      .select('*')
+      .eq('workflow_rule_id', rule.id)
+      .order('execution_order');
 
-      // Execute actions
-      const { data: actionsData } = await supabase
-        .from('workflow_actions')
-        .select('*')
-        .eq('workflow_rule_id', rule.id)
-        .order('execution_order');
+    for (const action of (actionsData || [])) {
+      const cfg = action.action_config || {};
+      switch(action.action_type) {
+        case 'send_notification': {
+          // Merge field placeholders like {{name}}, {{status}}, {{amount}} into subject/message
+          const interpolate = (text: string) => (text || '').replace(/\{\{(\w+)\}\}/g, (_, key) => {
+            const val = recordData[key];
+            return val !== undefined && val !== null ? String(val) : '';
+          });
+          const subject = interpolate(cfg.subject) || `Workflow: ${rule.name}`;
+          const message = interpolate(cfg.message) || `Rule "${rule.name}" triggered on ${objectType} record "${recordData.name || recordId}".`;
 
-      for (const action of (actionsData || [])) {
-        const cfg = action.action_config || {};
-        switch(action.action_type) {
-          case 'send_notification': {
-            // Merge field placeholders like {{name}}, {{status}}, {{amount}} into subject/message
-            const interpolate = (text: string) => (text || '').replace(/\{\{(\w+)\}\}/g, (_, key) => {
-              const val = recordData[key];
-              return val !== undefined && val !== null ? String(val) : '';
+          const emailSet = new Set<string>();
+
+          // Specific email addresses
+          (cfg.recipients || []).forEach((e: string) => emailSet.add(e));
+
+          // Specific selected users
+          (cfg.user_ids || []).forEach((uid: string) => {
+            const u = enterpriseUsers.find(x => x.id === uid);
+            if (u?.email) emailSet.add(u.email);
+          });
+
+          // Record owner (default true unless explicitly disabled)
+          if (cfg.notify_owner !== false && recordData.owner) emailSet.add(recordData.owner);
+
+          // Record creator/submitter
+          if (cfg.notify_submitter && recordData.created_by) emailSet.add(recordData.created_by);
+
+          for (const email of emailSet) {
+            await createNotification({
+              recipientEmail: email,
+              type: 'workflow',
+              title: subject,
+              body: message,
+              recordType: objectType, recordId,
             });
-            const subject = interpolate(cfg.subject) || `Workflow: ${rule.name}`;
-            const message = interpolate(cfg.message) || `Rule "${rule.name}" triggered on ${objectType} record "${recordData.name || recordId}".`;
-
-            const emailSet = new Set<string>();
-
-            // Specific email addresses
-            (cfg.recipients || []).forEach((e: string) => emailSet.add(e));
-
-            // Specific selected users
-            (cfg.user_ids || []).forEach((uid: string) => {
-              const u = enterpriseUsers.find(x => x.id === uid);
-              if (u?.email) emailSet.add(u.email);
-            });
-
-            // Record owner (default true unless explicitly disabled)
-            if (cfg.notify_owner !== false && recordData.owner) emailSet.add(recordData.owner);
-
-            // Record creator/submitter
-            if (cfg.notify_submitter && recordData.created_by) emailSet.add(recordData.created_by);
-
-            for (const email of emailSet) {
-              await createNotification({
-                recipientEmail: email,
-                type: 'workflow',
-                title: subject,
-                body: message,
-                recordType: objectType, recordId,
-              });
-            }
-            break;
           }
-          case 'update_field': {
-            // Safety: never allow this action to touch owner/owner_id — use assign_owner instead
-            if (cfg.field && cfg.field !== 'owner' && cfg.field !== 'owner_id' && cfg.value !== undefined && cfg.value !== '') {
-              const NUMERIC_FIELDS = ['amount','probability','price','grand_total','cost','quantity'];
-              const coercedValue = NUMERIC_FIELDS.includes(cfg.field) ? Number(cfg.value) : cfg.value;
-              const table   = getObjectTable(objectType);
-              const idField = getObjectIdField(objectType);
-              const { error: ufErr } = await supabase.from(table)
-                .update({ [cfg.field]: coercedValue })
-                .eq(idField, recordId);
-              if (ufErr) console.warn('[Workflow update_field] failed:', ufErr.message);
-              else fieldsWereMutated = true;
-            }
-            break;
+          break;
+        }
+        case 'update_field': {
+          // Safety: never allow this action to touch owner/owner_id — use assign_owner instead
+          if (cfg.field && cfg.field !== 'owner' && cfg.field !== 'owner_id' && cfg.value !== undefined && cfg.value !== '') {
+            const NUMERIC_FIELDS = ['amount','probability','price','grand_total','cost','quantity'];
+            const coercedValue = NUMERIC_FIELDS.includes(cfg.field) ? Number(cfg.value) : cfg.value;
+            const table   = getObjectTable(objectType);
+            const idField = getObjectIdField(objectType);
+            const { error: ufErr } = await supabase.from(table)
+              .update({ [cfg.field]: coercedValue })
+              .eq(idField, recordId);
+            if (ufErr) console.warn('[Workflow update_field] failed:', ufErr.message);
+            else fieldsWereMutated = true;
           }
-          case 'assign_owner': {
-            const newOwner = cfg.user_id
-              ? enterpriseUsers.find(u => u.id === cfg.user_id)
-              : null;
-            if (newOwner) {
-              const table   = getObjectTable(objectType);
-              const idField = getObjectIdField(objectType);
-              const { error: aoErr } = await supabase.from(table)
-                .update({ owner: newOwner.email, owner_id: newOwner.id })
-                .eq(idField, recordId);
-              if (!aoErr) {
-                fieldsWereMutated = true;
-                await createNotification({
-                  recipientEmail: newOwner.email,
-                  type: 'workflow',
-                  title: `Record Assigned: ${rule.name}`,
-                  body: `${objectType} "${recordData.name}" assigned to you by workflow.`,
-                  recordType: objectType, recordId,
-                });
-              } else {
-                console.warn('[Workflow assign_owner] failed:', aoErr.message);
-              }
-            }
-            break;
-          }
-          case 'create_task': {
-            // Resolve due date: either fixed date or N days from now
-            let dueDate = cfg.due_date || null;
-            if (cfg.due_in_days) {
-              const d = new Date();
-              d.setDate(d.getDate() + parseInt(cfg.due_in_days, 10));
-              dueDate = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-            }
-            // Resolve assignee: specific user or falls back to record owner
-            const assignee = cfg.assignee_user_id
-              ? enterpriseUsers.find(u => u.id === cfg.assignee_user_id)
-              : null;
-            const taskOwner   = assignee?.email || recordData.owner || currentUser?.email || '';
-            const taskOwnerId = assignee?.id    || recordData.owner_id || currentUser?.id || null;
-
-            const { error: taskErr } = await supabase.from('activities').insert([{
-              activity_number: generateId('ACT'),
-              name: cfg.task_name || 'Follow up',
-              subject: cfg.task_name || 'Follow up',
-              activity_type: 'Task',
-              status: 'Open',
-              priority: cfg.priority || 'Medium',
-              due_date: dueDate,
-              customer: recordData.customer || '',
-              customer_id: recordData.customer_id || null,
-              owner: taskOwner,
-              owner_id: taskOwnerId,
-              notes: cfg.notes ? `${cfg.notes}\n\n(Auto-created by workflow: ${rule.name})` : `Auto-created by workflow: ${rule.name}`,
-              created_by: currentUser?.email || '',
-              updated_by: currentUser?.email || '',
-            }]);
-            if (taskErr) {
-              console.warn('[Workflow create_task] failed:', taskErr.message);
-            } else {
-              fieldsWereMutated = true; // ensures fetchActivities() runs at the end
-            }
-
-            // Notify the assignee if different from current user
-            if (assignee && assignee.email !== currentUser?.email) {
-              await createNotification({
-                recipientEmail: assignee.email,
-                type: 'workflow',
-                title: `New Task: ${cfg.task_name || 'Follow up'}`,
-                body: `Workflow "${rule.name}" created a task for you on ${objectType} record "${recordData.name || recordId}".`,
-                recordType: objectType, recordId,
-              });
+          break;
+        }
+        case 'assign_owner': {
+          const newOwner = cfg.user_id
+            ? enterpriseUsers.find(u => u.id === cfg.user_id)
+            : null;
+          if (newOwner) {
+            const table   = getObjectTable(objectType);
+            const idField = getObjectIdField(objectType);
+            const { error: aoErr } = await supabase.from(table)
+              .update({ owner: newOwner.email, owner_id: newOwner.id })
+              .eq(idField, recordId);
+            if (!aoErr) {
               fieldsWereMutated = true;
+              await createNotification({
+                recipientEmail: newOwner.email,
+                type: 'workflow',
+                title: `Record Assigned: ${rule.name}`,
+                body: `${objectType} "${recordData.name}" assigned to you by workflow.`,
+                recordType: objectType, recordId,
+              });
+            } else {
+              console.warn('[Workflow assign_owner] failed:', aoErr.message);
             }
+          }
+          break;
+        }
+        case 'create_task': {
+          // Resolve due date: either fixed date or N days from now
+          let dueDate = cfg.due_date || null;
+          if (cfg.due_in_days) {
+            const d = new Date();
+            d.setDate(d.getDate() + parseInt(cfg.due_in_days, 10));
+            dueDate = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+          }
+          // Resolve assignee: specific user or falls back to record owner
+          const assignee = cfg.assignee_user_id
+            ? enterpriseUsers.find(u => u.id === cfg.assignee_user_id)
+            : null;
+          const taskOwner   = assignee?.email || recordData.owner || currentUser?.email || '';
+          const taskOwnerId = assignee?.id    || recordData.owner_id || currentUser?.id || null;
+
+          const { error: taskErr } = await supabase.from('activities').insert([{
+            activity_number: generateId('ACT'),
+            name: cfg.task_name || 'Follow up',
+            subject: cfg.task_name || 'Follow up',
+            activity_type: 'Task',
+            status: 'Open',
+            priority: cfg.priority || 'Medium',
+            due_date: dueDate,
+            customer: recordData.customer || '',
+            customer_id: recordData.customer_id || null,
+            owner: taskOwner,
+            owner_id: taskOwnerId,
+            notes: cfg.notes ? `${cfg.notes}\n\n(Auto-created by workflow: ${rule.name})` : `Auto-created by workflow: ${rule.name}`,
+            created_by: currentUser?.email || '',
+            updated_by: currentUser?.email || '',
+          }]);
+          if (taskErr) {
+            console.warn('[Workflow create_task] failed:', taskErr.message);
+          } else {
+            fieldsWereMutated = true; // ensures fetchActivities() runs at the end
+          }
+
+          // Notify the assignee if different from current user
+          if (assignee && assignee.email !== currentUser?.email) {
+            await createNotification({
+              recipientEmail: assignee.email,
+              type: 'workflow',
+              title: `New Task: ${cfg.task_name || 'Follow up'}`,
+              body: `Workflow "${rule.name}" created a task for you on ${objectType} record "${recordData.name || recordId}".`,
+              recordType: objectType, recordId,
+            });
+            fieldsWereMutated = true;
+          }
+          break;
+        }
+        case 'send_whatsapp': {
+          // Enables automatic WhatsApp messages/reminders from any
+          // workflow rule - including the scheduled "before_date" trigger
+          // type, e.g. "1 day before rental return, remind the customer"
+          // or "notify the business phone when a high-value order closes."
+          // Reuses the exact same send route and param_mappings resolution
+          // that manual sends use, so these are just as customizable.
+          if (!supabase) break;
+          const { data: waConfigRow } = await supabase.from('whatsapp_config').select('*').eq('tenant_id', getScopeTenantId()).maybeSingle();
+          if (!waConfigRow?.is_active) { console.warn('[Workflow send_whatsapp] WhatsApp is not active for this tenant — skipping.'); break; }
+
+          const recipientType = cfg.recipient_type || 'customer'; // 'customer' | 'business'
+          let toPhone = '';
+          if (recipientType === 'business') {
+            toPhone = String(waConfigRow.business_notify_phone || '').replace(/\D/g, '');
+          } else {
+            const rawPhone = String(recordData.customer_phone || recordData.phone || '').replace(/\D/g, '');
+            toPhone = rawPhone.length === 10 ? '91' + rawPhone : rawPhone;
+          }
+          if (!toPhone) {
+            console.warn(`[Workflow send_whatsapp] No ${recipientType} phone number available — skipping.`);
             break;
           }
+
+          try {
+            const res = await fetch('/api/whatsapp/send', {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                tenantId: getScopeTenantId(), to: toPhone,
+                recordType: objectType, recordId, recipientType, sendMode: 'automatic',
+                templateKey: cfg.template_key, record: recordData,
+              }),
+            });
+            if (!res.ok) {
+              const errData = await res.json().catch(() => ({}));
+              console.warn('[Workflow send_whatsapp] send failed:', errData?.error);
+            }
+          } catch (e) {
+            console.warn('[Workflow send_whatsapp] send failed:', e);
+          }
+          break;
         }
       }
     }
@@ -2956,14 +3077,136 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     }
   };
 
+  const runWorkflowRules = async (objectType: string, recordId: string, recordData: any, triggerEvent: string) => {
+    if (!supabase) return;
+    const rules = workflowRules.filter(r =>
+      r.object_type === objectType &&
+      r.trigger_event === triggerEvent &&
+      r.is_active
+    );
+
+    for (const rule of rules) {
+      // Evaluate conditions via the shared engine — supports the full
+      // multi-condition AND/OR builder plus line-item conditions, falling
+      // back to the legacy single trigger_field/trigger_value pair for
+      // rules saved before the conditions builder existed. Previously this
+      // only ever checked trigger_field/trigger_value directly, silently
+      // ignoring anything built with the conditions UI.
+      const conditionMet = await evaluateConditionsWithLineItems(
+        objectType, recordData, rule.conditions, rule.trigger_field, 'equals', rule.trigger_value
+      );
+      if (!conditionMet) continue;
+
+      await executeWorkflowActions(rule, objectType, recordId, recordData);
+    }
+  };
+
+  // ── Scheduled workflow triggers ("before_date") ─────────────────────
+  // Fires a configurable amount of time before a date field reaches now —
+  // e.g. "1 day before rental_end_date" or "1 hour before delivery_date" —
+  // for header-level or line-item-level date fields. Unlike runWorkflowRules
+  // above, nothing "happens" to trigger this (no create/update event), so
+  // it has to be checked periodically. This is a client-triggered check
+  // (runs while someone has the app open), not a guaranteed server-side
+  // cron — a true guarantee would need a scheduled Supabase Edge Function,
+  // separate infrastructure. The match uses a window around the exact
+  // target moment (sized to the poll interval) rather than an exact-instant
+  // comparison, since polling can't land on the precise second regardless.
+  const SCHEDULED_WORKFLOW_POLL_WINDOW_MS = 10 * 60 * 1000; // ±10 min around the exact offset target
+  const runScheduledWorkflowRules = async () => {
+    if (!supabase) return;
+    const scheduledRules = workflowRules.filter(r => r.trigger_event === 'before_date' && r.is_active && r.schedule_date_field);
+    if (!scheduledRules.length) return;
+
+    const tid = (typeof window !== 'undefined' ? (window as any).__bp_tenant : null) || {};
+    const now = Date.now();
+    const todayStr = todayLocalISO();
+    const future = new Date(); future.setDate(future.getDate() + 3);
+    const futureStr = `${future.getFullYear()}-${String(future.getMonth()+1).padStart(2,'0')}-${String(future.getDate()).padStart(2,'0')}`;
+
+    for (const rule of scheduledRules) {
+      const offsetMs = (rule.schedule_offset_value || 1) * (rule.schedule_offset_unit === 'hours' ? 3600000 : 86400000);
+      const [dueHour, dueMin] = (rule.schedule_due_time || '18:00').split(':').map(Number);
+      const liConfig = LINE_ITEM_TABLE_CONFIG[rule.object_type];
+      const isLineItemScoped = rule.schedule_date_scope === 'line_item' && !!liConfig;
+
+      // Broad candidate fetch (next few days) — exact time-window
+      // precision happens in JS below, since a date-only column can't
+      // express "within N hours" directly in the query.
+      let candidates: any[] = [];
+      try {
+        if (isLineItemScoped) {
+          let q = supabase.from(liConfig!.table).select('*').gte(rule.schedule_date_field, todayStr).lte(rule.schedule_date_field, futureStr);
+          if (tid.id && !tid.db_url) q = q.eq('tenant_id', tid.id);
+          const { data } = await withTimeout(q, 15000, 'Scheduled workflow candidate fetch');
+          candidates = data || [];
+        } else {
+          const table = getObjectTable(rule.object_type);
+          let q = supabase.from(table).select('*').gte(rule.schedule_date_field, todayStr).lte(rule.schedule_date_field, futureStr);
+          if (tid.id && !tid.db_url) q = q.eq('tenant_id', tid.id);
+          const { data } = await withTimeout(q, 15000, 'Scheduled workflow candidate fetch');
+          candidates = data || [];
+        }
+      } catch (e) { console.warn('[runScheduledWorkflowRules] candidate fetch failed:', e); continue; }
+
+      for (const candidate of candidates) {
+        const dateVal = candidate[rule.schedule_date_field];
+        if (!dateVal) continue;
+        const [y, m, d] = String(dateVal).slice(0, 10).split('-').map(Number);
+        if (!y || !m || !d) continue;
+        const dueMoment = new Date(y, m - 1, d, dueHour || 0, dueMin || 0, 0).getTime();
+        const msUntilDue = dueMoment - now;
+        // Only fire once we're within the poll window around the exact
+        // requested offset — e.g. for "1 hour before", only when we're
+        // roughly (within ±10 min) 1 hour away from the due moment.
+        if (Math.abs(msUntilDue - offsetMs) > SCHEDULED_WORKFLOW_POLL_WINDOW_MS) continue;
+
+        const idField = getObjectIdField(rule.object_type);
+        const parentId = isLineItemScoped ? candidate[liConfig!.fk] : (candidate.id || candidate[idField]);
+        const lineItemId = isLineItemScoped ? candidate.id : null;
+        if (!parentId) continue;
+
+        // Dedup — has this exact rule already fired for this exact
+        // record/line-item? Without this, every poll within the window
+        // would re-fire the same notification.
+        let dedupQuery = supabase.from('workflow_rule_firings').select('id').eq('workflow_rule_id', rule.id).eq('record_id', parentId);
+        dedupQuery = lineItemId ? dedupQuery.eq('line_item_id', lineItemId) : dedupQuery.is('line_item_id', null);
+        const { data: existingFiring } = await dedupQuery.maybeSingle();
+        if (existingFiring) continue;
+
+        // Resolve the parent header record — needed for header-level
+        // condition evaluation and for action context (owner, customer,
+        // etc.) even when the trigger itself is line-item scoped.
+        let parentRecord = candidate;
+        if (isLineItemScoped) {
+          const table = getObjectTable(rule.object_type);
+          const idF = getObjectIdField(rule.object_type);
+          const { data: parent } = await supabase.from(table).select('*').eq(idF, parentId).maybeSingle();
+          parentRecord = parent ? { ...parent, id: parent[idF] } : { id: parentId };
+        }
+
+        const conditionsMet = await evaluateConditionsWithLineItems(rule.object_type, parentRecord, rule.conditions);
+        if (!conditionsMet) continue;
+
+        await executeWorkflowActions(rule, rule.object_type, parentId, parentRecord);
+        await supabase.from('workflow_rule_firings').insert({
+          tenant_id: tid.id || null, workflow_rule_id: rule.id,
+          record_type: rule.object_type, record_id: parentId, line_item_id: lineItemId,
+        });
+      }
+    }
+  };
+
   // ── SLA Policies ──────────────────────────────────────────────────
   const runSLAPolicies = async (objectType: string, recordId: string, recordData: any) => {
     if (!supabase) return;
     const policies = slaPolicies?.filter(p => p.object_type === objectType && p.is_active) || [];
 
     for (const policy of policies) {
-      const value = recordData[policy.condition_field];
-      if (policy.condition_value && !evaluateCondition(value, 'equals', policy.condition_value)) continue;
+      const conditionMet = await evaluateConditionsWithLineItems(
+        objectType, recordData, policy.conditions, policy.condition_field, 'equals', policy.condition_value
+      );
+      if (!conditionMet) continue;
 
       const now = new Date();
       const responseDate  = new Date(now.getTime() + (policy.response_time_hours   || 24) * 3600000);
@@ -3002,24 +3245,10 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     const processes = approvalProcesses?.filter(p => p.object_type === objectType && p.is_active) || [];
 
     for (const process of processes) {
-      // Support both single condition and multi-condition (conditions JSONB)
-      let matches = false;
-      if (process.conditions?.conditions?.length > 0) {
-        const logic = process.conditions.logic || 'AND';
-        const results = process.conditions.conditions.map((c: any) =>
-          evaluateCondition(recordData[c.field], c.operator, c.value)
-        );
-        matches = logic === 'AND' ? results.every(Boolean) : results.some(Boolean);
-      } else if (process.condition_field) {
-        matches = evaluateCondition(
-          recordData[process.condition_field],
-          process.condition_operator || 'equals',
-          process.condition_value || ''
-        );
-      } else {
-        matches = true; // No condition = always matches
-      }
-
+      const matches = await evaluateConditionsWithLineItems(
+        objectType, recordData, process.conditions,
+        process.condition_field, process.condition_operator || 'equals', process.condition_value
+      );
       if (matches) return process;
     }
     return null;
@@ -3421,6 +3650,21 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     const interval = setInterval(() => { checkRentalReturnReminders(); }, 4 * 60 * 60 * 1000);
     return () => clearInterval(interval);
   }, [session?.user?.id, appPreferences?.business_type]);
+
+  // Scheduled ("before_date") workflow rules — checked every 15 minutes
+  // while the app stays open. More frequent than the rental-reminder poll
+  // above since this needs to support hour-level offsets ("1 hour before
+  // delivery date"), not just day-level ones — see
+  // SCHEDULED_WORKFLOW_POLL_WINDOW_MS for how the match window relates to
+  // this interval. Same client-triggered-check caveat applies as elsewhere:
+  // this runs while someone has the app open, not as a guaranteed
+  // server-side cron.
+  useEffect(() => {
+    if (!session?.user?.id) return;
+    runScheduledWorkflowRules();
+    const interval = setInterval(() => { runScheduledWorkflowRules(); }, 15 * 60 * 1000);
+    return () => clearInterval(interval);
+  }, [session?.user?.id, workflowRules.length]);
 
   const fetchAppPreferences = async () => {
     // Try localStorage first (fast path)

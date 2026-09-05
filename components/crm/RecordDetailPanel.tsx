@@ -3,6 +3,8 @@
 
 import { useState, useEffect } from 'react';
 import { useCustomFields, invalidateCustomFieldCache } from '@/lib/useCustomFields';
+import { useFieldLayout, resolveFieldRow } from '@/lib/useFieldLayout';
+import { useObjectLabels } from '@/lib/useObjectLabels';
 import LineItemCustomFieldInput from '@/components/shared/LineItemCustomFieldInput';
 import { Lead360, Contact360, Opportunity360, Quotation360, Order360, Invoice360, Activity360 } from '@/components/crm/Record360';
 import { useApp } from '@/context/AppContext';
@@ -216,6 +218,7 @@ function LineItemsTable({ items, setItems, products, page }) {
 // ─── Customer 360 ─────────────────────────────────────────────────────────────
 function Customer360({ customer, onSubRecordOpen, onCreateFor }) {
   const { contacts, leads, opportunities, orders, invoices, activities, quotations } = useApp();
+  const { getObjectLabel } = useObjectLabels();
   const [tab, setTab] = useState('contacts');
 
   // Match by UUID (customerId), display number (customer.id = customer_number), or name
@@ -241,6 +244,14 @@ function Customer360({ customer, onSubRecordOpen, onCreateFor }) {
     quotations:    { icon:'📄', label:'Quotations',     createLabel:null,          data:quotations.filter(m),
       cols:[{h:'Quote #',v:r=>r.quote_number},{h:'Name',v:r=>r.name},{h:'Grand Total',v:r=>fmt(r.grand_total)},{h:'Validity',v:r=>r.validity_date||'-'},{h:'Status',v:r=><Pill status={r.status}/>}] },
   };
+  // Overlay any published rename onto both the tab label (plural) and the
+  // create-button label (singular) - without this, Customer 360 tabs and
+  // their "+ New X" buttons would keep showing the original names even
+  // after an object was renamed elsewhere in the app.
+  Object.keys(secs).forEach(k => {
+    secs[k].label = getObjectLabel(k, secs[k].label, 'plural');
+    if (secs[k].createLabel) secs[k].createLabel = getObjectLabel(k, secs[k].createLabel, 'singular');
+  });
 
   const active = secs[tab];
 
@@ -322,6 +333,7 @@ export default function RecordDetailPanel({ page, record, onClose, prefillCustom
 
   // Local permission helper (mirrors CRMListPage canDo)
   const [edited,          setEdited]          = useState({ ...record });
+  const fieldLayout = useFieldLayout(page);
 
   // Re-sync edited state whenever the record prop changes (e.g. reopening panel
   // after an approval decision updated the record's status in the database)
@@ -444,6 +456,19 @@ export default function RecordDetailPanel({ page, record, onClose, prefillCustom
     sku:'SKU / Code', price:'Unit Price', cost:'Cost Price', taxRate:'Tax Rate (%)',
     unit:'Unit of Measure', comments:'Comments',
     stock_quantity:'Stock on Hand', reorder_level:'Reorder Level', track_inventory:'Inventory Tracking',
+  };
+
+  // Resolves each field's custom label, hidden state, read-only state, and
+  // sort order from this tenant's Page Layout Designer config — the same
+  // resolution engine and pattern already proven on the Retail side.
+  // Conditional rules evaluate against `edited`, the record currently being
+  // viewed/edited.
+  const resolveCRMField = (field, originalIdx) => {
+    const defaultLabel = LABEL_MAP[field] || field.replace(/([A-Z])/g,' $1').trim();
+    const resolved = fieldLayout.resolve(field, defaultLabel, edited, 'detail');
+    const savedRow = resolveFieldRow(field, fieldLayout.fields, 'detail');
+    const sortOrder = savedRow ? savedRow.display_order : 10000 + originalIdx;
+    return { key: field, label: resolved.label, hidden: !resolved.visible, readOnly: !resolved.editable, sortOrder };
   };
 
   const PRIORITY_OPTS = ['Low','Medium','High','Critical'];
@@ -801,12 +826,21 @@ export default function RecordDetailPanel({ page, record, onClose, prefillCustom
                         <span className="font-bold text-[#0F172A] text-sm">{section.title}</span>
                       </div>
                       <div className="p-5 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-                        {section.fields.filter(f=>fields.includes(f)||['notes','description','comments'].includes(f)).map(field=>(
-                          <div key={field} className={`space-y-1.5 ${['notes','description','comments','billingAddress','shippingAddress'].includes(field)?'md:col-span-2 xl:col-span-3':''}`}>
+                        {section.fields
+                          .filter(f=>fields.includes(f)||['notes','description','comments'].includes(f))
+                          .map((field, idx) => resolveCRMField(field, idx))
+                          .filter(rf => !rf.hidden)
+                          .sort((a, b) => a.sortOrder - b.sortOrder)
+                          .map(rf=>(
+                          <div key={rf.key} className={`space-y-1.5 ${['notes','description','comments','billingAddress','shippingAddress'].includes(rf.key)?'md:col-span-2 xl:col-span-3':''}`}>
                             <label className="text-xs font-bold uppercase tracking-wider text-gray-400 block">
-                              {LABEL_MAP[field]||field.replace(/([A-Z])/g,' $1').trim()}
+                              {rf.label}
                             </label>
-                            {renderField(field)}
+                            {rf.readOnly ? (
+                              <div className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm bg-gray-50 text-gray-500 cursor-not-allowed" title="Made read-only by this tenant's Page Layout Designer settings">
+                                {String(edited[rf.key] ?? '') || <span className="text-gray-300">—</span>}
+                              </div>
+                            ) : renderField(rf.key)}
                           </div>
                         ))}
                       </div>

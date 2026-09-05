@@ -6,17 +6,20 @@ import { useApp } from '@/context/AppContext';
 import { getStatusColor, formatCurrency, formatDate, formatDisplayNumber, PAGE_DISPLAY_PREFIX, tenantScope, todayLocalISO } from '@/lib/utils';
 // useCustomFields hook used inline below
 import { useTenant } from '@/context/TenantContext';
-import { getTaxRegime } from '@/lib/taxConfig';
+import { getTaxRegime, computeLineNet, computeLineGross } from '@/lib/taxConfig';
+import { useFieldMappingRules, applyFieldMapping } from '@/lib/useFieldMappingRules';
 import SearchableSelect from '@/components/shared/SearchableSelect';
 import ProductImages from '@/components/products/ProductImages';
 import RentalBookingCalendar from '@/components/retail/RentalBookingCalendar';
 import KanbanBoard from '@/components/shared/KanbanBoard';
 import { RetailQuickCreateCustomer } from '@/components/retail/RetailQuickCreateCustomer';
 import LoadingSpinner from '@/components/shared/LoadingSpinner';
-import { useFieldLayout } from '@/lib/useFieldLayout';
+import { useFieldLayout, resolveFieldRow } from '@/lib/useFieldLayout';
+import { useObjectLabels } from '@/lib/useObjectLabels';
 import { fetchServerPage, timePeriodToRange } from '@/lib/serverList';
 import { useAlert } from '@/components/shared/AlertProvider';
 import { useCustomFields } from '@/lib/useCustomFields';
+import { generateInvoicePdf, blobToBase64 } from '@/lib/generateInvoicePdf';
 import LineItemCustomFieldInput from '@/components/shared/LineItemCustomFieldInput';
 import { t } from '@/lib/i18n';
 
@@ -231,6 +234,7 @@ export const RETAIL_CONFIG = {
         { key:'subject', label:'Subject', type:'text', required:true },
         { key:'activity_type', label:'Type', type:'select', opts:['Visit','Call','WhatsApp','Complaint','Feedback','Service'] },
         { key:'customer_id', label:'Customer', type:'retailCustomer', required:true },
+        { key:'customer_phone', label:'Customer Phone', type:'tel' },
         { key:'activity_date', label:'Activity Date', type:'date' },
         { key:'due_date', label:'Due Date', type:'date' },
         { key:'priority', label:'Priority', type:'select', opts:['Low','Medium','High','Critical'] },
@@ -438,10 +442,14 @@ function buildCustomerPrefill(customer) {
 }
 
 // ─── Line items table (Orders / Invoices) ──────────────────────────────────
-function RetailLineItems({ items, setItems, products, taxRegime, page }) {
+function RetailLineItems({ items, setItems, products, taxRegime, page, headerDiscountPct = 0, onHeaderDiscountChange }) {
   const [stockWarning, setStockWarning] = useState(null);
   const [rentalWarnings, setRentalWarnings] = useState<Record<number,string>>({});
   const { appPreferences, checkRentalConflict } = useApp();
+  // "Copy Maps" — active rules for automatically copying a product's field
+  // (e.g. a "Security Deposit" custom field) onto a line item when that
+  // product is selected below.
+  const { rules: productToLineItemRules } = useFieldMappingRules('product_to_line_item', 'retailProducts');
   const rentalModeOn = appPreferences?.business_type === 'rental' && page === 'retailOrders';
   // Rental dates should be VISIBLE on an invoice converted from a rental
   // order (read-only, for reference — the order already secured the
@@ -542,6 +550,9 @@ function RetailLineItems({ items, setItems, products, taxRegime, page }) {
           if (taxRegime.regime==='india_gst') { u.hsn_code = pr.hsn_code || ''; u.gst_rate = pr.gst_rate ?? 18; }
           if (taxRegime.regime==='us_sales_tax') { u.taxable = pr.taxable || 'Yes'; }
           if (taxRegime.regime==='uk_vat') { u.vat_rate = pr.vat_rate ?? 20; }
+          // Copy Maps — automatically copy any mapped product fields (e.g.
+          // a "Security Deposit" custom field) onto this line item.
+          if (productToLineItemRules.length > 0) applyFieldMapping(productToLineItemRules, pr, u);
           if (taxRegime.regime==='generic') { u.tax_pct = pr.tax_rate ?? 0; }
         } else {
           u.product_id = null;
@@ -576,10 +587,16 @@ function RetailLineItems({ items, setItems, products, taxRegime, page }) {
     }
   };
 
-  const subtotal  = items.reduce((s,i) => s + i.quantity*i.unit_price, 0);
-  const totalDisc = items.reduce((s,i) => s + i.quantity*i.unit_price*i.discount_pct/100, 0);
+  const subtotal  = items.reduce((s,i) => s + computeLineGross(i), 0);
+  const totalDisc = items.reduce((s,i) => s + computeLineGross(i)*i.discount_pct/100, 0);
   const totalTax  = items.reduce((s,i) => s + taxRegime.computeLineTax(i).totalTax, 0);
-  const grandTotal = subtotal - totalDisc + totalTax;
+  // Overall, order-level discount — applied after per-line discounts and
+  // tax, on the final total. A simple "amount off the bill" (e.g. a
+  // loyalty or manager-approved discount), not a tax-affecting discount
+  // that would require recalculating tax on a reduced taxable base.
+  const preHeaderDiscTotal = subtotal - totalDisc + totalTax;
+  const headerDiscountAmount = preHeaderDiscTotal * Number(headerDiscountPct || 0) / 100;
+  const grandTotal = preHeaderDiscTotal - headerDiscountAmount;
 
   const taxCols = taxRegime.lineItemFields;
 
@@ -629,14 +646,15 @@ function RetailLineItems({ items, setItems, products, taxRegime, page }) {
               <th className="px-4 py-3 text-right text-xs font-bold text-gray-500 uppercase tracking-wider" style={{minWidth:100}}>Unit Price</th>
               <th className="px-4 py-3 text-center text-xs font-bold text-gray-500 uppercase tracking-wider" style={{minWidth:70}}>Disc %</th>
               {taxCols.map(tc=><th key={tc.key} className="px-4 py-3 text-center text-xs font-bold text-gray-500 uppercase tracking-wider whitespace-nowrap" style={{minWidth:tc.type==='select'?110:90}}>{tc.label}</th>)}
-              <th className="px-4 py-3 text-right text-xs font-bold text-gray-500 uppercase tracking-wider" style={{minWidth:110}}>Extended</th>
+              <th className="px-4 py-3 text-right text-xs font-bold text-gray-500 uppercase tracking-wider" style={{minWidth:110}}>Net Amount</th>
+              <th className="px-4 py-3 text-right text-xs font-bold text-gray-500 uppercase tracking-wider" style={{minWidth:110}}>Line Total <span className="normal-case font-normal text-gray-400">(incl. tax)</span></th>
               {customFields.map(f=><th key={f.id} className="px-4 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider" style={{minWidth:110}}>{f.label}</th>)}
               <th/>
             </tr>
           </thead>
           <tbody className="divide-y divide-blue-50">
             {items.length === 0
-              ? <tr><td colSpan={6 + (showRentalColumns?2:0) + taxCols.length + customFields.length} className="px-5 py-12 text-center text-gray-400 text-sm">
+              ? <tr><td colSpan={7 + (showRentalColumns?2:0) + taxCols.length + customFields.length} className="px-5 py-12 text-center text-gray-400 text-sm">
                   No items yet — click <span className="font-semibold text-[#0F172A]">+ Add Item</span> to begin.
                 </td></tr>
               : items.map((row, idx) => [
@@ -651,7 +669,7 @@ function RetailLineItems({ items, setItems, products, taxRegime, page }) {
                         sub: [
                           p.category,
                           p.sku ? `SKU: ${p.sku}` : null,
-                          showRentalColumns && p.is_rentable ? '👗 Rentable' : null,
+                          showRentalColumns && p.is_rentable ? '🔑 Rentable' : null,
                           p.stock_quantity !== undefined
                             ? (Number(p.stock_quantity) === 0
                                 ? '🚫 Out of stock'
@@ -717,11 +735,15 @@ function RetailLineItems({ items, setItems, products, taxRegime, page }) {
                       }
                     </td>
                   ))}
+                  <td className="px-3 py-3 text-right font-semibold text-gray-600 text-sm">
+                    {formatCurrency(computeLineNet(row))}
+                  </td>
                   <td className="px-3 py-3 text-right font-bold text-[#0F172A] text-sm">
                     {formatCurrency(row.extended_price || 0)}
                     {row.rental_days > 0 && (
                       <div className="text-[10px] font-normal text-purple-500">× {row.rental_days} day{row.rental_days!==1?'s':''}</div>
                     )}
+                    <div className="text-[10px] font-normal text-gray-400">+{formatCurrency((row.extended_price||0) - computeLineNet(row))} tax</div>
                   </td>
                   {customFields.map(f=><td key={f.id} className="px-3 py-3"><LineItemCustomFieldInput field={f} value={(row.custom_data||{})[f.api_name]} onChange={v=>updCustom(idx,f.api_name,v)}/></td>)}
                   <td className="px-3 py-3 text-center">
@@ -755,15 +777,40 @@ function RetailLineItems({ items, setItems, products, taxRegime, page }) {
             }, {} as Record<string,number>)
           : null;
         return (
-          <div className="px-5 py-4 border-t border-blue-100 text-sm">
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-3">
-              <div><div className="text-gray-400 text-xs uppercase font-bold">Subtotal</div><div className="font-bold text-[#0F172A]">{formatCurrency(subtotal)}</div></div>
-              <div><div className="text-gray-400 text-xs uppercase font-bold">Discount</div><div className="font-bold text-red-500">-{formatCurrency(totalDisc)}</div></div>
-              <div><div className="text-gray-400 text-xs uppercase font-bold">{taxRegime.shortLabel}</div><div className="font-bold text-[#0F172A]">{formatCurrency(totalTax)}</div></div>
-              <div><div className="text-gray-400 text-xs uppercase font-bold">Grand Total</div><div className="font-bold text-blue-700 text-base">{formatCurrency(grandTotal)}</div></div>
+          <div className="px-5 py-4 border-t border-blue-100 text-sm space-y-3">
+            <div className="bg-gray-50 rounded-2xl p-4 space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-gray-500">Subtotal <span className="text-gray-400">(before any discount or tax)</span></span>
+                <span className="font-semibold text-[#0F172A]">{formatCurrency(subtotal)}</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-gray-500">Line Discount <span className="text-gray-400">(sum of each item's own Disc %)</span></span>
+                <span className="font-semibold text-red-500">-{formatCurrency(totalDisc)}</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-gray-500">{taxRegime.shortLabel}</span>
+                <span className="font-semibold text-[#0F172A]">+{formatCurrency(totalTax)}</span>
+              </div>
+              <div className="flex items-center justify-between border-t border-gray-200 pt-2">
+                <div className="flex items-center gap-2">
+                  <span className="text-gray-500">Overall Discount</span>
+                  <input
+                    type="number" min={0} max={100}
+                    value={headerDiscountPct || 0}
+                    onChange={e => onHeaderDiscountChange?.(Math.min(100, Math.max(0, Number(e.target.value))))}
+                    className="w-16 border border-gray-200 rounded-lg px-2 py-1 text-xs text-center focus:outline-none focus:ring-1 focus:ring-blue-400"
+                  />
+                  <span className="text-gray-400 text-xs">% off the whole {page==='retailInvoices'?'invoice':'order'}</span>
+                </div>
+                <span className="font-semibold text-red-500">-{formatCurrency(headerDiscountAmount)}</span>
+              </div>
+              <div className="flex items-center justify-between border-t border-gray-200 pt-2">
+                <span className="font-bold text-[#0F172A] text-base">Grand Total</span>
+                <span className="font-bold text-blue-700 text-lg">{formatCurrency(grandTotal)}</span>
+              </div>
             </div>
             {breakdown && Object.keys(breakdown).length > 0 && (
-              <div className="flex flex-wrap gap-3 pt-2 border-t border-blue-50">
+              <div className="flex flex-wrap gap-3 pt-1">
                 {Object.entries(breakdown).map(([k,v]) => v > 0 && (
                   <div key={k} className="bg-blue-50 rounded-lg px-3 py-1.5 text-xs">
                     <span className="text-gray-500 uppercase font-bold mr-1.5">{k.toUpperCase()}</span>
@@ -780,7 +827,7 @@ function RetailLineItems({ items, setItems, products, taxRegime, page }) {
 }
 
 // ─── Print HTML Builder ──────────────────────────────────────────────────────
-function buildRetailPrintHTML(t, record, items, products) {
+function buildRetailPrintHTML(t, record, items, products, customFieldsMeta = []) {
   const isTh = t.paper_size?.startsWith('thermal');
   const widthMM = t.paper_size==='thermal_58'||t.paper_size==='thermal_57' ? 58 : t.paper_size==='thermal_80' ? 80 : t.paper_size==='A5' ? 148 : 210;
   const font   = t.font_family || 'Arial, sans-serif';
@@ -829,7 +876,7 @@ function buildRetailPrintHTML(t, record, items, products) {
     return `<tr style="background:${rowBg}">
       ${t.col_sno ? `<td style="padding:3px 4px;font-size:${fs(10)}px">${i+1}</td>` : ''}
       ${showImages ? `<td style="padding:3px 4px">${findProductImage(item) ? `<img src="${findProductImage(item)}" style="width:28px;height:28px;object-fit:cover;border-radius:4px;border:1px solid #E5E7EB"/>` : ''}</td>` : ''}
-      ${t.col_item!==false ? `<td style="padding:3px 4px;font-size:${fs(11)}px">${item.product_name||item.product||''}${item.rental_start_date && item.rental_end_date ? `<div style="font-size:${fs(8)}px;color:${accent};margin-top:2px">📅 ${item.rental_start_date} to ${item.rental_end_date}</div>` : ''}</td>` : ''}
+      ${t.col_item!==false ? `<td style="padding:3px 4px;font-size:${fs(11)}px">${item.product_name||item.product||''}${t.show_rental_dates!==false && item.rental_start_date && item.rental_end_date ? `<div style="font-size:${fs(8)}px;color:${accent};margin-top:2px">📅 ${item.rental_start_date} to ${item.rental_end_date}</div>` : ''}</td>` : ''}
       ${t.col_unit ? `<td style="padding:3px 4px;text-align:center;font-size:${fs(10)}px">${item.unit||''}</td>` : ''}
       ${t.col_qty!==false ? `<td style="padding:3px 4px;text-align:right;font-size:${fs(11)}px">${qty}</td>` : ''}
       ${t.col_price!==false ? `<td style="padding:3px 4px;text-align:right;font-size:${fs(11)}px">${fmt(price)}</td>` : ''}
@@ -841,7 +888,7 @@ function buildRetailPrintHTML(t, record, items, products) {
     </tr>`;
   }).join('');
 
-  const subtotal   = Number(record.subtotal || (items||[]).reduce((s,i)=>s+Number(i.unit_price??i.price??0)*Number(i.quantity||1),0));
+  const subtotal   = Number(record.subtotal || (items||[]).reduce((s,i)=>s+computeLineGross(i),0));
   const totalDisc  = Number(record.total_discount || 0);
   const totalTax   = Number(record.total_tax || 0);
   const grandTotal = Number(record.amount || record.grand_total || (subtotal - totalDisc + totalTax));
@@ -920,13 +967,14 @@ function buildRetailPrintHTML(t, record, items, products) {
     ${div}
 
     ${t.show_subtotal!==false ? `<div class="tot-row"><span class="meta-l">Subtotal</span><span class="meta-v">${fmt(subtotal)}</span></div>` : ''}
-    ${t.show_discount_total!==false && totalDisc>0 ? `<div class="tot-row"><span class="meta-l">Discount</span><span class="meta-v" style="color:#15803D">-${fmt(totalDisc)}</span></div>` : ''}
+    ${t.show_discount_total!==false && totalDisc>0 ? `<div class="tot-row"><span class="meta-l">Line Discount</span><span class="meta-v" style="color:#15803D">-${fmt(totalDisc)}</span></div>` : ''}
     ${t.show_tax_total!==false && totalTax>0 && t.tax_regime==='inclusive' ? `<div style="text-align:right;font-size:${fs(8)}px;color:#6B7280;font-style:italic;margin-bottom:2px">(Prices inclusive of GST)</div>` : ''}
     ${t.show_tax_total!==false && totalTax>0 && t.tax_regime!=='exempt' && t.tax_regime!=='inclusive' ? `<div class="tot-row"><span class="meta-l">Tax</span><span class="meta-v">${fmt(totalTax)}</span></div>` : ''}
     ${t.show_cgst_sgst && totalTax>0 && t.tax_regime!=='exempt' && t.tax_regime!=='inclusive' ? `
       <div style="display:flex;justify-content:space-between;margin-bottom:2px;font-size:${fs(9)}px;color:#6B7280"><span>CGST</span><span>${fmt(totalTax/2)}</span></div>
       <div style="display:flex;justify-content:space-between;margin-bottom:2px;font-size:${fs(9)}px;color:#6B7280"><span>SGST</span><span>${fmt(totalTax/2)}</span></div>
     ` : ''}
+    ${t.show_header_discount!==false && Number(record.header_discount_amount||0)>0 ? `<div class="tot-row"><span class="meta-l">Overall Discount${record.header_discount_pct?` (${record.header_discount_pct}%)`:''}</span><span class="meta-v" style="color:#15803D">-${fmt(Number(record.header_discount_amount))}</span></div>` : ''}
     ${t.show_round_off && Math.abs(roundOff)>0.001 ? `<div class="tot-row"><span class="meta-l">Round Off</span><span class="meta-v">${fmt(roundOff)}</span></div>` : ''}
     <div class="tot-final"><span>TOTAL</span><span>${fmt(grandTotal)}</span></div>
 
@@ -939,6 +987,15 @@ function buildRetailPrintHTML(t, record, items, products) {
 
     ${t.show_loyalty && record.loyalty_points_earned ? `${div}<div class="loyalty-box"><div style="font-size:${fs(9)}px;color:#6B7280">Points Earned</div><div style="font-weight:800;font-size:${fs(15)}px">+${record.loyalty_points_earned}</div></div>` : ''}
     ${totalDisc>0 ? `<div class="savings">You saved ${fmt(totalDisc)}!</div>` : ''}
+    ${(t.custom_field_keys||[]).length > 0 ? `${div}<div style="margin-bottom:${th?4:8}px">
+      ${(t.custom_field_keys||[]).map(key => {
+        const val = (record.custom_data||{})[key];
+        if (val === undefined || val === null || val === '') return '';
+        const meta = customFieldsMeta.find(f => f.api_name === key);
+        return `<div class="tot-row"><span class="meta-l">${meta?.label || key}</span><span class="meta-v">${val}</span></div>`;
+      }).join('')}
+    </div>` : ''}
+    ${t.show_terms && t.terms_and_conditions ? `${div}<div style="margin-bottom:${th?4:8}px"><div style="font-size:${fs(9)}px;font-weight:700;color:#374151;margin-bottom:4px;text-transform:uppercase;letter-spacing:0.5px">Terms &amp; Conditions</div><div style="font-size:${fs(8)}px;color:#6B7280;line-height:1.5">${t.terms_and_conditions}</div></div>` : ''}
     ${t.show_return_policy && t.return_policy ? `${div}<div style="font-size:${fs(8)}px;color:#6B7280;line-height:1.5">Return Policy: ${t.return_policy}</div>` : ''}
     ${t.show_signature ? `<div class="signature">${t.signature_label||'Authorised Signatory'}</div>` : ''}
     ${t.show_footer!==false && t.footer_msg ? `${div}<div class="footer-msg">${t.footer_msg}</div>` : ''}
@@ -949,6 +1006,7 @@ function buildRetailPrintHTML(t, record, items, products) {
 
 
 function RetailInvoicePrintModal({ template, record, items, products, onClose, onPrint }) {
+  const { fields: customFieldsMeta } = useCustomFields('retailInvoices');
   if (!template) return (
     <div className="fixed inset-0 bg-black/60 z-[200] flex items-center justify-center p-4" onClick={onClose}>
       <div className="bg-white rounded-[20px] p-8 max-w-md text-center shadow-2xl" onClick={e=>e.stopPropagation()}>
@@ -960,7 +1018,7 @@ function RetailInvoicePrintModal({ template, record, items, products, onClose, o
     </div>
   );
 
-  const html = buildRetailPrintHTML(template, record, items, products);
+  const html = buildRetailPrintHTML(template, record, items, products, customFieldsMeta);
   const ps   = template.paper_size;
   const isTh = ps?.startsWith('thermal');
   const previewW = ps==='thermal_58'||ps==='thermal_57' ? 219 : ps==='thermal_80' ? 303 : ps==='A5' ? 480 : 595;
@@ -1230,9 +1288,10 @@ function RetailCustomer360({ customer, onNavigate, onOpenCreate }) {
 function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo, onC360Navigate, onC360Create }) {
   const { updateRetailRecord, deleteRetailRecord, retailCustomers, retailProducts, retailOrders, enterpriseUsers, currentUser,
           fetchRetailLineItems, fetchRetailCustomers, createRetailRecord, appPreferences, appearance, setPendingReturnTo, createRetailInvoiceFromOrder,
-          checkMatchingApprovalProcess, submitForApproval, currentUserPermissions, permissionsLoaded } = useApp();
+          checkMatchingApprovalProcess, submitForApproval, currentUserPermissions, permissionsLoaded, setPendingRecord } = useApp();
   const { supabase, tenant } = useTenant();
   const { showAlert, showConfirm } = useAlert();
+  const { fields: retailInvoiceCustomFieldsMeta } = useCustomFields('retailInvoices');
   const lang = appearance?.language || 'en';
   const [showBookingCalendar, setShowBookingCalendar] = useState(false);
   const cfg = RETAIL_CONFIG[page];
@@ -1242,8 +1301,9 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo, on
   // API-based send alongside the always-available wa.me link.
   const [waConfig, setWaConfig] = useState<any>(null);
   const [waSending, setWaSending] = useState(false);
+  const [waSendingPdf, setWaSendingPdf] = useState(false);
   useEffect(() => {
-    if (page !== 'retailInvoices') return;
+    if (page !== 'retailInvoices' && page !== 'retailActivities' && page !== 'retailOrders') return;
     const qs = new URLSearchParams({ ...(tenant?.db_url ? { db_url: tenant.db_url } : {}), ...(tenant?.id ? { tenantId: tenant.id } : {}) });
     fetch(`/api/whatsapp/config?${qs}`).then(r => r.json()).then(d => setWaConfig(d.config)).catch(() => setWaConfig(null));
   }, [page, tenant?.db_url, tenant?.id]);
@@ -1303,6 +1363,7 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo, on
   const [loadingLI, setLoadingLI] = useState(cfg.hasLineItems);
   const [saving, setSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
+  const [actionsMenuOpen, setActionsMenuOpen] = useState(false);
   const [creatingInvoice, setCreatingInvoice] = useState(false);
   const [matchingProcess, setMatchingProcess] = useState(null);
   const [checkingApproval, setCheckingApproval] = useState(false);
@@ -1447,10 +1508,13 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo, on
         if (payload[nk] !== undefined && payload[nk] !== null && Number(payload[nk]) < 0) payload[nk] = 0;
       }
       if (cfg.hasLineItems) {
-        const subtotal  = items.reduce((s,i) => s + Number(i.quantity||0)*Number(i.unit_price||0), 0);
-        const totalDisc = items.reduce((s,i) => s + Number(i.quantity||0)*Number(i.unit_price||0)*Number(i.discount_pct||0)/100, 0);
+        const subtotal  = items.reduce((s,i) => s + computeLineGross(i), 0);
+        const totalDisc = items.reduce((s,i) => s + computeLineGross(i)*Number(i.discount_pct||0)/100, 0);
         const totalTax  = items.reduce((s,i) => s + taxRegime.computeLineTax(i).totalTax, 0);
-        const computed  = { subtotal, total_discount: totalDisc, total_tax: totalTax, amount: subtotal-totalDisc+totalTax };
+        const preHeaderDiscTotal = subtotal - totalDisc + totalTax;
+        const headerDiscountPct = Number(edited.header_discount_pct || 0);
+        const headerDiscountAmount = preHeaderDiscTotal * headerDiscountPct / 100;
+        const computed  = { subtotal, total_discount: totalDisc, total_tax: totalTax, header_discount_pct: headerDiscountPct, header_discount_amount: headerDiscountAmount, amount: preHeaderDiscTotal - headerDiscountAmount };
         payload = { ...payload, ...computed };
         // Update edited state so Preview & Print immediately reflects correct totals
         setEdited(p => ({ ...p, ...computed }));
@@ -1493,11 +1557,19 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo, on
     else if (fields === 'TAX_DOCUMENT') out = taxRegime.documentFields.map(f => ({ ...f }));
     return out
       .filter(f => typeof f.showIf !== 'function' || f.showIf(appPreferences))
-      .map(f => {
-        const resolved = fieldLayout.resolve(f.key, f.label, edited);
-        return { ...f, label: resolved.label, _layoutHidden: !resolved.visible, _layoutReadOnly: !resolved.editable };
+      .map((f, originalIdx) => {
+        const resolved = fieldLayout.resolve(f.key, f.label, edited, 'detail');
+        const savedRow = resolveFieldRow(f.key, fieldLayout.fields, 'detail');
+        // Fields with a saved override sort by their configured
+        // display_order; fields without one keep their original relative
+        // position, offset well above any realistic saved order value so
+        // reordered fields (typically moved earlier) don't get pushed
+        // behind untouched ones.
+        const sortOrder = savedRow ? savedRow.display_order : 10000 + originalIdx;
+        return { ...f, label: resolved.label, _layoutHidden: !resolved.visible, _layoutReadOnly: !resolved.editable, _sortOrder: sortOrder };
       })
-      .filter(f => !f._layoutHidden);
+      .filter(f => !f._layoutHidden)
+      .sort((a, b) => a._sortOrder - b._sortOrder);
   };
 
   const renderField = (field) => {
@@ -1632,7 +1704,7 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo, on
   // ── Print engine ──────────────────────────────────────────────────────────
   function handleDirectPrint(template, record, lineItems) {
     if (!template) { showAlert('Please select an invoice template first.', { variant:'warning' }); return; }
-    const html = buildRetailPrintHTML(template, record, lineItems, retailProducts);
+    const html = buildRetailPrintHTML(template, record, lineItems, retailProducts, retailInvoiceCustomFieldsMeta);
     const win = window.open('', '_blank', 'width=800,height=900');
     if (!win) { showAlert('Pop-up blocked. Please allow pop-ups for this site.', { variant:'warning' }); return; }
     win.document.write(html);
@@ -1670,69 +1742,224 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo, on
                 {creatingInvoice?t(lang,'loading'):`🧾 ${t(lang,'create')} ${t(lang,'invoices')}`}
               </button>
             )}
-            {page==='retailInvoices' && (
-              <>
-                <button
-                  onClick={() => { setShowPrintPreview(true); }}
-                  className="bg-indigo-500 hover:bg-indigo-600 text-white px-4 py-2 rounded-xl text-sm font-bold transition-all">
-                  👁️ Preview & Print
-                </button>
-                <button
-                  onClick={() => handleDirectPrint(invoiceTemplates.find(t=>t.id===selectedTemplateId), edited, items)}
-                  className="bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded-xl text-sm font-bold transition-all">
-                  🖨️ Print
-                </button>
-                {/* Fix 12: Share via WhatsApp or Email */}
-                {waConfig?.is_active && (
-                  <button disabled={waSending} onClick={async ()=>{
-                    const rawPhone = String(edited.customer_phone || '').replace(/\D/g, '');
-                    if (!rawPhone) { showAlert('No phone number on file for this customer — add one to the Customer Phone field first.', { variant:'warning' }); return; }
-                    const phone = rawPhone.length === 10 ? '91' + rawPhone : rawPhone;
-                    const invNum = record?.displayNumber ? 'RINV-'+String(record.displayNumber).padStart(5,'0') : (edited.id||'');
-                    setWaSending(true);
-                    try {
-                      const res = await fetch('/api/whatsapp/send', {
-                        method: 'POST', headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                          db_url: tenant?.db_url, tenantId: tenant?.id, to: phone,
-                          recordType: 'retailInvoices', recordId: invNum, recipientType: 'customer', sendMode: 'manual',
-                          templateKey: 'invoice_notice', templateParams: [edited.customer || 'Customer', invNum, String(edited.amount || 0)],
-                        }),
-                      });
-                      const data = await res.json();
-                      if (!res.ok) throw new Error(data.error || 'Send failed');
-                      showAlert('WhatsApp message sent.', { variant:'success' });
-                    } catch (e:any) {
-                      showAlert('Could not send via WhatsApp API: ' + (e?.message || 'Unknown error') + ' — you can still use "Open in WhatsApp" below.', { variant:'danger' });
-                    } finally { setWaSending(false); }
-                  }} className="bg-[#25D366] hover:bg-[#128C7E] text-white px-3 py-2 rounded-xl text-sm font-bold transition-all flex items-center gap-1.5 disabled:opacity-50">
+            {page==='retailOrders' && (() => {
+              const rawPhone = String(edited.customer_phone || '').replace(/\D/g, '');
+              const phone = rawPhone.length === 10 ? '91' + rawPhone : rawPhone;
+              const orderNum = record?.displayNumber ? 'RORD-'+String(record.displayNumber).padStart(5,'0') : (edited.id||'');
+              return (
+                <>
+                  {waConfig?.is_active && (
+                    <button disabled={waSending || !rawPhone} onClick={async ()=>{
+                      setWaSending(true);
+                      try {
+                        const res = await fetch('/api/whatsapp/send', {
+                          method: 'POST', headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({
+                            db_url: tenant?.db_url, tenantId: tenant?.id, to: phone,
+                            recordType: 'retailOrders', recordId: orderNum, recipientType: 'customer', sendMode: 'manual',
+                            templateKey: 'booking_confirmation', templateParams: [edited.customer || 'Customer', orderNum, String(edited.amount || 0)], record: edited,
+                          }),
+                        });
+                        const data = await res.json();
+                        if (!res.ok) throw new Error(data.error || 'Send failed');
+                        showAlert('WhatsApp confirmation sent.', { variant:'success' });
+                      } catch (e:any) {
+                        showAlert('Could not send via WhatsApp API: ' + (e?.message || 'Unknown error') + ' — you can still use "Open in WhatsApp" below.', { variant:'danger' });
+                      } finally { setWaSending(false); }
+                    }} className="bg-[#25D366] hover:bg-[#128C7E] text-white px-3 py-2 rounded-xl text-sm font-bold transition-all flex items-center gap-1.5 disabled:opacity-50">
+                      <svg viewBox="0 0 24 24" className="w-4 h-4 fill-current"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/></svg>
+                      {waSending ? 'Sending…' : 'Send Confirmation'}
+                    </button>
+                  )}
+                  <button onClick={() => {
+                    if (!rawPhone) { showAlert('No phone number on file for this customer.', { variant:'warning' }); return; }
+                    const msg = encodeURIComponent(`Dear ${edited.customer||'Customer'}, your order ${orderNum} has been confirmed. Total: ₹${edited.amount||0}. Thank you!`);
+                    window.open(`https://wa.me/${phone}?text=${msg}`, '_blank');
+                  }} disabled={!rawPhone} className={(waConfig?.is_active ? "bg-white border-2 border-[#25D366] text-[#128C7E] hover:bg-green-50 " : "bg-[#25D366] hover:bg-[#128C7E] text-white ") + "px-3 py-2 rounded-xl text-sm font-bold transition-all flex items-center gap-1.5 disabled:opacity-40"}>
                     <svg viewBox="0 0 24 24" className="w-4 h-4 fill-current"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/></svg>
-                    {waSending ? 'Sending…' : 'Send Instantly'}
+                    {waConfig?.is_active ? 'Open in WhatsApp' : 'WhatsApp'}
+                  </button>
+                </>
+              );
+            })()}
+            {page==='retailInvoices' && (
+              <div className="relative">
+                <button onClick={() => setActionsMenuOpen(o => !o)}
+                  className="bg-white/10 hover:bg-white/20 text-white px-4 py-2 rounded-xl text-sm font-bold transition-all flex items-center gap-1.5 border border-white/20">
+                  ⚡ Actions <span className={`transition-transform ${actionsMenuOpen ? 'rotate-180' : ''}`}>▾</span>
+                </button>
+                {actionsMenuOpen && (
+                  <>
+                    <div className="fixed inset-0 z-[119]" onClick={() => setActionsMenuOpen(false)} />
+                    <div className="absolute right-0 top-full mt-2 w-64 bg-white rounded-2xl shadow-2xl border border-gray-100 py-2 z-[120] text-left">
+                      <button
+                        onClick={() => { setActionsMenuOpen(false); setShowPrintPreview(true); }}
+                        className="w-full text-left px-4 py-2.5 text-sm font-semibold text-gray-700 hover:bg-blue-50 flex items-center gap-2.5">
+                        👁️ Preview & Print
+                      </button>
+                      <button
+                        onClick={() => { setActionsMenuOpen(false); handleDirectPrint(invoiceTemplates.find(t=>t.id===selectedTemplateId), edited, items); }}
+                        className="w-full text-left px-4 py-2.5 text-sm font-semibold text-gray-700 hover:bg-blue-50 flex items-center gap-2.5">
+                        🖨️ Print
+                      </button>
+                      {waConfig?.is_active && (
+                        <button disabled={waSending} onClick={async ()=>{
+                          setActionsMenuOpen(false);
+                          const rawPhone = String(edited.customer_phone || '').replace(/\D/g, '');
+                          if (!rawPhone) { showAlert('No phone number on file for this customer — add one to the Customer Phone field first.', { variant:'warning' }); return; }
+                          const phone = rawPhone.length === 10 ? '91' + rawPhone : rawPhone;
+                          const invNum = record?.displayNumber ? 'RINV-'+String(record.displayNumber).padStart(5,'0') : (edited.id||'');
+                          setWaSending(true);
+                          try {
+                            const res = await fetch('/api/whatsapp/send', {
+                              method: 'POST', headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({
+                                db_url: tenant?.db_url, tenantId: tenant?.id, to: phone,
+                                recordType: 'retailInvoices', recordId: invNum, recipientType: 'customer', sendMode: 'manual',
+                                templateKey: 'invoice_notice', templateParams: [edited.customer || 'Customer', invNum, String(edited.amount || 0)], record: edited,
+                              }),
+                            });
+                            const data = await res.json();
+                            if (!res.ok) throw new Error(data.error || 'Send failed');
+                            showAlert('WhatsApp message sent.', { variant:'success' });
+                          } catch (e:any) {
+                            showAlert('Could not send via WhatsApp API: ' + (e?.message || 'Unknown error') + ' — you can still use "Open in WhatsApp" below.', { variant:'danger' });
+                          } finally { setWaSending(false); }
+                        }} className="w-full text-left px-4 py-2.5 text-sm font-semibold text-[#128C7E] hover:bg-green-50 flex items-center gap-2.5 disabled:opacity-50">
+                          <svg viewBox="0 0 24 24" className="w-4 h-4 fill-current flex-shrink-0"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/></svg>
+                          {waSending ? 'Sending…' : 'Send WhatsApp (Instant)'}
+                        </button>
+                      )}
+                      {waConfig?.is_active && (
+                        <button disabled={waSendingPdf} onClick={async ()=>{
+                          setActionsMenuOpen(false);
+                          const rawPhone = String(edited.customer_phone || '').replace(/\D/g, '');
+                          if (!rawPhone) { showAlert('No phone number on file for this customer — add one to the Customer Phone field first.', { variant:'warning' }); return; }
+                          const phone = rawPhone.length === 10 ? '91' + rawPhone : rawPhone;
+                          const invNum = record?.displayNumber ? 'RINV-'+String(record.displayNumber).padStart(5,'0') : (edited.id||'');
+                          const template = invoiceTemplates.find(t=>t.id===selectedTemplateId);
+                          if (!template) { showAlert('Select an invoice template first.', { variant:'warning' }); return; }
+                          setWaSendingPdf(true);
+                          try {
+                            const html = buildRetailPrintHTML(template, edited, items, retailProducts, retailInvoiceCustomFieldsMeta);
+                            const pdfBlob = await generateInvoicePdf(html, template.paper_size);
+                            const fileBase64 = await blobToBase64(pdfBlob);
+                            const filename = `Invoice ${invNum}.pdf`;
+                            const uploadRes = await fetch('/api/whatsapp/upload-media', {
+                              method: 'POST', headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({ db_url: tenant?.db_url, tenantId: tenant?.id, fileBase64, filename, mimeType: 'application/pdf' }),
+                            });
+                            const uploadData = await uploadRes.json();
+                            if (!uploadRes.ok) throw new Error(uploadData.error || 'PDF upload failed');
+                            // Sent as a document message (not a template) -
+                            // works within Meta's 24h customer-service
+                            // window without needing the approved template
+                            // to have a Document header specially configured.
+                            const sendRes = await fetch('/api/whatsapp/send', {
+                              method: 'POST', headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({
+                                db_url: tenant?.db_url, tenantId: tenant?.id, to: phone,
+                                recordType: 'retailInvoices', recordId: invNum, recipientType: 'customer', sendMode: 'manual',
+                                documentMediaId: uploadData.mediaId, documentFilename: filename,
+                                freeformText: `Dear ${edited.customer||'Customer'}, please find your invoice ${invNum} attached. Total: ₹${edited.amount||0}.`,
+                              }),
+                            });
+                            const sendData = await sendRes.json();
+                            if (!sendRes.ok) throw new Error(sendData.error || 'Send failed');
+                            showAlert('Invoice PDF sent via WhatsApp.', { variant:'success' });
+                          } catch (e:any) {
+                            showAlert('Could not send PDF: ' + (e?.message || 'Unknown error') + ' — this only works within 24h of the customer\'s last WhatsApp message to you.', { variant:'danger' });
+                          } finally { setWaSendingPdf(false); }
+                        }} className="w-full text-left px-4 py-2.5 text-sm font-semibold text-[#128C7E] hover:bg-green-50 flex items-center gap-2.5 disabled:opacity-50">
+                          📎 {waSendingPdf ? 'Preparing PDF…' : 'Send with PDF Attachment'}
+                        </button>
+                      )}
+                      <button onClick={()=>{
+                        setActionsMenuOpen(false);
+                        const invNum = record?.displayNumber ? 'RINV-'+String(record.displayNumber).padStart(5,'0') : (edited.id||'');
+                        const msg = encodeURIComponent(`Dear ${edited.customer||'Customer'}, please find your invoice ${invNum}. Total: ₹${edited.amount||0}. Thank you!`);
+                        const rawPhone = String(edited.customer_phone || '').replace(/\D/g, '');
+                        if (!rawPhone) { showAlert('No phone number on file for this customer — add one to the Customer Phone field first.', { variant:'warning' }); return; }
+                        // wa.me expects a full international number with no leading 0/+.
+                        // A 10-digit number with no country code is assumed domestic
+                        // (India, 91) per this tenant's default currency/locale —
+                        // adjust here if targeting a different primary market.
+                        const phone = rawPhone.length === 10 ? '91' + rawPhone : rawPhone;
+                        window.open(`https://wa.me/${phone}?text=${msg}`, '_blank');
+                      }} className="w-full text-left px-4 py-2.5 text-sm font-semibold text-[#128C7E] hover:bg-green-50 flex items-center gap-2.5">
+                        <svg viewBox="0 0 24 24" className="w-4 h-4 fill-current flex-shrink-0"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/></svg>
+                        {waConfig?.is_active ? 'Open in WhatsApp' : 'WhatsApp'}
+                      </button>
+                      <button onClick={()=>{
+                        setActionsMenuOpen(false);
+                        const invNum = record?.displayNumber ? 'RINV-'+String(record.displayNumber).padStart(5,'0') : (edited.id||'');
+                        const sub = encodeURIComponent('Invoice '+invNum);
+                        const body = encodeURIComponent('Dear '+( edited.customer||'Customer')+',%0A%0APlease find your invoice '+invNum+'.%0ATotal: ₹'+(edited.amount||0)+'%0A%0AThank you!');
+                        window.open('mailto:'+(edited.customer_email||edited.email||'')+'?subject='+sub+'&body='+body,'_blank');
+                      }} className="w-full text-left px-4 py-2.5 text-sm font-semibold text-blue-600 hover:bg-blue-50 flex items-center gap-2.5">
+                        ✉️ Email
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+            {page==='retailActivities' && (
+              <>
+                {edited.status==='Completed' && (
+                  <button onClick={() => {
+                    // Hands the customer off directly to the Create Order
+                    // modal, using the same pendingRecord.openCreate
+                    // mechanism this app already has for exactly this kind
+                    // of cross-page prefilled handoff — rather than the
+                    // Manage Bookings calendar, which requires picking a
+                    // product before a customer or dates can even be entered.
+                    setPendingRecord({ page: 'retailOrders', openCreate: true, prefill: { customer_id: edited.customer_id, customer: edited.customer } });
+                    setPendingReturnTo({ page: 'retailActivities', record: record });
+                    window.dispatchEvent(new CustomEvent('retail-navigate', { detail: { page: 'retailOrders' } }));
+                  }} className="bg-purple-500 hover:bg-purple-600 text-white px-4 py-2 rounded-xl text-sm font-bold transition-all flex items-center gap-1.5">
+                    📅 Create Booking
                   </button>
                 )}
-                <button onClick={()=>{
-                  const invNum = record?.displayNumber ? 'RINV-'+String(record.displayNumber).padStart(5,'0') : (edited.id||'');
-                  const msg = encodeURIComponent(`Dear ${edited.customer||'Customer'}, please find your invoice ${invNum}. Total: ₹${edited.amount||0}. Thank you!`);
+                {(() => {
                   const rawPhone = String(edited.customer_phone || '').replace(/\D/g, '');
-                  if (!rawPhone) { showAlert('No phone number on file for this customer — add one to the Customer Phone field first.', { variant:'warning' }); return; }
-                  // wa.me expects a full international number with no leading 0/+.
-                  // A 10-digit number with no country code is assumed domestic
-                  // (India, 91) per this tenant's default currency/locale —
-                  // adjust here if targeting a different primary market.
                   const phone = rawPhone.length === 10 ? '91' + rawPhone : rawPhone;
-                  window.open(`https://wa.me/${phone}?text=${msg}`, '_blank');
-                }} className={waConfig?.is_active ? "bg-white border-2 border-[#25D366] text-[#128C7E] hover:bg-green-50 px-3 py-2 rounded-xl text-sm font-bold transition-all flex items-center gap-1.5" : "bg-[#25D366] hover:bg-[#128C7E] text-white px-3 py-2 rounded-xl text-sm font-bold transition-all flex items-center gap-1.5"}>
-                  <svg viewBox="0 0 24 24" className="w-4 h-4 fill-current"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/></svg>
-                  {waConfig?.is_active ? 'Open in WhatsApp' : 'WhatsApp'}
-                </button>
-                <button onClick={()=>{
-                  const invNum = record?.displayNumber ? 'RINV-'+String(record.displayNumber).padStart(5,'0') : (edited.id||'');
-                  const sub = encodeURIComponent('Invoice '+invNum);
-                  const body = encodeURIComponent('Dear '+( edited.customer||'Customer')+',%0A%0APlease find your invoice '+invNum+'.%0ATotal: ₹'+(edited.amount||0)+'%0A%0AThank you!');
-                  window.open('mailto:'+(edited.customer_email||edited.email||'')+'?subject='+sub+'&body='+body,'_blank');
-                }} className="bg-blue-500 hover:bg-blue-600 text-white px-3 py-2 rounded-xl text-sm font-bold transition-all">
-                  ✉️ Email
-                </button>
+                  return (
+                    <>
+                      {waConfig?.is_active && (
+                        <button disabled={waSending || !rawPhone} onClick={async ()=>{
+                          setWaSending(true);
+                          try {
+                            const res = await fetch('/api/whatsapp/send', {
+                              method: 'POST', headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({
+                                db_url: tenant?.db_url, tenantId: tenant?.id, to: phone,
+                                recordType: 'retailActivities', recordId: edited.id, recipientType: 'customer', sendMode: 'manual',
+                                templateKey: 'activity_followup', templateParams: [edited.customer || 'Customer', edited.subject || 'your recent visit', edited.activity_date || ''], record: edited,
+                              }),
+                            });
+                            const data = await res.json();
+                            if (!res.ok) throw new Error(data.error || 'Send failed');
+                            showAlert('WhatsApp message sent.', { variant:'success' });
+                          } catch (e:any) {
+                            showAlert('Could not send via WhatsApp API: ' + (e?.message || 'Unknown error') + ' — you can still use "Open in WhatsApp" below.', { variant:'danger' });
+                          } finally { setWaSending(false); }
+                        }} className="bg-[#25D366] hover:bg-[#128C7E] text-white px-3 py-2 rounded-xl text-sm font-bold transition-all flex items-center gap-1.5 disabled:opacity-50">
+                          <svg viewBox="0 0 24 24" className="w-4 h-4 fill-current"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/></svg>
+                          {waSending ? 'Sending…' : 'Send Instantly'}
+                        </button>
+                      )}
+                      <button onClick={() => {
+                        if (!rawPhone) { showAlert('No phone number on file for this customer.', { variant:'warning' }); return; }
+                        const msg = encodeURIComponent(`Hi ${edited.customer || 'there'}, following up on "${edited.subject || 'our recent conversation'}". Let us know if you have any questions!`);
+                        window.open(`https://wa.me/${phone}?text=${msg}`, '_blank');
+                      }} disabled={!rawPhone} className={(waConfig?.is_active ? "bg-white border-2 border-[#25D366] text-[#128C7E] hover:bg-green-50 " : "bg-[#25D366] hover:bg-[#128C7E] text-white ") + "px-3 py-2 rounded-xl text-sm font-bold transition-all flex items-center gap-1.5 disabled:opacity-40"}>
+                        <svg viewBox="0 0 24 24" className="w-4 h-4 fill-current"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/></svg>
+                        {waConfig?.is_active ? 'Open in WhatsApp' : 'WhatsApp'}
+                      </button>
+                    </>
+                  );
+                })()}
               </>
             )}
             {checkingApproval && <span className="text-xs text-white/50">Checking approval rules…</span>}
@@ -1808,7 +2035,7 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo, on
           {page === 'retailProducts' && appPreferences?.business_type === 'rental' && edited.is_rentable && (
             <div className="bg-purple-50 border border-purple-200 rounded-2xl p-4 flex items-center justify-between">
               <div>
-                <h4 className="font-bold text-[#0F172A] text-sm">👗 This item is rentable</h4>
+                <h4 className="font-bold text-[#0F172A] text-sm">🔑 This item is rentable</h4>
                 <p className="text-xs text-gray-500">View its full booking calendar to see existing reservations and availability.</p>
               </div>
               <button onClick={() => setShowBookingCalendar(true)}
@@ -1906,7 +2133,7 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo, on
           {cfg.hasLineItems && (
             loadingLI
               ? <div className="bg-white rounded-[20px] border border-blue-100 shadow p-8 text-center text-gray-400">Loading line items...</div>
-              : <RetailLineItems items={items} setItems={setItems} products={retailProducts} taxRegime={taxRegime} page={page}/>
+              : <RetailLineItems items={items} setItems={setItems} products={retailProducts} taxRegime={taxRegime} page={page} headerDiscountPct={edited.header_discount_pct} onHeaderDiscountChange={v=>set('header_discount_pct',v)}/>
           )}
 
           {/* System Information */}
@@ -1946,18 +2173,21 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo, on
       </div>
     </div>
 
-    {/* Quick Create Retail Customer */}
+    {/* Create Customer — the full Create Customer modal, same as clicking
+        "+ Create Customer" from the Customers list itself, rather than a
+        separate lightweight quick-create form. */}
     {quickCreateCustomer && (
-      <div className="fixed inset-0 bg-black/60 z-[9999] flex items-center justify-center p-4" onClick={()=>setQuickCreateCustomer(null)}>
-        <div className="bg-white rounded-[24px] shadow-2xl p-6 w-full max-w-md" onClick={e=>e.stopPropagation()}>
-          <h3 className="font-bold text-[#0F172A] text-lg mb-4">👤 New Retail Customer</h3>
-          <RetailQuickCreateCustomer
-            prefillName={quickCreateCustomer.prefillName}
-            onCreated={async(id,name,phone)=>{ quickCreateCustomer.onCreated(id,name,phone); setQuickCreateCustomer(null); await fetchRetailCustomers(); }}
-            onClose={()=>setQuickCreateCustomer(null)}
-          />
-        </div>
-      </div>
+      <RetailCreateModal
+        page="retailCustomers"
+        open={true}
+        prefill={{ name: quickCreateCustomer.prefillName || '' }}
+        onClose={()=>setQuickCreateCustomer(null)}
+        onCreated={async(rec)=>{
+          quickCreateCustomer.onCreated(rec._uuid || rec.id, rec.name, rec.phone || '');
+          setQuickCreateCustomer(null);
+          await fetchRetailCustomers();
+        }}
+      />
     )}
 
     {/* Print Preview Modal */}
@@ -1986,13 +2216,15 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo, on
 }
 
 // ─── Create Modal ───────────────────────────────────────────────────────────
-function RetailCreateModal({ page, open, onClose, onCreated, prefill = null }) {
+export function RetailCreateModal({ page, open, onClose, onCreated, prefill = null }) {
   const { createRetailRecord, retailCustomers, enterpriseUsers, currentUser, appPreferences, appearance } = useApp();
   const { supabase } = useTenant();
   const { showAlert } = useAlert();
   const lang = appearance?.language || 'en';
   const cfg = RETAIL_CONFIG[page];
   const taxRegime = getTaxRegime(appPreferences?.default_currency);
+  const fieldLayout = useFieldLayout(page);
+  const { getObjectLabel } = useObjectLabels();
   const [quickCreateCustomer, setQuickCreateCustomer] = useState(null);
 
   const defaultForm = () => ({
@@ -2056,8 +2288,21 @@ function RetailCreateModal({ page, open, onClose, onCreated, prefill = null }) {
         flat.push(f);
       }
     }
-    return flat;
-  }, [page, appPreferences]);
+    // Apply the same field layout config used on the edit view: custom
+    // labels, hidden fields, and ordering. Conditional rules evaluate
+    // against the in-progress form state as the user fills it in.
+    // Read-only doesn't apply here — there's no existing value to lock on a
+    // brand-new record, so that part of the config only affects editing.
+    return flat
+      .map((f, originalIdx) => {
+        const resolved = fieldLayout.resolve(f.key, f.label, form, 'create');
+        const savedRow = resolveFieldRow(f.key, fieldLayout.fields, 'create');
+        const sortOrder = savedRow ? savedRow.display_order : 10000 + originalIdx;
+        return { ...f, label: resolved.label, _layoutHidden: !resolved.visible, _sortOrder: sortOrder };
+      })
+      .filter(f => !f._layoutHidden)
+      .sort((a, b) => a._sortOrder - b._sortOrder);
+  }, [page, appPreferences, fieldLayout.fields, form]);
 
   if (!open) return null;
 
@@ -2189,7 +2434,7 @@ function RetailCreateModal({ page, open, onClose, onCreated, prefill = null }) {
       <div className="absolute inset-0 bg-black/50" onClick={onClose}/>
       <div className="relative bg-white rounded-[28px] shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden">
         <div className="bg-gradient-to-r from-[#0F172A] to-blue-900 px-6 py-5 flex items-center justify-between flex-shrink-0">
-          <h2 className="text-white text-xl font-bold">{cfg.icon} Create {cfg.singular}</h2>
+          <h2 className="text-white text-xl font-bold">{cfg.icon} Create {getObjectLabel(page, cfg.singular, 'singular')}</h2>
           <button onClick={onClose} className="text-white/70 hover:text-white text-2xl leading-none">✕</button>
         </div>
         <div className="overflow-y-auto flex-1 p-6">
@@ -2245,16 +2490,16 @@ function RetailCreateModal({ page, open, onClose, onCreated, prefill = null }) {
       </div>
     </div>
     {quickCreateCustomer && (
-      <div className="fixed inset-0 bg-black/60 z-[9999] flex items-center justify-center p-4" onClick={()=>setQuickCreateCustomer(null)}>
-        <div className="bg-white rounded-[24px] shadow-2xl p-6 w-full max-w-md" onClick={e=>e.stopPropagation()}>
-          <h3 className="font-bold text-[#0F172A] text-lg mb-4">👤 New Retail Customer</h3>
-          <RetailQuickCreateCustomer
-            prefillName={quickCreateCustomer.prefillName}
-            onCreated={quickCreateCustomer.onCreated}
-            onClose={()=>setQuickCreateCustomer(null)}
-          />
-        </div>
-      </div>
+      <RetailCreateModal
+        page="retailCustomers"
+        open={true}
+        prefill={{ name: quickCreateCustomer.prefillName || '' }}
+        onClose={()=>setQuickCreateCustomer(null)}
+        onCreated={(rec)=>{
+          quickCreateCustomer.onCreated(rec._uuid || rec.id, rec.name, rec.phone || '');
+          setQuickCreateCustomer(null);
+        }}
+      />
     )}
     </>
   );
@@ -2277,7 +2522,15 @@ function RetailSavedSearchPanel({ page, currentFilters, onApply, onClose }) {
 
   useEffect(() => { if (fetchSavedSearches) fetchSavedSearches(page); }, [page]);
 
-  const pageFieldMeta = useMemo(() => getRetailFieldMeta(page), [page]);
+  const pageFieldMetaLayout = useFieldLayout(page);
+  const pageFieldMeta = useMemo(() => {
+    const base = getRetailFieldMeta(page);
+    if (!pageFieldMetaLayout.fields.length) return base;
+    return base.map(m => {
+      const savedRow = pageFieldMetaLayout.fields.find(r => r.field_key === m.key);
+      return savedRow?.custom_label ? { ...m, label: savedRow.custom_label } : m;
+    });
+  }, [page, pageFieldMetaLayout.fields]);
   const retailFieldLabel = (key) => pageFieldMeta.find(f => f.key === key)?.label || key;
 
   const describe = (f) => {
@@ -2498,6 +2751,7 @@ const RETAIL_TABLE_NAME = {
 
 export default function RetailListPage({ page }) {
   const { supabase, tenant } = useTenant();
+  const { getObjectLabel } = useObjectLabels();
   const {
     retailCustomers, retailProducts, retailActivities, retailOrders, retailInvoices,
     fetchRetailCustomers, fetchRetailProducts, fetchRetailActivities, fetchRetailOrders, fetchRetailInvoices,
@@ -2542,7 +2796,15 @@ export default function RetailListPage({ page }) {
   const [sortField,      setSortField]      = useState('');
   const [sortDir,        setSortDir]        = useState('asc');
   const [columnsOpen,    setColumnsOpen]    = useState(false);
-  const fieldMeta = useMemo(() => getRetailFieldMeta(page), [page]);
+  const listFieldLayout = useFieldLayout(page);
+  const fieldMeta = useMemo(() => {
+    const base = getRetailFieldMeta(page);
+    if (!listFieldLayout.fields.length) return base;
+    return base.map(m => {
+      const savedRow = listFieldLayout.fields.find(r => r.field_key === m.key);
+      return savedRow?.custom_label ? { ...m, label: savedRow.custom_label } : m;
+    });
+  }, [page, listFieldLayout.fields]);
   const DEFAULT_COLUMNS = RETAIL_DEFAULT_COLUMNS[page] || ['id','name'];
   const [visibleColumns, setVisibleColumns] = useState(DEFAULT_COLUMNS);
   const [pageSize,       setPageSize]       = useState(25);
@@ -2868,7 +3130,7 @@ export default function RetailListPage({ page }) {
       {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h1 className="text-2xl font-bold text-[#0F172A]">{cfg.icon} {cfg.title}</h1>
+          <h1 className="text-2xl font-bold text-[#0F172A]">{cfg.icon} {getObjectLabel(page, cfg.title)}</h1>
           <p className="text-gray-400 text-sm mt-0.5">
             {serverLoading ? 'Loading…' : `${totalRecords.toLocaleString()} record${totalRecords!==1?'s':''}`}
             {activeCount > 0 && <span className="text-blue-600 font-semibold"> · {activeCount} filter{activeCount>1?'s':''} active</span>}
@@ -3162,7 +3424,13 @@ export default function RetailListPage({ page }) {
           onC360Create={(targetPage, prefill) => setCreatePrefill({ page: targetPage, data: prefill })}
         />
       )}
-      <RetailCreateModal page={page} open={createOpen} onClose={()=>{setCreateOpen(false);setPendingRecord(null);}} onCreated={()=>{fetchMap[page]?.();setPendingRecord(null);}} prefill={pendingRecord?.openCreate ? pendingRecord.prefill : null}/>
+      <RetailCreateModal page={page} open={createOpen} onClose={()=>{
+        setCreateOpen(false); setPendingRecord(null);
+        if (pendingReturnTo) { const rt = pendingReturnTo; setPendingReturnTo(null); window.dispatchEvent(new CustomEvent('open-crm-record', { detail: rt })); }
+      }} onCreated={()=>{
+        fetchMap[page]?.(); setPendingRecord(null);
+        if (pendingReturnTo) { const rt = pendingReturnTo; setPendingReturnTo(null); window.dispatchEvent(new CustomEvent('open-crm-record', { detail: rt })); }
+      }} prefill={pendingRecord?.openCreate ? pendingRecord.prefill : null}/>
       {/* Cross-object create modal — for Create Order/Invoice from customer list/360 */}
       {/* c360 navigation handled by effect below (was an in-render setTimeout) */}
 
