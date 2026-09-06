@@ -798,7 +798,7 @@ function RetailLineItems({ items, setItems, products, taxRegime, page, headerDis
                     type="number" min={0} max={100}
                     value={headerDiscountPct || 0}
                     onChange={e => onHeaderDiscountChange?.(Math.min(100, Math.max(0, Number(e.target.value))))}
-                    className="w-16 border border-gray-200 rounded-lg px-2 py-1 text-xs text-center focus:outline-none focus:ring-1 focus:ring-blue-400"
+                    className="w-16 border border-gray-200 rounded-lg px-2 py-1 text-xs text-center text-gray-900 focus:outline-none focus:ring-1 focus:ring-blue-400"
                   />
                   <span className="text-gray-400 text-xs">% off the whole {page==='retailInvoices'?'invoice':'order'}</span>
                 </div>
@@ -987,7 +987,7 @@ function buildRetailPrintHTML(t, record, items, products, customFieldsMeta = [])
 
     ${t.show_loyalty && record.loyalty_points_earned ? `${div}<div class="loyalty-box"><div style="font-size:${fs(9)}px;color:#6B7280">Points Earned</div><div style="font-weight:800;font-size:${fs(15)}px">+${record.loyalty_points_earned}</div></div>` : ''}
     ${totalDisc>0 ? `<div class="savings">You saved ${fmt(totalDisc)}!</div>` : ''}
-    ${(t.custom_field_keys||[]).length > 0 ? `${div}<div style="margin-bottom:${th?4:8}px">
+    ${(t.custom_field_keys||[]).length > 0 ? `${div}<div style="margin-bottom:${isTh?4:8}px">
       ${(t.custom_field_keys||[]).map(key => {
         const val = (record.custom_data||{})[key];
         if (val === undefined || val === null || val === '') return '';
@@ -995,7 +995,7 @@ function buildRetailPrintHTML(t, record, items, products, customFieldsMeta = [])
         return `<div class="tot-row"><span class="meta-l">${meta?.label || key}</span><span class="meta-v">${val}</span></div>`;
       }).join('')}
     </div>` : ''}
-    ${t.show_terms && t.terms_and_conditions ? `${div}<div style="margin-bottom:${th?4:8}px"><div style="font-size:${fs(9)}px;font-weight:700;color:#374151;margin-bottom:4px;text-transform:uppercase;letter-spacing:0.5px">Terms &amp; Conditions</div><div style="font-size:${fs(8)}px;color:#6B7280;line-height:1.5">${t.terms_and_conditions}</div></div>` : ''}
+    ${t.show_terms && t.terms_and_conditions ? `${div}<div style="margin-bottom:${isTh?4:8}px"><div style="font-size:${fs(9)}px;font-weight:700;color:#374151;margin-bottom:4px;text-transform:uppercase;letter-spacing:0.5px">Terms &amp; Conditions</div><div style="font-size:${fs(8)}px;color:#6B7280;line-height:1.5">${t.terms_and_conditions}</div></div>` : ''}
     ${t.show_return_policy && t.return_policy ? `${div}<div style="font-size:${fs(8)}px;color:#6B7280;line-height:1.5">Return Policy: ${t.return_policy}</div>` : ''}
     ${t.show_signature ? `<div class="signature">${t.signature_label||'Authorised Signatory'}</div>` : ''}
     ${t.show_footer!==false && t.footer_msg ? `${div}<div class="footer-msg">${t.footer_msg}</div>` : ''}
@@ -1296,20 +1296,6 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo, on
   const [showBookingCalendar, setShowBookingCalendar] = useState(false);
   const [relatedOrderDisplay, setRelatedOrderDisplay] = useState('');
   const [relatedActivities, setRelatedActivities] = useState<any[]>([]);
-  useEffect(() => {
-    if (page !== 'retailActivities' || !edited.related_order_number || !supabase) { setRelatedOrderDisplay(''); return; }
-    let cancelled = false;
-    tenantScope(supabase.from('retail_orders').select('display_number')).eq('order_number', edited.related_order_number).maybeSingle()
-      .then(({ data }) => { if (!cancelled && data) setRelatedOrderDisplay(formatDisplayNumber('RORD', data.display_number)); });
-    return () => { cancelled = true; };
-  }, [page, edited.related_order_number, supabase]);
-  useEffect(() => {
-    if (page !== 'retailOrders' || !edited.id || !supabase) { setRelatedActivities([]); return; }
-    let cancelled = false;
-    tenantScope(supabase.from('retail_activities').select('*')).eq('related_order_number', edited.id).order('created_at', { ascending: false })
-      .then(({ data }) => { if (!cancelled) setRelatedActivities(data || []); });
-    return () => { cancelled = true; };
-  }, [page, edited.id, supabase]);
   const cfg = RETAIL_CONFIG[page];
   const taxRegime = getTaxRegime(appPreferences?.default_currency);
   // WhatsApp API availability — only checked on the invoice page, where the
@@ -1325,6 +1311,20 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo, on
   }, [page, tenant?.db_url, tenant?.id]);
 
   const [edited, setEdited] = useState({ ...record });
+  useEffect(() => {
+    if (page !== 'retailActivities' || !edited.related_order_number || !supabase) { setRelatedOrderDisplay(''); return; }
+    let cancelled = false;
+    tenantScope(supabase.from('retail_orders').select('display_number')).eq('order_number', edited.related_order_number).maybeSingle()
+      .then(({ data }) => { if (!cancelled && data) setRelatedOrderDisplay(formatDisplayNumber('RORD', data.display_number)); });
+    return () => { cancelled = true; };
+  }, [page, edited.related_order_number, supabase]);
+  useEffect(() => {
+    if (page !== 'retailOrders' || !edited.id || !supabase) { setRelatedActivities([]); return; }
+    let cancelled = false;
+    tenantScope(supabase.from('retail_activities').select('*')).eq('related_order_number', edited.id).order('created_at', { ascending: false })
+      .then(({ data }) => { if (!cancelled) setRelatedActivities(data || []); });
+    return () => { cancelled = true; };
+  }, [page, edited.id, supabase]);
   const [activeTab, setActiveTab] = useState('details');
   const [quickCreateCustomer, setQuickCreateCustomer] = useState(null); // {prefillName, onCreated} // 'details' | '360'
   // Retail invoice templates (for retailInvoices page)
@@ -1538,6 +1538,7 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo, on
       await updateRetailRecord(page, payload, items);
       if (andClose) {
         onSaved?.();
+        console.log('[RetailDetailPanel] handleSave(andClose) - pendingReturnTo:', pendingReturnTo);
         if (pendingReturnTo) {
           const rt = pendingReturnTo; setPendingReturnTo(null);
           window.dispatchEvent(new CustomEvent('open-crm-record', { detail: rt }));
@@ -1552,6 +1553,7 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo, on
   };
 
   const handleClose = () => {
+    console.log('[RetailDetailPanel] handleClose - pendingReturnTo:', pendingReturnTo);
     if (pendingReturnTo) {
       const rt = pendingReturnTo; setPendingReturnTo(null);
       window.dispatchEvent(new CustomEvent('open-crm-record', { detail: rt }));

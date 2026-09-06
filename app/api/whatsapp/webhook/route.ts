@@ -72,8 +72,9 @@ export async function POST(request: Request) {
             recipient_type: 'customer',
             send_mode: 'inbound',
             status: 'received',
+            direction: 'inbound',
             meta_message_id: msg.id,
-            error_message: msg.text?.body ? `Reply: ${msg.text.body.slice(0, 500)}` : '[non-text message]',
+            message_body: msg.text?.body || '[non-text message]',
           });
         }
       }

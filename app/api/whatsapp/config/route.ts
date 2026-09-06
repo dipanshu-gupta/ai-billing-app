@@ -76,6 +76,7 @@ export async function POST(request: Request) {
           tenant_id: tenantId || null,
           template_key: tpl.template_key,
           meta_template_name: tpl.meta_template_name || null,
+          preview_text: tpl.preview_text || null,
           language_code: tpl.language_code || 'en_US',
           is_active: tpl.is_active !== false,
           param_count: tpl.param_count ?? 3,

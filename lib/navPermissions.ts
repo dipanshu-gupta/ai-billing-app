@@ -22,7 +22,8 @@ export const RETAIL_GROUP = [
   { key:'retailCustomers',  label:'retailCustomers',  icon:'🧑‍🤝‍🧑', permission:null, requiresB2C:true },
   { key:'retailActivities', label:'retailActivities', icon:'📅',       permission:null, requiresB2C:true },
   { key:'retailProducts',   label:'retailProducts',   icon:'🏷️',       permission:null, requiresB2C:true },
-  { key:'manageBookings',   label:'manageBookings',   icon:'📆',       permission:null, requiresB2C:true, requiresRental:true },
+  { key:'manageBookings',   label:'manageBookings',   icon:'🛎️',       permission:null, requiresB2C:true, requiresRental:true },
+  { key:'whatsappInbox',    label:'whatsappInbox',    icon:'💬',       permission:null, requiresB2C:true },
   { key:'retailOrders',     label:'retailOrders',     icon:'🛍️',       permission:null, requiresB2C:true },
   { key:'retailInvoices',   label:'retailInvoices',   icon:'🧾',       permission:null, requiresB2C:true },
 ];

@@ -79,7 +79,7 @@ export async function fetchServerPage(supabase, opts) {
     }
   }
 
-  q = q.order(sortColumn, { ascending: sortAscending, nullsFirst: false });
+  q = q.order(sortColumn, { ascending: sortAscending, nullsFirst: false }).order('created_at', { ascending: false });
 
   const from = Math.max(0, (page - 1) * pageSize);
   q = q.range(from, from + pageSize - 1);

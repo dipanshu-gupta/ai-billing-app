@@ -11,6 +11,7 @@ import DashboardPage from '@/components/dashboard/DashboardPage';
 import CRMListPage from '@/components/crm/CRMListPage';
 import RetailListPage from '@/components/retail/RetailListPage';
 import ManageBookingsPage from '@/components/retail/ManageBookingsPage';
+import WhatsAppInboxPage from '@/components/whatsapp/WhatsAppInboxPage';
 import SpringboardPage from '@/components/layout/SpringboardPage';
 import RetailDashboard from '@/components/retail/RetailDashboard';
 import AdminToolsPage from '@/components/admin/AdminToolsPage';
@@ -360,6 +361,7 @@ function AppShell() {
           {CRM_PAGES.includes(activePage) && !NON_CRM_PAGES.includes(activePage) && <CRMListPage page={activePage} />}
           {RETAIL_PAGES.includes(activePage) && <RetailListPage page={activePage} />}
           {activePage === 'manageBookings' && appPreferences?.b2c_mode === true && appPreferences?.business_type === 'rental' && <ManageBookingsPage />}
+          {activePage === 'whatsappInbox' && appPreferences?.b2c_mode === true && <WhatsAppInboxPage />}
           {activePage === 'quotations' && appPreferences?.cpq_enabled !== false && <QuotationsPage />}
           {activePage === 'reports' && <FastReportsPage />}
           {activePage === 'approvals' && <ApprovalsInboxPage />}

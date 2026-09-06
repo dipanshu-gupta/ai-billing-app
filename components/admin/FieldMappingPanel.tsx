@@ -193,14 +193,14 @@ export default function FieldMappingPanel() {
               <div>
                 <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Rule Name (optional)</label>
                 <input value={form.name} onChange={e => s('name', e.target.value)} placeholder="e.g. Copy Security Deposit"
-                  className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400" />
+                  className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-1 focus:ring-blue-400" />
               </div>
 
               {ruleType === 'record_conversion' && (
                 <div>
                   <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Conversion</label>
                   <select value={form.conversion_context} onChange={e => s('conversion_context', e.target.value)}
-                    className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm bg-white focus:outline-none focus:ring-1 focus:ring-blue-400">
+                    className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-900 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400">
                     {CONVERSIONS.map(c => <option key={c.v} value={c.v}>{getObjectLabel(c.source, STATIC_OBJECT_LABELS[c.source] || c.source)} → {getObjectLabel(c.target, STATIC_OBJECT_LABELS[c.target] || c.target)}</option>)}
                   </select>
                 </div>
@@ -211,7 +211,7 @@ export default function FieldMappingPanel() {
                   Source: {sourceObjectLabel}
                 </div>
                 <select value={form.source_field} onChange={e => s('source_field', e.target.value)}
-                  className="w-full border border-blue-200 rounded-xl px-3 py-2 text-sm bg-white focus:outline-none focus:ring-1 focus:ring-blue-400">
+                  className="w-full border border-blue-200 rounded-xl px-3 py-2 text-sm text-gray-900 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400">
                   <option value="">Select field...</option>
                   {sourceFieldsForForm.map(f => <option key={f.api_name} value={f.api_name}>{f.label} ({f.api_name})</option>)}
                 </select>
@@ -225,12 +225,12 @@ export default function FieldMappingPanel() {
                 {ruleType === 'product_to_line_item' ? (
                   <>
                     <input value={form.target_field} onChange={e => s('target_field', e.target.value)} placeholder="e.g. security_deposit"
-                      className="w-full border border-purple-200 rounded-xl px-3 py-2 text-sm bg-white focus:outline-none focus:ring-1 focus:ring-purple-400" />
+                      className="w-full border border-purple-200 rounded-xl px-3 py-2 text-sm text-gray-900 bg-white focus:outline-none focus:ring-1 focus:ring-purple-400" />
                     <p className="text-[11px] text-purple-600">The API name of the line-item custom field to write into. If it doesn't exist yet, add it via App Composer for the relevant object with "Show On" set to include line items.</p>
                   </>
                 ) : (
                   <select value={form.target_field} onChange={e => s('target_field', e.target.value)}
-                    className="w-full border border-purple-200 rounded-xl px-3 py-2 text-sm bg-white focus:outline-none focus:ring-1 focus:ring-purple-400">
+                    className="w-full border border-purple-200 rounded-xl px-3 py-2 text-sm text-gray-900 bg-white focus:outline-none focus:ring-1 focus:ring-purple-400">
                     <option value="">Select field...</option>
                     {targetFieldsForForm.map(f => <option key={f.api_name} value={f.api_name}>{f.label} ({f.api_name})</option>)}
                   </select>

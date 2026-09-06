@@ -169,6 +169,7 @@ function WhatsAppSettingsPanel() {
           templates: WHATSAPP_TEMPLATE_KEYS.map(t => ({
             template_key: t.key,
             meta_template_name: templates[t.key]?.meta_template_name || '',
+            preview_text: templates[t.key]?.preview_text || '',
             language_code: templates[t.key]?.language_code || 'en_US',
             is_active: templates[t.key]?.is_active !== false,
             param_count: templates[t.key]?.param_count ?? t.placeholders.length,
@@ -206,6 +207,25 @@ function WhatsAppSettingsPanel() {
       setTestResult({ success: false, error: e?.message });
     } finally {
       setTesting(false);
+    }
+  };
+
+  const [subscribing, setSubscribing] = useState(false);
+  const [subscribeResult, setSubscribeResult] = useState<any>(null);
+  const subscribeWebhook = async () => {
+    setSubscribing(true);
+    setSubscribeResult(null);
+    try {
+      const res = await fetch('/api/whatsapp/subscribe-webhook', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ db_url: tenant?.db_url, tenantId: tenant?.id }),
+      });
+      const data = await res.json();
+      setSubscribeResult(res.ok ? { success: true } : { success: false, error: data.error });
+    } catch (e: any) {
+      setSubscribeResult({ success: false, error: e?.message });
+    } finally {
+      setSubscribing(false);
     }
   };
 
@@ -297,6 +317,16 @@ function WhatsAppSettingsPanel() {
               <div className="grid sm:grid-cols-2 gap-3">
                 <input value={templates[t.key]?.meta_template_name || ''} onChange={e => setTemplates(p => ({ ...p, [t.key]: { ...p[t.key], meta_template_name: e.target.value } }))} className={iCls} placeholder="Meta template name" />
                 <input value={templates[t.key]?.language_code || 'en_US'} onChange={e => setTemplates(p => ({ ...p, [t.key]: { ...p[t.key], language_code: e.target.value } }))} className={iCls} placeholder="Language code (e.g. en_US)" />
+              </div>
+              <div className="mt-3">
+                <label className="text-[10px] font-bold uppercase tracking-wider text-gray-400 block mb-1">Approved Template Text (for readable conversation logging)</label>
+                <textarea
+                  value={templates[t.key]?.preview_text || ''}
+                  onChange={e => setTemplates(p => ({ ...p, [t.key]: { ...p[t.key], preview_text: e.target.value } }))}
+                  className={iCls + ' resize-none'} rows={2}
+                  placeholder="e.g. Hi {{1}}, your booking {{2}} for {{3}} is confirmed."
+                />
+                <p className="text-[11px] text-gray-400 mt-1">Paste your template's exact approved wording here, using {'{{1}}'}, {'{{2}}'}, etc. for placeholders — this doesn't change what's sent to Meta, it only lets the WhatsApp Inbox show the real message text instead of just the template name.</p>
               </div>
               <div className="mt-3">
                 <label className="text-[10px] font-bold uppercase tracking-wider text-gray-400 block mb-1">Placeholders in your approved template</label>

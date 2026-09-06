@@ -24,6 +24,11 @@ export async function POST(request: Request) {
 
     if (!fileBase64) return NextResponse.json({ error: 'No file data provided.' }, { status: 400 });
 
+    const buffer = Buffer.from(fileBase64, 'base64');
+    if (buffer.length < 100) {
+      return NextResponse.json({ error: `The generated file is suspiciously small (${buffer.length} bytes) - this usually means PDF generation failed silently rather than producing a real document. Try again, or check the browser console for errors during PDF creation.` }, { status: 400 });
+    }
+
     const supabase = await resolveClient(db_url);
     const { data: config } = await supabase.from('whatsapp_config').select('*').eq('tenant_id', tenantId || null).maybeSingle();
 
@@ -35,9 +40,14 @@ export async function POST(request: Request) {
     // Meta's media endpoint requires multipart/form-data, not JSON - the
     // client sends base64 (simpler over a JSON API route), converted back
     // into a real file here for the actual upload to Meta.
-    const buffer = Buffer.from(fileBase64, 'base64');
     const formData = new FormData();
     formData.append('messaging_product', 'whatsapp');
+    // 'type' is a required field in its own right per Meta's official docs
+    // (separate from the file part's own Content-Type header) - previously
+    // missing here entirely, which is a plausible explanation for an
+    // upload that reports success but the resulting media never actually
+    // delivers when referenced in a later send.
+    formData.append('type', mimeType);
     formData.append('file', new Blob([buffer], { type: mimeType }), filename || 'document.pdf');
 
     const res = await fetch(`https://graph.facebook.com/${META_API_VERSION}/${config.phone_number_id}/media`, {

@@ -59,6 +59,9 @@ export async function POST(request: Request) {
     }
 
     let metaBody: any;
+    let effectiveParamsForLog: string[] = [];
+    let renderedTemplateTextForLog: string | null = null;
+    let resolvedParamsForLog: string[] = [];
     let resolvedTemplateName: string | null = null;
 
     if (templateKey) {
@@ -97,6 +100,18 @@ export async function POST(request: Request) {
       // includes parameters the template itself has no placeholders for.
       const expectedCount = template.param_count ?? resolvedParams.length;
       const effectiveParams = resolvedParams.slice(0, expectedCount);
+      effectiveParamsForLog = effectiveParams;
+      // Renders the actual readable message text for conversation logging,
+      // by substituting resolved params into the admin-entered preview
+      // text - purely cosmetic for the log, has zero effect on what's
+      // actually sent to Meta (which still uses template.meta_template_name
+      // and the raw params directly, exactly as before).
+      if (template.preview_text) {
+        let rendered = template.preview_text;
+        effectiveParams.forEach((p: string, i: number) => { rendered = rendered.replaceAll(`{{${i + 1}}}`, String(p)); });
+        renderedTemplateTextForLog = rendered;
+      }
+      resolvedParamsForLog = resolvedParams;
       const bodyComponent = effectiveParams.length > 0 ? [{ type: 'body', parameters: effectiveParams.map((p: string) => ({ type: 'text', text: String(p) })) }] : [];
       // Document header — only valid if the approved Meta template was
       // itself configured with a Document header component in Meta
@@ -150,6 +165,10 @@ export async function POST(request: Request) {
     // automated-reminder dedup check queries against, so a failed send
     // still needs a row (marked failed, not silently dropped) or a retry
     // loop could spam the same failing message repeatedly.
+    const loggedBody = freeformText
+      || (renderedTemplateTextForLog ? `${renderedTemplateTextForLog}${resolvedParamsForLog?.length && effectiveParamsForLog?.length !== resolvedParamsForLog?.length ? ` (WARNING: only ${effectiveParamsForLog?.length || 0} of ${resolvedParamsForLog.length} values were actually sent - check this template's configured placeholder count in Admin Tools)` : ''}` : null)
+      || (templateKey ? `[Template: ${templateKey}]${resolvedParamsForLog?.length ? ' ' + resolvedParamsForLog.join(' | ') : ''}${resolvedParamsForLog?.length && effectiveParamsForLog?.length !== resolvedParamsForLog?.length ? ` (WARNING: only ${effectiveParamsForLog?.length || 0} of ${resolvedParamsForLog.length} values were actually sent - check this template's configured placeholder count in Admin Tools)` : ''}` : null)
+      || (documentMediaId ? `[Document: ${documentFilename || 'document.pdf'}]` : null);
     await supabase.from('whatsapp_message_log').insert({
       tenant_id: tenantId || null,
       record_type: recordType || null,
@@ -160,6 +179,8 @@ export async function POST(request: Request) {
       template_key: templateKey || null,
       status: sendError ? 'failed' : 'sent',
       error_message: sendError,
+      direction: 'outbound',
+      message_body: loggedBody,
       meta_message_id: metaResult?.messages?.[0]?.id || null,
     });
 
