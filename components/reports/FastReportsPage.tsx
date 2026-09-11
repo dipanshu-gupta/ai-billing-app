@@ -8,6 +8,17 @@ import { formatDisplayNumber, PAGE_DISPLAY_PREFIX, formatCurrency, formatDate, w
 import { useAlert } from '@/components/shared/AlertProvider';
 import { useCustomFields } from '@/lib/useCustomFields';
 import LoadingSpinner from '@/components/shared/LoadingSpinner';
+import { NavIcon } from '@/lib/icons';
+import { Table2, BarChart3, LineChart as LineChartIcon, Mountain, PieChart as PieChartIcon, Globe, User, Users, X, Save, Download, Folder, Receipt, AlertTriangle, Calendar, Search, ClipboardList, Trash2, Filter, Columns3 } from 'lucide-react';
+
+// Chart-type icons - a distinct category from navigation/object icons
+// (these represent visualization types, not modules), so kept local to
+// this one selector rather than added to the shared nav icon map.
+const CHART_TYPE_ICONS = { none: Table2, bar: BarChart3, line: LineChartIcon, area: Mountain, pie: PieChartIcon };
+const ChartTypeIcon = ({ iconKey, className }) => {
+  const Cmp = CHART_TYPE_ICONS[iconKey] || Table2;
+  return <Cmp className={className} strokeWidth={1.75} />;
+};
 import { useObjectLabels } from '@/lib/useObjectLabels';
 import {
   BarChart, Bar, LineChart, Line, PieChart, Pie, Cell, AreaChart, Area,
@@ -106,11 +117,11 @@ const LINE_ITEM_OBJECT_FIELDS = {
 const COLORS = ['#0F172A','#3B82F6','#10B981','#F59E0B','#EF4444','#8B5CF6','#EC4899','#14B8A6','#F97316','#64748B'];
 
 const CHART_TYPES = [
-  { v:'none', l:'Table Only', icon:'📋' },
-  { v:'bar',  l:'Bar Chart',  icon:'📊' },
-  { v:'line', l:'Line Chart', icon:'📈' },
-  { v:'area', l:'Area Chart', icon:'🏔️' },
-  { v:'pie',  l:'Pie / Donut', icon:'🥧' },
+  { v:'none', l:'Table Only' },
+  { v:'bar',  l:'Bar Chart' },
+  { v:'line', l:'Line Chart' },
+  { v:'area', l:'Area Chart' },
+  { v:'pie',  l:'Pie / Donut' },
 ];
 
 const DATE_RANGES = [
@@ -307,23 +318,23 @@ const B2C_OBJECT_FIELDS = {
 };
 
 const B2B_OBJECTS = [
-  { v:'customers',     l:'Customers',     icon:'👥' },
-  { v:'leads',         l:'Leads',         icon:'🎯' },
-  { v:'opportunities', l:'Opportunities', icon:'💡' },
-  { v:'orders',        l:'Orders',        icon:'📦' },
-  { v:'invoices',      l:'Invoices',      icon:'🧾' },
-  { v:'contacts',      l:'Contacts',      icon:'👤' },
-  { v:'activities',    l:'Activities',    icon:'📅' },
-  { v:'quotations',    l:'Quotations',    icon:'📄' },
-  { v:'products',      l:'Products',      icon:'🏷️' },
+  { v:'customers',     l:'Customers' },
+  { v:'leads',         l:'Leads' },
+  { v:'opportunities', l:'Opportunities' },
+  { v:'orders',        l:'Orders' },
+  { v:'invoices',      l:'Invoices' },
+  { v:'contacts',      l:'Contacts' },
+  { v:'activities',    l:'Activities' },
+  { v:'quotations',    l:'Quotations' },
+  { v:'products',      l:'Products' },
 ];
 
 const B2C_OBJECTS = [
-  { v:'retailCustomers',  l:'Retail Customers',  icon:'🧑‍🤝‍🧑' },
-  { v:'retailProducts',   l:'Retail Products',   icon:'🏷️' },
-  { v:'retailActivities', l:'Retail Activities', icon:'📅' },
-  { v:'retailOrders',     l:'Retail Orders',     icon:'🛍️' },
-  { v:'retailInvoices',   l:'Retail Invoices',   icon:'🧾' },
+  { v:'retailCustomers',  l:'Retail Customers' },
+  { v:'retailProducts',   l:'Retail Products' },
+  { v:'retailActivities', l:'Retail Activities' },
+  { v:'retailOrders',     l:'Retail Orders' },
+  { v:'retailInvoices',   l:'Retail Invoices' },
 ];
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -396,7 +407,7 @@ function FilterRow({ field, value, operator, onChange, onRemove, allData }) {
         : <input value={value} onChange={e=>onChange('value', e.target.value)} placeholder="Value..."
             className="flex-1 border border-blue-200 rounded-lg px-2 py-1.5 text-xs text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-blue-400"/>
       }
-      <button onClick={onRemove} className="text-red-400 hover:text-red-600 text-sm font-bold px-1">✕</button>
+      <button onClick={onRemove} className="text-red-400 hover:text-red-600 text-sm font-bold px-1"><X className="w-3.5 h-3.5"/></button>
     </div>
   );
 }
@@ -410,7 +421,7 @@ function SortRow({ field, direction, onChange, onRemove }) {
         <option value="asc">A → Z / Low → High</option>
         <option value="desc">Z → A / High → Low</option>
       </select>
-      <button onClick={onRemove} className="text-red-400 hover:text-red-600 text-sm font-bold px-1">✕</button>
+      <button onClick={onRemove} className="text-red-400 hover:text-red-600 text-sm font-bold px-1"><X className="w-3.5 h-3.5"/></button>
     </div>
   );
 }
@@ -784,7 +795,7 @@ export default function FastReportsPage() {
       {/* ── Header ── */}
       <div className="bg-gradient-to-r from-[#0F172A] to-blue-900 rounded-[28px] p-6 text-white flex items-center justify-between flex-wrap gap-4">
         <div>
-          <h1 className="text-3xl font-bold">⚡ Fast Reports</h1>
+          <h1 className="text-3xl font-bold flex items-center gap-2.5"><NavIcon iconKey="reports" className="w-7 h-7"/> Fast Reports</h1>
           <p className="text-blue-200 mt-1">Build, filter, sort, visualize and export from any data object · {filteredData.length} records</p>
         </div>
         <div className="flex items-center gap-3 flex-wrap">
@@ -798,12 +809,12 @@ export default function FastReportsPage() {
             Share
           </label>
           <button onClick={handleSave} disabled={saving}
-            className="bg-white text-[#0F172A] px-4 py-2 rounded-2xl font-bold text-sm shadow-lg hover:bg-blue-50 disabled:opacity-50">
-            {saving ? '💾 Saving...' : '💾 Save'}
+            className="bg-white text-[#0F172A] px-4 py-2 rounded-2xl font-bold text-sm shadow-lg hover:bg-blue-50 disabled:opacity-50 flex items-center gap-1.5">
+            <Save className="w-4 h-4"/> {saving ? 'Saving...' : 'Save'}
           </button>
           <button onClick={exportCSV}
             className="bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded-2xl font-bold text-sm shadow-lg flex items-center gap-1.5">
-            📥 Export CSV
+            <Download className="w-4 h-4"/> Export CSV
           </button>
         </div>
       </div>
@@ -814,12 +825,12 @@ export default function FastReportsPage() {
 
           {/* Object selector */}
           <div className="bg-white rounded-[24px] border border-blue-100 shadow p-5">
-            <h3 className="font-bold text-[#0F172A] mb-3">📁 Data Object</h3>
+            <h3 className="font-bold text-[#0F172A] mb-3 flex items-center gap-1.5"><Folder className="w-4 h-4"/> Data Object</h3>
             <div className="grid grid-cols-2 gap-2">
               {ACTIVE_OBJS.map(o => (
                 <button key={o.v} onClick={() => setObjType(o.v)}
                   className={`px-3 py-2 rounded-xl text-xs font-semibold transition-all text-left flex items-center gap-1.5 ${objType===o.v ? 'bg-gradient-to-r from-[#0F172A] to-blue-800 text-white shadow' : 'bg-gray-50 text-gray-600 hover:bg-blue-50 border border-gray-100'}`}>
-                  <span>{o.icon}</span><span className="truncate">{o.l}</span>
+                  <NavIcon iconKey={o.v} className="w-4 h-4 flex-shrink-0"/><span className="truncate">{o.l}</span>
                 </button>
               ))}
             </div>
@@ -828,12 +839,12 @@ export default function FastReportsPage() {
                 <label className="text-xs font-bold uppercase tracking-wider text-gray-400 block mb-1.5">Report On</label>
                 <div className="flex gap-2">
                   <button onClick={() => setIsLineItemMode(false)}
-                    className={`flex-1 py-2 rounded-xl text-xs font-semibold border transition-all ${!isLineItemMode ? 'bg-[#0F172A] text-white border-transparent' : 'bg-gray-50 text-gray-600 border-gray-200'}`}>
-                    📋 Records
+                    className={`flex-1 py-2 rounded-xl text-xs font-semibold border transition-all flex items-center justify-center gap-1.5 ${!isLineItemMode ? 'bg-[#0F172A] text-white border-transparent' : 'bg-gray-50 text-gray-600 border-gray-200'}`}>
+                    <ClipboardList className="w-3.5 h-3.5"/> Records
                   </button>
                   <button onClick={() => setIsLineItemMode(true)}
-                    className={`flex-1 py-2 rounded-xl text-xs font-semibold border transition-all ${isLineItemMode ? 'bg-purple-700 text-white border-transparent' : 'bg-gray-50 text-gray-600 border-gray-200'}`}>
-                    🧾 Line Items
+                    className={`flex-1 py-2 rounded-xl text-xs font-semibold border transition-all flex items-center justify-center gap-1.5 ${isLineItemMode ? 'bg-purple-700 text-white border-transparent' : 'bg-gray-50 text-gray-600 border-gray-200'}`}>
+                    <Receipt className="w-3.5 h-3.5"/> Line Items
                   </button>
                 </div>
                 {isLineItemMode && <p className="text-[11px] text-purple-600 mt-1.5">Reports on individual product/quantity/price rows across all matching records — e.g. "top products by quantity sold."</p>}
@@ -842,8 +853,9 @@ export default function FastReportsPage() {
           </div>
 
           {rawDataTruncated && (
-            <div className="bg-amber-50 border border-amber-200 rounded-2xl p-3 text-xs text-amber-700">
-              ⚠️ This report hit a {REPORT_SAFETY_CEILING.toLocaleString()}-row safety limit meant only to prevent a runaway fetch — if you're seeing this, something is likely off with your filters or data, not that data is being deliberately withheld. Narrow with filters and check with support if this persists.
+            <div className="bg-amber-50 border border-amber-200 rounded-2xl p-3 text-xs text-amber-700 flex items-start gap-2">
+              <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5"/>
+              <span>This report hit a {REPORT_SAFETY_CEILING.toLocaleString()}-row safety limit meant only to prevent a runaway fetch — if you're seeing this, something is likely off with your filters or data, not that data is being deliberately withheld. Narrow with filters and check with support if this persists.</span>
             </div>
           )}
 
@@ -853,12 +865,12 @@ export default function FastReportsPage() {
               meaningfully here. */}
           {!isLineItemMode && (
           <div className="bg-white rounded-[24px] border border-blue-100 shadow p-5">
-            <h3 className="font-bold text-[#0F172A] mb-3">👤 Data Scope</h3>
+            <h3 className="font-bold text-[#0F172A] mb-3 flex items-center gap-1.5"><User className="w-4 h-4"/> Data Scope</h3>
             <div className="space-y-2">
-              {[{v:'all',l:'All Records',icon:'🌐'},{v:'mine',l:'My Records',icon:'👤'},{v:'team',l:'My Team',icon:'👥'}].map(s=>(
+              {[{v:'all',l:'All Records',icon:Globe},{v:'mine',l:'My Records',icon:User},{v:'team',l:'My Team',icon:Users}].map(s=>(
                 <button key={s.v} onClick={()=>setOwnerScope(s.v)}
                   className={`w-full flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-semibold transition-all ${ownerScope===s.v?'bg-blue-600 text-white':'bg-gray-50 text-gray-600 hover:bg-blue-50 border border-gray-100'}`}>
-                  <span>{s.icon}</span>{s.l}
+                  <s.icon className="w-4 h-4"/>{s.l}
                 </button>
               ))}
             </div>
@@ -867,7 +879,7 @@ export default function FastReportsPage() {
 
           {/* Date range */}
           <div className="bg-white rounded-[24px] border border-blue-100 shadow p-5 space-y-3">
-            <h3 className="font-bold text-[#0F172A]">📅 Date Range</h3>
+            <h3 className="font-bold text-[#0F172A] flex items-center gap-2"><Calendar className="w-4 h-4"/> Date Range</h3>
             <select value={dateRange} onChange={e=>setDateRange(e.target.value)} className={sCls}>
               {DATE_RANGES.map(d=><option key={d.v} value={d.v}>{d.l}</option>)}
             </select>
@@ -883,7 +895,7 @@ export default function FastReportsPage() {
 
           {/* Custom filters */}
           <div className="bg-white rounded-[24px] border border-blue-100 shadow p-5 space-y-3">
-            <h3 className="font-bold text-[#0F172A]">🔍 Filters
+            <h3 className="font-bold text-[#0F172A] flex items-center gap-2"><Filter className="w-4 h-4"/> Filters
               {filters.length > 0 && <span className="ml-2 bg-blue-600 text-white text-xs px-2 py-0.5 rounded-full">{filters.length}</span>}
             </h3>
             {filters.map((f, i) => {
@@ -913,14 +925,14 @@ export default function FastReportsPage() {
 
           {/* Columns */}
           <div className="bg-white rounded-[24px] border border-blue-100 shadow p-5">
-            <h3 className="font-bold text-[#0F172A] mb-3">📋 Columns <span className="text-xs text-gray-400 font-normal">({columns.length} selected)</span></h3>
+            <h3 className="font-bold text-[#0F172A] mb-3 flex items-center gap-2"><Columns3 className="w-4 h-4"/> Columns <span className="text-xs text-gray-400 font-normal">({columns.length} selected)</span></h3>
             <div className="space-y-1">
               {fields.map(f => (
                 <label key={f.k} className="flex items-center gap-2 cursor-pointer py-1.5 px-2 hover:bg-blue-50 rounded-lg">
                   <input type="checkbox" checked={columns.includes(f.k)} onChange={()=>toggleCol(f.k)} className="w-4 h-4 accent-blue-600"/>
                   <span className="text-sm text-[#0F172A] flex-1">{f.l}</span>
                   {f.t === 'currency' && <span className="text-xs text-green-600">₹</span>}
-                  {f.t === 'date'     && <span className="text-xs text-blue-400">📅</span>}
+                  {f.t === 'date'     && <Calendar className="w-3 h-3 text-blue-400"/>}
                 </label>
               ))}
             </div>
@@ -958,14 +970,14 @@ export default function FastReportsPage() {
 
           {/* Chart / visualisation */}
           <div className="bg-white rounded-[24px] border border-blue-100 shadow p-5 space-y-3">
-            <h3 className="font-bold text-[#0F172A]">📊 Visualisation</h3>
+            <h3 className="font-bold text-[#0F172A] flex items-center gap-2"><BarChart3 className="w-4 h-4"/> Visualisation</h3>
             <div>
               <label className="text-xs font-bold uppercase text-gray-400 block mb-1.5">Chart Type</label>
               <div className="grid grid-cols-2 gap-1.5">
                 {CHART_TYPES.map(c=>(
                   <button key={c.v} onClick={()=>setChartType(c.v)}
                     className={`flex items-center gap-1 px-2 py-2 rounded-xl text-xs font-semibold transition-all ${chartType===c.v?'bg-[#0F172A] text-white':'bg-gray-50 text-gray-600 hover:bg-blue-50 border border-gray-100'}`}>
-                    <span>{c.icon}</span><span className="truncate">{c.l}</span>
+                    <ChartTypeIcon iconKey={c.v} className="w-4 h-4 flex-shrink-0"/><span className="truncate">{c.l}</span>
                   </button>
                 ))}
               </div>
@@ -995,15 +1007,15 @@ export default function FastReportsPage() {
           {/* KPI Cards */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             {[
-              { l:'Total Records',   v: kpis.total.toLocaleString('en-IN'), icon:'📋', color:'blue' },
+              { l:'Total Records',   v: kpis.total.toLocaleString('en-IN'), icon:'totalRecords', color:'blue' },
               { l: kpis.primaryAmt ? `Total ${kpis.primaryAmt.l}` : 'Total Value',
-                v: kpis.primaryAmt ? fmtCurrency(kpis.totalVal, currency) : '-', icon:'💰', color:'green' },
+                v: kpis.primaryAmt ? fmtCurrency(kpis.totalVal, currency) : '-', icon:'totalValue', color:'green' },
               { l: kpis.primaryAmt ? `Avg ${kpis.primaryAmt.l}` : 'Avg Value',
-                v: kpis.primaryAmt ? fmtCurrency(kpis.avgVal, currency) : '-', icon:'📈', color:'purple' },
-              { l:'Unique Owners',   v: kpis.uniqueOwners, icon:'👤', color:'amber' },
+                v: kpis.primaryAmt ? fmtCurrency(kpis.avgVal, currency) : '-', icon:'avgValue', color:'purple' },
+              { l:'Unique Owners',   v: kpis.uniqueOwners, icon:'uniqueOwners', color:'amber' },
             ].map(stat => (
               <div key={stat.l} className="bg-white rounded-2xl border border-blue-100 shadow p-4 flex items-center gap-3">
-                <span className="text-2xl">{stat.icon}</span>
+                <NavIcon iconKey={stat.icon} className="w-6 h-6 text-gray-400"/>
                 <div><div className="text-lg font-bold text-[#0F172A]">{stat.v}</div><div className="text-xs text-gray-400">{stat.l}</div></div>
               </div>
             ))}
@@ -1014,14 +1026,14 @@ export default function FastReportsPage() {
             <div className="flex flex-wrap gap-2 px-1">
               {ownerScope !== 'all' && (
                 <span className="bg-blue-100 text-blue-700 text-xs px-3 py-1 rounded-full font-medium flex items-center gap-1">
-                  👤 {ownerScope === 'mine' ? 'My Records' : 'My Team'}
-                  <button onClick={()=>setOwnerScope('all')} className="ml-1 text-blue-400 hover:text-blue-700">✕</button>
+                  <User className="w-3 h-3"/> {ownerScope === 'mine' ? 'My Records' : 'My Team'}
+                  <button onClick={()=>setOwnerScope('all')} className="ml-1 text-blue-400 hover:text-blue-700"><X className="w-3.5 h-3.5"/></button>
                 </span>
               )}
               {dateRange && (
                 <span className="bg-purple-100 text-purple-700 text-xs px-3 py-1 rounded-full font-medium flex items-center gap-1">
-                  📅 {DATE_RANGES.find(d=>d.v===dateRange)?.l}
-                  <button onClick={()=>setDateRange('')} className="ml-1 text-purple-400 hover:text-purple-700">✕</button>
+                  <Calendar className="w-3 h-3"/> {DATE_RANGES.find(d=>d.v===dateRange)?.l}
+                  <button onClick={()=>setDateRange('')} className="ml-1 text-purple-400 hover:text-purple-700"><X className="w-3.5 h-3.5"/></button>
                 </span>
               )}
               {filters.map((f, i) => {
@@ -1029,7 +1041,7 @@ export default function FastReportsPage() {
                 return (
                   <span key={i} className="bg-green-100 text-green-700 text-xs px-3 py-1 rounded-full font-medium flex items-center gap-1">
                     {fd?.l} {f.operator} {f.value}
-                    <button onClick={()=>setFilters(prev=>prev.filter((_,xi)=>xi!==i))} className="ml-1 text-green-400 hover:text-green-700">✕</button>
+                    <button onClick={()=>setFilters(prev=>prev.filter((_,xi)=>xi!==i))} className="ml-1 text-green-400 hover:text-green-700"><X className="w-3.5 h-3.5"/></button>
                   </span>
                 );
               })}
@@ -1040,15 +1052,15 @@ export default function FastReportsPage() {
           <div className="bg-white rounded-[24px] border border-blue-100 shadow overflow-hidden">
             <div className="flex items-center justify-between px-6 py-4 border-b border-blue-50 flex-wrap gap-2">
               <div className="flex gap-2">
-                {[{k:'table',l:'📋 Table'},{k:'chart',l:'📊 Chart'}].map(t=>(
+                {[{k:'table',l:'Table',icon:Table2},{k:'chart',l:'Chart',icon:BarChart3}].map(t=>(
                   <button key={t.k} onClick={()=>setActiveTab(t.k)}
-                    className={`px-5 py-2 rounded-xl text-sm font-semibold transition-all ${activeTab===t.k?'bg-gradient-to-r from-[#0F172A] to-blue-800 text-white shadow':'text-gray-500 hover:bg-blue-50'}`}>
-                    {t.l}
+                    className={`px-5 py-2 rounded-xl text-sm font-semibold transition-all flex items-center gap-1.5 ${activeTab===t.k?'bg-gradient-to-r from-[#0F172A] to-blue-800 text-white shadow':'text-gray-500 hover:bg-blue-50'}`}>
+                    <t.icon className="w-4 h-4"/>{t.l}
                   </button>
                 ))}
               </div>
               <div className="text-xs text-gray-400">
-                {objDef?.icon} {objDef?.l} · <strong className="text-[#0F172A]">{filteredData.length}</strong> records · {columns.length} columns
+                <span className="inline-flex items-center gap-1.5"><NavIcon iconKey={objDef?.v} className="w-4 h-4"/> {objDef?.l}</span> · <strong className="text-[#0F172A]">{filteredData.length}</strong> records · {columns.length} columns
                 {sorts.length > 0 && ` · sorted by ${sorts.map(s=>fields.find(f=>f.k===s.field)?.l).join(', ')}`}
               </div>
             </div>
@@ -1086,7 +1098,7 @@ export default function FastReportsPage() {
                     <tbody>
                       {pagedData.length === 0
                         ? <tr><td colSpan={columns.length+1} className="px-5 py-16 text-center text-gray-400">
-                            <div className="text-4xl mb-2">🔍</div>
+                              <div className="flex justify-center mb-2 text-gray-300"><Search className="w-9 h-9"/></div>
                             <div>No records match the current filters.</div>
                             <button onClick={()=>{setFilters([]);setDateRange('');setOwnerScope('all');}} className="text-blue-500 text-sm mt-2 hover:underline">Clear all filters</button>
                           </td></tr>
@@ -1149,7 +1161,7 @@ export default function FastReportsPage() {
             {!rawDataLoading && activeTab === 'chart' && (
               <div className="p-6">
                 {!groupBy
-                  ? <div className="text-center py-16 text-gray-400"><div className="text-4xl mb-2">📊</div><div>Set a Group By field in the left panel to generate a chart</div></div>
+                  ? <div className="text-center py-16 text-gray-400"><div className="flex justify-center mb-2 text-gray-300"><BarChart3 className="w-9 h-9"/></div><div>Set a Group By field in the left panel to generate a chart</div></div>
                   : groupedData.length === 0
                   ? <div className="text-center py-16 text-gray-400">No data to chart with current filters</div>
                   : chartType === 'none'
@@ -1170,7 +1182,7 @@ export default function FastReportsPage() {
                               label={({label,percent})=>`${label} (${(percent*100).toFixed(0)}%)`}>
                               {groupedData.map((_,i)=><Cell key={i} fill={COLORS[i%COLORS.length]}/>)}
                             </Pie>
-                            <Tooltip formatter={(v,n,p)=>[chartMetric==='count'?`${v} records`:fmtCurrency(v,currency), p.payload.label]}/>
+                            <Tooltip formatter={(v,n,p)=>[chartMetric==='count'?`${v} records`:fmtCurrency(v,currency), p.payload.label]} contentStyle={{ backgroundColor: '#fff', border: '1px solid #e2e8f0', borderRadius: 12 }} labelStyle={{ fontWeight: 'bold', color: '#0F172A' }} itemStyle={{ color: '#334155' }}/>
                             <Legend/>
                           </PieChart>
                         ) : chartType === 'area' ? (
@@ -1184,7 +1196,7 @@ export default function FastReportsPage() {
                             <CartesianGrid strokeDasharray="3 3" stroke="#F1F5F9"/>
                             <XAxis dataKey="label" tick={{fontSize:11}} angle={-30} textAnchor="end" interval={0}/>
                             <YAxis tick={{fontSize:11}}/>
-                            <Tooltip formatter={(v)=>[chartMetric==='count'?`${v} records`:fmtCurrency(v,currency)]}/>
+                            <Tooltip formatter={(v)=>[chartMetric==='count'?`${v} records`:fmtCurrency(v,currency)]} contentStyle={{ backgroundColor: '#fff', border: '1px solid #e2e8f0', borderRadius: 12 }} labelStyle={{ fontWeight: 'bold', color: '#0F172A' }} itemStyle={{ color: '#334155' }}/>
                             <Area type="monotone" dataKey={chartMetric==='count'?'count':'value'} stroke="#3B82F6" fill="url(#colorCount)" strokeWidth={2}/>
                           </AreaChart>
                         ) : chartType === 'line' ? (
@@ -1192,7 +1204,7 @@ export default function FastReportsPage() {
                             <CartesianGrid strokeDasharray="3 3" stroke="#F1F5F9"/>
                             <XAxis dataKey="label" tick={{fontSize:11}} angle={-30} textAnchor="end" interval={0}/>
                             <YAxis tick={{fontSize:11}}/>
-                            <Tooltip formatter={(v)=>[chartMetric==='count'?`${v} records`:fmtCurrency(v,currency)]}/>
+                            <Tooltip formatter={(v)=>[chartMetric==='count'?`${v} records`:fmtCurrency(v,currency)]} contentStyle={{ backgroundColor: '#fff', border: '1px solid #e2e8f0', borderRadius: 12 }} labelStyle={{ fontWeight: 'bold', color: '#0F172A' }} itemStyle={{ color: '#334155' }}/>
                             <Legend/>
                             <Line type="monotone" dataKey={chartMetric==='count'?'count':'value'} name={chartMetric==='count'?'Count':fields.find(f=>f.k===chartMetric)?.l}
                               stroke="#0F172A" strokeWidth={2.5} dot={{fill:'#0F172A',r:4}} activeDot={{r:6}}/>
@@ -1202,7 +1214,7 @@ export default function FastReportsPage() {
                             <CartesianGrid strokeDasharray="3 3" stroke="#F1F5F9"/>
                             <XAxis dataKey="label" tick={{fontSize:11}} angle={-30} textAnchor="end" interval={0}/>
                             <YAxis tick={{fontSize:11}}/>
-                            <Tooltip cursor={{fill:'#F1F5F9'}} formatter={(v)=>[chartMetric==='count'?`${v} records`:fmtCurrency(v,currency)]}/>
+                            <Tooltip cursor={{fill:'#F1F5F9'}} formatter={(v)=>[chartMetric==='count'?`${v} records`:fmtCurrency(v,currency)]} contentStyle={{ backgroundColor: '#fff', border: '1px solid #e2e8f0', borderRadius: 12 }} labelStyle={{ fontWeight: 'bold', color: '#0F172A' }} itemStyle={{ color: '#334155' }}/>
                             <Legend/>
                             <Bar dataKey={chartMetric==='count'?'count':'value'} name={chartMetric==='count'?'Count':fields.find(f=>f.k===chartMetric)?.l}
                               radius={[6,6,0,0]}>
@@ -1248,7 +1260,7 @@ export default function FastReportsPage() {
           {/* Saved Reports */}
           <div className="bg-white rounded-[24px] border border-blue-100 shadow overflow-hidden">
             <div className="px-6 py-4 border-b border-blue-50 flex items-center justify-between">
-              <h3 className="font-bold text-[#0F172A]">💾 Saved Reports</h3>
+              <h3 className="font-bold text-[#0F172A] flex items-center gap-2"><Save className="w-4 h-4"/> Saved Reports</h3>
               <div className="flex items-center gap-3">
                 <div className="flex gap-1">
                   {[{k:'mine',l:'My Reports'},{k:'public',l:'Shared'}].map(t=>(
@@ -1274,7 +1286,7 @@ export default function FastReportsPage() {
                               <div>
                                 <div className="font-semibold text-[#0F172A] text-sm">{r.name}</div>
                                 <div className="text-xs text-gray-400 mt-0.5 flex items-center gap-1">
-                                  <span>{objInfo?.icon}</span><span className="capitalize">{objInfo?.l || r.object_type}</span>
+                                  <NavIcon iconKey={objInfo?.v} className="w-3.5 h-3.5"/><span className="capitalize">{objInfo?.l || r.object_type}</span>
                                   <span>·</span><span>{CHART_TYPES.find(c=>c.v===r.chart_type)?.l||'Table'}</span>
                                 </div>
                                 {r.columns?.length > 0 && <div className="text-xs text-gray-300 mt-0.5">{r.columns.length} columns</div>}
@@ -1284,7 +1296,7 @@ export default function FastReportsPage() {
                             <div className="flex gap-2 mt-3">
                               <button onClick={()=>loadReport(r)} className="flex-1 bg-gradient-to-r from-[#0F172A] to-blue-800 text-white py-2 rounded-xl text-xs font-bold hover:opacity-90">▶ Load</button>
                               {r.created_by === currentUser?.email && (
-                                <button onClick={()=>deleteReport(r.id)} className="bg-red-100 text-red-500 px-3 py-2 rounded-xl text-xs font-semibold hover:bg-red-200">🗑</button>
+                                <button onClick={()=>deleteReport(r.id)} className="bg-red-100 text-red-500 px-3 py-2 rounded-xl hover:bg-red-200"><Trash2 className="w-3.5 h-3.5"/></button>
                               )}
                             </div>
                           </div>

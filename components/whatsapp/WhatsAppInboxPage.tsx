@@ -116,7 +116,9 @@ export default function WhatsAppInboxPage() {
                 <span className="text-[11px] text-gray-400">{timeLabel(c.last.created_at)}</span>
               </div>
               <p className="text-xs text-gray-500 mt-0.5 truncate">
-                {c.last.direction === 'outbound' ? '↗ ' : '↙ '}{c.last.message_body || (c.last.status === 'failed' ? `Failed: ${c.last.error_message || ''}` : '(no content)')}
+                {c.last.status === 'failed'
+                  ? `⚠️ Failed: ${c.last.error_message || 'Unknown error'}`
+                  : `${c.last.direction === 'outbound' ? '↗ ' : '↙ '}${c.last.message_body || '(no content)'}`}
               </p>
             </button>
           ))}
@@ -137,7 +139,12 @@ export default function WhatsAppInboxPage() {
               {activeConversation.messages.map(m => (
                 <div key={m.id} className={`flex ${m.direction === 'outbound' ? 'justify-end' : 'justify-start'}`}>
                   <div className={`max-w-md rounded-2xl px-4 py-2.5 ${m.direction === 'outbound' ? 'bg-[#25D366] text-white' : 'bg-white border border-gray-200 text-[#0F172A]'}`}>
-                    <p className="text-sm whitespace-pre-wrap">{m.message_body || (m.status === 'failed' ? `⚠️ Failed to send: ${m.error_message || 'Unknown error'}` : '(no content logged)')}</p>
+                    <p className="text-sm whitespace-pre-wrap">
+                      {m.message_body || '(no content logged)'}
+                      {m.status === 'failed' && (
+                        <span className="block mt-1.5 pt-1.5 border-t border-white/30 font-semibold">⚠️ Failed: {m.error_message || 'Unknown error'}</span>
+                      )}
+                    </p>
                     <div className={`text-[10px] mt-1 flex items-center gap-1.5 ${m.direction === 'outbound' ? 'text-white/70' : 'text-gray-400'}`}>
                       <span>{timeLabel(m.created_at)}</span>
                       {m.direction === 'outbound' && <span>· {m.status === 'delivered' ? '✓✓ Delivered' : m.status === 'read' ? '✓✓ Read' : m.status === 'failed' ? '✕ Failed' : '✓ Sent'}</span>}

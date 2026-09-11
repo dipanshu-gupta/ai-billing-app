@@ -5,6 +5,7 @@ import { useState, useEffect, useRef, useMemo } from 'react';
 import { useApp } from '@/context/AppContext';
 import { useObjectLabels } from '@/lib/useObjectLabels';
 import { getStatusColor } from '@/lib/utils';
+import { NavIcon } from '@/lib/icons';
 
 const B2B_SEARCH_CONFIG = [
   { page:'customers',     icon:'👥', label:'Customers',    fields:['name','email','company','city'],            secondary: r => r.industry || r.email || r.city },
@@ -92,8 +93,14 @@ export default function GlobalSearch({ onNavigate }) {
   };
 
   const handleSelect = (page, record) => {
+    // Capture where the user actually was before this search, so closing
+    // the record later returns them there instead of dumping them on the
+    // searched object's list page - the previous behavior regardless of
+    // where a search was made from.
+    const returnToPage = typeof window !== 'undefined' ? sessionStorage.getItem('bp_active_page') : null;
+    const returnTo = (returnToPage && returnToPage !== page) ? { page: returnToPage } : null;
     // Dispatch a single event — AppShell handles both navigation AND opening the record
-    window.dispatchEvent(new CustomEvent('open-record', { detail: { page, record } }));
+    window.dispatchEvent(new CustomEvent('open-record', { detail: { page, record, returnTo } }));
     setQuery('');
     setOpen(false);
   };
@@ -144,7 +151,7 @@ export default function GlobalSearch({ onNavigate }) {
             <div key={group.page}>
               {/* Group header */}
               <div className="px-4 py-2 bg-gray-50 border-b border-gray-100 flex items-center gap-2">
-                <span className="text-base">{group.icon}</span>
+                <NavIcon iconKey={group.page} className="w-4 h-4 text-gray-500"/>
                 <span className="text-xs font-bold uppercase tracking-wider text-gray-500">{group.label}</span>
                 <span className="ml-auto text-xs text-gray-400">{group.matches.length} result{group.matches.length!==1?'s':''}</span>
               </div>
@@ -161,9 +168,9 @@ export default function GlobalSearch({ onNavigate }) {
                     className={`w-full flex items-center gap-3 px-4 py-3 text-left border-b border-gray-50 transition-all hover:bg-blue-50
                       ${isFocused ? 'bg-blue-50' : 'bg-white'}`}
                   >
-                    <div className={`w-8 h-8 rounded-xl flex items-center justify-center text-sm flex-shrink-0
+                    <div className={`w-8 h-8 rounded-xl flex items-center justify-center flex-shrink-0
                       ${isFocused ? 'bg-[#0F172A] text-white' : 'bg-blue-100 text-blue-700'}`}>
-                      {group.icon}
+                      <NavIcon iconKey={group.page} className="w-4 h-4"/>
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="text-sm font-semibold text-[#0F172A] truncate">{name}</div>

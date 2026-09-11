@@ -4,6 +4,7 @@
 import { useState, useMemo } from 'react';
 import { useApp } from '@/context/AppContext';
 import { formatCurrency } from '@/lib/utils';
+import { NavIcon } from '@/lib/icons';
 import {
   BarChart, Bar, LineChart, Line, PieChart, Pie, Cell,
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip,
@@ -250,7 +251,7 @@ export default function DashboardPage() {
                   <CartesianGrid strokeDasharray="3 3" stroke="#F1F5F9"/>
                   <XAxis dataKey="stage" tick={{fontSize:12}}/>
                   <YAxis tickFormatter={v=>fmtShort(v)} tick={{fontSize:11}}/>
-                  <Tooltip formatter={v=>fmt(v)} labelFormatter={l=>`Stage: ${l}`}/>
+                  <Tooltip formatter={v=>fmt(v)} labelFormatter={l=>`Stage: ${l}`} contentStyle={{ backgroundColor: '#fff', border: '1px solid #e2e8f0', borderRadius: 12 }} labelStyle={{ fontWeight: 'bold', color: '#0F172A' }} itemStyle={{ color: '#334155' }}/>
                   <Bar dataKey="value" name="Pipeline Value" radius={[8,8,0,0]}>
                     {pipelineData.map((_,i)=><Cell key={i} fill={COLORS[i%COLORS.length]}/>)}
                   </Bar>
@@ -270,7 +271,7 @@ export default function DashboardPage() {
                   <CartesianGrid strokeDasharray="3 3" stroke="#F1F5F9"/>
                   <XAxis dataKey="month" tick={{fontSize:12}}/>
                   <YAxis tickFormatter={v=>fmtShort(v)} tick={{fontSize:11}}/>
-                  <Tooltip formatter={v=>fmt(v)}/>
+                  <Tooltip formatter={v=>fmt(v)} contentStyle={{ backgroundColor: '#fff', border: '1px solid #e2e8f0', borderRadius: 12 }} labelStyle={{ fontWeight: 'bold', color: '#0F172A' }} itemStyle={{ color: '#334155' }}/>
                   <Legend/>
                   <Area type="monotone" dataKey="orders" name="Orders" stroke="#0F172A" fill="url(#gOrders)" strokeWidth={2}/>
                   <Area type="monotone" dataKey="invoices" name="Paid Invoices" stroke="#3B82F6" fill="url(#gInv)" strokeWidth={2}/>
@@ -287,7 +288,7 @@ export default function DashboardPage() {
                     <Pie data={leadsBySource} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={110} innerRadius={50} label={({name,percent})=>`${name} ${(percent*100).toFixed(0)}%`} labelLine={false}>
                       {leadsBySource.map((_,i)=><Cell key={i} fill={COLORS[i%COLORS.length]}/>)}
                     </Pie>
-                    <Tooltip/>
+                    <Tooltip contentStyle={{ backgroundColor: '#fff', border: '1px solid #e2e8f0', borderRadius: 12 }} labelStyle={{ fontWeight: 'bold', color: '#0F172A' }} itemStyle={{ color: '#334155' }}/>
                   </PieChart>
                 </ResponsiveContainer>
               </div>
@@ -298,7 +299,7 @@ export default function DashboardPage() {
                     <CartesianGrid strokeDasharray="3 3" stroke="#F1F5F9"/>
                     <XAxis dataKey="name" tick={{fontSize:11}}/>
                     <YAxis tick={{fontSize:11}}/>
-                    <Tooltip/>
+                    <Tooltip contentStyle={{ backgroundColor: '#fff', border: '1px solid #e2e8f0', borderRadius: 12 }} labelStyle={{ fontWeight: 'bold', color: '#0F172A' }} itemStyle={{ color: '#334155' }}/>
                     <Bar dataKey="value" name="Count" radius={[6,6,0,0]}>
                       {fLeads.map((_,i)=><Cell key={i} fill={COLORS[i%COLORS.length]}/>)}
                     </Bar>
@@ -315,7 +316,7 @@ export default function DashboardPage() {
                   <CartesianGrid strokeDasharray="3 3" stroke="#F1F5F9"/>
                   <XAxis type="number" tick={{fontSize:12}}/>
                   <YAxis dataKey="name" type="category" tick={{fontSize:12}} width={80}/>
-                  <Tooltip/>
+                  <Tooltip contentStyle={{ backgroundColor: '#fff', border: '1px solid #e2e8f0', borderRadius: 12 }} labelStyle={{ fontWeight: 'bold', color: '#0F172A' }} itemStyle={{ color: '#334155' }}/>
                   <Bar dataKey="value" name="Count" radius={[0,6,6,0]}>
                     {activityData.map((_,i)=><Cell key={i} fill={COLORS[i%COLORS.length]}/>)}
                   </Bar>
@@ -331,7 +332,7 @@ export default function DashboardPage() {
                   <CartesianGrid strokeDasharray="3 3" stroke="#F1F5F9"/>
                   <XAxis dataKey="name" tick={{fontSize:12}}/>
                   <YAxis tick={{fontSize:12}}/>
-                  <Tooltip/>
+                  <Tooltip contentStyle={{ backgroundColor: '#fff', border: '1px solid #e2e8f0', borderRadius: 12 }} labelStyle={{ fontWeight: 'bold', color: '#0F172A' }} itemStyle={{ color: '#334155' }}/>
                   <Bar dataKey="value" name="Quotations" radius={[8,8,0,0]}>
                     {quoteFunnel.map((_,i)=><Cell key={i} fill={COLORS[i%COLORS.length]}/>)}
                   </Bar>
@@ -390,15 +391,15 @@ export default function DashboardPage() {
           <div className="bg-gradient-to-r from-[#0F172A] to-blue-900 px-5 py-3.5"><h3 className="text-white font-bold">📊 Quick Metrics</h3></div>
           <div className="p-5 space-y-4">
             {[
-              { l:'Avg Deal Size', v: fOpps.length ? fmt(fOpps.reduce((s,o)=>s+Number(o.amount||0),0)/fOpps.length) : '—', icon:'📐' },
-              { l:'Invoice Collection (All Time)', v: invoices.length ? `${Math.round(invoices.filter(i=>i.status==='Paid').length/invoices.length*100)}%` : '—', icon:'💳' },
-              { l:'Lead Conversion', v: `${kpis.convRate}%`, icon:'🔄' },
-              { l:'Open Activities (Live)', v: activities.filter(a=>a.status==='Open').length, icon:'📅' },
-              { l:'Active Contacts (Live)', v: contacts.filter(c=>c.status==='Active').length, icon:'📇' },
+              { l:'Avg Deal Size', v: fOpps.length ? fmt(fOpps.reduce((s,o)=>s+Number(o.amount||0),0)/fOpps.length) : '—', icon:'avgDealSize' },
+              { l:'Invoice Collection (All Time)', v: invoices.length ? `${Math.round(invoices.filter(i=>i.status==='Paid').length/invoices.length*100)}%` : '—', icon:'invoiceCollection' },
+              { l:'Lead Conversion', v: `${kpis.convRate}%`, icon:'leadConversion' },
+              { l:'Open Activities (Live)', v: activities.filter(a=>a.status==='Open').length, icon:'openActivities' },
+              { l:'Active Contacts (Live)', v: contacts.filter(c=>c.status==='Active').length, icon:'activeContacts' },
             ].map(m=>(
               <div key={m.l} className="flex items-center justify-between p-3 bg-blue-50 rounded-2xl">
                 <div className="flex items-center gap-2">
-                  <span className="text-lg">{m.icon}</span>
+                  <NavIcon iconKey={m.icon} className="w-[18px] h-[18px] text-blue-500"/>
                   <span className="text-sm text-gray-600">{m.l}</span>
                 </div>
                 <span className="font-bold text-[#0F172A]">{m.v}</span>

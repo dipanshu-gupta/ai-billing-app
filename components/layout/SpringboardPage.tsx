@@ -5,81 +5,29 @@ import { useApp } from '@/context/AppContext';
 import { t, THEMES } from '@/lib/i18n';
 import { useObjectLabels } from '@/lib/useObjectLabels';
 import { SALES_GROUP, RETAIL_GROUP, BOTTOM_ITEMS, DASHBOARD_ITEM, makeCanSee } from '@/lib/navPermissions';
+import { NavIcon } from '@/lib/icons';
+import { Plus } from 'lucide-react';
 
-// Tile gradients are derived from the tenant's OWN selected theme (the same
-// 3-color-plus-accent data the sidebar uses for its background), not a
-// generic, unrelated rainbow — recombining those 4 colors into 5 distinct
-// diagonal gradients gives bold, varied tiles that still visually belong to
-// this specific tenant's chosen palette.
-function getThemeTileGradients(themeObj) {
-  const [c0, c1, c2] = themeObj.colors;
-  const a = themeObj.accent;
-  return [
-    `linear-gradient(135deg, ${c0}, ${c1})`,
-    `linear-gradient(135deg, ${c1}, ${a})`,
-    `linear-gradient(140deg, ${c0}, ${a})`,
-    `linear-gradient(130deg, ${c2}, ${a})`,
-    `linear-gradient(150deg, ${c0}, ${c2})`,
-  ];
-}
-
-// Low-poly faceted triangle mesh, matching the reference image's crystalline
-// look — colored entirely from the tenant's own theme palette instead of a
-// fixed blue, and faded from near-invisible (top-left, where the greeting
-// text lives) to more visible (bottom-right, open canvas) so it can never
-// interfere with readability. A small seeded PRNG keeps the jitter and
-// per-facet shading stable across renders — not Math.random(), which would
-// regenerate a different pattern (a visible "flicker") on every reload.
-function generateLowPolyMesh(themeObj) {
-  let seed = 42;
+// Enterprise "textured surface" background, matching the Oracle Fusion
+// reference's look: a soft dot/circle texture plus a large, blurred
+// abstract organic shape - both colored entirely from the tenant's own
+// theme, not a fixed hue. A small seeded PRNG keeps the dot placement
+// stable across renders rather than reshuffling on every reload.
+function generateSurfacePattern(themeObj) {
+  let seed = 7;
   const rand = () => { seed = (seed * 9301 + 49297) % 233280; return seed / 233280; };
-
-  const cols = 11, rows = 7;
-  const W = 900, H = 520;
-  const cellW = W / cols, cellH = H / rows;
-  const points = [];
-  for (let r = 0; r <= rows; r++) {
-    const row = [];
-    for (let c = 0; c <= cols; c++) {
-      // Boundary points stay fixed exactly on the rectangle's edge — only
-      // interior points get jittered. Jittering every point (including the
-      // outer edge) made the mesh's own silhouette jagged rather than a
-      // clean rectangle, which is what produced a "torn edge" look right
-      // where the pattern should simply reach the container's boundary.
-      const onEdge = r === 0 || r === rows || c === 0 || c === cols;
-      row.push([
-        c * cellW + (onEdge ? 0 : (rand() - 0.5) * cellW * 0.7),
-        r * cellH + (onEdge ? 0 : (rand() - 0.5) * cellH * 0.7),
-      ]);
-    }
-    points.push(row);
+  const dots = [];
+  for (let i = 0; i < 70; i++) {
+    dots.push({ cx: rand() * 900, cy: rand() * 420, r: 3 + rand() * 14, opacity: 0.04 + rand() * 0.08, outline: false });
   }
-
-  const palette = [themeObj.colors[0], themeObj.colors[1], themeObj.colors[2], themeObj.accent];
-  const triangles = [];
-  for (let r = 0; r < rows; r++) {
-    for (let c = 0; c < cols; c++) {
-      const p1 = points[r][c], p2 = points[r][c + 1], p3 = points[r + 1][c], p4 = points[r + 1][c + 1];
-      [[p1, p2, p3], [p2, p4, p3]].forEach(tri => {
-        const cx = (tri[0][0] + tri[1][0] + tri[2][0]) / 3;
-        const cy = (tri[0][1] + tri[1][1] + tri[2][1]) / 3;
-        // Fade weight: 0 near top-left, up to 1 toward bottom-right —
-        // mirrors the reference image's own light-to-saturated composition.
-        const fade = Math.min(1, Math.max(0, (cx / W) * 0.55 + (cy / H) * 0.55));
-        const facetShade = 0.65 + rand() * 0.35; // per-triangle brightness variance for the "facet catching light" look
-        triangles.push({
-          points: tri,
-          color: palette[Math.floor(rand() * palette.length)],
-          opacity: fade * 0.4 * facetShade,
-        });
-      });
-    }
+  for (let i = 0; i < 30; i++) {
+    dots.push({ cx: rand() * 900, cy: rand() * 420, r: 8 + rand() * 20, opacity: 0.08 + rand() * 0.1, outline: true });
   }
-  return triangles;
+  return dots;
 }
 
 export default function SpringboardPage({ onNavigate }) {
-  const { currentUser, currentUserPermissions, permissionsLoaded, appPreferences, appearance } = useApp();
+  const { currentUser, currentUserPermissions, permissionsLoaded, appPreferences, appearance, setPendingRecord } = useApp();
   const [activeTabState, setActiveTabState] = useState(null);
 
   const isAdmin = currentUserPermissions.includes('__admin__') || currentUser?.is_admin === true;
@@ -87,9 +35,30 @@ export default function SpringboardPage({ onNavigate }) {
   const lang = appearance?.language || 'en';
   const { getObjectLabel } = useObjectLabels();
   const themeObj = THEMES.find(th => th.id === (appearance?.theme || 'navy')) || THEMES[0];
-  const tileGradients = useMemo(() => getThemeTileGradients(themeObj), [themeObj]);
-  const lowPolyMesh = useMemo(() => generateLowPolyMesh(themeObj), [themeObj]);
+  const surfaceDots = useMemo(() => generateSurfacePattern(themeObj), [themeObj]);
   const canSee = makeCanSee({ isAdmin, b2cMode, appPreferences, currentUserPermissions, permissionsLoaded });
+
+  // Quick Actions — jumps straight to a page with its create form already
+  // open, using the same pendingRecord.openCreate mechanism the rest of the
+  // app already relies on for cross-page create flows (e.g. "Create
+  // Booking" from an Activity), rather than a new, separate mechanism.
+  const startCreate = (page) => { setPendingRecord({ page, openCreate: true }); onNavigate?.(page); };
+  const QUICK_ACTIONS = useMemo(() => {
+    const list = b2cMode
+      ? [
+          { label: 'Create Customer',  icon: '👤', page: 'retailCustomers' },
+          { label: 'Create Order',     icon: '🛍️', page: 'retailOrders' },
+          { label: 'Create Invoice',   icon: '🧾', page: 'retailInvoices' },
+          { label: 'Create Activity',  icon: '📋', page: 'retailActivities' },
+        ]
+      : [
+          { label: 'Create Contact',      icon: '👤', page: 'contacts' },
+          { label: 'Create Lead',         icon: '🎯', page: 'leads' },
+          { label: 'Create Opportunity',  icon: '💼', page: 'opportunities' },
+          { label: 'Create Activity',     icon: '📋', page: 'activities' },
+        ];
+    return list.filter(a => canSee({ key: a.page, permission: null }));
+  }, [b2cMode, canSee]);
 
   // Tab -> items mapping. Swaps in the B2C (retail) or B2B (CRM) item set
   // per tab, pulled from the exact same shared arrays the sidebar uses —
@@ -147,75 +116,91 @@ export default function SpringboardPage({ onNavigate }) {
   }
 
   return (
-    <div className="relative min-h-screen -m-6 p-6">
-      {/* Ambient background — a low-poly faceted triangle mesh, matching the
-          reference image's crystalline look, colored from the tenant's own
-          theme palette rather than fixed blue, and faded from near-invisible
-          near the greeting text toward more visible in the open canvas.
-          Deliberately no z-index here (relies on normal DOM paint order —
-          this div is declared before the content below, so it naturally
-          paints first/behind) since a negative z-index can slip an element
-          behind an ANCESTOR's own background if that ancestor establishes
-          its own stacking context, which is what made an earlier version of
-          this invisible entirely. */}
-      <div className="absolute inset-0 overflow-hidden pointer-events-none" aria-hidden="true">
-        <svg viewBox="0 0 900 520" className="absolute inset-0 w-full h-full" preserveAspectRatio="xMaxYMax slice">
-          {lowPolyMesh.map((tri, i) => (
-            <polygon
-              key={i}
-              points={tri.points.map(p => p.join(',')).join(' ')}
-              fill={tri.color}
-              opacity={tri.opacity}
-            />
-          ))}
-        </svg>
-      </div>
-
-      <div className="relative space-y-6">
-        <div>
-          <h1 className="text-2xl font-bold text-[#0F172A]">{greeting()}, {currentUser?.first_name || 'there'} 👋</h1>
-          <p className="text-gray-500 text-sm mt-1">Jump straight to what you need.</p>
+    <div className="relative min-h-screen -m-6">
+      {/* Continuous textured surface — gradient wash from the tenant's own
+          theme colors, a soft dot texture, and a large blurred organic
+          shape for depth. Everything (greeting, tabs, quick actions, apps)
+          sits on this one surface, matching the reference's single-plane
+          composition rather than a white card floating on a colored page. */}
+      <div className="relative overflow-hidden min-h-screen" style={{ background: `linear-gradient(160deg, ${themeObj.colors[0]}, ${themeObj.colors[1]})` }}>
+        <div className="absolute inset-0 overflow-hidden pointer-events-none" aria-hidden="true">
+          <svg viewBox="0 0 900 420" className="absolute inset-0 w-full h-full" preserveAspectRatio="xMaxYMax slice">
+            {/* Soft abstract organic shape, off to one side — depth without
+                literal imagery that would need explaining */}
+            <ellipse cx="700" cy="120" rx="260" ry="220" fill={themeObj.accent} opacity="0.12"/>
+            <ellipse cx="780" cy="260" rx="180" ry="160" fill={themeObj.colors[2] || themeObj.accent} opacity="0.10"/>
+            {/* Dot texture */}
+            {surfaceDots.map((d, i) => (
+              d.outline
+                ? <circle key={i} cx={d.cx} cy={d.cy} r={d.r} fill="none" stroke="#FFFFFF" strokeWidth="1.5" opacity={d.opacity}/>
+                : <circle key={i} cx={d.cx} cy={d.cy} r={d.r} fill="#FFFFFF" opacity={d.opacity}/>
+            ))}
+          </svg>
         </div>
 
-        {/* Tab bar — plain clickable text, one shared line beneath the row,
-            active tab gets a colored underline sitting on that same line */}
-        <div className="flex gap-7 border-b border-gray-200 overflow-x-auto">
-          {visibleTabs.map(tab => {
-            const active = activeTab === tab.id;
-            return (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTabState(tab.id)}
-                className={`flex items-center gap-2 pb-3 pt-1 text-sm font-semibold whitespace-nowrap border-b-2 transition-colors duration-200 ${
-                  active ? '' : 'border-transparent text-gray-400 hover:text-gray-600'
-                }`}
-                style={active ? { color: themeObj.accent, borderColor: themeObj.accent } : undefined}
-              >
-                <span className="text-base">{tab.icon}</span>
-                <span>{tab.label}</span>
-              </button>
-            );
-          })}
-        </div>
+        <div className="relative px-6 pt-8 pb-10">
+          <div>
+            <h1 className="text-4xl text-white" style={{ fontFamily: 'Georgia, "Times New Roman", serif' }}>{greeting()}, {currentUser?.first_name || 'there'}</h1>
+            <p className="text-white/60 text-sm mt-1.5">Jump straight to what you need.</p>
+          </div>
 
-        {/* Tile grid — bold tiles in gradients derived from the tenant's own
-            selected theme, not a generic unrelated palette */}
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
-          {currentTab?.items.map((item, idx) => (
-            <button
-              key={item.key}
-              onClick={() => item.key === '_profile' ? window.dispatchEvent(new CustomEvent('open-profile')) : onNavigate?.(item.key)}
-              className="group relative aspect-square rounded-[24px] text-white shadow-lg hover:shadow-2xl hover:-translate-y-1 transition-all duration-200 flex flex-col items-center justify-center gap-3 p-4 overflow-hidden"
-              style={{ background: tileGradients[idx % tileGradients.length] }}
-            >
-              {/* Subtle sheen for depth, rather than a flat gradient fill */}
-              <div className="absolute inset-0 bg-gradient-to-t from-black/10 to-white/10 pointer-events-none" />
-              <div className="relative w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center group-hover:scale-110 transition-transform duration-200">
-                <span className="text-3xl drop-shadow-md">{item.icon}</span>
+          {/* Tab bar — white/translucent text on the colored surface, active
+              tab gets a solid white underline */}
+          <div className="flex gap-7 border-b border-white/15 overflow-x-auto mt-7">
+            {visibleTabs.map(tab => {
+              const active = activeTab === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => setActiveTabState(tab.id)}
+                  className={`flex items-center gap-2 pb-3 pt-1 text-sm font-semibold whitespace-nowrap border-b-2 transition-colors duration-200 ${
+                    active ? 'text-white border-white' : 'border-transparent text-white/50 hover:text-white/80'
+                  }`}
+                >
+                  <NavIcon iconKey={tab.id} className="w-4 h-4"/>
+                  <span>{tab.label}</span>
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Quick Actions + Apps grid, side by side */}
+          <div className="grid grid-cols-1 lg:grid-cols-[220px_1fr] gap-10 mt-8">
+            {QUICK_ACTIONS.length > 0 && (
+              <div>
+                <h3 className="text-white/50 text-xs font-bold uppercase tracking-wider mb-4">Quick Actions</h3>
+                <div className="space-y-1">
+                  {QUICK_ACTIONS.map(a => (
+                    <button key={a.page} onClick={() => startCreate(a.page)}
+                      className="w-full flex items-center gap-3 text-left text-white/85 hover:text-white text-sm py-2 group">
+                      <span className="w-6 h-6 rounded-full border border-white/30 flex items-center justify-center group-hover:border-white/60 group-hover:bg-white/10 transition-all flex-shrink-0">
+                        <Plus className="w-3.5 h-3.5" strokeWidth={2}/>
+                      </span>
+                      <span>{a.label}</span>
+                    </button>
+                  ))}
+                </div>
               </div>
-              <span className="relative text-sm font-bold text-center leading-tight drop-shadow-sm">{getObjectLabel(item.key, t(lang, item.label))}</span>
-            </button>
-          ))}
+            )}
+
+            <div>
+              <h3 className="text-white/50 text-xs font-bold uppercase tracking-wider mb-4">Apps</h3>
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
+                {currentTab?.items.map((item, idx) => (
+                  <button
+                    key={item.key}
+                    onClick={() => item.key === '_profile' ? window.dispatchEvent(new CustomEvent('open-profile')) : onNavigate?.(item.key)}
+                    className="group relative aspect-square rounded-2xl text-white bg-white/10 hover:bg-white/[0.16] border border-white/15 hover:border-white/30 backdrop-blur-sm shadow-sm hover:shadow-lg hover:-translate-y-0.5 transition-all duration-200 flex flex-col items-center justify-center gap-3 p-4"
+                  >
+                    <div className="w-12 h-12 rounded-xl bg-white/15 flex items-center justify-center group-hover:scale-110 transition-transform duration-200">
+                      <NavIcon iconKey={item.key} className="w-6 h-6 text-white"/>
+                    </div>
+                    <span className="text-sm font-semibold text-center leading-tight text-white/90">{getObjectLabel(item.key, t(lang, item.label))}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </div>

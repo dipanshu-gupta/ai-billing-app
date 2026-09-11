@@ -43,6 +43,35 @@ export function TenantProvider({ children }: { children: React.ReactNode }) {
   const [loading,     setLoading]     = useState(true);
   const [blocked,     setBlocked]     = useState(false);
   const [blockReason, setBlockReason] = useState('');
+
+  // Browsers throttle JS timers in backgrounded tabs, which can silently
+  // break Supabase's internal auto-refresh interval - the access token can
+  // expire while the tab is inactive without ever being renewed, and the
+  // throttled timer may not recover correctly once the tab becomes active
+  // again. This is Supabase's own documented mitigation: explicitly stop
+  // auto-refresh while hidden and restart it (forcing a fresh, correct
+  // cycle) when the tab becomes visible again, rather than leaving it to a
+  // timer that browser throttling may have left in a bad state. This is
+  // the likely remaining cause of "everything freezes after inactivity,
+  // only a refresh fixes it" beyond the lock-queue staleness fix above -
+  // that fix addresses calls piling up behind a stuck one during active
+  // use, not a token that silently expired while the tab was backgrounded.
+  useEffect(() => {
+    if (!supabase || typeof document === 'undefined') return;
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        supabase.auth.startAutoRefresh();
+      } else {
+        supabase.auth.stopAutoRefresh();
+      }
+    };
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    // Also cover the case where the provider mounts with the tab already
+    // visible (the common case) - starts the cycle fresh rather than
+    // assuming Supabase's own default start is still on schedule.
+    if (document.visibilityState === 'visible') supabase.auth.startAutoRefresh();
+    return () => document.removeEventListener('visibilitychange', onVisibilityChange);
+  }, [supabase]);
   // Tracks the URL's query string directly (where ?tenant= lives) so
   // resolution correctly re-runs if it changes after mount — a plain
   // useEffect(fn, []) only ever runs once, so if the tenant context changed
@@ -120,6 +149,7 @@ export function TenantProvider({ children }: { children: React.ReactNode }) {
             slug:        resolved.slug,
             id:          resolved.id          || null,
             db_url:      resolved.db_url      || null,
+            db_anon_key: resolved.db_anon_key || null,
             plan:        resolved.plan         || 'shared',
             b2c_enabled: resolved.b2c_enabled ?? false,
             app_name:    resolved.app_name     || 'Umbrella Suite',
@@ -130,6 +160,18 @@ export function TenantProvider({ children }: { children: React.ReactNode }) {
         const client = getTenantSupabaseClient(DEMO_TENANT);
         setTenant(DEMO_TENANT);
         setSupabase(client);
+        if (typeof window !== 'undefined') {
+          (window as any).__bp_supabase = client;
+          (window as any).__bp_tenant = {
+            slug:        DEMO_TENANT.slug,
+            id:          DEMO_TENANT.id          || null,
+            db_url:      DEMO_TENANT.db_url      || null,
+            db_anon_key: DEMO_TENANT.db_anon_key || null,
+            plan:        DEMO_TENANT.plan         || 'shared',
+            b2c_enabled: DEMO_TENANT.b2c_enabled ?? false,
+            app_name:    DEMO_TENANT.app_name     || 'Umbrella Suite',
+          };
+        }
       } finally {
         console.log('[TenantContext] Resolution finished in', Date.now() - t0, 'ms');
         setLoading(false);

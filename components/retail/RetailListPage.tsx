@@ -16,6 +16,8 @@ import { RetailQuickCreateCustomer } from '@/components/retail/RetailQuickCreate
 import LoadingSpinner from '@/components/shared/LoadingSpinner';
 import { useFieldLayout, resolveFieldRow } from '@/lib/useFieldLayout';
 import { useObjectLabels } from '@/lib/useObjectLabels';
+import { NavIcon } from '@/lib/icons';
+import { Search } from 'lucide-react';
 import { fetchServerPage, timePeriodToRange } from '@/lib/serverList';
 import { useAlert } from '@/components/shared/AlertProvider';
 import { useCustomFields } from '@/lib/useCustomFields';
@@ -130,6 +132,19 @@ const FIELD_VALIDATORS: Record<string, (v:any)=>string|null> = {
   tax_rate:         VALIDATORS.percent,
   discount_pct:     VALIDATORS.percent,
   date_of_birth:    VALIDATORS.date_past,
+};
+
+// Formats a retail customer's separate address fields into one readable
+// multi-line string, for auto-filling an order's delivery address or an
+// invoice's billing address when a customer is selected.
+export const formatCustomerAddress = (c) => {
+  if (!c) return '';
+  const lines = [
+    [c.address_line1, c.address_line2].filter(Boolean).join(', '),
+    [c.city, c.state, c.postal_code].filter(Boolean).join(', '),
+    c.country,
+  ].filter(Boolean);
+  return lines.join('\n');
 };
 
 export const RETAIL_CONFIG = {
@@ -324,6 +339,7 @@ export const RETAIL_CONFIG = {
         { key:'owner', label:'Owner', type:'owner' },
       ]},
       { icon:'💬', title:'Notes & Comments', fields:[
+        { key:'billing_address', label:'Billing Address', type:'textarea', full:true },
         { key:'notes', label:'Notes', type:'textarea', full:true },
         { key:'comments', label:'Comments', type:'textarea', full:true },
       ]},
@@ -1192,7 +1208,7 @@ function RetailCustomer360({ customer, onNavigate, onOpenCreate }) {
     const custName = customer.name || '';
     const pageMap  = { order: 'retailOrders', invoice: 'retailInvoices', activity: 'retailActivities' };
     const prefill  = {
-      ...(type !== 'activity' ? buildCustomerPrefill(customer) : { customer: custName, customer_id: customer._uuid || customer.id || '' }),
+      ...buildCustomerPrefill(customer),
       ...(type === 'order'    ? { order_date:    todayLocalISO(), status: 'Open',  channel: 'In-Store' } : {}),
       ...(type === 'invoice'  ? { invoice_date:  todayLocalISO(), status: 'Draft', payment_status: 'Pending' } : {}),
       ...(type === 'activity' ? { activity_date: todayLocalISO(), subject: 'Follow up with '+custName, activity_type: 'Call', status: 'Planned' } : {}),
@@ -1564,7 +1580,14 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo, on
     setCreatingInvoice(true);
     const inv = await createRetailInvoiceFromOrder(edited);
     setCreatingInvoice(false);
-    if (inv) { showAlert(`Invoice ${inv.invoice_number} created from this order.`, { variant:'success', title:'Invoice Created' }); onSaved?.(); handleClose(); }
+    if (inv) {
+      showAlert(`Invoice ${inv.invoice_number} created from this order.`, { variant:'success', title:'Invoice Created' });
+      onSaved?.();
+      setPendingReturnTo({ page: 'retailOrders', record: edited });
+      setPendingRecord({ page: 'retailInvoices', record: inv });
+      window.dispatchEvent(new CustomEvent('retail-navigate', { detail: { page: 'retailInvoices' } }));
+      handleClose();
+    }
   };
 
   // Resolve TAX_PRODUCT / TAX_DOCUMENT placeholder field sets dynamically
@@ -1624,7 +1647,15 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo, on
         || (!edited.customer_id && edited.customer ? retailCustomers.find(x => x.name === edited.customer) : null);
       return <SearchableSelect
         value={resolvedCustomer?._uuid || resolvedCustomer?.id || edited.customer_id || ''}
-        onChange={cid=>{ const c=retailCustomers.find(x=>(x._uuid||x.id)===cid); set('customer_id',c?._uuid||c?.id||''); set('customer',c?.name||''); set('customer_phone',c?.phone||''); }}
+        onChange={cid=>{
+          const c=retailCustomers.find(x=>(x._uuid||x.id)===cid);
+          set('customer_id',c?._uuid||c?.id||''); set('customer',c?.name||''); set('customer_phone',c?.phone||'');
+          // Auto-fill the address from the customer's own record, but only
+          // if this field is currently empty - never overwrites an address
+          // the user has already typed in or edited themselves.
+          const addressField = page==='retailOrders' ? 'delivery_address' : page==='retailInvoices' ? 'billing_address' : null;
+          if (addressField && !edited[addressField] && c) set(addressField, formatCustomerAddress(c));
+        }}
         options={retailCustomers.map(c=>({value:c._uuid||c.id,label:c.name,sub:[c.phone,c.email].filter(Boolean).join(' · ')}))}
         onCreateNew={name=>setQuickCreateCustomer({prefillName:name, onCreated:(id,cname,cphone)=>{ set('customer_id',id); set('customer',cname); if(cphone) set('customer_phone',cphone); }})}
         placeholder="Search customers..." emptyLabel="No customer"
@@ -1739,7 +1770,7 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo, on
         <div className="bg-gradient-to-r from-[#0F172A] to-blue-900 px-6 py-5 rounded-t-[28px] flex items-center justify-between flex-shrink-0">
           <div>
             <div className="flex items-center gap-2">
-              <span className="text-2xl">{cfg.icon}</span>
+              <NavIcon iconKey={page} className="w-5 h-5 text-white"/>
               <h2 className="text-white text-xl font-bold">{edited.name || edited.subject || edited[cfg.idField]}</h2>
               <span className={`px-2.5 py-0.5 rounded-full text-xs font-semibold ${getStatusColor(edited.status)}`}>{edited.status}</span>
             </div>
@@ -1763,7 +1794,7 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo, on
             {page==='retailOrders' && appPreferences?.business_type === 'rental' && (
               <button onClick={() => {
                 setPendingRecord({ page: 'retailActivities', openCreate: true, prefill: {
-                  customer_id: edited.customer_id, customer: edited.customer, related_order_number: edited.id,
+                  customer_id: edited.customer_id, customer: edited.customer, customer_phone: edited.customer_phone, related_order_number: edited.id,
                   subject: `Follow-up: Order ${record?.displayNumber ? 'RORD-'+String(record.displayNumber).padStart(5,'0') : edited.id}`,
                 } });
                 setPendingReturnTo({ page: 'retailOrders', record: record });
@@ -2248,6 +2279,7 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo, on
           quickCreateCustomer.onCreated(rec._uuid || rec.id, rec.name, rec.phone || '');
           setQuickCreateCustomer(null);
           await fetchRetailCustomers();
+          showAlert(`Customer "${rec.name}" created successfully.`, { variant: 'success' });
         }}
       />
     )}
@@ -2429,7 +2461,12 @@ export function RetailCreateModal({ page, open, onClose, onCreated, prefill = nu
     }
     if (field.type === 'retailCustomer') return <SearchableSelect
       value={form.customer_id||''}
-      onChange={cid=>{ const c=retailCustomers.find(x=>(x._uuid||x.id)===cid); s('customer_id',c?._uuid||c?.id||''); s('customer',c?.name||''); s('customer_phone',c?.phone||''); }}
+      onChange={cid=>{
+        const c=retailCustomers.find(x=>(x._uuid||x.id)===cid);
+        s('customer_id',c?._uuid||c?.id||''); s('customer',c?.name||''); s('customer_phone',c?.phone||'');
+        const addressField = page==='retailOrders' ? 'delivery_address' : page==='retailInvoices' ? 'billing_address' : null;
+        if (addressField && !form[addressField] && c) s(addressField, formatCustomerAddress(c));
+      }}
       options={retailCustomers.map(c=>({value:c._uuid||c.id,label:c.name,sub:[c.phone,c.email].filter(Boolean).join(' · ')}))}
       onCreateNew={name=>setQuickCreateCustomer({prefillName:name, onCreated:(id,cname,cphone)=>{ s('customer_id',id); s('customer',cname); s('customer_phone',cphone||''); setQuickCreateCustomer(null); }})}
       placeholder="Search customers..." emptyLabel="No customers — type to create new"
@@ -2496,7 +2533,7 @@ export function RetailCreateModal({ page, open, onClose, onCreated, prefill = nu
       <div className="absolute inset-0 bg-black/50" onClick={onClose}/>
       <div className="relative bg-white rounded-[28px] shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden">
         <div className="bg-gradient-to-r from-[#0F172A] to-blue-900 px-6 py-5 flex items-center justify-between flex-shrink-0">
-          <h2 className="text-white text-xl font-bold">{cfg.icon} Create {getObjectLabel(page, cfg.singular, 'singular')}</h2>
+          <h2 className="text-white text-xl font-bold flex items-center gap-2"><NavIcon iconKey={page} className="w-5 h-5"/> Create {getObjectLabel(page, cfg.singular, 'singular')}</h2>
           <button onClick={onClose} className="text-white/70 hover:text-white text-2xl leading-none">✕</button>
         </div>
         <div className="overflow-y-auto flex-1 p-6">
@@ -2560,6 +2597,7 @@ export function RetailCreateModal({ page, open, onClose, onCreated, prefill = nu
         onCreated={(rec)=>{
           quickCreateCustomer.onCreated(rec._uuid || rec.id, rec.name, rec.phone || '');
           setQuickCreateCustomer(null);
+          showAlert(`Customer "${rec.name}" created successfully.`, { variant: 'success' });
         }}
       />
     )}
@@ -2814,6 +2852,7 @@ const RETAIL_TABLE_NAME = {
 export default function RetailListPage({ page }) {
   const { supabase, tenant } = useTenant();
   const { getObjectLabel } = useObjectLabels();
+  const { showAlert } = useAlert();
   const {
     retailCustomers, retailProducts, retailActivities, retailOrders, retailInvoices,
     fetchRetailCustomers, fetchRetailProducts, fetchRetailActivities, fetchRetailOrders, fetchRetailInvoices,
@@ -3193,7 +3232,7 @@ export default function RetailListPage({ page }) {
       {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h1 className="text-2xl font-bold text-[#0F172A]">{cfg.icon} {getObjectLabel(page, cfg.title)}</h1>
+          <h1 className="text-2xl font-bold text-[#0F172A] flex items-center gap-2.5"><NavIcon iconKey={page} className="w-6 h-6"/> {getObjectLabel(page, cfg.title)}</h1>
           <p className="text-gray-400 text-sm mt-0.5">
             {serverLoading ? 'Loading…' : `${totalRecords.toLocaleString()} record${totalRecords!==1?'s':''}`}
             {activeCount > 0 && <span className="text-blue-600 font-semibold"> · {activeCount} filter{activeCount>1?'s':''} active</span>}
@@ -3386,7 +3425,9 @@ export default function RetailListPage({ page }) {
                 </td></tr>
               ) : pagedRows.length === 0 ? (
                 <tr><td colSpan={visibleColumns.length+1} className="px-5 py-16 text-center">
-                  <div className="text-5xl mb-3">{activeCount>0?'🔍':cfg.icon}</div>
+                  <div className="mb-3 flex justify-center text-gray-300">
+                    {activeCount>0 ? <Search className="w-12 h-12"/> : <NavIcon iconKey={page} className="w-12 h-12"/>}
+                  </div>
                   <div className="font-bold text-[#0F172A] text-lg mb-1">{activeCount>0?t(lang,'noRecordsFound'):`No ${cfg.title.toLowerCase()} yet`}</div>
                   <p className="text-gray-400 text-sm">{activeCount>0?t(lang,'tryAdjustingFilters'):`Click "+ Create ${cfg.singular}" to add your first record.`}</p>
                   {activeCount>0 && <button onClick={clearFilters} className="mt-3 text-blue-600 text-sm font-semibold hover:underline">{t(lang,'clearFilters')}</button>}
@@ -3433,7 +3474,16 @@ export default function RetailListPage({ page }) {
                             <button onClick={()=>{setMenuOpenId(null);setCreatePrefill({page:'retailInvoices',data:{...buildCustomerPrefill(r),invoice_date:todayLocalISO(),status:'Draft',payment_status:'Pending'}});}} className="w-full text-left px-4 py-3 rounded-xl text-sm font-medium hover:bg-blue-800 text-white">🧾 Create Invoice</button>
                           </>)}
                           {page==='retailOrders' && r.status==='Completed' && (
-                            <button onClick={()=>{createRetailInvoiceFromOrder(r);setMenuOpenId(null);}} className="w-full text-left px-4 py-3 rounded-xl text-sm font-medium hover:bg-blue-800 text-white">🧾 Create Invoice</button>
+                            <button onClick={async()=>{
+                              setMenuOpenId(null);
+                              const inv = await createRetailInvoiceFromOrder(r);
+                              if (inv) {
+                                showAlert(`Invoice ${inv.invoice_number} created from this order.`, { variant:'success', title:'Invoice Created' });
+                                setPendingReturnTo({ page: 'retailOrders', record: r });
+                                setPendingRecord({ page: 'retailInvoices', record: inv });
+                                window.dispatchEvent(new CustomEvent('retail-navigate', { detail: { page: 'retailInvoices' } }));
+                              }
+                            }} className="w-full text-left px-4 py-3 rounded-xl text-sm font-medium hover:bg-blue-800 text-white">🧾 Create Invoice</button>
                           )}
                         </div>
                       )}
@@ -3504,11 +3554,15 @@ export default function RetailListPage({ page }) {
           page={createPrefill.page}
           open={true}
           onClose={()=>setCreatePrefill(null)}
-          onCreated={async()=>{
-            // Refresh whichever data type was created
-            const f = { retailOrders: fetchRetailOrders, retailInvoices: fetchRetailInvoices, retailActivities: fetchRetailActivities };
-            await f[createPrefill.page]?.();
+          onCreated={(rec)=>{
             setCreatePrefill(null);
+            const typeLabel = createPrefill.page === 'retailOrders' ? 'Order' : createPrefill.page === 'retailInvoices' ? 'Invoice' : 'Activity';
+            showAlert(`${typeLabel} created successfully.`, { variant: 'success' });
+            if (rec) {
+              setPendingReturnTo({ page: 'retailCustomers', record: selectedRecord });
+              setPendingRecord({ page: createPrefill.page, record: rec });
+              window.dispatchEvent(new CustomEvent('retail-navigate', { detail: { page: createPrefill.page } }));
+            }
           }}
           prefill={createPrefill.data}
         />

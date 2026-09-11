@@ -1,8 +1,9 @@
 // @ts-nocheck
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { AppProvider, useApp } from '@/context/AppContext';
+import { THEMES } from '@/lib/i18n';
 import { TenantProvider, useTenant } from '@/context/TenantContext';
 import { AlertProvider, useAlert } from '@/components/shared/AlertProvider';
 import Sidebar from '@/components/layout/Sidebar';
@@ -41,9 +42,28 @@ function LoginPage() {
 
   // Tenant-level logo from appearance (set in app preferences)
   const { appearance } = useApp();
+  const themeObj = THEMES.find(th => th.id === (appearance?.theme || 'navy')) || THEMES[0];
   const tenantLogo = appearance?.company_logo_url || tenant?.logo_url || null;
-  const tenantName = tenant?.app_name || tenant?.name || 'Umbrella Suite';
+  const tenantName = appearance?.company_name || tenant?.app_name || tenant?.name || 'Umbrella Suite';
   const isDemo     = !tenant?.slug || tenant?.slug === 'demo';
+
+  // A different thought each day - deterministic by day-of-year, so it's
+  // stable across reloads within the same day but genuinely changes
+  // tomorrow, rather than reshuffling randomly on every visit.
+  const DAILY_THOUGHTS = [
+    "The best time to follow up with a customer was yesterday. The second best time is now.",
+    "A system you trust is worth more than a memory you rely on.",
+    "Every closed deal started as someone willing to send one more message.",
+    "Small, consistent follow-through beats occasional bursts of effort.",
+    "The customer who feels remembered is the customer who comes back.",
+    "Good records today save a difficult conversation tomorrow.",
+    "Momentum is built one completed task at a time, not one big push.",
+    "The businesses that grow are the ones that make it easy to say yes.",
+    "Clarity in your pipeline is clarity in your next decision.",
+    "A quick reply is often worth more than a perfect one.",
+  ];
+  const dayOfYear = Math.floor((Date.now() - new Date(new Date().getFullYear(), 0, 0).getTime()) / 86400000);
+  const dailyThought = DAILY_THOUGHTS[dayOfYear % DAILY_THOUGHTS.length];
 
   const submit = async (e) => {
     e.preventDefault();
@@ -59,74 +79,79 @@ function LoginPage() {
     window.location.href = `${window.location.origin}/?tenant=${slug}`;
   };
 
-  return (
-    <div className="min-h-screen bg-gradient-to-br from-[#0F172A] via-blue-950 to-blue-900 flex items-center justify-center p-4">
-      <div className="w-full max-w-md space-y-6">
+  // The platform's actual modules, sheltered under the umbrella illustration —
+  // not generic ERP terms, the real feature set this specific app ships.
+  const MODULES = [
+    { icon: '🎯', label: 'CRM & Sales' },
+    { icon: '🛍️', label: 'Retail & Orders' },
+    { icon: '🧾', label: 'Invoicing' },
+    { icon: '🛎️', label: 'Bookings' },
+    { icon: '💬', label: 'WhatsApp' },
+    { icon: '✅', label: 'Workflows' },
+    { icon: '⚡', label: 'Reports' },
+    { icon: '⚙️', label: 'Automation' },
+  ];
 
-        {/* Logo header */}
-        <div className="text-center">
-          {/* Always show Umbrella Suite logo */}
-          <div className="flex flex-col items-center mb-6">
-            {/* Co-branding: side by side when tenant has a logo */}
-            <div className="flex items-center justify-center gap-5 mb-4">
-              {/* Umbrella Suite logo */}
-              <div className="flex flex-col items-center gap-2">
-                <div className="w-14 h-14 rounded-2xl bg-white/10 backdrop-blur-sm border border-white/20 flex items-center justify-center shadow-xl overflow-hidden">
-                  <img src="/umbrella-logo.png" alt="Umbrella Suite" className="w-11 h-11 object-contain"/>
-                </div>
-                <span className="text-white/50 text-[10px] font-semibold uppercase tracking-widest">Umbrella Suite</span>
+  return (
+    <div className="min-h-screen flex bg-white">
+      {/* ── Left panel: sign-in form — kept deliberately restrained, no
+          decoration competing with the hero on the right */}
+      <div className="w-full lg:w-[440px] flex-shrink-0 flex flex-col justify-center px-8 sm:px-14 py-12">
+        <div className="w-full max-w-sm mx-auto space-y-8">
+          {/* Logo header */}
+          <div>
+            <div className="flex items-center gap-4 mb-8">
+              <div style={{ background: themeObj.colors[0] }} className="w-12 h-12 rounded-xl flex items-center justify-center shadow-sm overflow-hidden flex-shrink-0">
+                <img src="/umbrella-logo-white.png" alt="Umbrella Suite" className="w-9 h-9 object-contain"/>
               </div>
-              {/* Show tenant logo if available */}
-              {!isDemo && tenantLogo && (<>
-                <div className="h-12 w-px bg-white/20 rounded-full"/>
-                <div className="flex flex-col items-center gap-2">
-                  <div className="w-14 h-14 rounded-2xl bg-white border border-white/30 flex items-center justify-center shadow-xl overflow-hidden p-1.5">
+              {!isDemo && tenantLogo && (
+                <>
+                  <div className="h-8 w-px bg-gray-200"/>
+                  <div className="w-12 h-12 rounded-xl bg-white border border-gray-200 flex items-center justify-center overflow-hidden p-1 flex-shrink-0">
                     <img src={tenantLogo} alt={tenantName} className="w-full h-full object-contain"/>
                   </div>
-                  <span className="text-white/50 text-[10px] font-semibold uppercase tracking-widest truncate max-w-[90px] text-center">{tenantName}</span>
-                </div>
-              </>)}
+                </>
+              )}
             </div>
-            {/* Title */}
             {isDemo ? (
-              <div className="text-center">
-                <h1 className="text-2xl font-bold text-white tracking-tight">Umbrella Suite</h1>
-                <p className="text-blue-300 text-sm mt-0.5">Enterprise CRM & ERP Platform</p>
+              <div>
+                <h1 className="text-lg font-bold text-[#0F172A]">Umbrella Suite</h1>
+                <p className="text-gray-400 text-sm mt-0.5">Enterprise CRM &amp; ERP Platform</p>
               </div>
             ) : (
-              <div className="text-center">
-                <h1 className="text-xl font-bold text-white tracking-tight">{tenantName}</h1>
-                <p className="text-blue-300/80 text-sm mt-0.5">Sign in to your workspace</p>
+              <div>
+                <h1 className="text-lg font-bold text-[#0F172A]">{tenantName}</h1>
               </div>
             )}
           </div>
-        </div>
-
-        {/* Main card */}
-        <div className="bg-white rounded-[32px] shadow-2xl p-8">
 
           {/* Sign in form */}
           {!showWS && (
-            <form onSubmit={submit} className="space-y-4">
-              <div className="space-y-1">
+            <form onSubmit={submit} className="space-y-5">
+              <div>
+                <h2 className="text-2xl font-bold text-[#0F172A]">Welcome</h2>
+                <p className="text-gray-400 text-sm mt-1">Sign in to your workspace</p>
+              </div>
+              <div className="space-y-1.5">
                 <label className="text-xs font-bold uppercase tracking-wider text-gray-400">Email Address</label>
                 <input type="email" value={email} onChange={e => setEmail(e.target.value)} required
                   placeholder="you@company.com" className={inputClass}/>
               </div>
-              <div className="space-y-1">
+              <div className="space-y-1.5">
                 <label className="text-xs font-bold uppercase tracking-wider text-gray-400">Password</label>
                 <input type="password" value={password} onChange={e => setPassword(e.target.value)} required
                   placeholder="••••••••" className={inputClass}/>
               </div>
               <button type="submit" disabled={loading}
-                className="w-full bg-gradient-to-r from-[#0F172A] to-blue-800 text-white py-3.5 rounded-2xl font-bold shadow-lg hover:opacity-90 transition-all disabled:opacity-60">
+                style={{ background: themeObj.colors[0] }}
+                className="w-full text-white py-3.5 rounded-xl font-bold shadow-sm hover:opacity-90 transition-opacity disabled:opacity-60">
                 {loading ? 'Signing In...' : 'Sign In →'}
               </button>
 
               {/* Switch workspace — only show on master app */}
               {isMaster && (
                 <button type="button" onClick={() => setShowWS(true)}
-                  className="w-full text-center text-sm text-gray-400 hover:text-blue-600 transition-colors pt-2">
+                  className="w-full text-center text-sm text-gray-400 hover:text-[#0F172A] transition-colors pt-1">
                   🏢 Sign in to a different workspace →
                 </button>
               )}
@@ -135,13 +160,13 @@ function LoginPage() {
 
           {/* Workspace entry */}
           {showWS && (
-            <form onSubmit={goToWorkspace} className="space-y-4">
-              <div className="text-center mb-4">
+            <form onSubmit={goToWorkspace} className="space-y-5">
+              <div>
                 <div className="text-2xl mb-1">🏢</div>
-                <h2 className="text-lg font-bold text-[#0F172A]">Enter your workspace</h2>
-                <p className="text-sm text-gray-400">Type your workspace name to navigate to it</p>
+                <h2 className="text-xl font-bold text-[#0F172A]">Enter your workspace</h2>
+                <p className="text-sm text-gray-400 mt-1">Type your workspace name to navigate to it</p>
               </div>
-              <div className="space-y-1">
+              <div className="space-y-1.5">
                 <label className="text-xs font-bold uppercase tracking-wider text-gray-400">Workspace Name</label>
                 <input type="text" value={workspace} onChange={e => setWorkspace(e.target.value)} required
                   placeholder="e.g. infunity, jumpandjoy"
@@ -152,7 +177,8 @@ function LoginPage() {
                 </p>
               </div>
               <button type="submit"
-                className="w-full bg-gradient-to-r from-[#0F172A] to-blue-800 text-white py-3.5 rounded-2xl font-bold shadow-lg hover:opacity-90 transition-all">
+                style={{ background: themeObj.colors[0] }}
+                className="w-full text-white py-3.5 rounded-xl font-bold shadow-sm hover:opacity-90 transition-opacity">
                 Go to Workspace →
               </button>
               <button type="button" onClick={() => setShowWS(false)}
@@ -161,11 +187,49 @@ function LoginPage() {
               </button>
             </form>
           )}
-        </div>
 
-        <p className="text-center text-blue-400/50 text-xs">
-          Powered by Umbrella Suite · Enterprise ERP & CRM
-        </p>
+          <p className="text-center text-gray-500 text-xs pt-4">
+            Powered by Umbrella Suite · Enterprise ERP &amp; CRM
+          </p>
+        </div>
+      </div>
+
+      {/* ── Right panel: hero — hidden below lg, since a split-screen visual
+          is a nice-to-have on desktop, not something worth the scroll cost
+          on a phone signing in. border-l creates a clear seam against the
+          left panel, which previously had no visible separation at all. */}
+      <div className="hidden lg:flex flex-1 relative overflow-hidden bg-gradient-to-b from-[#DBEAFE] via-[#EFF6FF] to-white border-l border-black/10">
+        <div className="relative z-10 flex flex-col w-full h-full px-16 pt-16 pb-10">
+          <div>
+            <h2 className="text-[2.75rem] leading-[1.1] font-bold text-[#0F172A] max-w-lg">
+              Every part of your business, under one umbrella.
+            </h2>
+            <p className="text-slate-500 text-lg mt-4 max-w-md">
+              {dailyThought}
+            </p>
+          </div>
+
+          {/* Umbrella illustration sheltering the module cards — the actual
+              brand mark itself, scaled up, not a redrawn approximation.
+              Centered in the remaining vertical space (rather than pushed
+              to the bottom) and given a slow, gentle float for a touch of
+              life on an otherwise static screen. */}
+          <div className="relative flex-1 flex flex-col items-center justify-center gap-8">
+            <div style={{ background: themeObj.colors[0] }} className="float-umbrella w-40 h-40 rounded-[28px] shadow-xl shadow-blue-900/20 flex items-center justify-center overflow-hidden flex-shrink-0">
+              <img src="/umbrella-logo-white.png" alt="Umbrella Suite" className="w-full h-full object-contain"/>
+            </div>
+
+            {/* Module cards, beneath the umbrella */}
+            <div className="grid grid-cols-4 gap-3 w-full max-w-2xl">
+              {MODULES.map(m => (
+                <div key={m.label} className="bg-white rounded-xl border border-blue-100 shadow-sm px-3 py-3 flex flex-col items-center gap-1.5 text-center">
+                  <span className="text-xl">{m.icon}</span>
+                  <span className="text-[11px] font-semibold text-slate-600 leading-tight">{m.label}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -175,12 +239,16 @@ function LoginPage() {
 
 function ProfileModal({ open, onClose }) {
   const { currentUser, saveMyProfile, resetMyPassword } = useApp();
+  const { supabase } = useTenant();
   const { showAlert } = useAlert();
   const [form, setForm] = useState({
     first_name: currentUser?.first_name || '',
     last_name:  currentUser?.last_name  || '',
     phone:      currentUser?.phone      || '',
+    avatar_url: currentUser?.avatar_url || '',
   });
+  const [uploadingPhoto, setUploadingPhoto] = useState(false);
+  const photoInputRef = useRef(null);
 
   // Re-sync form when currentUser loads (e.g. after provisioning)
   useEffect(() => {
@@ -189,10 +257,35 @@ function ProfileModal({ open, onClose }) {
         first_name: currentUser.first_name || '',
         last_name:  currentUser.last_name  || '',
         phone:      currentUser.phone      || '',
+        avatar_url: currentUser.avatar_url || '',
       });
     }
   }, [currentUser?.id]);
   const [newPassword, setNewPassword] = useState('');
+
+  // Uploads a profile photo to the same Supabase storage bucket already
+  // used for the company logo, just under a per-user path - reuses an
+  // established, working pattern rather than a new upload mechanism.
+  const handlePhotoUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file || !supabase || !currentUser) return;
+    setUploadingPhoto(true);
+    try {
+      const ext = file.name.split('.').pop();
+      const path = `avatars/${currentUser.id}.${ext}`;
+      const { error: upErr } = await supabase.storage
+        .from('company-assets')
+        .upload(path, file, { upsert: true, contentType: file.type });
+      if (upErr) { showAlert('Upload failed: ' + upErr.message, { variant:'danger', title:'Upload Failed' }); return; }
+      const { data } = supabase.storage.from('company-assets').getPublicUrl(path);
+      const url = data.publicUrl + '?t=' + Date.now();
+      setForm(f => ({ ...f, avatar_url: url }));
+    } catch (err) {
+      showAlert('Upload error: ' + err.message, { variant:'danger', title:'Upload Failed' });
+    } finally {
+      setUploadingPhoto(false);
+    }
+  };
 
   return (
     <Modal
@@ -208,6 +301,25 @@ function ProfileModal({ open, onClose }) {
       }
     >
       <div className="space-y-5">
+        {/* Profile photo */}
+        <div className="flex items-center gap-4">
+          <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-blue-400 to-indigo-500 flex items-center justify-center text-white text-xl font-bold shadow-md overflow-hidden flex-shrink-0">
+            {form.avatar_url
+              ? <img src={form.avatar_url} alt="Profile" className="w-full h-full object-cover"/>
+              : (`${currentUser?.first_name?.[0]||''}${currentUser?.last_name?.[0]||''}`.toUpperCase() || '?')}
+          </div>
+          <div>
+            <input ref={photoInputRef} type="file" accept="image/*" className="hidden" onChange={handlePhotoUpload}/>
+            <button type="button" disabled={uploadingPhoto} onClick={() => photoInputRef.current?.click()}
+              className="text-sm font-semibold text-blue-600 hover:text-blue-700 disabled:opacity-60">
+              {uploadingPhoto ? 'Uploading...' : form.avatar_url ? 'Change Photo' : 'Add Photo'}
+            </button>
+            {form.avatar_url && (
+              <button type="button" onClick={() => setForm(f => ({ ...f, avatar_url: '' }))}
+                className="text-sm text-gray-400 hover:text-gray-600 ml-3">Remove</button>
+            )}
+          </div>
+        </div>
         <div className="grid grid-cols-2 gap-4">
           {[['First Name', 'first_name'], ['Last Name', 'last_name'], ['Phone', 'phone']].map(([label, field]) => (
             <div key={field} className="space-y-1">

@@ -1,13 +1,24 @@
 // @ts-nocheck
 'use client';
 import { useState, useEffect, useMemo, useRef } from 'react';
+import dynamic from 'next/dynamic';
 import { useApp } from '@/context/AppContext';
 import { useTenant } from '@/context/TenantContext';
 import { useAlert } from '@/components/shared/AlertProvider';
 import { formatDate, formatDisplayNumber } from '@/lib/utils';
 import { THEMES } from '@/lib/i18n';
 import SearchableSelect from '@/components/shared/SearchableSelect';
-import { RetailQuickCreateCustomer } from '@/components/retail/RetailQuickCreateCustomer';
+
+// The real, full Create Customer form - lazily imported to avoid a circular
+// dependency (RetailListPage.tsx already statically imports this very file
+// for the "Book a Rental" flow, so a static import in this direction would
+// create A -> B -> A). A dynamic import defers module resolution to
+// runtime instead of build-time module-graph resolution, which sidesteps
+// the cycle entirely.
+const RetailCreateModal = dynamic(
+  () => import('@/components/retail/RetailListPage').then(mod => ({ default: mod.RetailCreateModal })),
+  { ssr: false }
+);
 
 const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 
@@ -477,15 +488,13 @@ export default function RentalBookingCalendar({ productId, productName, productP
         dependencies (RETAIL_CONFIG, tax helpers, etc.) to be worth doing
         as its own careful pass rather than inside this fix. */}
     {quickCreateCustomer && (
-      <div className="fixed inset-0 bg-black/60 z-[10000] flex items-center justify-center p-4" onClick={()=>setQuickCreateCustomer(false)}>
-        <div onClick={e=>e.stopPropagation()}>
-          <RetailQuickCreateCustomer
-            prefillName={typeof quickCreateCustomer === 'string' ? quickCreateCustomer : ''}
-            onCreated={(id, name) => { setCustomerId(id); setCustomerName(name); setQuickCreateCustomer(false); }}
-            onClose={() => setQuickCreateCustomer(false)}
-          />
-        </div>
-      </div>
+      <RetailCreateModal
+        page="retailCustomers"
+        open={true}
+        prefill={{ name: typeof quickCreateCustomer === 'string' ? quickCreateCustomer : '' }}
+        onCreated={(rec) => { setCustomerId(rec._uuid || rec.id); setCustomerName(rec.name); setQuickCreateCustomer(false); }}
+        onClose={() => setQuickCreateCustomer(false)}
+      />
     )}
     </>
   );

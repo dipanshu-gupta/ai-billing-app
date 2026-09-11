@@ -470,6 +470,12 @@ export default function CRMListPage({ page }) {
     if (typeof window !== 'undefined') sessionStorage.setItem(`bp_view_mode_${page}`, viewMode);
   }, [viewMode, page]);
   const [createOpen,   setCreateOpen]   = useState(false);
+  useEffect(() => {
+    if (pendingRecord && pendingRecord.page === page && pendingRecord.openCreate && !pendingRecord.record) {
+      setCreateOpen(true);
+      setPendingRecord(null);
+    }
+  }, [pendingRecord, page]);
   const [searchPanelOpen, setSearchPanelOpen] = useState(false);
   const [menuOpenId,   setMenuOpenId]   = useState(null);
   const [defaultLoaded,setDefaultLoaded]= useState(false);

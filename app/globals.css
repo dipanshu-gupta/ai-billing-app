@@ -45,3 +45,14 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .dashboard-fade-in { animation: none; }
 }
+
+@keyframes floatUmbrella {
+  0%, 100% { transform: translateY(0) rotate(-1deg); }
+  50%      { transform: translateY(-14px) rotate(1deg); }
+}
+.float-umbrella {
+  animation: floatUmbrella 5s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .float-umbrella { animation: none; }
+}

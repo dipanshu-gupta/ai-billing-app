@@ -8,6 +8,7 @@ import { useFieldLayout, resolveFieldRow } from '@/lib/useFieldLayout';
 import SearchableSelect from '@/components/shared/SearchableSelect';
 import QuickCreateModal from '@/components/shared/QuickCreateModal';
 import { t } from '@/lib/i18n';
+import { useAlert } from '@/components/shared/AlertProvider';
 
 const iCls = 'w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm text-[#0F172A] bg-white focus:outline-none focus:ring-2 focus:ring-blue-400';
 const sCls = iCls;
@@ -127,6 +128,7 @@ export default function CreateRecordModal({ page, open, prefillCustomer, onClose
   const {
     createRecord, customers, contacts, enterpriseUsers, currentUser, appPreferences, appearance,
   } = useApp();
+  const { showAlert } = useAlert();
   const lang = appearance?.language || 'en';
 
   const fields     = OBJECT_FIELDS[page] || [];
@@ -138,6 +140,7 @@ export default function CreateRecordModal({ page, open, prefillCustomer, onClose
     if (prefillCustomer) {
       base.customerId = prefillCustomer.id;
       base.customer   = prefillCustomer.name;
+      if (prefillCustomer.phone) base.phone = prefillCustomer.phone;
     }
     if (currentUser) {
       base.owner_id = currentUser.id;
@@ -421,7 +424,7 @@ export default function CreateRecordModal({ page, open, prefillCustomer, onClose
         onClose={()=>setQuickCreate(null)}
         prefill={quickCreate?.prefillName?{name:quickCreate.prefillName}:{}}
         prefillExtra={quickCreate?.prefillExtra||{}}
-        onCreated={(id,name)=>{quickCreate?.onCreated?.(id,name);setQuickCreate(null);}}
+        onCreated={(id,name)=>{quickCreate?.onCreated?.(id,name);setQuickCreate(null);showAlert(`${quickCreate?.type === 'contact' ? 'Contact' : 'Customer'} "${name}" created successfully.`, { variant: 'success' });}}
       />
     </>
   );

@@ -478,7 +478,7 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     if (!supabase || !currentUser) return;
     const { error } = await supabase
       .from('enterprise_users')
-      .update({ first_name: data.first_name, last_name: data.last_name, phone: data.phone })
+      .update({ first_name: data.first_name, last_name: data.last_name, phone: data.phone, avatar_url: data.avatar_url })
       .eq('id', currentUser.id);
     if (!error) { await fetchCurrentUser(); await fetchEnterpriseUsers(); showAlert('Profile Updated'); }
     else showAlert(error.message);
@@ -1179,7 +1179,7 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     retail_products:   ['name','category','brand','sku','barcode','unit','price','mrp','cost','stock_quantity','reorder_level','description','hsn_code','gst_rate','taxable','tax_category','vat_rate','tax_rate','status','owner','owner_id','owner_name','comments','organization_id','business_unit_id','custom_data','is_rentable','rent_per_day'],
     retail_activities: ['subject','activity_type','customer','customer_id','customer_phone','related_order_number','activity_date','due_date','priority','status','description','notes','comments','owner','owner_id','owner_name','organization_id','business_unit_id','custom_data'],
     retail_orders:     ['customer','customer_id','customer_phone','order_date','channel','currency','payment_method','payment_status','delivery_method','delivery_address','delivery_date','subtotal','total_discount','total_tax','header_discount_pct','header_discount_amount','shipping_cost','amount','place_of_supply','gstin','tax_state','resale_certificate','vat_registration_number','tax_registration_number','status','notes','comments','owner','owner_id','owner_name','organization_id','business_unit_id','custom_data'],
-    retail_invoices:   ['order_number','customer','customer_id','customer_phone','invoice_date','due_date','currency','subtotal','total_discount','total_tax','header_discount_pct','header_discount_amount','shipping_cost','amount','payment_method','payment_status','place_of_supply','gstin','tax_state','resale_certificate','vat_registration_number','tax_registration_number','status','notes','comments','owner','owner_id','owner_name','organization_id','business_unit_id','custom_data','invoice_template_id'],
+    retail_invoices:   ['order_number','customer','customer_id','customer_phone','billing_address','invoice_date','due_date','currency','subtotal','total_discount','total_tax','header_discount_pct','header_discount_amount','shipping_cost','amount','payment_method','payment_status','place_of_supply','gstin','tax_state','resale_certificate','vat_registration_number','tax_registration_number','status','notes','comments','owner','owner_id','owner_name','organization_id','business_unit_id','custom_data','invoice_template_id'],
   };
 
   const createRetailRecord = async (page: keyof typeof RETAIL_TABLE_MAP, data: any, items: any[] = []) => {

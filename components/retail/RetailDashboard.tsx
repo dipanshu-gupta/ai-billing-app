@@ -3,9 +3,11 @@
 
 import { useState, useMemo, useEffect } from 'react';
 import { useApp } from '@/context/AppContext';
-import { getStatusColor, roundPercentagesTo100 } from '@/lib/utils';
+import { useTenant } from '@/context/TenantContext';
+import { getStatusColor, roundPercentagesTo100, tenantScope } from '@/lib/utils';
 import { THEMES } from '@/lib/i18n';
 import { useObjectLabels } from '@/lib/useObjectLabels';
+import { NavIcon } from '@/lib/icons';
 import {
   BarChart, Bar, LineChart, Line, PieChart, Pie, Cell,
   AreaChart, Area,
@@ -93,6 +95,32 @@ const DASHBOARD_WIDGETS = [
 const DEFAULT_WIDGETS = DASHBOARD_WIDGETS.map(w => w.key);
 
 // ─── Component ────────────────────────────────────────────────────────────────
+// Shared empty-state illustration, used across every dashboard card and
+// table in this file - defined at module level (not inside any one
+// component) so every component here can use it, not just whichever one
+// happened to declare it locally.
+function Empty({ msg = 'No data for this period', themeColor = '#3B82F6' }) {
+  return (
+    <div className="flex flex-col items-center justify-center h-48 text-gray-400 text-sm gap-3">
+      <svg width="88" height="72" viewBox="0 0 88 72" fill="none">
+        {/* dashed baseline */}
+        <line x1="4" y1="60" x2="84" y2="60" stroke="#CBD5E1" strokeWidth="2" strokeDasharray="4 4"/>
+        {/* faded bars, tapering off - suggests "no activity" rather than a generic chart glyph.
+            Uses opacity variations of the tenant's own theme color rather than a fixed blue
+            palette, so this stays visually consistent with whatever color the real charts use. */}
+        <rect x="14" y="42" width="10" height="18" rx="2" fill={themeColor} opacity="0.25"/>
+        <rect x="30" y="30" width="10" height="30" rx="2" fill={themeColor} opacity="0.4"/>
+        <rect x="46" y="20" width="10" height="40" rx="2" fill={themeColor} opacity="0.6"/>
+        <rect x="62" y="48" width="10" height="12" rx="2" fill={themeColor} opacity="0.25"/>
+        {/* magnifying glass, overlapping the top-right bar */}
+        <circle cx="66" cy="20" r="11" fill="white" stroke="#94A3B8" strokeWidth="2.5"/>
+        <line x1="74" y1="28" x2="80" y2="34" stroke="#94A3B8" strokeWidth="2.5" strokeLinecap="round"/>
+      </svg>
+      <span>{msg}</span>
+    </div>
+  );
+}
+
 export default function RetailDashboard() {
   const {
     retailCustomers, retailProducts, retailActivities,
@@ -101,6 +129,7 @@ export default function RetailDashboard() {
     fetchListViewPrefs, saveListViewPrefs,
   } = useApp();
   const themeObj = THEMES.find(th => th.id === (appearance?.theme || 'navy')) || THEMES[0];
+  const { supabase } = useTenant();
   const { getObjectLabel } = useObjectLabels();
 
   const [visibleWidgets, setVisibleWidgets] = useState<string[]>(DEFAULT_WIDGETS);
@@ -163,6 +192,45 @@ export default function RetailDashboard() {
   const fOrders = useMemo(() =>
     filterByRange(retailOrders, dateRange, 'order_date', 'created_at'),
     [retailOrders, dateRange, dayTick]);
+
+  // ── Top products by revenue ─────────────────────────────────────────────
+  // Order/invoice records only carry totals, not which products were sold -
+  // that detail lives in a separate line-items table. Only counts
+  // Completed orders (fulfilled sales, not Draft/Pending/Cancelled/
+  // Refunded). Fetches only the line items belonging to those orders
+  // within the current date range (by order_number, the line items'
+  // actual FK column despite the name - matched against order.id, which
+  // for retailOrders records is the order_number string, not the real
+  // UUID, due to a field remapping in fetchRetailOrders), not the whole
+  // table, then sums each line's already-computed extended_price per
+  // product name - reusing the app's own line-total calculation (which
+  // already accounts for rental-day multipliers) rather than re-deriving
+  // it here from quantity/price/discount.
+  const [topProducts, setTopProducts] = useState<{name:string,revenue:number}[]>([]);
+  const orderIdsKey = useMemo(() => fOrders.filter(o => o.status === 'Completed').map(o => o.id).sort().join(','), [fOrders]);
+  useEffect(() => {
+    const ids = fOrders.filter(o => o.status === 'Completed').map(o => o.id).filter(Boolean);
+    if (!supabase || ids.length === 0) { setTopProducts([]); return; }
+    let cancelled = false;
+    tenantScope(supabase.from('retail_order_line_items').select('product_name,extended_price,order_number'))
+      .in('order_number', ids)
+      .then(({ data, error }) => {
+        if (cancelled) return;
+        if (error) { console.error('[RetailDashboard] top products fetch:', error.message); setTopProducts([]); return; }
+        const byProduct: Record<string, number> = {};
+        (data || []).forEach(li => {
+          const name = li.product_name || 'Unnamed product';
+          const revenue = Number(li.extended_price || 0);
+          byProduct[name] = (byProduct[name] || 0) + revenue;
+        });
+        const ranked = Object.entries(byProduct)
+          .map(([name, revenue]) => ({ name, revenue: Math.round(revenue) }))
+          .sort((a, b) => b.revenue - a.revenue)
+          .slice(0, 8);
+        setTopProducts(ranked);
+      });
+    return () => { cancelled = true; };
+  }, [orderIdsKey, supabase]);
 
   const fInvoices = useMemo(() =>
     filterByRange(retailInvoices, dateRange, 'invoice_date', 'created_at'),
@@ -427,10 +495,6 @@ export default function RetailDashboard() {
     </div>
   );
 
-  const Empty = ({ msg = 'No data for this period' }) => (
-    <div className="flex items-center justify-center h-48 text-gray-400 text-sm">{msg}</div>
-  );
-
   const rangeLabel = DATE_RANGES.find(r => r.v === dateRange)?.l || 'Period';
 
   return (
@@ -524,17 +588,17 @@ export default function RetailDashboard() {
           rows of equal-sized cards, condensed into one scannable row ── */}
       <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3">
         {[
-          { label:`${getObjectLabel('retailInvoices', 'Invoices')} Issued`,   value:kpis.invoicesIssued,               icon:'🧾' },
-          { label:'Refunds',           value:fmt(kpis.refundAmount),            icon:'↩️' },
-          { label:`Total ${getObjectLabel('retailCustomers', 'Customers')}`,   value:kpis.totalCustomers,               icon:'🧑‍🤝‍🧑' },
-          { label:`New ${getObjectLabel('retailCustomers', 'Customers')}`,     value:kpis.newCustomers,                 icon:'✨' },
-          { label:`Active ${getObjectLabel('retailProducts', 'Products')}`,   value:kpis.activeProducts,               icon:'🏷️' },
-          { label:'Low Stock',         value:kpis.lowStockCount,                icon:'⚠️', warn:kpis.lowStockCount>0 },
-          { label:`Open ${getObjectLabel('retailActivities', 'Activities')}`,   value:kpis.openActivities,               icon:'📅' },
+          { label:`${getObjectLabel('retailInvoices', 'Invoices')} Issued`,   value:kpis.invoicesIssued,               icon:'invoicesIssued' },
+          { label:'Refunds',           value:fmt(kpis.refundAmount),            icon:'refunds' },
+          { label:`Total ${getObjectLabel('retailCustomers', 'Customers')}`,   value:kpis.totalCustomers,               icon:'totalCustomers' },
+          { label:`New ${getObjectLabel('retailCustomers', 'Customers')}`,     value:kpis.newCustomers,                 icon:'newCustomers' },
+          { label:`Active ${getObjectLabel('retailProducts', 'Products')}`,   value:kpis.activeProducts,               icon:'activeProducts' },
+          { label:'Low Stock',         value:kpis.lowStockCount,                icon:'lowStock', warn:kpis.lowStockCount>0 },
+          { label:`Open ${getObjectLabel('retailActivities', 'Activities')}`,   value:kpis.openActivities,               icon:'openActivities' },
         ].map(s => (
           <div key={s.label} className={`bg-white rounded-2xl border p-3.5 shadow-sm dashboard-fade-in transition-all hover:shadow-md hover:-translate-y-0.5 ${s.warn?'border-amber-200 bg-amber-50/50':'border-gray-100'}`}>
             <div className="flex items-center justify-between mb-1">
-              <span className="text-lg">{s.icon}</span>
+              <NavIcon iconKey={s.icon} className={`w-[18px] h-[18px] ${s.warn?'text-amber-500':'text-slate-400'}`}/>
               <span className={`text-lg font-bold ${s.warn?'text-amber-700':'text-[#0F172A]'}`}>{s.value}</span>
             </div>
             <div className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide leading-tight">{s.label}</div>
@@ -562,37 +626,25 @@ export default function RetailDashboard() {
       {activeTab === 'overview' && (
       <>
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
-          <ChartCard title={`Sales Trend — ${rangeLabel}`} className="lg:col-span-2">
-            {salesTrend.every(d => d.sales === 0) ? <Empty/> : (
+          <ChartCard title={`Top Products by Revenue — ${rangeLabel}`} className="lg:col-span-2">
+            {topProducts.length === 0 ? <Empty msg="No completed orders with products for this period" themeColor={themeObj.colors[0]}/> : (
               <ResponsiveContainer width="100%" height={260}>
-                <AreaChart data={salesTrend}>
-                  <defs>
-                    <linearGradient id="salesGrad" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%"  stopColor="#3B82F6" stopOpacity={0.3}/>
-                      <stop offset="95%" stopColor="#3B82F6" stopOpacity={0}/>
-                    </linearGradient>
-                  </defs>
+                <BarChart data={topProducts} layout="vertical" margin={{ left: 8 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9"/>
-                  <XAxis dataKey="label" tick={{ fontSize: 11 }}
-                    interval={salesTrend.length > 14 ? Math.floor(salesTrend.length/7) : 0}/>
-                  <YAxis tick={{ fontSize: 11 }} tickFormatter={v => fmtShort(v)} width={70}/>
+                  <XAxis type="number" tick={{ fontSize: 11 }} tickFormatter={v => fmtShort(v)}/>
+                  <YAxis type="category" dataKey="name" tick={{ fontSize: 11 }} width={120}/>
                   <Tooltip
-                    formatter={(v: any, name: string) => [
-                      name === 'Sales' ? fmt(Number(v)) : `${v} invoice${v===1?'':'s'}`,
-                      name === 'Sales' ? 'Revenue' : 'Invoices'
-                    ]}
-                    labelStyle={{ fontWeight: 'bold' }}/>
-                  <Legend/>
-                  <Area type="monotone" dataKey="sales" stroke="#3B82F6" strokeWidth={2.5}
-                    fill="url(#salesGrad)" name="Sales" dot={false}/>
-                  <Line type="monotone" dataKey="invoices" stroke="#10B981" strokeWidth={2}
-                    name="Invoices" dot={false} yAxisId={0}/>
-                </AreaChart>
+                    formatter={(v: any) => [fmt(Number(v)), 'Revenue']}
+                    contentStyle={{ backgroundColor: '#fff', border: '1px solid #e2e8f0', borderRadius: 12 }}
+                    labelStyle={{ fontWeight: 'bold', color: '#0F172A' }}
+                    itemStyle={{ color: '#334155' }}/>
+                  <Bar dataKey="revenue" fill={themeObj.colors[0]} radius={[0,6,6,0]} name="Revenue"/>
+                </BarChart>
               </ResponsiveContainer>
             )}
           </ChartCard>
           <ChartCard title="Invoices by Status">
-            {invoicesByStatus.length === 0 ? <Empty/> : (
+            {invoicesByStatus.length === 0 ? <Empty themeColor={themeObj.colors[0]}/> : (
               <div className="space-y-3">
                 {(() => {
                   const maxAmount = Math.max(...invoicesByStatus.map(s => s.amount), 1);
@@ -620,7 +672,7 @@ export default function RetailDashboard() {
             )}
           </ChartCard>
         </div>
-        <RecentInvoicesTable recentInvoices={recentInvoices} fmt={fmt}/>
+        <RecentInvoicesTable recentInvoices={recentInvoices} fmt={fmt} themeObj={themeObj}/>
       </>
       )}
 
@@ -628,7 +680,7 @@ export default function RetailDashboard() {
       {activeTab === 'sales' && (
       <>
         <ChartCard title={`Sales Trend — ${rangeLabel}`}>
-          {salesTrend.every(d => d.sales === 0) ? <Empty/> : (
+          {salesTrend.every(d => d.sales === 0) ? <Empty themeColor={themeObj.colors[0]}/> : (
             <ResponsiveContainer width="100%" height={300}>
               <AreaChart data={salesTrend}>
                 <defs>
@@ -646,11 +698,13 @@ export default function RetailDashboard() {
                     name === 'Sales' ? fmt(Number(v)) : `${v} invoice${v===1?'':'s'}`,
                     name === 'Sales' ? 'Revenue' : 'Invoices'
                   ]}
-                  labelStyle={{ fontWeight: 'bold' }}/>
+                  contentStyle={{ backgroundColor: '#fff', border: '1px solid #e2e8f0', borderRadius: 12 }}
+                  labelStyle={{ fontWeight: 'bold', color: '#0F172A' }}
+                  itemStyle={{ color: '#334155' }}/>
                 <Legend/>
-                <Area type="monotone" dataKey="sales" stroke="#3B82F6" strokeWidth={2.5}
+                <Area type="monotone" dataKey="sales" stroke={themeObj.colors[0]} strokeWidth={2.5}
                   fill="url(#salesGrad2)" name="Sales" dot={false}/>
-                <Line type="monotone" dataKey="invoices" stroke="#10B981" strokeWidth={2}
+                <Line type="monotone" dataKey="invoices" stroke={themeObj.accent} strokeWidth={2}
                   name="Invoices" dot={false} yAxisId={0}/>
               </AreaChart>
             </ResponsiveContainer>
@@ -658,7 +712,7 @@ export default function RetailDashboard() {
         </ChartCard>
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
           <ChartCard title="Revenue by Payment Method">
-            {invoicesByChannel.length === 0 ? <Empty/> : (
+            {invoicesByChannel.length === 0 ? <Empty themeColor={themeObj.colors[0]}/> : (
               <div className="space-y-3">
                 {(() => {
                   const maxRevenue = Math.max(...invoicesByChannel.map(c => c.revenue), 1);
@@ -686,7 +740,7 @@ export default function RetailDashboard() {
             )}
           </ChartCard>
           <ChartCard title="Invoices by Status">
-            {invoicesByStatus.length === 0 ? <Empty/> : (
+            {invoicesByStatus.length === 0 ? <Empty themeColor={themeObj.colors[0]}/> : (
               <div className="space-y-3">
                 {(() => {
                   const maxAmount = Math.max(...invoicesByStatus.map(s => s.amount), 1);
@@ -714,7 +768,7 @@ export default function RetailDashboard() {
             )}
           </ChartCard>
         </div>
-        <RecentInvoicesTable recentInvoices={recentInvoices} fmt={fmt}/>
+        <RecentInvoicesTable recentInvoices={recentInvoices} fmt={fmt} themeObj={themeObj}/>
       </>
       )}
 
@@ -723,7 +777,7 @@ export default function RetailDashboard() {
       <>
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
           <ChartCard title="Customer Loyalty Tiers">
-            {loyaltyBreakdown.length === 0 ? <Empty msg="No customer data"/> : (
+            {loyaltyBreakdown.length === 0 ? <Empty msg="No customer data" themeColor={themeObj.colors[0]}/> : (
               <div className="space-y-3">
                 {(() => {
                   const maxVal = Math.max(...loyaltyBreakdown.map(t => t.value), 1);
@@ -767,7 +821,7 @@ export default function RetailDashboard() {
             </div>
           </ChartCard>
         </div>
-        <RecentInvoicesTable recentInvoices={recentInvoices} fmt={fmt}/>
+        <RecentInvoicesTable recentInvoices={recentInvoices} fmt={fmt} themeObj={themeObj}/>
       </>
       )}
 
@@ -775,14 +829,16 @@ export default function RetailDashboard() {
       {activeTab === 'inventory' && (
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
         <ChartCard title="Products by Category" className="lg:col-span-2">
-          {topCategories.length === 0 ? <Empty msg="No products yet"/> : (
+          {topCategories.length === 0 ? <Empty msg="No products yet" themeColor={themeObj.colors[0]}/> : (
             <ResponsiveContainer width="100%" height={280}>
               <BarChart data={topCategories} layout="vertical">
                 <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9"/>
                 <XAxis type="number" tick={{ fontSize: 11 }} allowDecimals={false}/>
                 <YAxis type="category" dataKey="name" tick={{ fontSize: 11 }} width={110}/>
-                <Tooltip/>
-                <Bar dataKey="products" fill="#8B5CF6" radius={[0,6,6,0]} name="Products"/>
+                <Tooltip contentStyle={{ backgroundColor: '#fff', border: '1px solid #e2e8f0', borderRadius: 12 }}
+                  labelStyle={{ fontWeight: 'bold', color: '#0F172A' }}
+                  itemStyle={{ color: '#334155' }}/>
+                <Bar dataKey="products" fill={themeObj.colors[0]} radius={[0,6,6,0]} name="Products"/>
               </BarChart>
             </ResponsiveContainer>
           )}
@@ -832,7 +888,7 @@ export default function RetailDashboard() {
 }
 
 // ─── Recent Invoices — shared across tabs ──────────────────────────────────────
-function RecentInvoicesTable({ recentInvoices, fmt }) {
+function RecentInvoicesTable({ recentInvoices, fmt, themeObj }) {
   return (
     <div className="bg-white rounded-[24px] border border-gray-100 shadow-sm overflow-hidden dashboard-fade-in transition-all duration-300 hover:shadow-md">
       <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
@@ -840,7 +896,7 @@ function RecentInvoicesTable({ recentInvoices, fmt }) {
         <span className="text-xs text-gray-500">{recentInvoices.length} most recent</span>
       </div>
       {recentInvoices.length === 0 ? (
-        <div className="py-12 text-center text-gray-400 text-sm">No invoices yet</div>
+        <Empty msg="No invoices yet" themeColor={themeObj?.colors?.[0]}/>
       ) : (
         <div className="overflow-x-auto">
           <table className="w-full text-sm">

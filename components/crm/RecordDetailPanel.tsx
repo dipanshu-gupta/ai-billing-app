@@ -958,8 +958,17 @@ export default function RecordDetailPanel({ page, record, onClose, prefillCustom
         <CreateRecordModal
           page={createForPage}
           open={true}
-          prefillCustomer={{ id: edited.id, name: edited.name }}
+          prefillCustomer={{ id: edited.id, name: edited.name, phone: edited.phone }}
           onClose={() => setCreateForPage(null)}
+          onCreated={(rec) => {
+            setCreateForPage(null);
+            const typeLabel = createForPage === 'orders' ? 'Order' : createForPage === 'invoices' ? 'Invoice' : createForPage === 'activities' ? 'Activity' : 'Record';
+            showAlert(`${typeLabel} created successfully.`, { variant: 'success' });
+            if (rec) {
+              window.dispatchEvent(new CustomEvent('open-crm-record', { detail: { page: createForPage, record: rec, returnTo: { page: 'customers', record: edited, tab: '360' } } }));
+              onClose();
+            }
+          }}
         />
       )}
       <QuickCreateModal

@@ -2,10 +2,11 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
-import { t, THEMES } from '@/lib/i18n';
+import { t } from '@/lib/i18n';
 import { useApp } from '@/context/AppContext';
 import { SALES_GROUP, RETAIL_GROUP, BOTTOM_ITEMS, makeCanSee } from '@/lib/navPermissions';
 import { useObjectLabels } from '@/lib/useObjectLabels';
+import { NavIcon } from '@/lib/icons';
 
 const TOP_ITEMS = [
   { key:'home',      label:'home',          icon:'🏠', permission:null },
@@ -48,20 +49,19 @@ export default function Sidebar({ activePage, setActivePage, collapsed, setColla
             : 'text-blue-100 hover:bg-white/10 hover:text-white'
           }`}
       >
-        <span className="text-lg flex-shrink-0">{item.icon}</span>
+        <span className="flex-shrink-0"><NavIcon iconKey={item.key} className="w-[18px] h-[18px]"/></span>
         {!collapsed && <span className="truncate flex-1 text-left">{displayLabel}</span>}
       </button>
     );
   };
 
   const lang      = appearance?.language || 'en';
-  const themeObj  = THEMES.find(th => th.id === (appearance?.theme || 'navy')) || THEMES[0];
-  const sidebarBg = themeObj.sidebar;
+  const sidebarBg = '#1C1917';
 
   return (
     <aside
       ref={ref}
-      className={`${collapsed ? 'w-16' : 'w-64'} text-white transition-all duration-300 min-h-screen sticky top-0 shadow-2xl flex-shrink-0 flex flex-col z-40`}
+      className={`${collapsed ? 'w-16' : 'w-64'} text-white transition-all duration-300 min-h-screen sticky top-0 shadow-2xl border-r-2 border-black/25 flex-shrink-0 flex flex-col z-40`}
       style={{background: sidebarBg}}
     >
       {/* Top: Hamburger menu */}

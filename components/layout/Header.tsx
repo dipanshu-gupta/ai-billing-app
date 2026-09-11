@@ -5,13 +5,13 @@ import { useApp } from '@/context/AppContext';
 import { getPageLabel } from '@/lib/utils';
 import { t } from '@/lib/i18n';
 import GlobalSearch from '@/components/layout/GlobalSearch';
+import { Bot, User, Info, LogOut, ClipboardList, Settings, CheckCircle2, Clock, Bell } from 'lucide-react';
 
 function NotificationBell() {
   const {
     notifications, markNotificationRead, markAllNotificationsRead,
     leads, opportunities, customers, contacts, orders,
     invoices, quotations, activities, products,
-    retailOrders, retailInvoices, retailCustomers, retailProducts, retailActivities,
     appPreferences,
   } = useApp();
   const isB2C = appPreferences?.b2c_mode === true;
@@ -55,15 +55,11 @@ function NotificationBell() {
     activity: 'activities', activities: 'activities',
     product: 'products', products: 'products',
     workflow: null, assignment: null, sla: null, approval: 'approvals',
-    // Previously missing — a retail order/invoice notification (like the
-    // rental return reminder) had no page to navigate to when clicked.
-    retailOrders: 'retailOrders', retailInvoices: 'retailInvoices',
-    retailCustomers: 'retailCustomers', retailProducts: 'retailProducts', retailActivities: 'retailActivities',
   };
 
   const TYPE_ICONS = {
-    assignment: '📋', workflow: '⚙️', approval: '✅',
-    sla: '⏱️', notification: '🔔', info: 'ℹ️',
+    assignment: ClipboardList, workflow: Settings, approval: CheckCircle2,
+    sla: Clock, notification: Bell, info: Info,
   };
 
   const handleClick = async (n) => {
@@ -85,7 +81,6 @@ function NotificationBell() {
     const RECORD_ARRAYS: Record<string, any[]> = {
       leads, opportunities, customers, contacts, orders,
       invoices, quotations, activities, products,
-      retailOrders, retailInvoices, retailCustomers, retailProducts, retailActivities,
     };
     const arr = RECORD_ARRAYS[page] || [];
     const fullRecord = arr.find(r =>
@@ -158,14 +153,14 @@ function NotificationBell() {
           <div className="overflow-y-auto divide-y divide-gray-50" style={{maxHeight:'380px'}}>
             {!visibleNotifications?.length ? (
               <div className="px-4 py-12 text-center">
-                <div className="text-4xl mb-2">🔔</div>
+                <div className="flex justify-center mb-2 text-gray-300"><Bell className="w-9 h-9"/></div>
                 <p className="text-gray-400 text-sm">No notifications yet</p>
               </div>
             ) : (
               visibleNotifications.slice(0, 20).map(n => {
                 const page = PAGE_MAP[n.record_type];
                 const isNavigable = page && n.record_id;
-                const icon = TYPE_ICONS[n.type] || '🔔';
+                const IconCmp = TYPE_ICONS[n.type] || Bell;
                 return (
                   <div
                     key={n.id}
@@ -177,7 +172,7 @@ function NotificationBell() {
                     <div className="flex items-start gap-3">
                       {/* Icon + unread dot */}
                       <div className="relative flex-shrink-0 mt-0.5">
-                        <span className="text-lg">{icon}</span>
+                        <IconCmp className="w-[18px] h-[18px] text-gray-500" strokeWidth={1.75}/>
                         {!n.is_read && (
                           <span className="absolute -top-0.5 -right-0.5 w-2 h-2 bg-blue-500 rounded-full"/>
                         )}
@@ -296,10 +291,7 @@ export default function Header({ activePage, onNavigate }) {
 
   return (
     <>
-    <header className="h-16 flex items-center justify-between px-6 shadow-lg flex-shrink-0 sticky top-0 z-30"
-      style={{background: appearance?.themeColors
-        ? `linear-gradient(135deg, ${appearance.themeColors.sidebar}, ${appearance.themeColors.to})`
-        : `linear-gradient(135deg, var(--bp-primary, #0F172A), var(--bp-secondary, #1e3a8a))`}}>
+    <header className="h-16 flex items-center justify-between px-6 shadow-lg border-b-2 border-black/25 flex-shrink-0 sticky top-0 z-30 bg-[#1C1917]">
       {/* Left: Company logo / branding */}
       <div className="flex items-center gap-3">
         {appearance?.company_logo_url
@@ -333,7 +325,7 @@ export default function Header({ activePage, onNavigate }) {
         <button onClick={() => window.dispatchEvent(new CustomEvent('toggle-ai-chat'))}
           title="Business Advisor Agent"
           className="relative flex items-center gap-2 px-3.5 py-2 rounded-xl bg-white/15 hover:bg-white/25 text-white transition-all border border-white/20 text-sm font-semibold">
-          <span>🤖</span>
+          <Bot className="w-4 h-4" strokeWidth={1.75}/>
           <span className="hidden sm:inline">{t(appearance?.language||'en','aiAdvisor')}</span>
           <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-green-400 rounded-full border-2 border-[#0F172A]"/>
         </button>
@@ -349,12 +341,10 @@ export default function Header({ activePage, onNavigate }) {
           <button onClick={() => setProfileOpen(!profileOpen)}
             className="flex items-center gap-2.5 pl-1 pr-3 py-1.5 rounded-xl hover:bg-white/10 transition-all">
             {/* Company logo / avatar */}
-            <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-blue-400 to-indigo-500 flex items-center justify-center text-white text-sm font-bold shadow-md border-2 border-white/30">
-              {initials}
-            </div>
-            <div className="hidden sm:block text-left">
-              <p className="text-sm font-semibold text-white leading-tight">{displayName}</p>
-              <p className="text-xs text-blue-300 leading-tight">{currentUser?.designation || 'User'}</p>
+            <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-blue-400 to-indigo-500 flex items-center justify-center text-white text-sm font-bold shadow-md border-2 border-white/30 overflow-hidden">
+              {currentUser?.avatar_url
+                ? <img src={currentUser.avatar_url} alt="Profile" className="w-full h-full object-cover"/>
+                : initials}
             </div>
             <svg className="w-3.5 h-3.5 text-white/60 ml-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7"/>
@@ -364,8 +354,10 @@ export default function Header({ activePage, onNavigate }) {
           {profileOpen && (
             <div className="absolute right-0 top-full mt-2 w-60 bg-white border border-gray-200 rounded-2xl shadow-2xl z-50 overflow-hidden">
               <div className="px-4 py-4 bg-gradient-to-r from-[#0F172A] to-blue-900 flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-400 to-indigo-500 flex items-center justify-center text-white font-bold text-sm border-2 border-white/30">
-                  {initials}
+                <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-400 to-indigo-500 flex items-center justify-center text-white font-bold text-sm border-2 border-white/30 overflow-hidden">
+                  {currentUser?.avatar_url
+                    ? <img src={currentUser.avatar_url} alt="Profile" className="w-full h-full object-cover"/>
+                    : initials}
                 </div>
                 <div>
                   <p className="text-sm font-bold text-white">{displayName}</p>
@@ -375,16 +367,16 @@ export default function Header({ activePage, onNavigate }) {
               <div className="py-1">
                 <button onClick={() => { window.dispatchEvent(new CustomEvent('open-profile')); setProfileOpen(false); }}
                   className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 transition-colors">
-                  <span>👤</span> {t(appearance?.language||'en','myProfile')}
+                  <User className="w-4 h-4" strokeWidth={1.75}/> {t(appearance?.language||'en','myProfile')}
                 </button>
                 <button onClick={() => { setAboutOpen(true); setProfileOpen(false); }}
                   className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 transition-colors">
-                  <span>ℹ️</span> About Umbrella Suite
+                  <Info className="w-4 h-4" strokeWidth={1.75}/> About Umbrella Suite
                 </button>
                 <hr className="my-1 border-gray-100"/>
                 <button onClick={() => { handleLogout(); setProfileOpen(false); }}
                   className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-red-600 hover:bg-red-50 transition-colors">
-                  <span>🚪</span> {t(appearance?.language||'en','signOut')}
+                  <LogOut className="w-4 h-4" strokeWidth={1.75}/> {t(appearance?.language||'en','signOut')}
                 </button>
               </div>
             </div>
