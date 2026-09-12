@@ -4030,7 +4030,20 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
   // true = team-wide default (visible/applied for everyone on this object).
   const setDefaultSavedSearch = async (id: string, isGlobal: boolean = false) => {
     if(!supabase||!currentUser)return;
-    await supabase.from('saved_searches').update({is_default:false,is_global_default:false}).eq('created_by',currentUser.email);
+    // Look up the target search's own object_type and tenant_id first, so
+    // the "clear existing defaults" step can be scoped to just that object
+    // and tenant - previously this cleared is_default/is_global_default
+    // for EVERY saved search the user had ever created, across every
+    // object type (Orders, Invoices, Activities, etc.), not just the one
+    // being defaulted. That's the actual cause of defaults appearing to
+    // break unpredictably: setting a default on one object silently wiped
+    // out the default on every other object too.
+    const { data: target, error: lookupErr } = await supabase.from('saved_searches').select('object_type,tenant_id').eq('id', id).single();
+    if (lookupErr || !target) { showAlert('Failed to set default: could not find that saved search.', { variant:'danger' }); return; }
+    let clearQ = supabase.from('saved_searches').update({is_default:false,is_global_default:false})
+      .eq('created_by', currentUser.email).eq('object_type', target.object_type);
+    if (target.tenant_id) clearQ = (clearQ as any).eq('tenant_id', target.tenant_id);
+    await clearQ;
     const{error}=await supabase.from('saved_searches').update({is_default:true,is_global_default:isGlobal}).eq('id',id);
     if(error){showAlert('Failed to set default: '+error.message,{variant:'danger'});return;}
     await fetchSavedSearches();

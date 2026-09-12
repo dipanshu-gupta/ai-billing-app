@@ -2641,6 +2641,7 @@ function RetailSavedSearchPanel({ page, currentFilters, onApply, onClose }) {
     (f.advFilters||[]).forEach(c => { if (c.field && (c.value || c.op==='is_empty' || c.op==='is_not_empty' || c.op==='is_true' || c.op==='is_false')) parts.push(`${retailFieldLabel(c.field)} ${retailOperatorLabel(c.op)} ${c.value||''}`.trim()); });
     if (f.owner)             parts.push(`Owner: ${f.owner}`);
     if (f.sortField)         parts.push(`Sorted by ${retailFieldLabel(f.sortField)} (${f.sortDir==='desc'?'descending':'ascending'})`);
+    if (f.columns?.length)   parts.push(`${f.columns.length} column${f.columns.length===1?'':'s'} shown`);
     return parts.length ? parts.join(' · ') : 'All records, no filters';
   };
 
@@ -2654,7 +2655,12 @@ function RetailSavedSearchPanel({ page, currentFilters, onApply, onClose }) {
     advFilters: f?.advFilters || [], owner: f?.owner || '',
     sortField: f?.sortField || '', sortDir: f?.sortDir || 'asc',
   });
-  const isCurrentlyApplied = (s) => normalizeFilters(s.filters) === normalizeFilters(currentFilters);
+  const sameColumns = (a, b) => JSON.stringify(a||[]) === JSON.stringify(b||[]);
+  const isCurrentlyApplied = (s) => {
+    if (normalizeFilters(s.filters) !== normalizeFilters(currentFilters)) return false;
+    if (s.filters?.columns?.length && !sameColumns(s.filters.columns, currentFilters.columns)) return false;
+    return true;
+  };
 
   const allForPage = (savedSearches||[]).filter(s => s.object_type === page);
   const q = filterText.trim().toLowerCase();
@@ -2937,7 +2943,7 @@ export default function RetailListPage({ page }) {
   const [c360Record,     setC360Record]     = useState(null); // {page, data} for cross-object creates
   const [searchPanel,    setSearchPanel]    = useState(false);
   const [menuOpenId,     setMenuOpenId]     = useState(null);
-  const [defaultLoaded,  setDefaultLoaded]  = useState(false);
+  const appliedDefaultForPage = useRef(null);
 
   const TIME_PERIODS_R = [
     { v:'',           l:'All Time' },
@@ -3004,14 +3010,13 @@ export default function RetailListPage({ page }) {
     if (fetchSavedSearches) fetchSavedSearches(page);
     setSearch(''); setStatusFilter('All'); setTimePeriod('');
     setAdvFilters([]); setOwnerFilter('');
-    setCurrentPage(1); setDefaultLoaded(false);
+    setCurrentPage(1);
     setVisibleColumns(RETAIL_DEFAULT_COLUMNS[page] || ['id','name']); setSortField(''); setSortDir('asc');
     if (fetchListViewPrefs) fetchListViewPrefs(page).then(saved => {
       if (!saved) return;
       if (saved.columns?.length) setVisibleColumns(saved.columns);
       if (saved.sort?.field) { setSortField(saved.sort.field); setSortDir(saved.sort.direction||'asc'); }
     });
-    setTimeout(() => setDefaultLoaded(true), 300);
   }, [page]);
 
   // Debounce search input (300ms) so filtering doesn't recompute on every
@@ -3103,11 +3108,12 @@ export default function RetailListPage({ page }) {
   useEffect(() => { setCurrentPage(1); }, [debouncedSearch, statusFilter, timePeriod, advFilters, ownerFilter, sortField, sortDir]);
 
   useEffect(() => {
-    if (!defaultLoaded || !savedSearches?.length) return;
+    if (!savedSearches?.length) return;
+    if (appliedDefaultForPage.current === page) return; // already applied for this page visit
     const def = savedSearches.find(s => s.object_type===page && s.is_default)
              || savedSearches.find(s => s.object_type===page && s.is_global_default);
-    if (def?.filters) applyFilters(def.filters);
-  }, [defaultLoaded]);
+    if (def?.filters) { applyFilters(def.filters); appliedDefaultForPage.current = page; }
+  }, [page, savedSearches]);
 
   useEffect(() => {
     if (!pendingRecord) return;
@@ -3130,10 +3136,11 @@ export default function RetailListPage({ page }) {
     if (f.advFilters  !== undefined) setAdvFilters(f.advFilters || []);
     if (f.owner       !== undefined) setOwnerFilter(f.owner || '');
     if (f.sortField   !== undefined) { setSortField(f.sortField||''); setSortDir(f.sortDir||'asc'); }
+    if (f.columns?.length) persistColumns(f.columns, f.sortField||sortField, f.sortDir||sortDir);
     setCurrentPage(1);
   };
 
-  const currentFilters = { search, status: statusFilter, timePeriod, advFilters, owner: ownerFilter, sortField, sortDir };
+  const currentFilters = { search, status: statusFilter, timePeriod, advFilters, owner: ownerFilter, sortField, sortDir, columns: visibleColumns };
 
   const toggleSort = (key) => {
     if (sortField !== key) { setSortField(key); setSortDir('asc'); }
