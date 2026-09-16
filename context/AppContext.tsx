@@ -951,6 +951,7 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
       console.error('[checkRentalConflict] Tenant context never resolved — refusing to check availability unscoped');
       return { conflict: true, unresolved: true };
     }
+    console.log('[checkRentalConflict] Querying:', { productId, startDate, endDate, excludeOrderNumber, tenantId: tid });
     let q = supabase.from('retail_order_line_items')
       .select('order_number, rental_start_date, rental_end_date')
       .eq('tenant_id', tid)
@@ -961,9 +962,11 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
       .limit(5);
     if (excludeOrderNumber) q = (q as any).neq('order_number', excludeOrderNumber);
     const { data, error } = await q;
+    console.log('[checkRentalConflict] Result:', { data, error: error?.message, excludeOrderNumberWasApplied: !!excludeOrderNumber });
     if (error) { console.error('[checkRentalConflict]', error.message); return { conflict: true, unresolved: true }; }
     if (data && data.length) {
       const rawOrderNumber = data[0].order_number;
+      console.log('[checkRentalConflict] Matched row:', data[0], '- excludeOrderNumber was:', excludeOrderNumber, '- matched row order_number === excludeOrderNumber?', rawOrderNumber === excludeOrderNumber);
       // Show the clean display number (e.g. RORD-00042), not the raw
       // timestamp-based order_number — matching how every other part of
       // this app identifies a record to the user.
@@ -1375,12 +1378,13 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     ].filter(Boolean)));
     const { data: existingList } = await supabase
       .from('retail_invoices')
-      .select('invoice_number')
+      .select('invoice_number,display_number')
       .in('order_number', orderCandidates)
       .limit(1);
     const existing = existingList?.[0];
     if (existing) {
-      showAlert(`An invoice already exists for this order (${existing.invoice_number}). Cannot create duplicate.`);
+      const existingLabel = existing.display_number ? formatDisplayNumber('RINV', existing.display_number) : 'this order';
+      showAlert(`An invoice already exists for this order (${existingLabel}). Cannot create duplicate.`);
       return null;
     }
     const items = await fetchRetailLineItems('retail_order_line_items', 'order_number', order.id);
@@ -3875,7 +3879,7 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     const { error } = await supabase.from('orders').insert([{
       ...buildSystemFields(),
       order_number: ordId,
-      name: quotation.name || `Order - ${quotation.quote_number}`,
+      name: quotation.name || `Order - ${quotation.display_number ? formatDisplayNumber('QUO', quotation.display_number) : 'New Quotation'}`,
       quote_number: quotation.quote_number,
       customer: quotation.customer || '', customer_id: quotation.customer_id || null,
       contact: quotation.contact || '', contact_id: quotation.contact_id || null,

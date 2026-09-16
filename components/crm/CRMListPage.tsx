@@ -40,8 +40,8 @@ const NUMBER_FIELDS = new Set(['amount','price','cost','probability','stock_quan
 const BOOL_FIELDS   = new Set(['isPrimary','track_inventory']);
 const fieldType = (page, k) => k==='status' ? 'select' : DATE_FIELDS.has(k) ? 'date' : NUMBER_FIELDS.has(k) ? 'number' : BOOL_FIELDS.has(k) ? 'boolean' : 'text';
 const getFieldMeta = (page) => {
-  const keys = Array.from(new Set(['id', ...getObjectFields(page), 'created_at']));
-  return keys.map(k => ({ key:k, label: k==='id' ? 'ID' : fieldLabel(k), type: fieldType(page,k) }));
+  const keys = Array.from(new Set([...getObjectFields(page), 'created_at']));
+  return keys.map(k => ({ key:k, label: fieldLabel(k), type: fieldType(page,k) }));
 };
 
 const OPERATORS = {
@@ -923,7 +923,7 @@ export default function CRMListPage({ page }) {
                             )}
                             {page==='opportunities' && (<>
                               {appPreferences?.cpq_enabled !== false ? (
-                                <button onClick={async()=>{setMenuOpenId(null);const q=await createQuotationFromOpportunity(record);await fetchQuotations();if(q)setSuccessDialog({ title: '✅ Quotation Created', message: `Quotation ${q.quote_number} has been created successfully. You can view and edit it in the Quotations page.` });}} className="w-full text-left px-4 py-3 rounded-xl text-sm font-medium hover:bg-blue-800 text-white">📄 Create Quotation</button>
+                                <button onClick={async()=>{setMenuOpenId(null);const q=await createQuotationFromOpportunity(record);await fetchQuotations();if(q)setSuccessDialog({ title: '✅ Quotation Created', message: `Quotation ${q.display_number ? formatDisplayNumber('QUO', q.display_number) : ''} has been created successfully. You can view and edit it in the Quotations page.` });}} className="w-full text-left px-4 py-3 rounded-xl text-sm font-medium hover:bg-blue-800 text-white">📄 Create Quotation</button>
                               ) : (
                                 <button onClick={async()=>{setMenuOpenId(null);await createOrderFromOpportunity(record);await fetchOrders();showAlert('Order created successfully!', { variant:'success', title:'Order Created' });}} className="w-full text-left px-4 py-3 rounded-xl text-sm font-medium hover:bg-blue-800 text-white">🛒 Create Order</button>
                               )}

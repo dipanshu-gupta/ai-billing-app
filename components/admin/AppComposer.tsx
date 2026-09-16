@@ -55,7 +55,7 @@ function emptyField() {
     _key: `new_${Date.now()}_${Math.random()}`,
     id: null,
     label: '', api_name: '', field_type: 'text',
-    options: [], required: false, is_active: true, is_published: false, sort_order: 0, show_on: 'both',
+    options: [], required: false, is_active: true, is_published: false, sort_order: 0, show_on: 'both', default_value: '',
   };
 }
 
@@ -175,6 +175,7 @@ export default function AppComposer() {
           options:      f.options || [],
           required:     f.required || false,
           show_on:      f.show_on || 'both',
+          default_value: f.default_value || null,
           is_active:    f.is_active === false ? false : true,  // default true
           // CRITICAL: preserve is_published — do NOT reset it to false on save
           sort_order:   i,
@@ -475,6 +476,18 @@ export default function AppComposer() {
                       </button>
                     ))}
                   </div>
+                </div>
+
+                {/* Default value - same mechanism, works identically whether
+                    this custom field is on a header object or a line-item
+                    object, since both already share this one table. */}
+                <div className="mb-3">
+                  <label className="text-[10px] font-bold uppercase tracking-wider text-gray-400 block mb-1">
+                    Default Value {RETAIL_OBJECTS.find(o => o.v === selectedObj)?.isLineItem && <span className="normal-case font-normal text-gray-400">(applied to every new line added to the grid)</span>}
+                  </label>
+                  <input value={f.default_value || ''} onChange={e => upd(idx, 'default_value', e.target.value)}
+                    placeholder="Leave blank for no default"
+                    className="w-full border border-blue-200 rounded-xl px-3 py-2 text-sm text-[#0F172A] bg-white focus:outline-none focus:ring-2 focus:ring-blue-400"/>
                 </div>
 
                 {/* Required */}

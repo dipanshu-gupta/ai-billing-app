@@ -242,7 +242,7 @@ function Customer360({ customer, onSubRecordOpen, onCreateFor }) {
     activities:    { icon:'📅', label:'Activities',     createLabel:'Activity',    data:activities.filter(m),
       cols:[{h:'Name',v:r=>r.name},{h:'Type',v:r=>r.activityType||'-'},{h:'Date',v:r=>r.activityDate||'-'},{h:'Status',v:r=><Pill status={r.status}/>}] },
     quotations:    { icon:'📄', label:'Quotations',     createLabel:null,          data:quotations.filter(m),
-      cols:[{h:'Quote #',v:r=>r.quote_number},{h:'Name',v:r=>r.name},{h:'Grand Total',v:r=>fmt(r.grand_total)},{h:'Validity',v:r=>r.validity_date||'-'},{h:'Status',v:r=><Pill status={r.status}/>}] },
+      cols:[{h:'Quote #',v:r=>r.display_number?formatDisplayNumber('QUO',r.display_number):'-'},{h:'Name',v:r=>r.name},{h:'Grand Total',v:r=>fmt(r.grand_total)},{h:'Validity',v:r=>r.validity_date||'-'},{h:'Status',v:r=><Pill status={r.status}/>}] },
   };
   // Overlay any published rename onto both the tab label (plural) and the
   // create-button label (singular) - without this, Customer 360 tabs and
@@ -922,7 +922,7 @@ export default function RecordDetailPanel({ page, record, onClose, prefillCustom
                     <span className="text-2xl">🛡️</span>
                   </div>
                   <div className="p-6 grid grid-cols-2 md:grid-cols-4 gap-4">
-                    {[['Created By',record.created_by||'-'],['Created At',record.created_at?formatDateTime(record.created_at):'-'],['Updated By',record.updated_by||'-'],['Updated At',record.updated_at?formatDateTime(record.updated_at):'-'],['Organization',organizations.find(o=>o.id===record.organization_id)?.name||'-'],['Business Unit',businessUnits.find(b=>b.id===record.business_unit_id)?.name||'-'],['Record ID',record.id||'-'],['Owner',ownerUser?`${ownerUser.first_name} ${ownerUser.last_name}`:(record.owner||'-')]].map(([lbl,val])=>(
+                    {[['Created By',record.created_by||'-'],['Created At',record.created_at?formatDateTime(record.created_at):'-'],['Updated By',record.updated_by||'-'],['Updated At',record.updated_at?formatDateTime(record.updated_at):'-'],['Organization',organizations.find(o=>o.id===record.organization_id)?.name||'-'],['Business Unit',businessUnits.find(b=>b.id===record.business_unit_id)?.name||'-'],['Record #',record.displayNumber?formatDisplayNumber(PAGE_DISPLAY_PREFIX[page]||'REC',record.displayNumber):'-'],['Owner',ownerUser?`${ownerUser.first_name} ${ownerUser.last_name}`:(record.owner||'-')]].map(([lbl,val])=>(
                       <div key={lbl}>
                         <div className="text-xs font-bold uppercase tracking-wider text-gray-400 mb-1">{lbl}</div>
                         <div className="text-sm text-[#0F172A] font-medium bg-gray-50 rounded-xl px-3 py-2 truncate">{val}</div>

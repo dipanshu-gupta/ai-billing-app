@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useApp } from '@/context/AppContext';
 import { useTenant } from '@/context/TenantContext';
-import { getStatusColor, formatCurrency } from '@/lib/utils';
+import { getStatusColor, formatCurrency, formatDisplayNumber } from '@/lib/utils';
 
 // ─── Shared helpers ────────────────────────────────────────────────────────────
 const fmt = (n: any) => formatCurrency(n||0);
@@ -305,15 +305,15 @@ export function Lead360({ record, onSubRecordOpen, onCreateFor }) {
     },
     quotations: {
       icon:'📄', label:'Quotations', page:'quotations', data: linkedQuotes, createLabel:null,
-      cols:[{h:'Quote #',v:r=>r.id},{h:'Name',v:r=>r.name},{h:'Total',v:r=>fmt(r.grand_total)},{h:'Validity',v:r=>r.validity_date||'-'},{h:'Status',v:r=><Pill status={r.status}/>}],
+      cols:[{h:'Quote #',v:r=>r.displayNumber?formatDisplayNumber('QUO',r.displayNumber):'-'},{h:'Name',v:r=>r.name},{h:'Total',v:r=>fmt(r.grand_total)},{h:'Validity',v:r=>r.validity_date||'-'},{h:'Status',v:r=><Pill status={r.status}/>}],
     },
     orders: {
       icon:'🛒', label:'Orders', page:'orders', data: linkedOrders, createLabel:null,
-      cols:[{h:'Order #',v:r=>r.id},{h:'Name',v:r=>r.name},{h:'Amount',v:r=>fmt(r.amount)},{h:'Status',v:r=><Pill status={r.status}/>}],
+      cols:[{h:'Order #',v:r=>r.displayNumber?formatDisplayNumber('ORD',r.displayNumber):'-'},{h:'Name',v:r=>r.name},{h:'Amount',v:r=>fmt(r.amount)},{h:'Status',v:r=><Pill status={r.status}/>}],
     },
     invoices: {
       icon:'🧾', label:'Invoices', page:'invoices', data: linkedInvoices, createLabel:null,
-      cols:[{h:'Invoice #',v:r=>r.id},{h:'Name',v:r=>r.name},{h:'Amount',v:r=>fmt(r.amount)},{h:'Due',v:r=>r.dueDate||'-'},{h:'Status',v:r=><Pill status={r.status}/>}],
+      cols:[{h:'Invoice #',v:r=>r.displayNumber?formatDisplayNumber('INV',r.displayNumber):'-'},{h:'Name',v:r=>r.name},{h:'Amount',v:r=>fmt(r.amount)},{h:'Due',v:r=>r.dueDate||'-'},{h:'Status',v:r=><Pill status={r.status}/>}],
     },
   };
 
@@ -352,15 +352,15 @@ export function Contact360({ record, onSubRecordOpen, onCreateFor }) {
     },
     quotations: {
       icon:'📄', label:'Quotations', page:'quotations', data: quotations.filter(byContact), createLabel: null,
-      cols:[{h:'Quote #',v:r=>r.id},{h:'Name',v:r=>r.name},{h:'Total',v:r=>fmt(r.grand_total)},{h:'Status',v:r=><Pill status={r.status}/>}],
+      cols:[{h:'Quote #',v:r=>r.displayNumber?formatDisplayNumber('QUO',r.displayNumber):'-'},{h:'Name',v:r=>r.name},{h:'Total',v:r=>fmt(r.grand_total)},{h:'Status',v:r=><Pill status={r.status}/>}],
     },
     orders: {
       icon:'🛒', label:'Orders', page:'orders', data: orders.filter(byContact), createLabel: null,
-      cols:[{h:'Order #',v:r=>r.id},{h:'Name',v:r=>r.name},{h:'Amount',v:r=>fmt(r.amount)},{h:'Status',v:r=><Pill status={r.status}/>}],
+      cols:[{h:'Order #',v:r=>r.displayNumber?formatDisplayNumber('ORD',r.displayNumber):'-'},{h:'Name',v:r=>r.name},{h:'Amount',v:r=>fmt(r.amount)},{h:'Status',v:r=><Pill status={r.status}/>}],
     },
     invoices: {
       icon:'🧾', label:'Invoices', page:'invoices', data: invoices.filter(byContact), createLabel: null,
-      cols:[{h:'Invoice #',v:r=>r.id},{h:'Name',v:r=>r.name},{h:'Amount',v:r=>fmt(r.amount)},{h:'Status',v:r=><Pill status={r.status}/>}],
+      cols:[{h:'Invoice #',v:r=>r.displayNumber?formatDisplayNumber('INV',r.displayNumber):'-'},{h:'Name',v:r=>r.name},{h:'Amount',v:r=>fmt(r.amount)},{h:'Status',v:r=><Pill status={r.status}/>}],
     },
   };
 
@@ -394,15 +394,15 @@ export function Opportunity360({ record, onSubRecordOpen, onCreateFor }) {
     },
     quotations: {
       icon:'📄', label:'Quotations', page:'quotations', data: quotations.filter(byCustomer), createLabel:'Quotation',
-      cols:[{h:'Quote #',v:r=>r.id},{h:'Name',v:r=>r.name},{h:'Total',v:r=>fmt(r.grand_total)},{h:'Validity',v:r=>r.validity_date||'-'},{h:'Status',v:r=><Pill status={r.status}/>}],
+      cols:[{h:'Quote #',v:r=>r.displayNumber?formatDisplayNumber('QUO',r.displayNumber):'-'},{h:'Name',v:r=>r.name},{h:'Total',v:r=>fmt(r.grand_total)},{h:'Validity',v:r=>r.validity_date||'-'},{h:'Status',v:r=><Pill status={r.status}/>}],
     },
     orders: {
       icon:'🛒', label:'Orders', page:'orders', data: orders.filter(byCustomer), createLabel:'Order',
-      cols:[{h:'Order #',v:r=>r.id},{h:'Name',v:r=>r.name},{h:'Amount',v:r=>fmt(r.amount)},{h:'Status',v:r=><Pill status={r.status}/>}],
+      cols:[{h:'Order #',v:r=>r.displayNumber?formatDisplayNumber('ORD',r.displayNumber):'-'},{h:'Name',v:r=>r.name},{h:'Amount',v:r=>fmt(r.amount)},{h:'Status',v:r=><Pill status={r.status}/>}],
     },
     invoices: {
       icon:'🧾', label:'Invoices', page:'invoices', data: invoices.filter(byCustomer), createLabel: null,
-      cols:[{h:'Invoice #',v:r=>r.id},{h:'Name',v:r=>r.name},{h:'Amount',v:r=>fmt(r.amount)},{h:'Status',v:r=><Pill status={r.status}/>}],
+      cols:[{h:'Invoice #',v:r=>r.displayNumber?formatDisplayNumber('INV',r.displayNumber):'-'},{h:'Name',v:r=>r.name},{h:'Amount',v:r=>fmt(r.amount)},{h:'Status',v:r=><Pill status={r.status}/>}],
     },
   };
 
@@ -433,11 +433,11 @@ export function Quotation360({ record, onSubRecordOpen, onCreateFor }) {
     },
     orders: {
       icon:'🛒', label:'Orders', page:'orders', data: orders.filter(r => byQuote(r) || byCustomer(r)), createLabel:'Order',
-      cols:[{h:'Order #',v:r=>r.id},{h:'Name',v:r=>r.name},{h:'Amount',v:r=>fmt(r.amount)},{h:'Status',v:r=><Pill status={r.status}/>}],
+      cols:[{h:'Order #',v:r=>r.displayNumber?formatDisplayNumber('ORD',r.displayNumber):'-'},{h:'Name',v:r=>r.name},{h:'Amount',v:r=>fmt(r.amount)},{h:'Status',v:r=><Pill status={r.status}/>}],
     },
     invoices: {
       icon:'🧾', label:'Invoices', page:'invoices', data: invoices.filter(byCustomer), createLabel: null,
-      cols:[{h:'Invoice #',v:r=>r.id},{h:'Name',v:r=>r.name},{h:'Amount',v:r=>fmt(r.amount)},{h:'Status',v:r=><Pill status={r.status}/>}],
+      cols:[{h:'Invoice #',v:r=>r.displayNumber?formatDisplayNumber('INV',r.displayNumber):'-'},{h:'Name',v:r=>r.name},{h:'Amount',v:r=>fmt(r.amount)},{h:'Status',v:r=><Pill status={r.status}/>}],
     },
     activities: {
       icon:'📅', label:'Activities', page:'activities', data: activities.filter(byCustomer), createLabel:'Activity',
@@ -472,11 +472,11 @@ export function Order360({ record, onSubRecordOpen, onCreateFor }) {
     },
     quotations: {
       icon:'📄', label:'Source Quotation', page:'quotations', data: linkedQuotes, createLabel: null,
-      cols:[{h:'Quote #',v:r=>r.id},{h:'Name',v:r=>r.name},{h:'Total',v:r=>fmt(r.grand_total)},{h:'Status',v:r=><Pill status={r.status}/>}],
+      cols:[{h:'Quote #',v:r=>r.displayNumber?formatDisplayNumber('QUO',r.displayNumber):'-'},{h:'Name',v:r=>r.name},{h:'Total',v:r=>fmt(r.grand_total)},{h:'Status',v:r=><Pill status={r.status}/>}],
     },
     invoices: {
       icon:'🧾', label:'Invoices', page:'invoices', data: linkedInvoices, createLabel:'Invoice',
-      cols:[{h:'Invoice #',v:r=>r.id},{h:'Name',v:r=>r.name},{h:'Amount',v:r=>fmt(r.amount)},{h:'Due',v:r=>r.dueDate||'-'},{h:'Status',v:r=><Pill status={r.status}/>}],
+      cols:[{h:'Invoice #',v:r=>r.displayNumber?formatDisplayNumber('INV',r.displayNumber):'-'},{h:'Name',v:r=>r.name},{h:'Amount',v:r=>fmt(r.amount)},{h:'Due',v:r=>r.dueDate||'-'},{h:'Status',v:r=><Pill status={r.status}/>}],
     },
     activities: {
       icon:'📅', label:'Activities', page:'activities', data: activities.filter(byCustomer), createLabel:'Activity',
@@ -509,11 +509,11 @@ export function Invoice360({ record, onSubRecordOpen, onCreateFor }) {
     },
     orders: {
       icon:'🛒', label:'Source Order', page:'orders', data: linkedOrders, createLabel: null,
-      cols:[{h:'Order #',v:r=>r.id},{h:'Name',v:r=>r.name},{h:'Amount',v:r=>fmt(r.amount)},{h:'Status',v:r=><Pill status={r.status}/>}],
+      cols:[{h:'Order #',v:r=>r.displayNumber?formatDisplayNumber('ORD',r.displayNumber):'-'},{h:'Name',v:r=>r.name},{h:'Amount',v:r=>fmt(r.amount)},{h:'Status',v:r=><Pill status={r.status}/>}],
     },
     quotations: {
       icon:'📄', label:'Quotations', data: linkedQuotes, createLabel: null,
-      cols:[{h:'Quote #',v:r=>r.id},{h:'Name',v:r=>r.name},{h:'Total',v:r=>fmt(r.grand_total)},{h:'Status',v:r=><Pill status={r.status}/>}],
+      cols:[{h:'Quote #',v:r=>r.displayNumber?formatDisplayNumber('QUO',r.displayNumber):'-'},{h:'Name',v:r=>r.name},{h:'Total',v:r=>fmt(r.grand_total)},{h:'Status',v:r=><Pill status={r.status}/>}],
     },
     activities: {
       icon:'📅', label:'Activities', page:'activities', data: activities.filter(byCustomer), createLabel:'Activity',

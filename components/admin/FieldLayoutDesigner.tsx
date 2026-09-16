@@ -38,7 +38,64 @@ const CRM_OBJECTS = [
   { v: 'invoices',      l: 'Invoices',      group: 'CRM' },
   { v: 'activities',    l: 'Activities',    group: 'CRM' },
 ];
-const ALL_OBJECTS = [...RETAIL_OBJECTS, ...CRM_OBJECTS];
+// Line items use the same object_type-as-distinct-object convention
+// already established for line-item custom fields (migration 11) rather
+// than a new field_scope column - object_type is a plain text column in
+// both field_layout_config and app_custom_fields, so a line-item "object"
+// works with the existing schema as-is.
+const RETAIL_LINE_ITEM_OBJECTS = [
+  { v: 'retailOrderLineItems',   l: 'Retail Order Line Items',   group: 'Retail Line Items' },
+  { v: 'retailInvoiceLineItems', l: 'Retail Invoice Line Items', group: 'Retail Line Items' },
+];
+const CRM_LINE_ITEM_OBJECTS = [
+  { v: 'quotationLineItems', l: 'Quotation Line Items', group: 'CRM Line Items' },
+  { v: 'orderLineItems',     l: 'Order Line Items',     group: 'CRM Line Items' },
+  { v: 'invoiceLineItems',   l: 'Invoice Line Items',   group: 'CRM Line Items' },
+];
+const ALL_OBJECTS = [...RETAIL_OBJECTS, ...CRM_OBJECTS, ...RETAIL_LINE_ITEM_OBJECTS, ...CRM_LINE_ITEM_OBJECTS];
+const LINE_ITEM_OBJECT_TYPES = new Set([...RETAIL_LINE_ITEM_OBJECTS, ...CRM_LINE_ITEM_OBJECTS].map(o => o.v));
+
+// Standard line-item fields - hardcoded here the same way RETAIL_CONFIG's
+// header sections are the source of truth for header fields, since line
+// item columns are defined directly in each grid's own JSX rather than a
+// shared config object.
+const LINE_ITEM_STANDARD_FIELDS: Record<string, { key: string; label: string; type: string }[]> = {
+  retailOrderLineItems: [
+    { key: 'product_name',      label: 'Product',       type: 'text' },
+    { key: 'rental_start_date', label: 'Rental Start',  type: 'date' },
+    { key: 'rental_end_date',   label: 'Rental End',    type: 'date' },
+    { key: 'quantity',          label: 'Qty',           type: 'number' },
+    { key: 'unit_price',        label: 'Unit Price',    type: 'number' },
+    { key: 'discount_pct',      label: 'Disc %',        type: 'number' },
+  ],
+  retailInvoiceLineItems: [
+    { key: 'product_name', label: 'Product',    type: 'text' },
+    { key: 'quantity',     label: 'Qty',        type: 'number' },
+    { key: 'unit_price',   label: 'Unit Price', type: 'number' },
+    { key: 'discount_pct', label: 'Disc %',     type: 'number' },
+  ],
+  quotationLineItems: [
+    { key: 'product_name', label: 'Product',     type: 'text' },
+    { key: 'quantity',     label: 'Quantity',    type: 'number' },
+    { key: 'unit_price',   label: 'Unit Price',  type: 'number' },
+    { key: 'discount_pct', label: 'Discount %',  type: 'number' },
+    { key: 'tax_pct',      label: 'Tax %',       type: 'number' },
+  ],
+  orderLineItems: [
+    { key: 'product_name', label: 'Product',     type: 'text' },
+    { key: 'quantity',     label: 'Quantity',    type: 'number' },
+    { key: 'unit_price',   label: 'Unit Price',  type: 'number' },
+    { key: 'discount_pct', label: 'Discount %',  type: 'number' },
+    { key: 'tax_pct',      label: 'Tax %',       type: 'number' },
+  ],
+  invoiceLineItems: [
+    { key: 'product_name', label: 'Product',     type: 'text' },
+    { key: 'quantity',     label: 'Quantity',    type: 'number' },
+    { key: 'unit_price',   label: 'Unit Price',  type: 'number' },
+    { key: 'discount_pct', label: 'Discount %',  type: 'number' },
+    { key: 'tax_pct',      label: 'Tax %',       type: 'number' },
+  ],
+};
 
 const OPERATORS = [
   { v: 'equals',        l: 'equals' },
@@ -50,20 +107,24 @@ const OPERATORS = [
 // Returns the standard field list (key + original label) for any object,
 // pulling from each side's real, existing source of truth rather than a
 // separately maintained duplicate that could drift out of sync.
-function getStandardFields(objectType: string): { key: string; label: string }[] {
+const CRM_DATE_FIELDS = new Set(['created_at','updated_at','closeDate','expectedCloseDate','dueDate','deliveryDate','activityDate','validity_date']);
+const CRM_NUMBER_FIELDS = new Set(['amount','price','cost','probability','stock_quantity','reorder_level','taxRate']);
+
+function getStandardFields(objectType: string): { key: string; label: string; type: string }[] {
+  if (LINE_ITEM_OBJECT_TYPES.has(objectType)) return LINE_ITEM_STANDARD_FIELDS[objectType] || [];
   const isRetail = objectType.startsWith('retail');
   if (isRetail) {
     const cfg = RETAIL_CONFIG[objectType];
     if (!cfg) return [];
-    const fields: { key: string; label: string }[] = [];
+    const fields: { key: string; label: string; type: string }[] = [];
     for (const section of cfg.sections || []) {
       const sectionFields = Array.isArray(section.fields) ? section.fields : [];
-      for (const f of sectionFields) fields.push({ key: f.key, label: f.label });
+      for (const f of sectionFields) fields.push({ key: f.key, label: f.label, type: f.type || 'text' });
     }
     return fields;
   }
   const keys = getObjectFields(objectType);
-  return keys.map(k => ({ key: k, label: CRM_FIELD_LABELS[k] || k }));
+  return keys.map(k => ({ key: k, label: CRM_FIELD_LABELS[k] || k, type: CRM_DATE_FIELDS.has(k) ? 'date' : CRM_NUMBER_FIELDS.has(k) ? 'number' : 'text' }));
 }
 
 const iCls = 'w-full border border-blue-200 rounded-xl px-3 py-2 text-sm text-[#0F172A] bg-white focus:outline-none focus:ring-2 focus:ring-blue-400';
@@ -77,6 +138,28 @@ const PAGE_SCOPES = [
   { v: 'detail', l: 'Detail Page Only', desc: 'Only overrides the record detail page' },
   { v: 'create', l: 'Create Page Only', desc: 'Only overrides the new-record form' },
 ];
+
+// Parses a stored default_value string into its editable parts. A relative
+// reference looks like "rental_start_date+3" or "rental_start_date-1" -
+// unambiguous against a fixed value since a real field key is always an
+// identifier (letters/digits/underscore, never starting with a digit),
+// never a valid date string or the reserved word "today".
+const RELATIVE_DEFAULT_RE = /^([a-zA-Z_][a-zA-Z0-9_]*)\s*([+-]\d+)?$/;
+function parseDefaultValue(raw: string) {
+  if (!raw) return { mode: 'fixed', fixedValue: '', refField: '', offset: 0 };
+  if (raw === 'today') return { mode: 'today', fixedValue: '', refField: '', offset: 0 };
+  const m = raw.match(RELATIVE_DEFAULT_RE);
+  if (m) return { mode: 'relative', fixedValue: '', refField: m[1], offset: m[2] ? parseInt(m[2], 10) : 0 };
+  return { mode: 'fixed', fixedValue: raw, refField: '', offset: 0 };
+}
+function serializeDefaultValue(parts: { mode: string; fixedValue: string; refField: string; offset: number }) {
+  if (parts.mode === 'today') return 'today';
+  if (parts.mode === 'relative') {
+    if (!parts.refField) return '';
+    return parts.offset ? `${parts.refField}${parts.offset > 0 ? '+' : ''}${parts.offset}` : parts.refField;
+  }
+  return parts.fixedValue || '';
+}
 
 export default function FieldLayoutDesigner() {
   const { supabase, tenant } = useTenant();
@@ -142,6 +225,7 @@ export default function FieldLayoutDesigner() {
         const o = overrideMap[f.key];
         return {
           field_key: f.key,
+          field_type: f.type || 'text',
           default_label: f.label,
           custom_label: o?.custom_label || '',
           visibility_mode: o?.visibility_mode || 'visible',
@@ -149,6 +233,8 @@ export default function FieldLayoutDesigner() {
           conditional_rules: o?.conditional_rules || [],
           display_order: o?.display_order ?? idx,
           is_published: o?.is_published || false,
+          default_value: o?.default_value || '',
+          _defaultMode: parseDefaultValue(o?.default_value || '').mode,
           id: o?.id || null,
         };
       }).sort((a, b) => a.display_order - b.display_order);
@@ -204,6 +290,7 @@ export default function FieldLayoutDesigner() {
             editability_mode: row.editability_mode,
             display_order: row.display_order,
             conditional_rules: row.conditional_rules || [],
+            default_value: row.default_value || null,
             is_published: publish ? true : row.is_published,
             updated_at: new Date().toISOString(),
           }, { onConflict: 'tenant_id,object_type,field_key,page_scope' }),
@@ -225,7 +312,7 @@ export default function FieldLayoutDesigner() {
     <div className="space-y-5">
       <div className="bg-gradient-to-r from-purple-900 to-purple-700 rounded-[24px] p-6 text-white">
         <h2 className="text-2xl font-bold flex items-center gap-2">🧱 Page Layout Designer</h2>
-        <p className="text-purple-200 text-sm mt-1">Relabel, show/hide, lock, and reorder standard fields on any object's record page — no code changes needed.</p>
+        <p className="text-purple-200 text-sm mt-1">Relabel, show/hide, lock, reorder, and set default values for standard fields on any object's record page — header or line item — no code changes needed.</p>
       </div>
 
       <div className="bg-white rounded-[20px] border border-gray-200 shadow-sm p-5">
@@ -233,6 +320,8 @@ export default function FieldLayoutDesigner() {
         <select value={selectedObj} onChange={e => setSelectedObj(e.target.value)} className={iCls + ' max-w-sm'}>
           <optgroup label="Retail">{RETAIL_OBJECTS.map(o => <option key={o.v} value={o.v}>{o.l}</option>)}</optgroup>
           <optgroup label="CRM">{CRM_OBJECTS.map(o => <option key={o.v} value={o.v}>{o.l}</option>)}</optgroup>
+          <optgroup label="Retail Line Items">{RETAIL_LINE_ITEM_OBJECTS.map(o => <option key={o.v} value={o.v}>{o.l}</option>)}</optgroup>
+          <optgroup label="CRM Line Items">{CRM_LINE_ITEM_OBJECTS.map(o => <option key={o.v} value={o.v}>{o.l}</option>)}</optgroup>
         </select>
 
         <label className="block text-xs font-bold uppercase tracking-wider text-gray-400 mb-2 mt-4">Which page</label>
@@ -249,10 +338,11 @@ export default function FieldLayoutDesigner() {
         </p>
       </div>
 
+      {!LINE_ITEM_OBJECT_TYPES.has(selectedObj) && (
       <div className="bg-white rounded-[20px] border border-gray-200 shadow-sm p-5">
         <h3 className="text-sm font-bold text-[#0F172A] mb-1">🏷️ Object Display Name</h3>
         <div className="inline-block bg-purple-50 border border-purple-200 rounded-lg px-3 py-1 mb-2">
-          <span className="text-xs text-purple-700">Editing: <strong>{[...RETAIL_OBJECTS, ...CRM_OBJECTS].find(o => o.v === selectedObj)?.l}</strong></span>
+          <span className="text-xs text-purple-700">Editing: <strong>{ALL_OBJECTS.find(o => o.v === selectedObj)?.l}</strong></span>
         </div>
         <p className="text-xs text-gray-400 mb-3">Rename this entire object throughout the app's nav and page headers — e.g. "Customers" → "Patients" for a healthcare tenant. Independent of the field overrides above.</p>
         <div className="grid sm:grid-cols-2 gap-3 mb-3">
@@ -279,6 +369,7 @@ export default function FieldLayoutDesigner() {
           </button>
         </div>
       </div>
+      )}
 
       {loading ? (
         <div className="text-center py-10 text-gray-400">Loading…</div>
@@ -334,6 +425,70 @@ export default function FieldLayoutDesigner() {
                   </div>
                 </div>
               </div>
+
+              {(() => {
+                const parsed = parseDefaultValue(row.default_value);
+                const mode = row._defaultMode || parsed.mode;
+                // Selecting a mode is a separate action from producing a
+                // valid serialized string - "relative mode, no field chosen
+                // yet" has no valid string form (it would serialize to ''),
+                // but is still a real, meaningful UI state. Tracking it in
+                // its own field means the segmented control doesn't silently
+                // snap back to "Fixed" the instant "Relative" is clicked.
+                const setMode = (m: string) => {
+                  upd(idx, '_defaultMode', m);
+                  if (m === 'today') upd(idx, 'default_value', 'today');
+                  else if (m === 'fixed' && parsed.mode !== 'fixed') upd(idx, 'default_value', '');
+                };
+                const setParts = (patch: any) => {
+                  const next = serializeDefaultValue({ ...parsed, mode, ...patch });
+                  upd(idx, 'default_value', next);
+                };
+                const otherDateFields = standardFields.filter(f => f.type === 'date' && f.key !== row.field_key);
+                return (
+                  <div className="mb-3">
+                    <label className="text-[10px] font-bold uppercase tracking-wider text-gray-400 block mb-1">
+                      Default Value {LINE_ITEM_OBJECT_TYPES.has(selectedObj) && <span className="normal-case font-normal text-gray-400">(applied to every new line added to the grid)</span>}
+                    </label>
+                    {row.field_type === 'date' ? (
+                      <div className="space-y-2">
+                        <div className="flex gap-2">
+                          {[{v:'fixed',l:'Fixed Date'},{v:'today',l:'Today'},{v:'relative',l:'Relative to Another Field'}].map(m => (
+                            <button key={m.v} onClick={() => setMode(m.v)}
+                              className={`flex-1 py-2 rounded-xl text-xs font-semibold border transition-all ${mode === m.v ? 'bg-[#0F172A] text-white border-transparent' : 'bg-gray-50 text-gray-600 border-gray-200'}`}>
+                              {m.l}
+                            </button>
+                          ))}
+                        </div>
+                        {mode === 'fixed' && (
+                          <input type="date" value={parsed.fixedValue} onChange={e => setParts({ fixedValue: e.target.value })} className={iCls} />
+                        )}
+                        {mode === 'relative' && (
+                          <div className="flex items-center gap-2 flex-wrap bg-purple-50 rounded-xl p-2.5">
+                            <select value={parsed.refField} onChange={e => setParts({ refField: e.target.value })} className="text-xs border border-gray-200 rounded-lg px-2 py-1.5 bg-white text-[#0F172A]">
+                              <option value="">field…</option>
+                              {otherDateFields.map(f => <option key={f.key} value={f.key}>{f.label}</option>)}
+                            </select>
+                            <span className="text-xs font-semibold text-gray-500">+</span>
+                            <input type="number" value={parsed.offset} onChange={e => setParts({ offset: parseInt(e.target.value, 10) || 0 })}
+                              className="text-xs border border-gray-200 rounded-lg px-2 py-1.5 bg-white text-[#0F172A] w-20 text-center" />
+                            <span className="text-xs font-semibold text-gray-500">day(s) — use a negative number for "before"</span>
+                          </div>
+                        )}
+                        {mode === 'relative' && (
+                          <p className="text-[11px] text-gray-400">
+                            Recalculates live whenever {otherDateFields.find(f=>f.key===parsed.refField)?.label || 'the referenced field'} changes on the same {LINE_ITEM_OBJECT_TYPES.has(selectedObj) ? 'line' : 'record'} — not just once when the {LINE_ITEM_OBJECT_TYPES.has(selectedObj) ? 'line is added' : 'record is created'}.
+                          </p>
+                        )}
+                      </div>
+                    ) : (
+                      <input value={row.default_value} onChange={e => upd(idx, 'default_value', e.target.value)}
+                        placeholder="Leave blank for no default"
+                        className={iCls} />
+                    )}
+                  </div>
+                );
+              })()}
 
               <button onClick={() => setExpandedRules(p => ({ ...p, [row.field_key]: !p[row.field_key] }))} className="text-xs font-semibold text-purple-600 hover:underline">
                 {expandedRules[row.field_key] ? '▾' : '▸'} Conditional rules {row.conditional_rules?.length > 0 && `(${row.conditional_rules.length})`}

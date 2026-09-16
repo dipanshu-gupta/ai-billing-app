@@ -6,6 +6,7 @@ import { useApp } from '@/context/AppContext';
 import { useTenant } from '@/context/TenantContext';
 import { useAlert } from '@/components/shared/AlertProvider';
 import { formatDate, formatDisplayNumber } from '@/lib/utils';
+import { useFieldLayout } from '@/lib/useFieldLayout';
 import { THEMES } from '@/lib/i18n';
 import SearchableSelect from '@/components/shared/SearchableSelect';
 
@@ -190,12 +191,41 @@ export default function RentalBookingCalendar({ productId, productName, productP
     return iso >= toISO(rangeStart) && iso <= endISO;
   };
 
+  // Same relative-default mechanism as the Line Items grid (Page Layout
+  // Designer > Retail Order Line Items > Rental End) - "rental_start_date+N"
+  // syntax, resolved against whatever start date was just clicked. Kept in
+  // sync with RetailListPage.tsx's resolveLineDefault by definition (same
+  // parsing rule), not a shared import, since this is a different component.
+  const lineItemFieldLayout = useFieldLayout('retailOrderLineItems');
+  const RELATIVE_DEFAULT_RE = /^([a-zA-Z_][a-zA-Z0-9_]*)\s*([+-]\d+)?$/;
+  const resolveDefaultEndDate = (startDay) => {
+    const row = (lineItemFieldLayout.fields || []).find(f => f.field_key === 'rental_end_date');
+    if (!row?.default_value) return null;
+    const m = row.default_value.match(RELATIVE_DEFAULT_RE);
+    if (!m || m[1] !== 'rental_start_date') return null;
+    const offset = m[2] ? parseInt(m[2], 10) : 0;
+    const d = new Date(startDay);
+    d.setDate(d.getDate() + offset);
+    return d;
+  };
+
   const handleDayClick = (day) => {
     if (successResult) return; // no-op on the success screen
     const iso = toISO(day);
     if (!rangeStart || (rangeStart && rangeEnd)) {
       // Starting a fresh selection — either nothing picked yet, or a
       // complete range was already picked and this click starts over.
+      const defaultEnd = resolveDefaultEndDate(day);
+      if (defaultEnd) {
+        // A default is configured — propose the complete range immediately
+        // rather than waiting for a second click, exactly like the Line
+        // Items grid seeds rental_end_date the moment rental_start_date is
+        // set. The user can still click again to override, which starts a
+        // fresh selection per the branch above.
+        setRangeStart(day); setRangeEnd(defaultEnd); setRangeConflict(null);
+        runAvailabilityCheck(toISO(day), toISO(defaultEnd));
+        return;
+      }
       setRangeStart(day); setRangeEnd(null); setRangeConflict(null);
       return;
     }
@@ -328,14 +358,14 @@ export default function RentalBookingCalendar({ productId, productName, productP
           <div className="flex-1 flex flex-col items-center justify-center p-10 text-center">
             <div className="w-16 h-16 rounded-full bg-green-100 flex items-center justify-center text-3xl mb-4">✓</div>
             <h3 className="text-xl font-bold text-[#0F172A] mb-1">Booking Confirmed</h3>
-            <p className="text-gray-500 text-sm mb-1">Order <span className="font-mono font-bold" style={{color:themeObj.accent}}>{successResult.display_number ? formatDisplayNumber('RORD', successResult.display_number) : successResult.id}</span> created for {customerName}</p>
+            <p className="text-gray-500 text-sm mb-1">Order <span className="font-mono font-bold" style={{color:themeObj.accent}}>{successResult.display_number ? formatDisplayNumber('RORD', successResult.display_number) : '(confirmed)'}</span> created for {customerName}</p>
             <p className="text-gray-400 text-xs mb-6">{formatDate(toISO(rangeStart))} – {formatDate(toISO(rangeEnd))} · {productName}</p>
             <div className="flex items-center gap-3">
               <button onClick={bookAnother} className="px-5 py-2.5 rounded-xl border border-gray-200 text-gray-600 text-sm font-semibold hover:bg-gray-50">
                 + Book Another
               </button>
               <button onClick={viewOrder} className="px-5 py-2.5 rounded-xl text-white text-sm font-bold hover:opacity-90" style={{background:`linear-gradient(to right,${themeObj.colors[1]},${themeObj.colors[0]})`}}>
-                View Order {successResult.display_number ? formatDisplayNumber('RORD', successResult.display_number) : successResult.id} →
+                View Order {successResult.display_number ? formatDisplayNumber('RORD', successResult.display_number) : ''} →
               </button>
             </div>
           </div>

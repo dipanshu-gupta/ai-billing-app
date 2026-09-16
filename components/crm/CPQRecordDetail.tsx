@@ -250,7 +250,7 @@ export default function CPQRecordDetail({ page, record, onClose }) {
           <div>
             <div className="flex items-center gap-3 flex-wrap">
               <span className="text-3xl">{pageIcon}</span>
-              <h2 className="text-2xl font-bold">{edited.name || formatDisplayNumber(PAGE_DISPLAY_PREFIX[page]||'REC', record.displayNumber) || record.id}</h2>
+              <h2 className="text-2xl font-bold">{edited.name || formatDisplayNumber(PAGE_DISPLAY_PREFIX[page]||'REC', record.displayNumber) || 'Untitled Record'}</h2>
               <span className={`flex items-center gap-1.5 px-4 py-1.5 rounded-full text-sm font-bold border-2 ${statusMeta}`}>{edited.status}</span>
               {page==='orders' && ['Partially Invoiced','Invoiced'].includes(edited.status) && items.length>0 && (() => {
                 const totalQty = items.reduce((s,i)=>s+Number(i.quantity||0),0);
@@ -270,7 +270,7 @@ export default function CPQRecordDetail({ page, record, onClose }) {
                   </span>
                 )}
                 <span>{getPageLabel(page)}</span>
-                {edited.quote_number && <span className="text-blue-400 text-xs">· From Quote: {edited.quote_number}</span>}
+                {edited.quote_number && <span className="text-blue-400 text-xs">· From a Quotation</span>}
               </p>
           </div>
           <div className="flex items-center gap-2">

@@ -1,7 +1,7 @@
 // @ts-nocheck
 'use client';
 
-import { useState, useMemo, useEffect, useRef } from 'react';
+import { useState, useMemo, useEffect, useRef, Fragment } from 'react';
 import { useApp } from '@/context/AppContext';
 import { getStatusColor, formatCurrency, formatDate, formatDisplayNumber, PAGE_DISPLAY_PREFIX, tenantScope, todayLocalISO } from '@/lib/utils';
 // useCustomFields hook used inline below
@@ -473,57 +473,135 @@ function RetailLineItems({ items, setItems, products, taxRegime, page, headerDis
   // though rentalModeOn itself stays scoped to orders for those behaviors.
   const showRentalColumns = appPreferences?.business_type === 'rental' && (page === 'retailOrders' || page === 'retailInvoices');
   const { fields: customFields } = useCustomFields(page === 'retailInvoices' ? 'retailInvoiceLineItems' : 'retailOrderLineItems');
+  const lineItemFieldLayout = useFieldLayout(page === 'retailInvoices' ? 'retailInvoiceLineItems' : 'retailOrderLineItems');
   const updCustom = (idx, apiName, val) => setItems(p => p.map((r,i) => i!==idx ? r : { ...r, custom_data: { ...(r.custom_data||{}), [apiName]: val } }));
 
   // Filter out discontinued products from the product picker
   const activeProducts = products.filter(p => p.status !== 'Discontinued');
 
-  const add = () => setItems(p => [...p, {
-    _id: Date.now(), product_name:'', product_id:null, description:'', quantity:1, unit_price:0, list_price:0, discount_pct:0,
-    extended_price:0, custom_data:{}, rental_start_date:'', rental_end_date:'',
-    ...(taxRegime.regime==='india_gst' ? { hsn_code:'', gst_rate:18 } : {}),
-    ...(taxRegime.regime==='us_sales_tax' ? { taxable:'Yes', sales_tax_rate:0 } : {}),
-    ...(taxRegime.regime==='uk_vat' ? { vat_rate:20 } : {}),
-    ...(taxRegime.regime==='generic' ? { tax_pct:0 } : {}),
-  }]);
+  // Same default_value resolution as the header form's defaultForm() -
+  // 'today' resolves to the real current date for date-type fields, a
+  // checkbox field's text default is parsed as a boolean, a relative
+  // reference like "rental_start_date+3" looks up that field's current
+  // value on sourceRow and offsets it by that many days, everything else
+  // is used as-is. Duplicated rather than imported since this is a
+  // module-level function scoped to a different component - kept in sync
+  // by definition (same lines), not by a shared reference.
+  const RELATIVE_DEFAULT_RE = /^([a-zA-Z_][a-zA-Z0-9_]*)\s*([+-]\d+)?$/;
+  const parseDefaultValueRuntime = (raw: string) => {
+    if (!raw || raw.toLowerCase() === 'today') return null;
+    const m = raw.match(RELATIVE_DEFAULT_RE);
+    return m ? { refField: m[1] } : null;
+  };
+  const resolveLineDefault = (fieldType, rawValue, sourceRow: any = null) => {
+    if (rawValue === undefined || rawValue === null || rawValue === '') return undefined;
+    if (fieldType === 'date') {
+      if (rawValue.toLowerCase() === 'today') return todayLocalISO();
+      const m = rawValue.match(RELATIVE_DEFAULT_RE);
+      if (m) {
+        const refVal = sourceRow?.[m[1]];
+        if (!refVal) return undefined; // referenced field not set yet - nothing to offset from
+        const d = new Date(refVal + 'T00:00:00');
+        if (isNaN(d.getTime())) return undefined;
+        if (m[2]) d.setDate(d.getDate() + parseInt(m[2], 10));
+        return d.toLocaleDateString('en-CA');
+      }
+      return rawValue;
+    }
+    if (fieldType === 'checkbox' || fieldType === 'boolean') return rawValue.toLowerCase() === 'true';
+    if (fieldType === 'number') { const n = Number(rawValue); return Number.isNaN(n) ? undefined : n; }
+    return rawValue;
+  };
+
+  const add = () => setItems(p => {
+    const row: any = {
+      _id: Date.now(), product_name:'', product_id:null, description:'', quantity:1, unit_price:0, list_price:0, discount_pct:0,
+      extended_price:0, custom_data:{}, rental_start_date:'', rental_end_date:'',
+      ...(taxRegime.regime==='india_gst' ? { hsn_code:'', gst_rate:18 } : {}),
+      ...(taxRegime.regime==='us_sales_tax' ? { taxable:'Yes', sales_tax_rate:0 } : {}),
+      ...(taxRegime.regime==='uk_vat' ? { vat_rate:20 } : {}),
+      ...(taxRegime.regime==='generic' ? { tax_pct:0 } : {}),
+    };
+    // Admin-configured standard line-item field defaults - dynamic, works
+    // for any standard line-item field on this object, not a fixed set.
+    const lineFieldTypeByKey: Record<string,string> = { quantity:'number', unit_price:'number', discount_pct:'number', rental_start_date:'date', rental_end_date:'date' };
+    (lineItemFieldLayout.fields || []).forEach(fr => {
+      const resolved = resolveLineDefault(lineFieldTypeByKey[fr.field_key] || 'text', fr.default_value, row);
+      if (resolved !== undefined) row[fr.field_key] = resolved;
+    });
+    // Admin-configured custom line-item field defaults, into custom_data.
+    (customFields || []).forEach(f => {
+      const resolved = resolveLineDefault(f.field_type, f.default_value);
+      if (resolved !== undefined) row.custom_data[f.api_name] = resolved;
+    });
+    return [...p, row];
+  });
   const remove = (idx) => {
     setStockWarning(null);
     setRentalWarnings(w => { const n = { ...w }; delete n[idx]; return n; });
     setItems(p => p.filter((_,i)=>i!==idx));
   };
 
-  // Live conflict check — debounced per-row so rapid date typing doesn't
-  // hammer the database with a query on every keystroke. Purely advisory in
-  // the UI (the real guarantee is the server-side check at save time plus
-  // the database's own exclusion constraint) — this just gives fast, honest
-  // feedback before the user even attempts to save.
-  const conflictCheckTimers = useRef<Record<number, any>>({});
-  const runConflictCheck = (idx: number, row: any) => {
+  // Live conflict check — debounced (via the delay before each row's check
+  // actually fires) so rapid date typing doesn't hammer the database on
+  // every keystroke, and cancellation-safe via a standard React
+  // effect-cleanup flag rather than manual timestamp/token bookkeeping.
+  // Purely advisory in the UI (the real guarantee is the server-side check
+  // at save time plus the database's own exclusion constraint) — this just
+  // gives fast, honest feedback before the user even attempts to save.
+  //
+  // This runs as a useEffect keyed to every row's own (product_id, start,
+  // end) rather than being triggered imperatively from upd() - an effect's
+  // cleanup function is GUARANTEED by React to run before the next
+  // execution of that same effect, which means a superseded check's
+  // `cancelled` flag is set before the new check even starts. That makes
+  // it structurally impossible for a slow, stale response (e.g. the
+  // conflict check for dates the user has already changed away from) to
+  // arrive after a newer one and overwrite its correct result - not just
+  // unlikely, but ruled out by how React effects are specified to behave.
+  const rentalCheckKey = items.map(r => `${r.product_id||''}|${r.rental_start_date||''}|${r.rental_end_date||''}|${r.order_number||''}`).join(';;');
+  useEffect(() => {
     if (!rentalModeOn) return;
-    if (conflictCheckTimers.current[idx]) clearTimeout(conflictCheckTimers.current[idx]);
-    if (!row.product_id || !row.rental_start_date || !row.rental_end_date) {
-      setRentalWarnings(w => { const n = { ...w }; delete n[idx]; return n; });
-      return;
-    }
-    if (row.rental_end_date < row.rental_start_date) {
-      setRentalWarnings(w => ({ ...w, [idx]: 'End date must be on or after the start date.' }));
-      return;
-    }
+    console.log('[RentalAvailability] Effect firing with key:', rentalCheckKey);
+    let cancelled = false;
+    const timers: any[] = [];
     const todayISO = new Date().toLocaleDateString('en-CA');
-    if (row.rental_start_date < todayISO) {
-      setRentalWarnings(w => ({ ...w, [idx]: 'Start date is in the past.' }));
-      return;
-    }
-    conflictCheckTimers.current[idx] = setTimeout(async () => {
-      const { conflict, withOrder, unresolved } = await checkRentalConflict(row.product_id, row.rental_start_date, row.rental_end_date, row.order_number || undefined);
-      setRentalWarnings(w => ({
-        ...w,
-        ...(conflict
-          ? { [idx]: unresolved ? 'Could not verify availability — will be checked again on save.' : `Already booked by order ${withOrder} for an overlapping date range.` }
-          : (() => { const n = { ...w }; delete n[idx]; return n; })()),
-      }));
-    }, 400);
-  };
+
+    items.forEach((row, idx) => {
+      if (!row.product_id || !row.rental_start_date || !row.rental_end_date) {
+        setRentalWarnings(w => (w[idx] === undefined ? w : (() => { const n = { ...w }; delete n[idx]; return n; })()));
+        return;
+      }
+      if (row.rental_end_date < row.rental_start_date) {
+        setRentalWarnings(w => (w[idx] === 'End date must be on or after the start date.' ? w : { ...w, [idx]: 'End date must be on or after the start date.' }));
+        return;
+      }
+      if (row.rental_start_date < todayISO) {
+        setRentalWarnings(w => (w[idx] === 'Start date is in the past.' ? w : { ...w, [idx]: 'Start date is in the past.' }));
+        return;
+      }
+      console.log('[RentalAvailability] Scheduling check for row', idx, ':', { product_id: row.product_id, start: row.rental_start_date, end: row.rental_end_date, excludeOrderNumber: row.order_number });
+      timers.push(setTimeout(async () => {
+        const { conflict, withOrder, unresolved } = await checkRentalConflict(row.product_id, row.rental_start_date, row.rental_end_date, row.order_number || undefined);
+        // A cleanup from a newer run of this same effect has already fired
+        // by the time we get here if this check has been superseded -
+        // discard the result rather than apply it.
+        if (cancelled) { console.log('[RentalAvailability] Discarding stale result for row', idx, '- superseded by a newer check'); return; }
+        console.log('[RentalAvailability] Applying result for row', idx, ':', { conflict, withOrder, unresolved });
+        setRentalWarnings(w => {
+          if (conflict) {
+            return { ...w, [idx]: unresolved ? 'Could not verify availability — will be checked again on save.' : `Already booked by order ${withOrder} for an overlapping date range.` };
+          }
+          if (w[idx] === undefined) return w;
+          const n = { ...w };
+          delete n[idx];
+          return n;
+        });
+      }, 400));
+    });
+
+    return () => { cancelled = true; timers.forEach(t => clearTimeout(t)); };
+  }, [rentalCheckKey, rentalModeOn]);
 
   const upd = (idx, field, val) => {
     // Compute stock warning OUTSIDE setItems to avoid setState-in-render error
@@ -544,7 +622,6 @@ function RetailLineItems({ items, setItems, products, taxRegime, page, headerDis
       }
     }
 
-    let updatedRow: any = null;
     setItems(p => p.map((r, i) => {
       if (i !== idx) return r;
       const numFields = ['quantity','unit_price','list_price','discount_pct','gst_rate','sales_tax_rate','vat_rate','tax_pct'];
@@ -574,6 +651,24 @@ function RetailLineItems({ items, setItems, products, taxRegime, page, headerDis
           u.product_id = null;
         }
       }
+      // Live relative-default recalculation - if any OTHER field on this
+      // line has a configured default that's a relative reference to the
+      // field that just changed (e.g. rental_end_date = "rental_start_date
+      // +3"), recompute it now, BEFORE the pricing math below - otherwise
+      // extended_price/rentalDays would be computed against the stale,
+      // pre-cascade date and never reflect the auto-updated one. Always
+      // recalculates on a reference-field change, even if the dependent
+      // field already had a value - simpler and more predictable than
+      // partial dirty-tracking; the user can still edit the dependent
+      // field directly afterward if they want a different value.
+      (lineItemFieldLayout.fields || []).forEach(fr => {
+        if (fr.field_key === field) return; // don't recompute the field the user is directly editing
+        const parsed = parseDefaultValueRuntime(fr.default_value);
+        if (parsed?.refField === field) {
+          const recalculated = resolveLineDefault('date', fr.default_value, u);
+          if (recalculated !== undefined) u[fr.field_key] = recalculated;
+        }
+      });
       const { totalTax } = taxRegime.computeLineTax(u);
       // Rental pricing: for a rentable product with both rental dates set,
       // the line total is rent_per_day × number of days × quantity — not
@@ -589,18 +684,12 @@ function RetailLineItems({ items, setItems, products, taxRegime, page, headerDis
         : u.quantity * u.unit_price * (1 - u.discount_pct/100);
       u.extended_price = net + totalTax;
       u.rental_days = isRentalPricedLine ? rentalDays : undefined; // surfaced in the grid for transparency, not a DB column
-      updatedRow = u;
       return u;
     }));
-    // Runs AFTER setItems, not inside its updater — setState updater
-    // functions must be pure (React may invoke them more than once
-    // internally), so triggering a second setState (via runConflictCheck ->
-    // setRentalWarnings) from inside this one violates that and is exactly
-    // what caused "Cannot update a component while rendering a different
-    // component."
-    if (rentalModeOn && updatedRow && ['product_name','rental_start_date','rental_end_date'].includes(field)) {
-      runConflictCheck(idx, updatedRow);
-    }
+    // Availability re-checking for rental dates is handled by a dedicated
+    // useEffect below, which watches every row's (product_id, start, end)
+    // directly - not triggered imperatively from here. See that effect's
+    // comment for why.
   };
 
   const subtotal  = items.reduce((s,i) => s + computeLineGross(i), 0);
@@ -615,6 +704,29 @@ function RetailLineItems({ items, setItems, products, taxRegime, page, headerDis
   const grandTotal = preHeaderDiscTotal - headerDiscountAmount;
 
   const taxCols = taxRegime.lineItemFields;
+
+  // Column-level visibility/label overrides for the four targeted
+  // standard line-item fields - resolved once for the whole column (not
+  // per-row), since a column's visibility must stay consistent across
+  // every row for the table structure to make sense. Falls back to the
+  // field's own built-in label when no override is published.
+  const lineCol = (fieldKey, defaultLabel) => {
+    const row = resolveFieldRow(fieldKey, lineItemFieldLayout.fields || [], 'both');
+    return {
+      visible: row ? row.visibility_mode !== 'hidden' : true,
+      readOnly: row ? row.editability_mode === 'readonly' : false,
+      label: row?.custom_label || defaultLabel,
+    };
+  };
+  const colProduct  = lineCol('product_name', 'Product');
+  const colQty       = lineCol('quantity', 'Qty');
+  const colPrice     = lineCol('unit_price', 'Unit Price');
+  const colDiscount  = lineCol('discount_pct', 'Disc %');
+  // Net Amount + Line Total are always shown (computed, not user-editable,
+  // so not offered as customizable) - the four fields above are the only
+  // ones whose visibility can vary, so colSpan math needs to count them
+  // dynamically rather than assume all four are always present.
+  const visibleStandardColCount = [colProduct, colQty, colPrice, colDiscount].filter(c => c.visible).length + 2;
 
   return (
     <div className="bg-white rounded-[20px] border border-blue-100 shadow">
@@ -653,14 +765,14 @@ function RetailLineItems({ items, setItems, products, taxRegime, page, headerDis
         <table className="w-full" style={{ minWidth:'700px' }}>
           <thead>
             <tr className="bg-blue-50 border-b border-blue-100">
-              <th className="px-4 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider" style={{minWidth:200}}>Product</th>
+              {colProduct.visible && <th className="px-4 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider" style={{minWidth:200}}>{colProduct.label}</th>}
               {showRentalColumns && <>
                 <th className="px-4 py-3 text-center text-xs font-bold text-purple-600 uppercase tracking-wider" style={{minWidth:130}}>Rental Start</th>
                 <th className="px-4 py-3 text-center text-xs font-bold text-purple-600 uppercase tracking-wider" style={{minWidth:130}}>Rental End</th>
               </>}
-              <th className="px-4 py-3 text-center text-xs font-bold text-gray-500 uppercase tracking-wider" style={{minWidth:70}}>Qty</th>
-              <th className="px-4 py-3 text-right text-xs font-bold text-gray-500 uppercase tracking-wider" style={{minWidth:100}}>Unit Price</th>
-              <th className="px-4 py-3 text-center text-xs font-bold text-gray-500 uppercase tracking-wider" style={{minWidth:70}}>Disc %</th>
+              {colQty.visible && <th className="px-4 py-3 text-center text-xs font-bold text-gray-500 uppercase tracking-wider" style={{minWidth:70}}>{colQty.label}</th>}
+              {colPrice.visible && <th className="px-4 py-3 text-right text-xs font-bold text-gray-500 uppercase tracking-wider" style={{minWidth:100}}>{colPrice.label}</th>}
+              {colDiscount.visible && <th className="px-4 py-3 text-center text-xs font-bold text-gray-500 uppercase tracking-wider" style={{minWidth:70}}>{colDiscount.label}</th>}
               {taxCols.map(tc=><th key={tc.key} className="px-4 py-3 text-center text-xs font-bold text-gray-500 uppercase tracking-wider whitespace-nowrap" style={{minWidth:tc.type==='select'?110:90}}>{tc.label}</th>)}
               <th className="px-4 py-3 text-right text-xs font-bold text-gray-500 uppercase tracking-wider" style={{minWidth:110}}>Net Amount</th>
               <th className="px-4 py-3 text-right text-xs font-bold text-gray-500 uppercase tracking-wider" style={{minWidth:110}}>Line Total <span className="normal-case font-normal text-gray-400">(incl. tax)</span></th>
@@ -670,22 +782,24 @@ function RetailLineItems({ items, setItems, products, taxRegime, page, headerDis
           </thead>
           <tbody className="divide-y divide-blue-50">
             {items.length === 0
-              ? <tr><td colSpan={7 + (showRentalColumns?2:0) + taxCols.length + customFields.length} className="px-5 py-12 text-center text-gray-400 text-sm">
+              ? <tr><td colSpan={visibleStandardColCount + 1 + (showRentalColumns?2:0) + taxCols.length + customFields.length} className="px-5 py-12 text-center text-gray-400 text-sm">
                   No items yet — click <span className="font-semibold text-[#0F172A]">+ Add Item</span> to begin.
                 </td></tr>
-              : items.map((row, idx) => [
-                <tr key={row._id ?? idx} className="hover:bg-blue-50/40 transition-all">
-                  <td className="px-3 py-3">
+              : items.map((row, idx) => (
+                <Fragment key={row._id ?? idx}>
+                <tr className="hover:bg-blue-50/40 transition-all">
+                  {colProduct.visible && <td className="px-3 py-3">
                     <SearchableSelect
                       value={row.product_name || ''}
                       onChange={v => upd(idx, 'product_name', v)}
+                      disabled={colProduct.readOnly}
                       options={activeProducts.map(p => ({
                         value: p.name,
                         label: p.name,
+                        icon: showRentalColumns && p.is_rentable ? '🔑' : undefined,
                         sub: [
                           p.category,
                           p.sku ? `SKU: ${p.sku}` : null,
-                          showRentalColumns && p.is_rentable ? '🔑 Rentable' : null,
                           p.stock_quantity !== undefined
                             ? (Number(p.stock_quantity) === 0
                                 ? '🚫 Out of stock'
@@ -698,7 +812,7 @@ function RetailLineItems({ items, setItems, products, taxRegime, page, headerDis
                       placeholder="Search products..."
                       emptyLabel="No active products found"
                     />
-                  </td>
+                  </td>}
                   {showRentalColumns && (() => {
                     const selectedProduct = activeProducts.find(p => p.name === row.product_name);
                     const isRentable = !!selectedProduct?.is_rentable;
@@ -721,21 +835,21 @@ function RetailLineItems({ items, setItems, products, taxRegime, page, headerDis
                       </td>
                     </>;
                   })()}
-                  <td className="px-3 py-3">
-                    <input type="number" min={1} value={row.quantity}
+                  {colQty.visible && <td className="px-3 py-3">
+                    <input type="number" min={1} value={row.quantity} disabled={colQty.readOnly}
                       onChange={e => { const v = Number(e.target.value); if (v < 1) return; upd(idx, 'quantity', v); }}
-                      className={`${iCls} text-center`}/>
-                  </td>
-                  <td className="px-3 py-3">
-                    <input type="number" min={0} value={row.unit_price}
+                      className={`${iCls} text-center ${colQty.readOnly ? 'bg-gray-50 text-gray-500 cursor-not-allowed' : ''}`}/>
+                  </td>}
+                  {colPrice.visible && <td className="px-3 py-3">
+                    <input type="number" min={0} value={row.unit_price} disabled={colPrice.readOnly}
                       onChange={e => upd(idx, 'unit_price', Math.max(0, Number(e.target.value)))}
-                      className={`${iCls} text-right`}/>
-                  </td>
-                  <td className="px-3 py-3">
-                    <input type="number" min={0} max={100} value={row.discount_pct}
+                      className={`${iCls} text-right ${colPrice.readOnly ? 'bg-gray-50 text-gray-500 cursor-not-allowed' : ''}`}/>
+                  </td>}
+                  {colDiscount.visible && <td className="px-3 py-3">
+                    <input type="number" min={0} max={100} value={row.discount_pct} disabled={colDiscount.readOnly}
                       onChange={e => upd(idx, 'discount_pct', Math.min(100, Math.max(0, Number(e.target.value))))}
-                      className={`${iCls} text-center ${row.discount_pct > 0 ? 'border-green-300 bg-green-50 text-green-800' : ''}`}/>
-                  </td>
+                      className={`${iCls} text-center ${colDiscount.readOnly ? 'bg-gray-50 text-gray-500 cursor-not-allowed' : row.discount_pct > 0 ? 'border-green-300 bg-green-50 text-green-800' : ''}`}/>
+                  </td>}
                   {taxCols.map(tc => (
                     <td key={tc.key} className="px-3 py-3">
                       {tc.type === 'select'
@@ -768,17 +882,18 @@ function RetailLineItems({ items, setItems, products, taxRegime, page, headerDis
                       ×
                     </button>
                   </td>
-                </tr>,
-                rentalWarnings[idx] ? (
-                  <tr key={`warn-${row._id ?? idx}`}>
-                    <td colSpan={6 + (showRentalColumns?2:0) + taxCols.length + customFields.length} className="px-4 pb-2 -mt-1">
+                </tr>
+                {rentalWarnings[idx] ? (
+                  <tr>
+                    <td colSpan={visibleStandardColCount + (showRentalColumns?2:0) + taxCols.length + customFields.length} className="px-4 pb-2 -mt-1">
                       <div className="flex items-center gap-2 text-xs font-semibold text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-1.5">
                         <span>⚠️</span><span>{rentalWarnings[idx]}</span>
                       </div>
                     </td>
                   </tr>
-                ) : null,
-              ])
+                ) : null}
+                </Fragment>
+              ))
             }
           </tbody>
         </table>
@@ -1459,6 +1574,17 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo, on
     setMatchingProcess(null);
   };
 
+  // Live grand total for THIS component's own scope - reflects unsaved
+  // line-item edits immediately (e.g. for the WhatsApp/email message
+  // handlers below), using the exact same formula handleSave uses at
+  // save time, so the two are always consistent with each other.
+  const liveSubtotal = cfg.hasLineItems ? items.reduce((s,i) => s + computeLineGross(i), 0) : Number(edited.amount || 0);
+  const liveTotalDisc = cfg.hasLineItems ? items.reduce((s,i) => s + computeLineGross(i)*Number(i.discount_pct||0)/100, 0) : 0;
+  const liveTotalTax = cfg.hasLineItems ? items.reduce((s,i) => s + taxRegime.computeLineTax(i).totalTax, 0) : 0;
+  const livePreHeaderDiscTotal = liveSubtotal - liveTotalDisc + liveTotalTax;
+  const liveHeaderDiscountAmount = livePreHeaderDiscTotal * Number(edited.header_discount_pct || 0) / 100;
+  const grandTotal = cfg.hasLineItems ? (livePreHeaderDiscTotal - liveHeaderDiscountAmount) : Number(edited.amount || 0);
+
   const handleSave = async (andClose=false) => {
     setSaving(true);
     try {
@@ -1540,13 +1666,7 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo, on
         if (payload[nk] !== undefined && payload[nk] !== null && Number(payload[nk]) < 0) payload[nk] = 0;
       }
       if (cfg.hasLineItems) {
-        const subtotal  = items.reduce((s,i) => s + computeLineGross(i), 0);
-        const totalDisc = items.reduce((s,i) => s + computeLineGross(i)*Number(i.discount_pct||0)/100, 0);
-        const totalTax  = items.reduce((s,i) => s + taxRegime.computeLineTax(i).totalTax, 0);
-        const preHeaderDiscTotal = subtotal - totalDisc + totalTax;
-        const headerDiscountPct = Number(edited.header_discount_pct || 0);
-        const headerDiscountAmount = preHeaderDiscTotal * headerDiscountPct / 100;
-        const computed  = { subtotal, total_discount: totalDisc, total_tax: totalTax, header_discount_pct: headerDiscountPct, header_discount_amount: headerDiscountAmount, amount: preHeaderDiscTotal - headerDiscountAmount };
+        const computed = { subtotal: liveSubtotal, total_discount: liveTotalDisc, total_tax: liveTotalTax, header_discount_pct: Number(edited.header_discount_pct || 0), header_discount_amount: liveHeaderDiscountAmount, amount: grandTotal };
         payload = { ...payload, ...computed };
         // Update edited state so Preview & Print immediately reflects correct totals
         setEdited(p => ({ ...p, ...computed }));
@@ -1581,7 +1701,7 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo, on
     const inv = await createRetailInvoiceFromOrder(edited);
     setCreatingInvoice(false);
     if (inv) {
-      showAlert(`Invoice ${inv.invoice_number} created from this order.`, { variant:'success', title:'Invoice Created' });
+      showAlert(`Invoice ${inv.display_number ? formatDisplayNumber('RINV', inv.display_number) : ''} created from this order.`, { variant:'success', title:'Invoice Created' });
       onSaved?.();
       setPendingReturnTo({ page: 'retailOrders', record: edited });
       setPendingRecord({ page: 'retailInvoices', record: inv });
@@ -1794,7 +1914,7 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo, on
                 {actionsMenuOpen && (() => {
                   const rawPhone = String(edited.customer_phone || '').replace(/\D/g, '');
                   const phone = rawPhone.length === 10 ? '91' + rawPhone : rawPhone;
-                  const orderNum = record?.displayNumber ? 'RORD-'+String(record.displayNumber).padStart(5,'0') : (edited.id||'');
+                  const orderNum = (record?.displayNumber || edited.display_number) ? 'RORD-'+String(record?.displayNumber || edited.display_number).padStart(5,'0') : 'this order';
                   return (
                     <>
                       <div className="fixed inset-0 z-[119]" onClick={() => setActionsMenuOpen(false)} />
@@ -1828,7 +1948,7 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo, on
                                 body: JSON.stringify({
                                   db_url: tenant?.db_url, tenantId: tenant?.id, to: phone,
                                   recordType: 'retailOrders', recordId: orderNum, recipientType: 'customer', sendMode: 'manual',
-                                  templateKey: 'booking_confirmation', templateParams: [edited.customer || 'Customer', orderNum, String(edited.amount || 0)], record: edited,
+                                  templateKey: 'booking_confirmation', templateParams: [edited.customer || 'Customer', orderNum, String(grandTotal || 0)], record: edited,
                                 }),
                               });
                               const data = await res.json();
@@ -1845,7 +1965,7 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo, on
                         <button onClick={() => {
                           setActionsMenuOpen(false);
                           if (!rawPhone) { showAlert('No phone number on file for this customer.', { variant:'warning' }); return; }
-                          const msg = encodeURIComponent(`Dear ${edited.customer||'Customer'}, your order ${orderNum} has been confirmed. Total: ₹${edited.amount||0}. Thank you!`);
+                          const msg = encodeURIComponent(`Dear ${edited.customer||'Customer'}, your order ${orderNum} has been confirmed. Total: ₹${grandTotal||0}. Thank you!`);
                           window.open(`https://wa.me/${phone}?text=${msg}`, '_blank');
                         }} className="w-full text-left px-4 py-2.5 text-sm font-semibold text-[#128C7E] hover:bg-green-50 flex items-center gap-2.5">
                           <svg viewBox="0 0 24 24" className="w-4 h-4 fill-current flex-shrink-0"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/></svg>
@@ -1883,7 +2003,7 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo, on
                           const rawPhone = String(edited.customer_phone || '').replace(/\D/g, '');
                           if (!rawPhone) { showAlert('No phone number on file for this customer — add one to the Customer Phone field first.', { variant:'warning' }); return; }
                           const phone = rawPhone.length === 10 ? '91' + rawPhone : rawPhone;
-                          const invNum = record?.displayNumber ? 'RINV-'+String(record.displayNumber).padStart(5,'0') : (edited.id||'');
+                          const invNum = (record?.displayNumber || edited.display_number) ? 'RINV-'+String(record?.displayNumber || edited.display_number).padStart(5,'0') : 'this invoice';
                           setWaSending(true);
                           try {
                             const res = await fetch('/api/whatsapp/send', {
@@ -1891,7 +2011,7 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo, on
                               body: JSON.stringify({
                                 db_url: tenant?.db_url, tenantId: tenant?.id, to: phone,
                                 recordType: 'retailInvoices', recordId: invNum, recipientType: 'customer', sendMode: 'manual',
-                                templateKey: 'invoice_notice', templateParams: [edited.customer || 'Customer', invNum, String(edited.amount || 0)], record: edited,
+                                templateKey: 'invoice_notice', templateParams: [edited.customer || 'Customer', invNum, String(grandTotal || 0)], record: edited,
                               }),
                             });
                             const data = await res.json();
@@ -1911,7 +2031,7 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo, on
                           const rawPhone = String(edited.customer_phone || '').replace(/\D/g, '');
                           if (!rawPhone) { showAlert('No phone number on file for this customer — add one to the Customer Phone field first.', { variant:'warning' }); return; }
                           const phone = rawPhone.length === 10 ? '91' + rawPhone : rawPhone;
-                          const invNum = record?.displayNumber ? 'RINV-'+String(record.displayNumber).padStart(5,'0') : (edited.id||'');
+                          const invNum = (record?.displayNumber || edited.display_number) ? 'RINV-'+String(record?.displayNumber || edited.display_number).padStart(5,'0') : 'this invoice';
                           const template = invoiceTemplates.find(t=>t.id===selectedTemplateId);
                           if (!template) { showAlert('Select an invoice template first.', { variant:'warning' }); return; }
                           setWaSendingPdf(true);
@@ -1936,7 +2056,7 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo, on
                                 db_url: tenant?.db_url, tenantId: tenant?.id, to: phone,
                                 recordType: 'retailInvoices', recordId: invNum, recipientType: 'customer', sendMode: 'manual',
                                 documentMediaId: uploadData.mediaId, documentFilename: filename,
-                                freeformText: `Dear ${edited.customer||'Customer'}, please find your invoice ${invNum} attached. Total: ₹${edited.amount||0}.`,
+                                freeformText: `Dear ${edited.customer||'Customer'}, please find your invoice ${invNum} attached. Total: ₹${grandTotal||0}.`,
                               }),
                             });
                             const sendData = await sendRes.json();
@@ -1951,8 +2071,8 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo, on
                       )}
                       <button onClick={()=>{
                         setActionsMenuOpen(false);
-                        const invNum = record?.displayNumber ? 'RINV-'+String(record.displayNumber).padStart(5,'0') : (edited.id||'');
-                        const msg = encodeURIComponent(`Dear ${edited.customer||'Customer'}, please find your invoice ${invNum}. Total: ₹${edited.amount||0}. Thank you!`);
+                        const invNum = (record?.displayNumber || edited.display_number) ? 'RINV-'+String(record?.displayNumber || edited.display_number).padStart(5,'0') : 'this invoice';
+                        const msg = encodeURIComponent(`Dear ${edited.customer||'Customer'}, please find your invoice ${invNum}. Total: ₹${grandTotal||0}. Thank you!`);
                         const rawPhone = String(edited.customer_phone || '').replace(/\D/g, '');
                         if (!rawPhone) { showAlert('No phone number on file for this customer — add one to the Customer Phone field first.', { variant:'warning' }); return; }
                         // wa.me expects a full international number with no leading 0/+.
@@ -1967,9 +2087,9 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo, on
                       </button>
                       <button onClick={()=>{
                         setActionsMenuOpen(false);
-                        const invNum = record?.displayNumber ? 'RINV-'+String(record.displayNumber).padStart(5,'0') : (edited.id||'');
+                        const invNum = (record?.displayNumber || edited.display_number) ? 'RINV-'+String(record?.displayNumber || edited.display_number).padStart(5,'0') : 'this invoice';
                         const sub = encodeURIComponent('Invoice '+invNum);
-                        const body = encodeURIComponent('Dear '+( edited.customer||'Customer')+',%0A%0APlease find your invoice '+invNum+'.%0ATotal: ₹'+(edited.amount||0)+'%0A%0AThank you!');
+                        const body = encodeURIComponent('Dear '+( edited.customer||'Customer')+',%0A%0APlease find your invoice '+invNum+'.%0ATotal: ₹'+(grandTotal||0)+'%0A%0AThank you!');
                         window.open('mailto:'+(edited.customer_email||edited.email||'')+'?subject='+sub+'&body='+body,'_blank');
                       }} className="w-full text-left px-4 py-2.5 text-sm font-semibold text-blue-600 hover:bg-blue-50 flex items-center gap-2.5">
                         ✉️ Email
@@ -2269,7 +2389,6 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo, on
             </div>
             <div className="p-5 grid grid-cols-2 sm:grid-cols-4 gap-4 text-sm">
               {[
-                { l:'Record ID',    v: edited.id?.slice(0,16)+'...' },
                 { l:'Display #',    v: edited.display_number ? (PAGE_DISPLAY_PREFIX[page]||'REC')+'-'+String(edited.display_number).padStart(5,'0') : '-' },
                 { l:'Created At',   v: edited.created_at ? new Date(edited.created_at).toLocaleString('en-IN',{day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}) : '-' },
                 { l:'Updated At',   v: edited.updated_at ? new Date(edited.updated_at).toLocaleString('en-IN',{day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}) : '-' },
@@ -2351,35 +2470,91 @@ export function RetailCreateModal({ page, open, onClose, onCreated, prefill = nu
   const cfg = RETAIL_CONFIG[page];
   const taxRegime = getTaxRegime(appPreferences?.default_currency);
   const fieldLayout = useFieldLayout(page);
+  const { fields: headerCustomFields } = useCustomFields(page);
   const { getObjectLabel } = useObjectLabels();
   const [quickCreateCustomer, setQuickCreateCustomer] = useState(null);
 
-  const defaultForm = () => ({
-    status: cfg.statusOptions[0],
-    currency: appPreferences?.default_currency || 'INR',
-    owner_id: currentUser?.id, owner: currentUser?.email,
-    owner_name: (`${currentUser?.first_name||''} ${currentUser?.last_name||''}`.trim()) || currentUser?.email || '',
-    created_by: currentUser?.email,
-    created_at: new Date().toISOString(),
-    invoice_date: todayLocalISO(),
-    order_date: todayLocalISO(),
-    activity_date: todayLocalISO(),
-    loyalty_points: 0, loyalty_tier: 'Standard', preferred_contact: 'Phone',
-    country: 'India', unit: 'pc', price: 0, mrp: 0, cost: 0, stock_quantity: 0, reorder_level: 10,
-    quantity: 1, payment_method: 'Cash', payment_status: 'Pending', channel: 'In-Store', delivery_method: 'Pickup', place_of_supply: 'Tamil Nadu',
-    ...(taxRegime.regime==='india_gst' ? { gst_rate: 18 } : {}),
-    ...(taxRegime.regime==='us_sales_tax' ? { taxable: 'Yes' } : {}),
-    ...(taxRegime.regime==='uk_vat' ? { vat_rate: 20 } : {}),
-  });
+  // Resolves one field_layout_config/app_custom_fields default_value
+  // (always stored as plain text) into the actual value to seed the form
+  // with - 'today' is a dynamic keyword for date fields so the default
+  // always reflects the real current date rather than whatever date
+  // string was typed in as the default at config time; a checkbox field's
+  // text default is parsed as a boolean; everything else is used as-is.
+  const HEADER_RELATIVE_DEFAULT_RE = /^([a-zA-Z_][a-zA-Z0-9_]*)\s*([+-]\d+)?$/;
+  const resolveDefaultValue = (fieldType, rawValue, sourceRow: any = null) => {
+    if (rawValue === undefined || rawValue === null || rawValue === '') return undefined;
+    if (fieldType === 'date') {
+      if (rawValue.toLowerCase() === 'today') return todayLocalISO();
+      const m = rawValue.match(HEADER_RELATIVE_DEFAULT_RE);
+      if (m) {
+        const refVal = sourceRow?.[m[1]];
+        if (!refVal) return undefined;
+        const d = new Date(refVal + 'T00:00:00');
+        if (isNaN(d.getTime())) return undefined;
+        if (m[2]) d.setDate(d.getDate() + parseInt(m[2], 10));
+        return d.toLocaleDateString('en-CA');
+      }
+      return rawValue;
+    }
+    if (fieldType === 'checkbox' || fieldType === 'boolean') return rawValue.toLowerCase() === 'true';
+    if (fieldType === 'number') { const n = Number(rawValue); return Number.isNaN(n) ? undefined : n; }
+    return rawValue;
+  };
+
+  const defaultForm = () => {
+    const base: any = {
+      status: cfg.statusOptions[0],
+      currency: appPreferences?.default_currency || 'INR',
+      owner_id: currentUser?.id, owner: currentUser?.email,
+      owner_name: (`${currentUser?.first_name||''} ${currentUser?.last_name||''}`.trim()) || currentUser?.email || '',
+      created_by: currentUser?.email,
+      created_at: new Date().toISOString(),
+      invoice_date: todayLocalISO(),
+      order_date: todayLocalISO(),
+      activity_date: todayLocalISO(),
+      loyalty_points: 0, loyalty_tier: 'Standard', preferred_contact: 'Phone',
+      country: 'India', unit: 'pc', price: 0, mrp: 0, cost: 0, stock_quantity: 0, reorder_level: 10,
+      quantity: 1, payment_method: 'Cash', payment_status: 'Pending', channel: 'In-Store', delivery_method: 'Pickup', place_of_supply: 'Tamil Nadu',
+      ...(taxRegime.regime==='india_gst' ? { gst_rate: 18 } : {}),
+      ...(taxRegime.regime==='us_sales_tax' ? { taxable: 'Yes' } : {}),
+      ...(taxRegime.regime==='uk_vat' ? { vat_rate: 20 } : {}),
+    };
+    // Admin-configured standard field defaults - applied after the
+    // hardcoded ones above so an admin's own configuration always wins,
+    // for ANY standard field on this object, not just the fixed set
+    // hardcoded here. This is what makes the feature dynamic rather than
+    // requiring a code change per field.
+    const fieldTypeByKey: Record<string,string> = {};
+    (cfg.sections||[]).forEach(s => (s.fields||[]).forEach(f => { fieldTypeByKey[f.key] = f.type; }));
+    (fieldLayout.fields || []).forEach(row => {
+      const resolved = resolveDefaultValue(fieldTypeByKey[row.field_key] || 'text', row.default_value, base);
+      if (resolved !== undefined) base[row.field_key] = resolved;
+    });
+    // Admin-configured custom field defaults, into custom_data - same
+    // mechanism, works for any custom field defined on this object.
+    const custom_data: Record<string, any> = {};
+    (headerCustomFields || []).forEach(f => {
+      const resolved = resolveDefaultValue(f.field_type, f.default_value);
+      if (resolved !== undefined) custom_data[f.api_name] = resolved;
+    });
+    if (Object.keys(custom_data).length) base.custom_data = custom_data;
+    return base;
+  };
 
   const [form, setForm] = useState(defaultForm);
+  const wasOpenRef = useRef(false);
 
-  // Apply prefill whenever it changes (e.g. when opened from Customer 360)
+  // Resets the form only on an actual closed->open transition (or when the
+  // object type changes while open), never merely because prefill's object
+  // identity changed - a fresh {..} literal from the caller on every
+  // render would otherwise silently wipe out anything the user had typed,
+  // since React compares effect dependencies by reference, not value.
   useEffect(() => {
-    if (open) {
+    if (open && !wasOpenRef.current) {
       setForm({ ...defaultForm(), ...(prefill || {}) });
     }
-  }, [open, prefill]);
+    wasOpenRef.current = open;
+  }, [open, page]);
   const [saving, setSaving] = useState(false);
   const [errors, setErrors] = useState({});
   const [createCustomFields, setCreateCustomFields] = useState([]);
@@ -2865,7 +3040,7 @@ function RetailBoardView({ page, cfg, records, onCardClick, updateRetailRecord }
       onCardClick={onCardClick}
       renderCard={r => (
         <div>
-          <div className="font-bold text-sm text-[#0F172A] mb-1.5 truncate">{cfg.listColumns[0]?.v(r) ?? r.id}</div>
+          <div className="font-bold text-sm text-[#0F172A] mb-1.5 truncate">{cfg.listColumns[0]?.v(r) ?? (r.display_number ? formatDisplayNumber(PAGE_DISPLAY_PREFIX[page]||'REC', r.display_number) : 'Untitled')}</div>
           {cfg.listColumns.slice(1, 4).map((col, i) => (
             <div key={i} className="text-xs text-gray-500 flex items-center justify-between gap-2 py-0.5">
               <span className="text-gray-400 flex-shrink-0">{col.h}</span>
@@ -3251,7 +3426,7 @@ export default function RetailListPage({ page }) {
   const moveColumn = (idx, dir) => { const cols=[...visibleColumns]; const j=idx+dir; if (j<0||j>=cols.length) return; [cols[idx],cols[j]]=[cols[j],cols[idx]]; persistColumns(cols); };
   const fmtRetailCell = (r, meta) => {
     const v = r[meta.key];
-    if (meta.key === 'id') return r.displayNumber ? formatDisplayNumber(PAGE_DISPLAY_PREFIX[page]||'REC', r.displayNumber) : (r[cfg.idField] || r.id);
+    if (meta.key === 'id') return r.displayNumber ? formatDisplayNumber(PAGE_DISPLAY_PREFIX[page]||'REC', r.displayNumber) : (r[cfg.idField] || '-');
     if (meta.key === 'order_number' && page === 'retailInvoices') {
       if (!v) return '-';
       const ord = retailOrders.find(o => o._uuid === v || o.order_number === v || o.id === v);
@@ -3518,7 +3693,7 @@ export default function RetailListPage({ page }) {
                               setMenuOpenId(null);
                               const inv = await createRetailInvoiceFromOrder(r);
                               if (inv) {
-                                showAlert(`Invoice ${inv.invoice_number} created from this order.`, { variant:'success', title:'Invoice Created' });
+                                showAlert(`Invoice ${inv.display_number ? formatDisplayNumber('RINV', inv.display_number) : ''} created from this order.`, { variant:'success', title:'Invoice Created' });
                                 setPendingReturnTo({ page: 'retailOrders', record: r });
                                 setPendingRecord({ page: 'retailInvoices', record: inv });
                                 window.dispatchEvent(new CustomEvent('retail-navigate', { detail: { page: 'retailInvoices' } }));
@@ -3584,7 +3759,7 @@ export default function RetailListPage({ page }) {
         const linkBack = pendingRecord?.linkBack;
         setPendingRecord(null);
         if (rec) {
-          const displayVal = rec[cfg.idField] || rec.name || rec.subject || '';
+          const displayVal = rec.display_number ? formatDisplayNumber(PAGE_DISPLAY_PREFIX[page]||'REC', rec.display_number) : (rec.name || rec.subject || '');
           showAlert(`${cfg.singular} ${displayVal ? `"${displayVal}" ` : ''}created successfully.`, { variant:'success', title:`${cfg.singular} Created` });
         }
         // If this create was launched with a linkBack instruction (e.g.

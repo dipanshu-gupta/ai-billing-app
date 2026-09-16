@@ -468,7 +468,7 @@ function QuotationDetail({ quote, onClose, onSaved }) {
           <div className="bg-gradient-to-r from-[#0F172A] to-blue-900 px-8 py-5 text-white flex items-center justify-between flex-shrink-0">
             <div>
               <div className="flex items-center gap-3 flex-wrap">
-                <h2 className="text-2xl font-bold">{form.name || form.quote_number}</h2>
+                <h2 className="text-2xl font-bold">{form.name || (form.display_number ? formatDisplayNumber('QUO', form.display_number) : 'Untitled Quotation')}</h2>
                 {/* Coloured status badge — NOT a button */}
                 <span className={`flex items-center gap-1.5 px-4 py-1.5 rounded-full text-sm font-bold border-2 ${statusMeta.color}`}>
                   <span>{statusMeta.icon}</span>{statusMeta.label}
@@ -899,7 +899,7 @@ export default function QuotationsPage() {
                           {q.displayNumber ? formatDisplayNumber('QUO', q.displayNumber) : formatDisplayNumber('QUO', q.display_number) || q.quote_number}
                         </span>
                       </td>
-                        <td className="px-5 py-3.5"><button onClick={()=>setSelectedQuote(q)} className="font-semibold text-[#0F172A] hover:text-blue-700 hover:underline text-left">{q.name||q.quote_number}</button></td>
+                        <td className="px-5 py-3.5"><button onClick={()=>setSelectedQuote(q)} className="font-semibold text-[#0F172A] hover:text-blue-700 hover:underline text-left">{q.name||(q.display_number?formatDisplayNumber('QUO',q.display_number):'Untitled')}</button></td>
                         <td className="px-5 py-3.5 text-gray-600">{q.customer||'-'}</td>
                         <td className="px-5 py-3.5 text-center"><span className="bg-blue-100 text-blue-700 text-xs font-bold px-2.5 py-1 rounded-full">v{q.version||1}</span></td>
                         <td className="px-5 py-3.5"><span className={`flex items-center gap-1.5 w-fit px-3 py-1 rounded-full text-xs font-bold border ${sm.color}`}><span>{sm.icon}</span>{sm.label}</span></td>
