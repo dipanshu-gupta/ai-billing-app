@@ -718,15 +718,18 @@ function RetailLineItems({ items, setItems, products, taxRegime, page, headerDis
       label: row?.custom_label || defaultLabel,
     };
   };
-  const colProduct  = lineCol('product_name', 'Product');
-  const colQty       = lineCol('quantity', 'Qty');
-  const colPrice     = lineCol('unit_price', 'Unit Price');
-  const colDiscount  = lineCol('discount_pct', 'Disc %');
-  // Net Amount + Line Total are always shown (computed, not user-editable,
-  // so not offered as customizable) - the four fields above are the only
-  // ones whose visibility can vary, so colSpan math needs to count them
-  // dynamically rather than assume all four are always present.
-  const visibleStandardColCount = [colProduct, colQty, colPrice, colDiscount].filter(c => c.visible).length + 2;
+  const colProduct    = lineCol('product_name', 'Product');
+  const colQty        = lineCol('quantity', 'Qty');
+  const colPrice      = lineCol('unit_price', 'Unit Price');
+  const colDiscount   = lineCol('discount_pct', 'Disc %');
+  // Net Amount + Line Total are computed, display-only values (never stored,
+  // never user-editable) - they're registered in the Page Layout Designer as
+  // `computed: true` so they can still be relabeled/hidden there, just with
+  // no Editability/Default Value controls. `readOnly` is ignored for both
+  // below since the cells are always plain text, never inputs.
+  const colNetAmount  = lineCol('net_amount', 'Net Amount');
+  const colLineTotal  = lineCol('extended_price', 'Line Total');
+  const visibleStandardColCount = [colProduct, colQty, colPrice, colDiscount, colNetAmount, colLineTotal].filter(c => c.visible).length;
 
   return (
     <div className="bg-white rounded-[20px] border border-blue-100 shadow">
@@ -774,8 +777,8 @@ function RetailLineItems({ items, setItems, products, taxRegime, page, headerDis
               {colPrice.visible && <th className="px-4 py-3 text-right text-xs font-bold text-gray-500 uppercase tracking-wider" style={{minWidth:100}}>{colPrice.label}</th>}
               {colDiscount.visible && <th className="px-4 py-3 text-center text-xs font-bold text-gray-500 uppercase tracking-wider" style={{minWidth:70}}>{colDiscount.label}</th>}
               {taxCols.map(tc=><th key={tc.key} className="px-4 py-3 text-center text-xs font-bold text-gray-500 uppercase tracking-wider whitespace-nowrap" style={{minWidth:tc.type==='select'?110:90}}>{tc.label}</th>)}
-              <th className="px-4 py-3 text-right text-xs font-bold text-gray-500 uppercase tracking-wider" style={{minWidth:110}}>Net Amount</th>
-              <th className="px-4 py-3 text-right text-xs font-bold text-gray-500 uppercase tracking-wider" style={{minWidth:110}}>Line Total <span className="normal-case font-normal text-gray-400">(incl. tax)</span></th>
+              {colNetAmount.visible && <th className="px-4 py-3 text-right text-xs font-bold text-gray-500 uppercase tracking-wider" style={{minWidth:110}}>{colNetAmount.label}</th>}
+              {colLineTotal.visible && <th className="px-4 py-3 text-right text-xs font-bold text-gray-500 uppercase tracking-wider" style={{minWidth:110}}>{colLineTotal.label} <span className="normal-case font-normal text-gray-400">(incl. tax)</span></th>}
               {customFields.map(f=><th key={f.id} className="px-4 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider" style={{minWidth:110}}>{f.label}</th>)}
               <th/>
             </tr>
@@ -865,16 +868,16 @@ function RetailLineItems({ items, setItems, products, taxRegime, page, headerDis
                       }
                     </td>
                   ))}
-                  <td className="px-3 py-3 text-right font-semibold text-gray-600 text-sm">
+                  {colNetAmount.visible && <td className="px-3 py-3 text-right font-semibold text-gray-600 text-sm">
                     {formatCurrency(computeLineNet(row))}
-                  </td>
-                  <td className="px-3 py-3 text-right font-bold text-[#0F172A] text-sm">
+                  </td>}
+                  {colLineTotal.visible && <td className="px-3 py-3 text-right font-bold text-[#0F172A] text-sm">
                     {formatCurrency(row.extended_price || 0)}
                     {row.rental_days > 0 && (
                       <div className="text-[10px] font-normal text-purple-500">× {row.rental_days} day{row.rental_days!==1?'s':''}</div>
                     )}
                     <div className="text-[10px] font-normal text-gray-400">+{formatCurrency((row.extended_price||0) - computeLineNet(row))} tax</div>
-                  </td>
+                  </td>}
                   {customFields.map(f=><td key={f.id} className="px-3 py-3"><LineItemCustomFieldInput field={f} value={(row.custom_data||{})[f.api_name]} onChange={v=>updCustom(idx,f.api_name,v)}/></td>)}
                   <td className="px-3 py-3 text-center">
                     <button type="button" onClick={() => remove(idx)}

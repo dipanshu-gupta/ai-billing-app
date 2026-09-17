@@ -59,7 +59,7 @@ export const LINE_ITEM_OBJECT_TYPES = new Set([...RETAIL_LINE_ITEM_OBJECTS, ...C
 // header sections are the source of truth for header fields, since line
 // item columns are defined directly in each grid's own JSX rather than a
 // shared config object.
-export const LINE_ITEM_STANDARD_FIELDS: Record<string, { key: string; label: string; type: string }[]> = {
+export const LINE_ITEM_STANDARD_FIELDS: Record<string, { key: string; label: string; type: string; computed?: boolean }[]> = {
   retailOrderLineItems: [
     { key: 'product_name',      label: 'Product',       type: 'text' },
     { key: 'rental_start_date', label: 'Rental Start',  type: 'date' },
@@ -78,6 +78,10 @@ export const LINE_ITEM_STANDARD_FIELDS: Record<string, { key: string; label: str
     { key: 'sales_tax_rate',    label: 'Sales Tax %',   type: 'number' },        // US Sales Tax
     { key: 'vat_rate',          label: 'VAT %',         type: 'select' },        // UK VAT
     { key: 'tax_pct',           label: 'Tax %',         type: 'number' },        // Generic
+    // Computed grid totals — not stored as their own editable input, so
+    // they get relabel/hide only (no Editability toggle, no Default Value).
+    { key: 'net_amount',        label: 'Net Amount',    type: 'number', computed: true },
+    { key: 'extended_price',    label: 'Line Total',    type: 'number', computed: true },
   ],
   retailInvoiceLineItems: [
     { key: 'product_name',      label: 'Product',       type: 'text' },
@@ -92,6 +96,8 @@ export const LINE_ITEM_STANDARD_FIELDS: Record<string, { key: string; label: str
     { key: 'sales_tax_rate',    label: 'Sales Tax %',   type: 'number' },
     { key: 'vat_rate',          label: 'VAT %',         type: 'select' },
     { key: 'tax_pct',           label: 'Tax %',         type: 'number' },
+    { key: 'net_amount',        label: 'Net Amount',    type: 'number', computed: true },
+    { key: 'extended_price',    label: 'Line Total',    type: 'number', computed: true },
   ],
   quotationLineItems: [
     { key: 'product_name', label: 'Product',     type: 'text' },
@@ -99,6 +105,7 @@ export const LINE_ITEM_STANDARD_FIELDS: Record<string, { key: string; label: str
     { key: 'unit_price',   label: 'Unit Price',  type: 'number' },
     { key: 'discount_pct', label: 'Discount %',  type: 'number' },
     { key: 'tax_pct',      label: 'Tax %',       type: 'number' },
+    { key: 'extended_price', label: 'Extended (Line Total)', type: 'number', computed: true },
   ],
   orderLineItems: [
     { key: 'product_name', label: 'Product',     type: 'text' },
@@ -106,6 +113,7 @@ export const LINE_ITEM_STANDARD_FIELDS: Record<string, { key: string; label: str
     { key: 'unit_price',   label: 'Unit Price',  type: 'number' },
     { key: 'discount_pct', label: 'Discount %',  type: 'number' },
     { key: 'tax_pct',      label: 'Tax %',       type: 'number' },
+    { key: 'extended_price', label: 'Extended (Line Total)', type: 'number', computed: true },
   ],
   invoiceLineItems: [
     { key: 'product_name', label: 'Product',     type: 'text' },
@@ -113,6 +121,7 @@ export const LINE_ITEM_STANDARD_FIELDS: Record<string, { key: string; label: str
     { key: 'unit_price',   label: 'Unit Price',  type: 'number' },
     { key: 'discount_pct', label: 'Discount %',  type: 'number' },
     { key: 'tax_pct',      label: 'Tax %',       type: 'number' },
+    { key: 'extended_price', label: 'Extended (Line Total)', type: 'number', computed: true },
   ],
 };
 
@@ -245,10 +254,14 @@ export default function FieldLayoutDesigner() {
         return {
           field_key: f.key,
           field_type: f.type || 'text',
+          computed: (f as any).computed || false,
           default_label: f.label,
           custom_label: o?.custom_label || '',
           visibility_mode: o?.visibility_mode || 'visible',
-          editability_mode: o?.editability_mode || 'editable',
+          // Computed fields (Net Amount, Line Total, etc.) are never
+          // user-editable - force 'readonly' regardless of any stale saved
+          // value, since the Editability toggle is hidden for these rows.
+          editability_mode: (f as any).computed ? 'readonly' : (o?.editability_mode || 'editable'),
           conditional_rules: o?.conditional_rules || [],
           display_order: o?.display_order ?? idx,
           is_published: o?.is_published || false,
@@ -306,10 +319,13 @@ export default function FieldLayoutDesigner() {
             page_scope: pageScope,
             custom_label: row.custom_label || null,
             visibility_mode: row.visibility_mode,
-            editability_mode: row.editability_mode,
+            // Belt-and-braces: force computed rows to 'readonly'/no default
+            // at save time too, not just in load()'s initial merge, in case
+            // a stale client ever has a different value in state.
+            editability_mode: row.computed ? 'readonly' : row.editability_mode,
             display_order: row.display_order,
             conditional_rules: row.conditional_rules || [],
-            default_value: row.default_value || null,
+            default_value: row.computed ? null : (row.default_value || null),
             is_published: publish ? true : row.is_published,
             updated_at: new Date().toISOString(),
           }, { onConflict: 'tenant_id,object_type,field_key,page_scope' }),
@@ -432,20 +448,33 @@ export default function FieldLayoutDesigner() {
                     ))}
                   </div>
                 </div>
-                <div>
-                  <label className="text-[10px] font-bold uppercase tracking-wider text-gray-400 block mb-1">Editability</label>
-                  <div className="flex gap-2">
-                    {['editable', 'readonly'].map(m => (
-                      <button key={m} onClick={() => upd(idx, 'editability_mode', m)}
-                        className={`flex-1 py-2 rounded-xl text-xs font-semibold border transition-all ${row.editability_mode === m ? 'bg-[#0F172A] text-white border-transparent' : 'bg-gray-50 text-gray-600 border-gray-200'}`}>
-                        {m === 'editable' ? 'Editable' : 'Read-only'}
-                      </button>
-                    ))}
+                {row.computed ? (
+                  <div>
+                    <label className="text-[10px] font-bold uppercase tracking-wider text-gray-400 block mb-1">Editability</label>
+                    <div className="flex-1 py-2 rounded-xl text-xs font-semibold border border-dashed border-gray-200 bg-gray-50 text-gray-400 text-center">
+                      Computed — always read-only
+                    </div>
                   </div>
-                </div>
+                ) : (
+                  <div>
+                    <label className="text-[10px] font-bold uppercase tracking-wider text-gray-400 block mb-1">Editability</label>
+                    <div className="flex gap-2">
+                      {['editable', 'readonly'].map(m => (
+                        <button key={m} onClick={() => upd(idx, 'editability_mode', m)}
+                          className={`flex-1 py-2 rounded-xl text-xs font-semibold border transition-all ${row.editability_mode === m ? 'bg-[#0F172A] text-white border-transparent' : 'bg-gray-50 text-gray-600 border-gray-200'}`}>
+                          {m === 'editable' ? 'Editable' : 'Read-only'}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
 
-              {(() => {
+              {row.computed ? (
+                <p className="text-[11px] text-gray-400 mb-3">
+                  This is a computed value (calculated at display time, not stored) — it can be relabeled or hidden above, but has no editability or default value to configure.
+                </p>
+              ) : (() => {
                 const parsed = parseDefaultValue(row.default_value);
                 const mode = row._defaultMode || parsed.mode;
                 // Selecting a mode is a separate action from producing a

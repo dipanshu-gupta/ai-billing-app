@@ -1075,6 +1075,12 @@ function SecurityConsolePanel() {
 // line item (every tax column, for one).
 const mapStdLineField = (f: {key:string,label:string,type:string}) => ({ v: f.key, l: f.label, type: f.type === 'date' || f.type === 'number' ? f.type : undefined });
 const RENTAL_DATE_KEYS = new Set(['rental_start_date', 'rental_end_date']);
+// net_amount is a Page-Layout-Designer-only display concept (pre-tax total,
+// recomputed at render time, never written to a column) — unlike
+// extended_price, which IS a real saved column, it can't be read back as
+// li.net_amount for a workflow condition, so it's excluded here even though
+// it's a valid relabel/hide target in the Designer itself.
+const NON_QUERYABLE_LINE_FIELDS = new Set(['net_amount']);
 // Which custom-field-capable line-item object (as used by AppComposer /
 // FieldLayoutDesigner) backs each header object's line items.
 const LI_PARENT_TO_TYPE: Record<string,string> = {
@@ -1087,10 +1093,13 @@ const LI_PARENT_TO_TYPE: Record<string,string> = {
 const LINE_ITEM_FIELDS: Record<string, {v:string,l:string,type?:string}[]> = Object.fromEntries(
   Object.entries(LI_PARENT_TO_TYPE).map(([parent, liType]) => [
     parent,
-    [
-      ...(LINE_ITEM_STANDARD_FIELDS[liType] || []).filter(f => !RENTAL_DATE_KEYS.has(f.key)).map(mapStdLineField),
-      { v:'extended_price', l:'Line Total', type:'number' }, // computed total, not a form field, but a real saved column
-    ],
+    // extended_price (Line Total) is already listed in
+    // LINE_ITEM_STANDARD_FIELDS itself (computed:true there), so no need
+    // to append it separately here; net_amount is filtered out (see
+    // NON_QUERYABLE_LINE_FIELDS).
+    (LINE_ITEM_STANDARD_FIELDS[liType] || [])
+      .filter(f => !RENTAL_DATE_KEYS.has(f.key) && !NON_QUERYABLE_LINE_FIELDS.has(f.key))
+      .map(mapStdLineField),
   ])
 );
 // Leads/Opportunities have their own line-item tables (lead_line_items,
