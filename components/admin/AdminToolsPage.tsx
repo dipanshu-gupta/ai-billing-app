@@ -4,7 +4,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import AppearancePanel from '@/components/admin/AppearancePanel';
 import AppComposer from '@/components/admin/AppComposer';
-import FieldLayoutDesigner from '@/components/admin/FieldLayoutDesigner';
+import FieldLayoutDesigner, { LINE_ITEM_STANDARD_FIELDS } from '@/components/admin/FieldLayoutDesigner';
 import FieldMappingPanel from '@/components/admin/FieldMappingPanel';
 import { useObjectLabels } from '@/lib/useObjectLabels';
 import { useCustomFields } from '@/lib/useCustomFields';
@@ -1067,17 +1067,39 @@ function SecurityConsolePanel() {
 // ── Shared condition builder ─────────────────────────────────────────────────
 
 // Line-item field registry — which fields the condition builder can offer
-// once "Line Item" scope is selected, per object. Mirrors the actual line-
-// item table schemas in AppContext.tsx (LINE_ITEM_TABLE_CONFIG there).
-const LINE_ITEM_FIELDS: Record<string, {v:string,l:string,type?:string}[]> = {
-  retailOrders:   [{v:'product_name',l:'Product'},{v:'quantity',l:'Quantity',type:'number'},{v:'unit_price',l:'Unit Price',type:'number'},{v:'discount_pct',l:'Discount %',type:'number'},{v:'extended_price',l:'Line Total',type:'number'}],
-  retailInvoices: [{v:'product_name',l:'Product'},{v:'quantity',l:'Quantity',type:'number'},{v:'unit_price',l:'Unit Price',type:'number'},{v:'discount_pct',l:'Discount %',type:'number'},{v:'extended_price',l:'Line Total',type:'number'}],
-  leads:          [{v:'product_name',l:'Product'},{v:'quantity',l:'Quantity',type:'number'},{v:'price',l:'Price',type:'number'}],
-  opportunities:  [{v:'product_name',l:'Product'},{v:'quantity',l:'Quantity',type:'number'},{v:'price',l:'Price',type:'number'}],
-  orders:         [{v:'product_name',l:'Product'},{v:'quantity',l:'Quantity',type:'number'},{v:'price',l:'Price',type:'number'}],
-  invoices:       [{v:'product_name',l:'Product'},{v:'quantity',l:'Quantity',type:'number'},{v:'price',l:'Price',type:'number'}],
-  quotations:     [{v:'product_name',l:'Product'},{v:'quantity',l:'Quantity',type:'number'},{v:'unit_price',l:'Unit Price',type:'number'},{v:'discount_pct',l:'Discount %',type:'number'},{v:'extended_price',l:'Line Total',type:'number'}],
+// once "Line Item" scope is selected, per object. Derived from
+// LINE_ITEM_STANDARD_FIELDS (FieldLayoutDesigner.tsx's own registry of the
+// line-item grid's actual columns, including every tax-regime field) rather
+// than a separately hand-maintained short list — the previous version here
+// only ever listed 4-5 fields and silently excluded everything else on the
+// line item (every tax column, for one).
+const mapStdLineField = (f: {key:string,label:string,type:string}) => ({ v: f.key, l: f.label, type: f.type === 'date' || f.type === 'number' ? f.type : undefined });
+const RENTAL_DATE_KEYS = new Set(['rental_start_date', 'rental_end_date']);
+// Which custom-field-capable line-item object (as used by AppComposer /
+// FieldLayoutDesigner) backs each header object's line items.
+const LI_PARENT_TO_TYPE: Record<string,string> = {
+  retailOrders:   'retailOrderLineItems',
+  retailInvoices: 'retailInvoiceLineItems',
+  quotations:     'quotationLineItems',
+  orders:         'orderLineItems',
+  invoices:       'invoiceLineItems',
 };
+const LINE_ITEM_FIELDS: Record<string, {v:string,l:string,type?:string}[]> = Object.fromEntries(
+  Object.entries(LI_PARENT_TO_TYPE).map(([parent, liType]) => [
+    parent,
+    [
+      ...(LINE_ITEM_STANDARD_FIELDS[liType] || []).filter(f => !RENTAL_DATE_KEYS.has(f.key)).map(mapStdLineField),
+      { v:'extended_price', l:'Line Total', type:'number' }, // computed total, not a form field, but a real saved column
+    ],
+  ])
+);
+// Leads/Opportunities have their own line-item tables (lead_line_items,
+// opportunity_line_items — see LINE_ITEM_TABLE_CONFIG in AppContext.tsx)
+// but no custom-field-capable object type exists for them yet anywhere in
+// App Composer, so — unlike the five objects above — they keep their own
+// small, hand-maintained standard-fields-only list.
+LINE_ITEM_FIELDS.leads         = [{v:'product_name',l:'Product'},{v:'quantity',l:'Quantity',type:'number'},{v:'price',l:'Price',type:'number'}];
+LINE_ITEM_FIELDS.opportunities = [{v:'product_name',l:'Product'},{v:'quantity',l:'Quantity',type:'number'},{v:'price',l:'Price',type:'number'}];
 // Rental-only line-item fields, kept separate rather than always included —
 // only merged into the picker when the tenant is actually in rental mode,
 // since these fields are meaningless (always empty) otherwise.
@@ -1094,16 +1116,51 @@ const getLineItemFieldsFor = (objType: string, appPreferences: any): {v:string,l
   }
   return base;
 };
+
+// ─── Custom fields in Workflow Rules / Assignment Rules / SLA / Approvals ──
+// Every object's own custom fields (defined in App Composer) should be
+// selectable here too, both as header fields and — for objects with line
+// items — as line-item-scope fields, exactly like the standard fields
+// above. A custom field's condition/action value is namespaced "custom:
+// <api_name>" so it can never collide with a real column, and is resolved
+// against record.custom_data (or, for a line item, its own custom_data) at
+// evaluation/execution time in AppContext.tsx.
+const mapCustomFieldType = (fieldType: string): string | undefined => {
+  if (fieldType === 'date' || fieldType === 'datetime') return 'date';
+  if (fieldType === 'number' || fieldType === 'currency') return 'number';
+  return undefined; // text / checkbox / select / url / email -> free text unless opts below apply
+};
+const customFieldToConditionOption = (f: any): {v:string,l:string,type?:string,opts?:string[]} => ({
+  v: `custom:${f.api_name}`,
+  l: f.label,
+  type: mapCustomFieldType(f.field_type),
+  opts: (f.field_type === 'single_select' || f.field_type === 'multi_select') && f.options?.length ? f.options : undefined,
+});
+// Merges an object's custom fields onto its standard field list.
+const withCustomFields = (standardFields: {v:string,l:string,type?:string}[], customFields: any[]) =>
+  customFields?.length ? [...standardFields, ...customFields.map(customFieldToConditionOption)] : standardFields;
+// Same idea, but for the "Line Item Field" scope — merges the line item's
+// own custom fields (defined against its dedicated *LineItems object type,
+// e.g. retailOrderLineItems) onto its standard line-item field list.
+const getLineItemFieldsWithCustom = (
+  objType: string, appPreferences: any, lineItemCustomFieldsByObject: Record<string, any[]>
+): {v:string,l:string,type?:string,opts?:string[]}[] => {
+  const base = getLineItemFieldsFor(objType, appPreferences);
+  const liType = LI_PARENT_TO_TYPE[objType];
+  const custom = liType ? (lineItemCustomFieldsByObject?.[liType] || []) : [];
+  return withCustomFields(base, custom);
+};
+
 const AGGREGATION_MODES = [
   { v:'any', l:'Any line item matches' },
   { v:'all', l:'Every line item matches' },
   { v:'sum', l:'Sum across line items' },
 ];
 
-function ConditionRow({ fields, condition, onChange, onRemove, users, objType, appPreferences }) {
+function ConditionRow({ fields, condition, onChange, onRemove, users, objType, appPreferences, getLineItemFields }) {
   const opts = getFieldOptions(objType, condition.field);
   const noValue = ['is_empty','is_not_empty'].includes(condition.operator);
-  const lineItemFields = getLineItemFieldsFor(objType, appPreferences);
+  const lineItemFields = (getLineItemFields || getLineItemFieldsFor)(objType, appPreferences);
   const isLineItem = condition.scope === 'line_item';
   const activeFieldOptions = isLineItem ? lineItemFields : fields;
 
@@ -1137,12 +1194,19 @@ function ConditionRow({ fields, condition, onChange, onRemove, users, objType, a
       {!noValue && (() => {
         const selectedFieldMeta = activeFieldOptions.find(f => f.v === condition.field);
         const fieldType = (selectedFieldMeta as any)?.type;
+        // Standard fields get their option list from getFieldOptions (never
+        // covers line-item fields); custom single/multi-select fields carry
+        // their own options directly on the field meta from App Composer —
+        // check both, in either scope, so a custom select field (header OR
+        // line item) gets a real dropdown instead of falling through to a
+        // free-text box.
+        const effectiveOpts = (!isLineItem && opts) || (selectedFieldMeta as any)?.opts;
         const inputCls = "border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-900 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400 min-w-[140px]";
-        if (opts && !isLineItem) {
+        if (effectiveOpts?.length) {
           return (
             <select value={condition.value||''} onChange={e=>onChange({...condition,value:e.target.value})} className={inputCls}>
               <option value="">Select value...</option>
-              {opts.map(o=><option key={o} value={o}>{o}</option>)}
+              {effectiveOpts.map(o=><option key={o} value={o}>{o}</option>)}
             </select>
           );
         }
@@ -1159,7 +1223,7 @@ function ConditionRow({ fields, condition, onChange, onRemove, users, objType, a
   );
 }
 
-function ConditionBuilder({ fields, conditions, logic, onChange, objType, appPreferences }) {
+function ConditionBuilder({ fields, conditions, logic, onChange, objType, appPreferences, getLineItemFields }) {
   const addCond = () => onChange({ logic, conditions: [...conditions, {field:'',operator:'equals',value:''}] });
   const updCond = (i,c) => onChange({ logic, conditions: conditions.map((x,j)=>j===i?c:x) });
   const remCond = (i) => onChange({ logic, conditions: conditions.filter((_,j)=>j!==i) });
@@ -1176,7 +1240,7 @@ function ConditionBuilder({ fields, conditions, logic, onChange, objType, appPre
         <span className="text-sm text-gray-400">of these conditions</span>
       </div>
       {conditions.map((c,i)=>(
-        <ConditionRow key={i} fields={fields} condition={c} objType={objType} appPreferences={appPreferences}
+        <ConditionRow key={i} fields={fields} condition={c} objType={objType} appPreferences={appPreferences} getLineItemFields={getLineItemFields}
           onChange={nc=>updCond(i,nc)} onRemove={()=>remCond(i)} />
       ))}
       <button onClick={addCond} className="text-sm text-blue-600 hover:text-blue-800 font-semibold flex items-center gap-1">
@@ -1189,7 +1253,13 @@ function ConditionBuilder({ fields, conditions, logic, onChange, objType, appPre
 function ActionBuilder({ action, idx, users, fields, objectType, onChange, onRemove }) {
   const cfg = action.action_config || {};
   const setcfg = (k,v) => onChange({ ...action, action_config: { ...cfg, [k]: v } });
-  const updateFieldOpts = cfg.field ? getFieldOptions(objectType, cfg.field) : null;
+  // Standard fields get their options/type from getFieldOptions/NUMERIC_FIELDS
+  // (neither knows about custom fields); a custom field's own type/opts —
+  // set on it when it was merged into `fields` — cover that case.
+  const selectedActionFieldMeta = cfg.field ? fields.find(f => f.v === cfg.field) : null;
+  const updateFieldOpts = cfg.field ? (getFieldOptions(objectType, cfg.field) || (selectedActionFieldMeta as any)?.opts || null) : null;
+  const updateFieldIsNumeric = cfg.field ? (NUMERIC_FIELDS.includes(cfg.field) || (selectedActionFieldMeta as any)?.type === 'number') : false;
+  const updateFieldIsDate = cfg.field ? (selectedActionFieldMeta as any)?.type === 'date' : false;
 
   return (
     <div className="bg-gray-50 rounded-[16px] p-4 space-y-3 border border-gray-200">
@@ -1251,7 +1321,10 @@ function ActionBuilder({ action, idx, users, fields, objectType, onChange, onRem
                   <option value="">Select new value... *</option>
                   {updateFieldOpts.map(o=><option key={o} value={o}>{o}</option>)}
                 </select>
-              : NUMERIC_FIELDS.includes(cfg.field)
+              : updateFieldIsDate
+              ? <input type="date" value={cfg.value||''} onChange={e=>setcfg('value',e.target.value)}
+                  className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-900 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400"/>
+              : updateFieldIsNumeric
               ? <input type="number" step="any" value={cfg.value||''} onChange={e=>setcfg('value',e.target.value)}
                   placeholder="New numeric value *"
                   className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-900 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400"/>
@@ -1348,7 +1421,7 @@ function ActionBuilder({ action, idx, users, fields, objectType, onChange, onRem
 }
 
 // ── Workflow Builder Panel ────────────────────────────────────────────────────
-function WorkflowBuilderPanel({ objectList = ALL_OBJECTS, conditionFields = CONDITION_FIELDS, objectLabels = null }) {
+function WorkflowBuilderPanel({ objectList = ALL_OBJECTS, conditionFields = CONDITION_FIELDS, objectLabels = null, lineItemCustomFieldsByObject = {} }) {
   const { workflowRules, enterpriseUsers, saveWorkflowRule, deleteWorkflowRule, appPreferences } = useApp();
   const { showAlert } = useAlert();
   const [open, setOpen]         = useState(false);
@@ -1361,6 +1434,7 @@ function WorkflowBuilderPanel({ objectList = ALL_OBJECTS, conditionFields = COND
 
   const fields = conditionFields[form.object_type] || [];
   const triggerFieldOpts = getFieldOptions(form.object_type, form.trigger_field);
+  const getLineItemFields = (objType: string, appPrefs: any) => getLineItemFieldsWithCustom(objType, appPrefs, lineItemCustomFieldsByObject);
 
   const openNew = () => {
     setEditing(null);
@@ -1534,7 +1608,7 @@ function WorkflowBuilderPanel({ objectList = ALL_OBJECTS, conditionFields = COND
               </div>
             )}
             {form.trigger_event==='before_date' && (() => {
-              const lineItemFieldsForObj = getLineItemFieldsFor(form.object_type, appPreferences);
+              const lineItemFieldsForObj = getLineItemFields(form.object_type, appPreferences);
               const isLineItemField = lineItemFieldsForObj.some(f => f.v === form.schedule_date_field);
               const offsetUnit = form.schedule_offset_unit || 'days';
               return (
@@ -1595,7 +1669,7 @@ function WorkflowBuilderPanel({ objectList = ALL_OBJECTS, conditionFields = COND
           {/* Conditions */}
           <div className="bg-gray-50 rounded-[16px] p-4">
             <h4 className="text-sm font-bold text-[#0F172A] mb-3">🔍 Additional Conditions (optional)</h4>
-            <ConditionBuilder fields={fields} conditions={conditions.conditions||[]} logic={conditions.logic||'AND'} onChange={setCond} objType={form.object_type} appPreferences={appPreferences}/>
+            <ConditionBuilder fields={fields} conditions={conditions.conditions||[]} logic={conditions.logic||'AND'} onChange={setCond} objType={form.object_type} appPreferences={appPreferences} getLineItemFields={getLineItemFields}/>
           </div>
 
           {/* Actions */}
@@ -1806,7 +1880,7 @@ function AssignmentRulesPanel({ objectList = ALL_OBJECTS, conditionFields = COND
 }
 
 // ── SLA Panel ──────────────────────────────────────────────────────────────
-function SLAPanel({ objectList = ALL_OBJECTS, conditionFields = CONDITION_FIELDS, objectLabels = null }) {
+function SLAPanel({ objectList = ALL_OBJECTS, conditionFields = CONDITION_FIELDS, objectLabels = null, lineItemCustomFieldsByObject = {} }) {
   const { slaPolicies, enterpriseUsers, userGroups, saveSLAPolicy, deleteSLAPolicy, appPreferences } = useApp();
   const { showAlert } = useAlert();
   const [open, setOpen]       = useState(false);
@@ -1815,6 +1889,7 @@ function SLAPanel({ objectList = ALL_OBJECTS, conditionFields = CONDITION_FIELDS
   const [conditions, setCond] = useState({ logic:'AND', conditions:[] });
   const [saving, setSaving]   = useState(false);
   const s = (k,v)=>setForm(f=>({...f,[k]:v}));
+  const getLineItemFields = (objType: string, appPrefs: any) => getLineItemFieldsWithCustom(objType, appPrefs, lineItemCustomFieldsByObject);
 
   const fields    = conditionFields[form.object_type] || [];
   const valueOpts = getFieldOptions(form.object_type, form.condition_field);
@@ -1905,7 +1980,7 @@ function SLAPanel({ objectList = ALL_OBJECTS, conditionFields = CONDITION_FIELDS
 
           <div className="bg-teal-50 rounded-[16px] p-4 space-y-3">
             <h4 className="text-sm font-bold text-[#0F172A]">🔍 Apply When (optional conditions)</h4>
-            <ConditionBuilder fields={fields} conditions={conditions.conditions||[]} logic={conditions.logic||'AND'} onChange={setCond} objType={form.object_type} appPreferences={appPreferences}/>
+            <ConditionBuilder fields={fields} conditions={conditions.conditions||[]} logic={conditions.logic||'AND'} onChange={setCond} objType={form.object_type} appPreferences={appPreferences} getLineItemFields={getLineItemFields}/>
           </div>
 
           <div className="grid grid-cols-3 gap-4">
@@ -1949,7 +2024,7 @@ function SLAPanel({ objectList = ALL_OBJECTS, conditionFields = CONDITION_FIELDS
 }
 
 // ── Approval Process Panel ─────────────────────────────────────────────────
-function ApprovalProcessPanel({ objectList = ALL_OBJECTS, conditionFields = CONDITION_FIELDS, objectLabels = null }) {
+function ApprovalProcessPanel({ objectList = ALL_OBJECTS, conditionFields = CONDITION_FIELDS, objectLabels = null, lineItemCustomFieldsByObject = {} }) {
   const { approvalProcesses, approvalRequests, enterpriseUsers, userGroups, saveApprovalProcess, deleteApprovalProcess, fetchApprovalProcesses, appPreferences } = useApp();
   const { showAlert } = useAlert();
   const [open, setOpen]         = useState(false);
@@ -1961,6 +2036,7 @@ function ApprovalProcessPanel({ objectList = ALL_OBJECTS, conditionFields = COND
   const s = (k,v)=>setForm(f=>({...f,[k]:v}));
   const fields    = conditionFields[form.object_type] || [];
   const OBJ_LABELS = objectLabels || {};
+  const getLineItemFields = (objType: string, appPrefs: any) => getLineItemFieldsWithCustom(objType, appPrefs, lineItemCustomFieldsByObject);
 
   const addStep = () => setSteps(p=>[...p,{step_number:p.length+1,step_name:'',approver_user_id:'',approver_group_id:'',approval_type:'any',on_approve_action:'proceed',on_reject_action:'reject'}]);
 
@@ -2100,7 +2176,7 @@ function ApprovalProcessPanel({ objectList = ALL_OBJECTS, conditionFields = COND
 
           <div className="bg-purple-50 rounded-[16px] p-4">
             <h4 className="text-sm font-bold text-[#0F172A] mb-3">🔍 Entry Conditions (when to trigger)</h4>
-            <ConditionBuilder fields={fields} conditions={conditions.conditions||[]} logic={conditions.logic||'AND'} onChange={setCond} objType={form.object_type} appPreferences={appPreferences}/>
+            <ConditionBuilder fields={fields} conditions={conditions.conditions||[]} logic={conditions.logic||'AND'} onChange={setCond} objType={form.object_type} appPreferences={appPreferences} getLineItemFields={getLineItemFields}/>
           </div>
 
           <div>
@@ -2185,11 +2261,68 @@ function ApprovalProcessPanel({ objectList = ALL_OBJECTS, conditionFields = COND
 
 
 
+// Fetches every object's custom fields in one fixed, unconditional set of
+// hook calls (Rules of Hooks requires the call count/order never change
+// between renders — this list is a module-level constant, so it's safe),
+// so Workflow Rules / Assignment Rules / SLA Policies / Approval Processes
+// can all offer custom fields as conditions, trigger fields and (header-
+// level) update-field actions, for every object including line items.
+function useAdminToolsCustomFields() {
+  const customers      = useCustomFields('customers').fields;
+  const leads          = useCustomFields('leads').fields;
+  const opportunities  = useCustomFields('opportunities').fields;
+  const orders         = useCustomFields('orders').fields;
+  const invoices       = useCustomFields('invoices').fields;
+  const contacts       = useCustomFields('contacts').fields;
+  const activities     = useCustomFields('activities').fields;
+  const quotations     = useCustomFields('quotations').fields;
+  const products       = useCustomFields('products').fields;
+  const retailCustomers  = useCustomFields('retailCustomers').fields;
+  const retailProducts   = useCustomFields('retailProducts').fields;
+  const retailActivities = useCustomFields('retailActivities').fields;
+  const retailOrders     = useCustomFields('retailOrders').fields;
+  const retailInvoices   = useCustomFields('retailInvoices').fields;
+  const retailOrderLineItems   = useCustomFields('retailOrderLineItems').fields;
+  const retailInvoiceLineItems = useCustomFields('retailInvoiceLineItems').fields;
+  const quotationLineItems     = useCustomFields('quotationLineItems').fields;
+  const orderLineItems         = useCustomFields('orderLineItems').fields;
+  const invoiceLineItems       = useCustomFields('invoiceLineItems').fields;
+
+  return useMemo(() => ({
+    customers, leads, opportunities, orders, invoices, contacts, activities, quotations, products,
+    retailCustomers, retailProducts, retailActivities, retailOrders, retailInvoices,
+    retailOrderLineItems, retailInvoiceLineItems, quotationLineItems, orderLineItems, invoiceLineItems,
+  }), [customers, leads, opportunities, orders, invoices, contacts, activities, quotations, products,
+       retailCustomers, retailProducts, retailActivities, retailOrders, retailInvoices,
+       retailOrderLineItems, retailInvoiceLineItems, quotationLineItems, orderLineItems, invoiceLineItems]);
+}
+
 export default function AdminToolsPage() {
   const [active, setActive] = useState(null);
   const [adminMode, setAdminMode] = useState('b2b'); // 'b2b' | 'b2c' | 'tenant' | 'import'
   const { hasPermission, currentUserPermissions, permissionsLoaded, currentUser, appPreferences } = useApp();
   const { tenant } = useTenant();
+  const customFieldsByObject = useAdminToolsCustomFields();
+  // Standard fields + each object's own custom fields (App Composer),
+  // merged once here and threaded down to every rule-builder panel so
+  // conditions, trigger fields, and update-field actions can all reference
+  // a custom field alongside the standard ones.
+  const conditionFieldsWithCustom = useMemo(() => Object.fromEntries(
+    B2B_OBJECT_KEYS.map(obj => [obj, withCustomFields(CONDITION_FIELDS[obj] || [], customFieldsByObject[obj])])
+  ), [customFieldsByObject]);
+  const retailConditionFieldsWithCustom = useMemo(() => Object.fromEntries(
+    RETAIL_FIELD_KEYS.map(obj => [obj, withCustomFields(RETAIL_CONDITION_FIELDS[obj] || [], customFieldsByObject[obj])])
+  ), [customFieldsByObject]);
+  // Custom fields for the line-item pseudo-objects, keyed by THEIR OWN
+  // object type (e.g. 'retailOrderLineItems') — getLineItemFieldsWithCustom
+  // looks these up via LI_PARENT_TO_TYPE.
+  const lineItemCustomFieldsByObject = useMemo(() => ({
+    retailOrderLineItems: customFieldsByObject.retailOrderLineItems,
+    retailInvoiceLineItems: customFieldsByObject.retailInvoiceLineItems,
+    quotationLineItems: customFieldsByObject.quotationLineItems,
+    orderLineItems: customFieldsByObject.orderLineItems,
+    invoiceLineItems: customFieldsByObject.invoiceLineItems,
+  }), [customFieldsByObject]);
   const { getObjectLabel } = useObjectLabels();
   // One merged labels map (static defaults + any published rename)
   // covering every object, used by every admin panel below instead of the
@@ -2262,10 +2395,10 @@ export default function AdminToolsPage() {
       case 'users':         return <UsersPanel/>;
       case 'groups':        return <UserGroupsPanel/>;
       case 'security':      return <SecurityConsole/>;
-      case 'workflow':      return <WorkflowBuilderPanel objectLabels={dynamicObjectLabels}/>;
-      case 'assignment':    return <AssignmentRulesPanel objectLabels={dynamicObjectLabels}/>;
-      case 'sla':           return <SLAPanel objectLabels={dynamicObjectLabels}/>;
-      case 'approvals':     return <ApprovalProcessPanel objectLabels={dynamicObjectLabels}/>;
+      case 'workflow':      return <WorkflowBuilderPanel objectLabels={dynamicObjectLabels} conditionFields={conditionFieldsWithCustom} lineItemCustomFieldsByObject={lineItemCustomFieldsByObject}/>;
+      case 'assignment':    return <AssignmentRulesPanel objectLabels={dynamicObjectLabels} conditionFields={conditionFieldsWithCustom}/>;
+      case 'sla':           return <SLAPanel objectLabels={dynamicObjectLabels} conditionFields={conditionFieldsWithCustom} lineItemCustomFieldsByObject={lineItemCustomFieldsByObject}/>;
+      case 'approvals':     return <ApprovalProcessPanel objectLabels={dynamicObjectLabels} conditionFields={conditionFieldsWithCustom} lineItemCustomFieldsByObject={lineItemCustomFieldsByObject}/>;
       case 'templates':        return <DocumentTemplateDesigner docType="quote"/>;
       case 'invoiceTemplates': return <DocumentTemplateDesigner docType="invoice"/>;
       case 'warehouses':       return <WarehousesPanel/>;
@@ -2280,10 +2413,10 @@ export default function AdminToolsPage() {
       case 'r_groups':           return <RetailAdminWrapper title="User Groups" icon="👥" desc="Retail user group access and assignment"><UserGroupsPanel/></RetailAdminWrapper>;
       case 'r_security':         return <RetailAdminWrapper title="Security Console" icon="🔐" desc="Retail roles, permissions and data access — shared with B2B Enterprise"><SecurityConsole/></RetailAdminWrapper>;
       case 'r_invoiceTemplates': return <RetailInvoiceDesigner/>;
-      case 'r_approvals':        return <RetailAdminWrapper title="Approval Processes" icon="✅" desc="Multi-step approvals for Retail Orders and Invoices"><ApprovalProcessPanel objectList={RETAIL_OBJECTS_LIST} conditionFields={RETAIL_CONDITION_FIELDS} objectLabels={dynamicObjectLabels}/></RetailAdminWrapper>;
-      case 'r_workflow':         return <RetailAdminWrapper title="Workflow Builder" icon="⚙️" desc="Auto-trigger actions on Retail data object events"><WorkflowBuilderPanel objectList={RETAIL_OBJECTS_LIST} conditionFields={RETAIL_CONDITION_FIELDS} objectLabels={dynamicObjectLabels}/></RetailAdminWrapper>;
-      case 'r_assignment':       return <RetailAdminWrapper title="Assignment Rules" icon="📋" desc="Auto-assign Retail records to users"><AssignmentRulesPanel objectList={RETAIL_OBJECTS_LIST} conditionFields={RETAIL_CONDITION_FIELDS} objectLabels={dynamicObjectLabels}/></RetailAdminWrapper>;
-      case 'r_sla':              return <RetailAdminWrapper title="SLA Policies" icon="⏱️" desc="Response and resolution SLA for Retail objects"><SLAPanel objectList={RETAIL_OBJECTS_LIST} conditionFields={RETAIL_CONDITION_FIELDS} objectLabels={dynamicObjectLabels}/></RetailAdminWrapper>;
+      case 'r_approvals':        return <RetailAdminWrapper title="Approval Processes" icon="✅" desc="Multi-step approvals for Retail Orders and Invoices"><ApprovalProcessPanel objectList={RETAIL_OBJECTS_LIST} conditionFields={retailConditionFieldsWithCustom} objectLabels={dynamicObjectLabels} lineItemCustomFieldsByObject={lineItemCustomFieldsByObject}/></RetailAdminWrapper>;
+      case 'r_workflow':         return <RetailAdminWrapper title="Workflow Builder" icon="⚙️" desc="Auto-trigger actions on Retail data object events"><WorkflowBuilderPanel objectList={RETAIL_OBJECTS_LIST} conditionFields={retailConditionFieldsWithCustom} objectLabels={dynamicObjectLabels} lineItemCustomFieldsByObject={lineItemCustomFieldsByObject}/></RetailAdminWrapper>;
+      case 'r_assignment':       return <RetailAdminWrapper title="Assignment Rules" icon="📋" desc="Auto-assign Retail records to users"><AssignmentRulesPanel objectList={RETAIL_OBJECTS_LIST} conditionFields={retailConditionFieldsWithCustom} objectLabels={dynamicObjectLabels}/></RetailAdminWrapper>;
+      case 'r_sla':              return <RetailAdminWrapper title="SLA Policies" icon="⏱️" desc="Response and resolution SLA for Retail objects"><SLAPanel objectList={RETAIL_OBJECTS_LIST} conditionFields={retailConditionFieldsWithCustom} objectLabels={dynamicObjectLabels} lineItemCustomFieldsByObject={lineItemCustomFieldsByObject}/></RetailAdminWrapper>;
       case 'r_appPrefs':         return <RetailAdminWrapper title="App Preferences" icon="⚙️" desc="Currency, date format and module settings"><AppPreferencesPanel/></RetailAdminWrapper>;
       case 'r_appearance':       return <RetailAdminWrapper title="Appearance" icon="🎨" desc="Theme, logo and branding — shared with B2B Enterprise"><AppearancePanel/></RetailAdminWrapper>;
       case 'r_composer':         return <AppComposer/>;

@@ -43,23 +43,23 @@ const CRM_OBJECTS = [
 // than a new field_scope column - object_type is a plain text column in
 // both field_layout_config and app_custom_fields, so a line-item "object"
 // works with the existing schema as-is.
-const RETAIL_LINE_ITEM_OBJECTS = [
+export const RETAIL_LINE_ITEM_OBJECTS = [
   { v: 'retailOrderLineItems',   l: 'Retail Order Line Items',   group: 'Retail Line Items' },
   { v: 'retailInvoiceLineItems', l: 'Retail Invoice Line Items', group: 'Retail Line Items' },
 ];
-const CRM_LINE_ITEM_OBJECTS = [
+export const CRM_LINE_ITEM_OBJECTS = [
   { v: 'quotationLineItems', l: 'Quotation Line Items', group: 'CRM Line Items' },
   { v: 'orderLineItems',     l: 'Order Line Items',     group: 'CRM Line Items' },
   { v: 'invoiceLineItems',   l: 'Invoice Line Items',   group: 'CRM Line Items' },
 ];
 const ALL_OBJECTS = [...RETAIL_OBJECTS, ...CRM_OBJECTS, ...RETAIL_LINE_ITEM_OBJECTS, ...CRM_LINE_ITEM_OBJECTS];
-const LINE_ITEM_OBJECT_TYPES = new Set([...RETAIL_LINE_ITEM_OBJECTS, ...CRM_LINE_ITEM_OBJECTS].map(o => o.v));
+export const LINE_ITEM_OBJECT_TYPES = new Set([...RETAIL_LINE_ITEM_OBJECTS, ...CRM_LINE_ITEM_OBJECTS].map(o => o.v));
 
 // Standard line-item fields - hardcoded here the same way RETAIL_CONFIG's
 // header sections are the source of truth for header fields, since line
 // item columns are defined directly in each grid's own JSX rather than a
 // shared config object.
-const LINE_ITEM_STANDARD_FIELDS: Record<string, { key: string; label: string; type: string }[]> = {
+export const LINE_ITEM_STANDARD_FIELDS: Record<string, { key: string; label: string; type: string }[]> = {
   retailOrderLineItems: [
     { key: 'product_name',      label: 'Product',       type: 'text' },
     { key: 'rental_start_date', label: 'Rental Start',  type: 'date' },
@@ -67,12 +67,31 @@ const LINE_ITEM_STANDARD_FIELDS: Record<string, { key: string; label: string; ty
     { key: 'quantity',          label: 'Qty',           type: 'number' },
     { key: 'unit_price',        label: 'Unit Price',    type: 'number' },
     { key: 'discount_pct',      label: 'Disc %',        type: 'number' },
+    // Tax columns vary by the tenant's configured tax regime - all four
+    // possible sets are listed here so a layout override is available
+    // regardless of which regime a given tenant is actually on (only the
+    // fields matching their real regime ever render in the grid itself,
+    // so an unused override here is simply inert, not incorrect).
+    { key: 'hsn_code',          label: 'HSN/SAC',       type: 'text' },          // India GST
+    { key: 'gst_rate',          label: 'GST %',         type: 'select' },        // India GST
+    { key: 'taxable',           label: 'Taxable',       type: 'select' },        // US Sales Tax
+    { key: 'sales_tax_rate',    label: 'Sales Tax %',   type: 'number' },        // US Sales Tax
+    { key: 'vat_rate',          label: 'VAT %',         type: 'select' },        // UK VAT
+    { key: 'tax_pct',           label: 'Tax %',         type: 'number' },        // Generic
   ],
   retailInvoiceLineItems: [
-    { key: 'product_name', label: 'Product',    type: 'text' },
-    { key: 'quantity',     label: 'Qty',        type: 'number' },
-    { key: 'unit_price',   label: 'Unit Price', type: 'number' },
-    { key: 'discount_pct', label: 'Disc %',     type: 'number' },
+    { key: 'product_name',      label: 'Product',       type: 'text' },
+    { key: 'rental_start_date', label: 'Rental Start',  type: 'date' },
+    { key: 'rental_end_date',   label: 'Rental End',    type: 'date' },
+    { key: 'quantity',          label: 'Qty',           type: 'number' },
+    { key: 'unit_price',        label: 'Unit Price',    type: 'number' },
+    { key: 'discount_pct',      label: 'Disc %',        type: 'number' },
+    { key: 'hsn_code',          label: 'HSN/SAC',       type: 'text' },
+    { key: 'gst_rate',          label: 'GST %',         type: 'select' },
+    { key: 'taxable',           label: 'Taxable',       type: 'select' },
+    { key: 'sales_tax_rate',    label: 'Sales Tax %',   type: 'number' },
+    { key: 'vat_rate',          label: 'VAT %',         type: 'select' },
+    { key: 'tax_pct',           label: 'Tax %',         type: 'number' },
   ],
   quotationLineItems: [
     { key: 'product_name', label: 'Product',     type: 'text' },
@@ -447,8 +466,14 @@ export default function FieldLayoutDesigner() {
                 const otherDateFields = standardFields.filter(f => f.type === 'date' && f.key !== row.field_key);
                 return (
                   <div className="mb-3">
-                    <label className="text-[10px] font-bold uppercase tracking-wider text-gray-400 block mb-1">
-                      Default Value {LINE_ITEM_OBJECT_TYPES.has(selectedObj) && <span className="normal-case font-normal text-gray-400">(applied to every new line added to the grid)</span>}
+                    <label className="text-[10px] font-bold uppercase tracking-wider text-gray-400 block mb-1 flex items-center justify-between">
+                      <span>Default Value {LINE_ITEM_OBJECT_TYPES.has(selectedObj) && <span className="normal-case font-normal text-gray-400">(applied to every new line added to the grid)</span>}</span>
+                      {row.default_value && (
+                        <button onClick={() => { upd(idx, 'default_value', ''); upd(idx, '_defaultMode', 'fixed'); }}
+                          className="normal-case font-semibold text-red-500 hover:text-red-700 hover:underline">
+                          ✕ Clear
+                        </button>
+                      )}
                     </label>
                     {row.field_type === 'date' ? (
                       <div className="space-y-2">

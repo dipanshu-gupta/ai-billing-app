@@ -2739,6 +2739,18 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     quotations:     { table: 'quotation_line_items',      fk: 'quote_number' },
   };
 
+  // A condition/action field of the form "custom:<api_name>" refers to a
+  // custom field (defined in App Composer), whose value lives in the
+  // record's own custom_data JSONB column, not as a top-level column —
+  // reading recordData[field] directly for one of these always returns
+  // undefined. This resolves either kind uniformly, for a header record OR
+  // a single line item row (both shapes carry their own custom_data).
+  const getRuleFieldValue = (data: any, field: string): any => {
+    if (!field || !data) return undefined;
+    if (field.startsWith('custom:')) return data.custom_data ? data.custom_data[field.slice(7)] : undefined;
+    return data[field];
+  };
+
   // The shared condition-evaluation engine for both Workflow Rules and
   // Approval Processes — previously each had its own separate, inconsistent
   // logic (approvals supported multi-condition AND/OR; workflows silently
@@ -2758,7 +2770,7 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
       // Fall back to the legacy single-condition fields, for rules/processes
       // saved before the multi-condition builder existed. Matches the
       // original semantics exactly: both must be set, not just the field.
-      if (legacyField && legacyValue) return evaluateCondition(recordData[legacyField], legacyOperator || 'equals', legacyValue);
+      if (legacyField && legacyValue) return evaluateCondition(getRuleFieldValue(recordData, legacyField), legacyOperator || 'equals', legacyValue);
       return true; // no condition at all = always matches
     }
 
@@ -2784,16 +2796,16 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     const results = conds.map((c: any) => {
       if (c.scope === 'line_item') {
         if (c.aggregation === 'sum') {
-          const sum = lineItems.reduce((s, li) => s + Number(li[c.field] || 0), 0);
+          const sum = lineItems.reduce((s, li) => s + Number(getRuleFieldValue(li, c.field) || 0), 0);
           return evaluateCondition(sum, c.operator, c.value);
         }
         if (c.aggregation === 'all') {
-          return lineItems.length > 0 && lineItems.every(li => evaluateCondition(li[c.field], c.operator, c.value));
+          return lineItems.length > 0 && lineItems.every(li => evaluateCondition(getRuleFieldValue(li, c.field), c.operator, c.value));
         }
         // 'any' — default aggregation for line-item conditions
-        return lineItems.some(li => evaluateCondition(li[c.field], c.operator, c.value));
+        return lineItems.some(li => evaluateCondition(getRuleFieldValue(li, c.field), c.operator, c.value));
       }
-      return evaluateCondition(recordData[c.field], c.operator, c.value);
+      return evaluateCondition(getRuleFieldValue(recordData, c.field), c.operator, c.value);
     });
 
     return logic === 'AND' ? results.every(Boolean) : results.some(Boolean);
@@ -2833,7 +2845,7 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
       .sort((a,b) => a.priority - b.priority);
 
     for (const rule of rules) {
-      const value = recordData[rule.condition_field];
+      const value = getRuleFieldValue(recordData, rule.condition_field);
       if (!evaluateCondition(value, rule.condition_operator, rule.condition_value)) continue;
 
       const assignee = rule.assign_to_user_id
@@ -2890,6 +2902,11 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
   const executeWorkflowActions = async (rule: any, objectType: string, recordId: string, recordData: any) => {
     if (!supabase) return;
     let fieldsWereMutated = false;
+    // Tracks custom_data across multiple update_field actions within this
+    // same rule run, so a second custom-field update doesn't clobber the
+    // first (custom_data is a single JSONB column — see the 'update_field'
+    // case below).
+    let pendingCustomData: Record<string, any> | null = null;
 
     const { data: actionsData } = await supabase
       .from('workflow_actions')
@@ -2940,12 +2957,27 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
         case 'update_field': {
           // Safety: never allow this action to touch owner/owner_id — use assign_owner instead
           if (cfg.field && cfg.field !== 'owner' && cfg.field !== 'owner_id' && cfg.value !== undefined && cfg.value !== '') {
-            const NUMERIC_FIELDS = ['amount','probability','price','grand_total','cost','quantity'];
-            const coercedValue = NUMERIC_FIELDS.includes(cfg.field) ? Number(cfg.value) : cfg.value;
             const table   = getObjectTable(objectType);
             const idField = getObjectIdField(objectType);
+            let updatePayload: Record<string, any>;
+            if (cfg.field.startsWith('custom:')) {
+              // Custom fields live inside the custom_data JSONB column, not
+              // as their own column — a naive `.update({ custom_data: {...} })`
+              // with just the one key would silently wipe every other
+              // custom field on the record, so this merges onto the
+              // record's current custom_data (or onto whatever an earlier
+              // update_field action in this same rule already wrote).
+              const apiName = cfg.field.slice(7);
+              const baseCustomData: Record<string, any> = pendingCustomData ?? (recordData.custom_data || {});
+              pendingCustomData = { ...baseCustomData, [apiName]: cfg.value };
+              updatePayload = { custom_data: pendingCustomData };
+            } else {
+              const NUMERIC_FIELDS = ['amount','probability','price','grand_total','cost','quantity'];
+              const coercedValue = NUMERIC_FIELDS.includes(cfg.field) ? Number(cfg.value) : cfg.value;
+              updatePayload = { [cfg.field]: coercedValue };
+            }
             const { error: ufErr } = await supabase.from(table)
-              .update({ [cfg.field]: coercedValue })
+              .update(updatePayload)
               .eq(idField, recordId);
             if (ufErr) console.warn('[Workflow update_field] failed:', ufErr.message);
             else fieldsWereMutated = true;
