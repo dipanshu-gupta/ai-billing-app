@@ -85,6 +85,8 @@ interface AppContextValue {
   // Notifications
   notifications: Notification[];
   unreadCount: number;
+  notificationsHasMore: boolean;
+  loadMoreNotifications: () => Promise<void>;
   markNotificationRead: (id: string) => Promise<void>;
   markAllNotificationsRead: () => Promise<void>;
 
@@ -275,6 +277,13 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
 
   // Notifications
   const [notifications, setNotifications] = useState<Notification[]>([]);
+  // How many rows fetchNotifications pulls — the bell dropdown only ever
+  // needs the most recent handful, but the full Notification Center (see
+  // Header.tsx) lets the user page back further via loadMoreNotifications,
+  // which bumps this and refetches rather than maintaining a second,
+  // separate list.
+  const [notificationsLimit, setNotificationsLimit] = useState(50);
+  const [notificationsHasMore, setNotificationsHasMore] = useState(false);
 
   // \u2500\u2500\u2500 System Helpers \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 
@@ -648,6 +657,7 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
         id: c.contact_number, displayNumber: c.display_number, customerId: c.customer_id, customer: c.customer,
         name: c.name, email: c.email, phone: c.phone, designation: c.designation,
         department: c.department, isPrimary: c.is_primary || false, status: c.status,
+        mobile: c.mobile, linkedIn: c.linked_in,
         created_by: c.created_by, created_at: c.created_at, updated_by: c.updated_by, updated_at: c.updated_at,
         organization_id: c.organization_id, business_unit_id: c.business_unit_id,
       })));
@@ -663,6 +673,7 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
         ...p,
         id: p.product_number || p.id, displayNumber: p.display_number, _uuid: p.id, name: p.name, category: p.category,
         price: Number(p.price || 0), status: p.status,
+        productFamily: p.product_family, taxRate: p.tax_rate,
         stock_quantity: Number(p.stock_quantity || 0), reorder_level: Number(p.reorder_level ?? 10),
         track_inventory: p.track_inventory !== false,
         created_by: p.created_by, created_at: p.created_at, updated_by: p.updated_by, updated_at: p.updated_at,
@@ -681,6 +692,7 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
         id: l.lead_number, displayNumber: l.display_number, name: l.name, customer: l.customer, customerId: l.customer_id,
         contact: l.contact, contactId: l.contact_id, email: l.email, phone: l.phone,
         source: l.source, amount: Number(l.amount || 0), status: l.status,
+        expectedCloseDate: l.expected_close_date, billingAddress: l.billing_address, shippingAddress: l.shipping_address,
         created_by: l.created_by, created_at: l.created_at, updated_by: l.updated_by, updated_at: l.updated_at,
         organization_id: l.organization_id, business_unit_id: l.business_unit_id,
       })));
@@ -697,6 +709,7 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
         id: o.opportunity_number, displayNumber: o.display_number, name: o.name, customer: o.customer, customerId: o.customer_id,
         contact: o.contact, contactId: o.contact_id, stage: o.stage,
         amount: Number(o.amount || 0), closeDate: o.close_date, status: o.status,
+        billingAddress: o.billing_address, shippingAddress: o.shipping_address,
         created_by: o.created_by, created_at: o.created_at, updated_by: o.updated_by, updated_at: o.updated_at,
         organization_id: o.organization_id, business_unit_id: o.business_unit_id,
       })));
@@ -712,7 +725,8 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
         ...o,
         id: o.order_number, displayNumber: o.display_number, name: o.name, customer: o.customer, customerId: o.customer_id,
         contact: o.contact, contactId: o.contact_id, amount: Number(o.amount || 0),
-        shippingAddress: o.shipping_address, deliveryDate: o.delivery_date, status: o.status,
+        shippingAddress: o.shipping_address, billingAddress: o.billing_address,
+        deliveryDate: o.delivery_date, paymentTerms: o.payment_terms, status: o.status,
         created_by: o.created_by, created_at: o.created_at, updated_by: o.updated_by, updated_at: o.updated_at,
         organization_id: o.organization_id, business_unit_id: o.business_unit_id,
       })));
@@ -745,7 +759,7 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
         ...a,
         id: a.activity_number, displayNumber: a.display_number, name: a.name, customer: a.customer, customerId: a.customer_id,
         contact: a.contact, contactId: a.contact_id, subject: a.subject,
-        activityType: a.activity_type, activityDate: a.activity_date, notes: a.notes, status: a.status,
+        activityType: a.activity_type, activityDate: a.activity_date, dueDate: a.due_date, notes: a.notes, status: a.status,
         created_by: a.created_by, created_at: a.created_at, updated_by: a.updated_by, updated_at: a.updated_at,
         organization_id: a.organization_id, business_unit_id: a.business_unit_id,
       })));
@@ -1283,10 +1297,17 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     if (!cfg) return;
     try {
 
+    // Snapshot the record as it stood before this save — reused below both
+    // for the terminal-status guard (previously its own separate,
+    // status-only fetch) and to let runWorkflowRules detect "When Status
+    // changes"/"When Field changes" rules (it needs the full pre-update row,
+    // not just status, since a field-change rule can watch any field).
+    const { data: previousData } = await supabase.from(cfg.table).select('*').eq(cfg.idField, record.id).maybeSingle();
+
     // Terminal statuses can never be reverted (checked against the DB, not stale UI state)
     const TERMINAL = ['Completed','Paid','Cancelled','Refunded'];
     if (record.status && !TERMINAL.includes(record.status)) {
-      const { data: cur } = await supabase.from(cfg.table).select('status').eq(cfg.idField, record.id).maybeSingle();
+      const cur = previousData;
       if (cur && TERMINAL.includes(cur.status) && cur.status !== record.status) {
         showAlert(`This record is ${cur.status} and its status can no longer be changed to ${record.status}.`);
         return;
@@ -1340,7 +1361,7 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     if (page === 'retailOrders' || page === 'retailInvoices') {
       await autoSetRetailCustomerStatus(record.customer_id, 'Active');
     }
-    await runAutomations(page, record.id, record, 'on_update');
+    await runAutomations(page, record.id, record, 'on_update', previousData);
     await cfg.fetch();
     } catch (e: any) {
       console.error('[updateRetailRecord]', e);
@@ -1564,7 +1585,7 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
 
   // \u2500\u2500\u2500 Fetch: Notifications \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 
-  const fetchNotifications = async () => {
+  const fetchNotifications = async (limit: number = notificationsLimit) => {
     if (!supabase) return;
     const email = currentUser?.email || session?.user?.email;
     if (!email) return;
@@ -1575,17 +1596,45 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     // recipient_email is the real access boundary for this table (a user
     // only ever sees their own notifications regardless of tenant_id), so
     // including legacy null-tenant_id rows here is safe in a way it
-    // wouldn't necessarily be for other tables.
+    // wouldn't necessarily be for other tables. (Database-level enforcement
+    // of this same boundary now also exists as RLS — see
+    // 39_workflow_conditions_and_notifications_hardening.sql — this query
+    // is what decides which of the rows RLS allows actually get shown.)
     const tid = getScopeTenantId();
     let q = supabase.from('notifications').select('*').eq('recipient_email', email);
     if (tid) q = q.or(`tenant_id.eq.${tid},tenant_id.is.null`);
-    const { data } = await q.order('created_at', { ascending: false }).limit(50);
-    if (data) setNotifications(data);
+    // Fetch one extra row beyond the limit purely to know whether there's
+    // more to page through — trimmed back off before it reaches state, so
+    // it never shows up as a phantom (limit+1)th notification.
+    const { data } = await q.order('created_at', { ascending: false }).limit(limit + 1);
+    if (data) {
+      setNotificationsHasMore(data.length > limit);
+      setNotifications(data.slice(0, limit));
+    }
+  };
+
+  // Pages the Notification Center further back in time by re-fetching with
+  // a larger limit, rather than maintaining a second parallel list — the
+  // bell dropdown and the full center both read from the same
+  // `notifications` array, just render different-sized slices of it.
+  const loadMoreNotifications = async () => {
+    const next = notificationsLimit + 50;
+    setNotificationsLimit(next);
+    await fetchNotifications(next);
   };
 
   const markNotificationRead = async (id: string) => {
     if (!supabase) return;
-    await supabase.from('notifications').update({ is_read: true }).eq('id', id);
+    const email = currentUser?.email || session?.user?.email;
+    // Scoped to the current user's own email as defense in depth — RLS
+    // (see the hardening migration) is now the real backstop preventing
+    // this from ever touching someone else's row, but keeping the same
+    // explicit filter here as fetchNotifications/markAllNotificationsRead
+    // means a stale/forged id in the UI can't even attempt a cross-user
+    // write, RLS aside.
+    let q = supabase.from('notifications').update({ is_read: true }).eq('id', id);
+    if (email) q = q.eq('recipient_email', email);
+    await q;
     setNotifications(prev => prev.map(n => n.id === id ? { ...n, is_read: true } : n));
   };
 
@@ -2008,6 +2057,27 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     const sys = buildSystemFields(true);
     const calcAmount = (lineItems||[]).reduce((s, i) => s + (i.quantity||1) * (i.price||0), 0);
 
+    // Snapshot the record as it stood right before this save — this is what
+    // lets runWorkflowRules tell whether a "When Status changes"/"When
+    // Field changes" rule's watched field actually changed on this save
+    // (see runWorkflowRules). Best-effort only: on_create/on_update rules
+    // are unaffected if this fetch fails, only the two change-triggered
+    // types would simply not fire for this one save.
+    let previousData: any = null;
+    try {
+      const table = getObjectTable(page);
+      // products is looked up by its true UUID (record._uuid || record.id)
+      // below, not by product_number like every other object type here —
+      // matching the actual .update(...).eq(...) call in the 'products'
+      // case further down, not the generic getObjectIdField() mapping.
+      const idField = page === 'products' ? 'id' : getObjectIdField(page);
+      const idValue = page === 'products' ? (record._uuid || record.id) : record.id;
+      if (table && idField && idValue) {
+        const { data: prev } = await supabase.from(table).select('*').eq(idField, idValue).maybeSingle();
+        previousData = prev;
+      }
+    } catch (e) { console.warn('[updateRecord] pre-update snapshot fetch failed:', e); }
+
     const upsertLineItems = async (table: string, field: string, id: string) => {
       if (lineItems === null) return; // caller explicitly handles line items itself elsewhere
       await supabase.from(table).delete().eq(field, id);
@@ -2027,7 +2097,7 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
         const { error: e_customers } = await supabase.from('customers').update({ ...sys, custom_data: record.custom_data||{}, name: record.name, email: record.email, phone: record.phone, company: record.company, industry: record.industry, primary_contact_id: record.primaryContactId, billing_address: record.billingAddress, shipping_address: record.shippingAddress, city: record.city, state: record.state, postal_code: record.postalCode||record.postal_code||'', country: record.country||'', website: record.website||'', gst_number: record.gstNumber||record.gst_number||'', description: record.description||'', owner: record.owner||'', owner_id: record.owner_id||null, status: record.status, comments: record.comments||'' }).eq('customer_number', record.id);
         if (e_customers) { console.error('update customers:', e_customers.message); showAlert('Save failed: ' + e_customers.message); return; }
         await logAudit({ recordType: 'customer', recordId: record.id, recordName: record.name, action: 'updated' });
-        await runAutomations('customers', record.id, record, 'on_update');
+        await runAutomations('customers', record.id, record, 'on_update', previousData);
         await fetchCustomers(); break; }
       case 'contacts': {
         const { error: e_contacts } = await supabase.from('contacts').update({ ...sys, custom_data: record.custom_data||{}, customer: record.customer, customer_id: record.customerId||null, name: record.name, email: record.email||'', phone: record.phone||'', mobile: record.mobile||'', designation: record.designation||'', department: record.department||'', is_primary: record.isPrimary||false, linked_in: record.linkedIn||'', description: record.description||'', owner: record.owner||'', owner_id: record.owner_id||null, status: record.status, comments: record.comments||'' }).eq('contact_number', record.id);
@@ -2036,26 +2106,26 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
           await supabase.from('contacts').update({ is_primary: false }).eq('customer_id', record.customerId).neq('contact_number', record.id);
           await supabase.from('customers').update({ primary_contact_id: record.id }).eq('customer_number', record.customerId);
         }
-        await runAutomations('contacts', record.id, record, 'on_update');
+        await runAutomations('contacts', record.id, record, 'on_update', previousData);
         await fetchContacts(); await fetchCustomers(); break; }
       case 'products': {
         const { error: e_products } = await supabase.from('products').update({ ...sys, custom_data: record.custom_data||{}, name: record.name, product_family: record.productFamily||'', category: record.category||'', sku: record.sku||'', price: Number(record.price||0), cost: Number(record.cost||0), unit: record.unit||'', tax_rate: Number(record.taxRate||record.tax_rate||0), hsn_code: record.hsn_code||'', gst_rate: record.gst_rate!=null?Number(record.gst_rate):null, taxable: record.taxable||'', tax_category: record.tax_category||'', vat_rate: record.vat_rate!=null?Number(record.vat_rate):null, description: record.description||'', owner: record.owner||'', status: record.status, comments: record.comments||'', stock_quantity: Number(record.stock_quantity||0), reorder_level: Number(record.reorder_level ?? 10), track_inventory: record.track_inventory !== false }).eq('id', record._uuid || record.id);
         if (e_products) { console.error('update products:', e_products.message); showAlert('Save failed: ' + e_products.message); return; }
-        await runAutomations('products', record._uuid || record.id, record, 'on_update');
+        await runAutomations('products', record._uuid || record.id, record, 'on_update', previousData);
         await fetchProducts(); break; }
       case 'leads': {
         const { error: e_leads } = await supabase.from('leads').update({ ...sys, custom_data: record.custom_data||{}, name: record.name, customer: record.customer, customer_id: record.customerId||null, contact: record.contact, contact_id: record.contactId||null, email: record.email||'', phone: record.phone||'', source: record.source||'', amount: calcAmount||Number(record.amount||0), expected_close_date: record.expectedCloseDate||null, billing_address: record.billingAddress||record.billing_address||'', shipping_address: record.shippingAddress||record.shipping_address||'', description: record.description||'', owner: record.owner||'', owner_id: record.owner_id||null, status: record.status, comments: record.comments||'' }).eq('lead_number', record.id);
         if (e_leads) { console.error('update leads:', e_leads.message); showAlert('Save failed: ' + e_leads.message); return; }
         await upsertLineItems('lead_line_items', 'lead_number', record.id);
         await logAudit({ recordType: 'lead', recordId: record.id, recordName: record.name, action: 'updated' });
-        await runAutomations('leads', record.id, record, 'on_update');
+        await runAutomations('leads', record.id, record, 'on_update', previousData);
         await fetchLeads(); break; }
       case 'opportunities': {
         const { error: e_opportunities } = await supabase.from('opportunities').update({ ...sys, custom_data: record.custom_data||{}, name: record.name, customer: record.customer, customer_id: record.customerId||null, contact: record.contact, contact_id: record.contactId||null, stage: record.stage||'', amount: calcAmount||Number(record.amount||0), close_date: record.closeDate||null, probability: Number(record.probability||0), campaign: record.campaign||'', billing_address: record.billingAddress||record.billing_address||'', shipping_address: record.shippingAddress||record.shipping_address||'', description: record.description||'', owner: record.owner||'', owner_id: record.owner_id||null, status: record.status, comments: record.comments||'' }).eq('opportunity_number', record.id);
         if (e_opportunities) { console.error('update opportunities:', e_opportunities.message); showAlert('Save failed: ' + e_opportunities.message); return; }
         await upsertLineItems('opportunity_line_items', 'opportunity_number', record.id);
         await logAudit({ recordType: 'opportunity', recordId: record.id, recordName: record.name, action: 'updated' });
-        await runAutomations('opportunities', record.id, record, 'on_update');
+        await runAutomations('opportunities', record.id, record, 'on_update', previousData);
         await fetchOpportunities(); break; }
       case 'orders': {
         const { error: e_orders } = await supabase.from('orders').update({
@@ -2081,7 +2151,7 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
         // losing any line-item changes made via the fallback view).
         await upsertLineItems('order_line_items', 'order_number', record.id);
         await logAudit({ recordType: 'order', recordId: record.id, recordName: record.name, action: 'updated' });
-        await runAutomations('orders', record.id, record, 'on_update');
+        await runAutomations('orders', record.id, record, 'on_update', previousData);
         await fetchOrders(); break; }
       case 'invoices': {
         const { error: e_invoices } = await supabase.from('invoices').update({
@@ -2101,12 +2171,12 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
         // See the matching comment in the 'orders' case above — same fix.
         await upsertLineItems('invoice_line_items', 'invoice_number', record.id);
         await logAudit({ recordType: 'invoice', recordId: record.id, recordName: record.name, action: 'updated' });
-        await runAutomations('invoices', record.id, record, 'on_update');
+        await runAutomations('invoices', record.id, record, 'on_update', previousData);
         await fetchInvoices(); break; }
       case 'activities': {
         const { error: e_activities } = await supabase.from('activities').update({ ...sys, custom_data: record.custom_data||{}, name: record.name, customer: record.customer, customer_id: record.customerId||null, contact: record.contact, contact_id: record.contactId||null, activity_type: record.activityType||'', activity_date: record.activityDate||null, due_date: record.dueDate||null, priority: record.priority||'Medium', description: record.description||'', notes: record.notes||'', owner: record.owner||'', owner_id: record.owner_id||null, status: record.status, comments: record.comments||'' }).eq('activity_number', record.id);
         if (e_activities) { console.error('update activities:', e_activities.message); showAlert('Save failed: ' + e_activities.message); return; }
-        await runAutomations('activities', record.id, record, 'on_update');
+        await runAutomations('activities', record.id, record, 'on_update', previousData);
         await fetchActivities(); break; }
     }
   };
@@ -2739,6 +2809,24 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     quotations:     { table: 'quotation_line_items',      fk: 'quote_number' },
   };
 
+  // Every object's *_number identifier field (lead_number, order_number,
+  // etc.) is either a raw, non-human-friendly key (a timestamp-based value
+  // for retail/order-type objects, kept unique after the generateId()
+  // collision fix) or, even where it reads as "pretty" already, isn't the
+  // sequential number end users actually recognize on-screen. Every fetch
+  // function in this file already maps the DB's own `display_number`
+  // sequence column onto every record as .displayNumber (see fetchLeads,
+  // fetchOrders, fetchRetailOrders, etc.) — this is that same value's
+  // display prefix, so a workflow notification can render the exact
+  // "RORD-00059" style number the user sees in the UI via formatDisplayNumber,
+  // instead of the raw record id or nothing at all.
+  const DISPLAY_NUMBER_PREFIX: Record<string, string> = {
+    leads: 'LEAD', opportunities: 'OPP', customers: 'CUST', contacts: 'CONT',
+    activities: 'ACT', orders: 'ORD', invoices: 'INV', quotations: 'QUO', products: 'PROD',
+    retailCustomers: 'RCUST', retailProducts: 'RPROD', retailActivities: 'RACT',
+    retailOrders: 'RORD', retailInvoices: 'RINV',
+  };
+
   // A condition/action field of the form "custom:<api_name>" refers to a
   // custom field (defined in App Composer), whose value lives in the
   // record's own custom_data JSONB column, not as a top-level column —
@@ -2748,6 +2836,23 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
   const getRuleFieldValue = (data: any, field: string): any => {
     if (!field || !data) return undefined;
     if (field.startsWith('custom:')) return data.custom_data ? data.custom_data[field.slice(7)] : undefined;
+    // "customer_name_resolved" is a client-side-only convenience field:
+    // getRetailFieldMeta() (RetailListPage.tsx) substitutes it for the
+    // "Customer" picker field so the list view's filters/sorts have a
+    // plain resolved name to work with. That substitution leaks into the
+    // condition builder AND the notification field picker in
+    // AdminToolsPage.tsx, both of which reuse the exact same field list —
+    // so picking "Customer" for a workflow condition or a {{...}} template
+    // token stores "customer_name_resolved" as the field key. But
+    // automations only ever run against the raw DB row (retail_orders,
+    // retail_invoices, ...), which has the real "customer" text column but
+    // never this computed one — so every condition or notification using
+    // "Customer" silently evaluated to undefined server-side, even though
+    // it worked fine in the list view. Falling back to the real column here
+    // fixes it at the one choke point every consumer (conditions, workflow
+    // rule field-change matching, notification interpolation) already goes
+    // through, rather than patching each caller separately.
+    if (field === 'customer_name_resolved' && data.customer_name_resolved === undefined) return data.customer;
     return data[field];
   };
 
@@ -2879,14 +2984,26 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
         }
       }
       if (group) {
-        // Notify all group members
-        await createNotification({
-          recipientEmail: currentUser?.email || '',
-          type: 'assignment',
-          title: `New ${objectType} Assigned to Group: ${group.group_name}`,
-          body: `Record "${recordData.name || recordId}" has been assigned to ${group.group_name}.`,
-          recordType: objectType, recordId,
-        });
+        // Notify all actual group members — this previously notified
+        // currentUser (whoever triggered the save that caused the rule to
+        // run) instead of the group's real members, so nobody the record
+        // was actually assigned to ever heard about it.
+        const { data: members } = await supabase
+          .from('user_group_members')
+          .select('enterprise_users(email)')
+          .eq('user_group_id', group.id);
+        const memberEmails: string[] = Array.from(new Set(
+          (members || []).map((m: any) => m.enterprise_users?.email).filter((e: any): e is string => !!e)
+        ));
+        for (const email of memberEmails) {
+          await createNotification({
+            recipientEmail: email,
+            type: 'assignment',
+            title: `New ${objectType} Assigned to Group: ${group.group_name}`,
+            body: `Record "${recordData.name || recordId}" has been assigned to ${group.group_name}.`,
+            recordType: objectType, recordId,
+          });
+        }
       }
       break; // Only first matching rule fires
     }
@@ -2918,9 +3035,58 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
       const cfg = action.action_config || {};
       switch(action.action_type) {
         case 'send_notification': {
-          // Merge field placeholders like {{name}}, {{status}}, {{amount}} into subject/message
-          const interpolate = (text: string) => (text || '').replace(/\{\{(\w+)\}\}/g, (_, key) => {
-            const val = recordData[key];
+          // Line items were previously not reachable from a notification
+          // template at all — only fetched (and only lazily, when the
+          // template text actually references them) so this doesn't add a
+          // query to every notification send. {{line_items}} renders a
+          // one-line summary of every line item; {{li:<field>}} resolves a
+          // specific line-item field against the FIRST line item (a single
+          // {{}} token can't repeat per row).
+          const liConfig = LINE_ITEM_TABLE_CONFIG[objectType];
+          const templateText = `${cfg.subject || ''} ${cfg.message || ''}`;
+          const needsLineItems = !!liConfig && (templateText.includes('{{line_items}}') || templateText.includes('{{li:'));
+          let notifLineItems: any[] = [];
+          if (needsLineItems) {
+            const recordNumber = recordData.id || recordId;
+            try {
+              const { data } = await supabase.from(liConfig.table).select('*').eq(liConfig.fk, recordNumber).order('sort_order');
+              notifLineItems = data || [];
+            } catch (e) { console.warn('[Workflow] send_notification line-item fetch failed:', e); }
+          }
+          const lineItemsSummary = notifLineItems.length
+            ? notifLineItems.map((li: any) => `${li.product_name || li.product || 'Item'} x${li.quantity ?? 1}`).join(', ')
+            : '(no line items)';
+
+          // Record Display Number: recordData already carries the raw
+          // display_number column (every fetch* function spreads the raw
+          // row before aliasing it to .displayNumber, so it survives
+          // untouched into whatever gets passed to runAutomations) — this
+          // just formats it the same way the UI does everywhere else
+          // (RORD-00059, LEAD-00001, ...) instead of leaving the picker's
+          // "Record Display Number" option resolve to a bare, meaningless
+          // integer or nothing.
+          const displayPrefix = DISPLAY_NUMBER_PREFIX[objectType];
+          const rawDisplayNum = recordData.display_number ?? recordData.displayNumber;
+          const formattedDisplayNumber = (displayPrefix && rawDisplayNum != null)
+            ? formatDisplayNumber(displayPrefix, rawDisplayNum)
+            : String(recordData.name || recordId || '');
+
+          // Merge field placeholders like {{name}}, {{status}}, {{amount}} into
+          // subject/message. Uses the same field-resolution helper as
+          // condition evaluation (getRuleFieldValue) so a custom field
+          // token — {{custom:api_name}}, as inserted by the "+ Field" picker
+          // in Workflow Rules — resolves against record.custom_data instead
+          // of falling through as a literal string. The token regex allows
+          // ":" so those custom-field keys actually match at all (the old
+          // \w+-only pattern silently ignored anything with a colon in it).
+          const interpolate = (text: string) => (text || '').replace(/\{\{([\w:]+)\}\}/g, (_, key) => {
+            if (key === 'display_number' || key === 'displayNumber') return formattedDisplayNumber;
+            if (key === 'line_items') return lineItemsSummary;
+            if (key.startsWith('li:')) {
+              const val = notifLineItems[0] ? getRuleFieldValue(notifLineItems[0], key.slice(3)) : undefined;
+              return val !== undefined && val !== null ? String(val) : '';
+            }
+            const val = getRuleFieldValue(recordData, key);
             return val !== undefined && val !== null ? String(val) : '';
           });
           const subject = interpolate(cfg.subject) || `Workflow: ${rule.name}`;
@@ -2942,6 +3108,18 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
 
           // Record creator/submitter
           if (cfg.notify_submitter && recordData.created_by) emailSet.add(recordData.created_by);
+
+          // A rule can silently resolve to zero recipients — no explicit
+          // recipients/users configured, "Notify record owner" unchecked
+          // (or the record simply has no owner set yet, common right after
+          // create and before assignment rules run), and "Notify submitter"
+          // off or created_by unset. Previously this just fell through the
+          // loop below and did nothing, with no way to tell "the rule fired
+          // but had nobody to notify" apart from "the rule never fired at
+          // all" — this makes that case visible in the console at least.
+          if (emailSet.size === 0) {
+            console.warn(`[Workflow] Rule "${rule.name}" (send_notification) resolved to zero recipients — check its recipients/users/notify-owner/notify-submitter config.`);
+          }
 
           for (const email of emailSet) {
             await createNotification({
@@ -3121,15 +3299,38 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     }
   };
 
-  const runWorkflowRules = async (objectType: string, recordId: string, recordData: any, triggerEvent: string) => {
+  const runWorkflowRules = async (objectType: string, recordId: string, recordData: any, triggerEvent: string, previousData?: any) => {
     if (!supabase) return;
-    const rules = workflowRules.filter(r =>
-      r.object_type === objectType &&
-      r.trigger_event === triggerEvent &&
-      r.is_active
-    );
+    // A rule saved with "When Status changes" or "When Field changes" is
+    // its own trigger_event value ('on_status_change'/'on_field_change') —
+    // it is NOT the same as 'on_update' and must never be matched by a
+    // plain exact-equality filter against the raw create/update/delete
+    // event. Previously that's exactly what happened here: the filter only
+    // ever compared against 'on_create'/'on_update'/'on_delete', so a
+    // status/field-change rule could never match anything and silently
+    // never fired, even though the Workflow Rules UI fully supports
+    // building one (Object → When → Field → New Value). The fix: such a
+    // rule is eligible on an 'on_update' pass, but only when the specific
+    // field it watches actually changed value on this save — which is why
+    // the caller now fetches and passes previousData (the pre-update row)
+    // alongside the new recordData.
+    const rules = workflowRules.filter(r => {
+      if (r.object_type !== objectType || !r.is_active) return false;
+      if (r.trigger_event === triggerEvent) return true;
+      if (triggerEvent === 'on_update' && (r.trigger_event === 'on_status_change' || r.trigger_event === 'on_field_change') && r.trigger_field) {
+        if (!previousData) return false; // no pre-update snapshot to compare against — can't tell what changed
+        return getRuleFieldValue(previousData, r.trigger_field) !== getRuleFieldValue(recordData, r.trigger_field);
+      }
+      return false;
+    });
 
     for (const rule of rules) {
+      // For status/field-change rules, "New Value" on the trigger (when
+      // set — it's optional, "Any value" otherwise) must match what the
+      // field changed TO on this save, not just that it changed at all.
+      if ((rule.trigger_event === 'on_status_change' || rule.trigger_event === 'on_field_change') && rule.trigger_value) {
+        if (!evaluateCondition(getRuleFieldValue(recordData, rule.trigger_field), 'equals', rule.trigger_value)) continue;
+      }
       // Evaluate conditions via the shared engine — supports the full
       // multi-condition AND/OR builder plus line-item conditions, falling
       // back to the legacy single trigger_field/trigger_value pair for
@@ -3174,19 +3375,35 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
       const liConfig = LINE_ITEM_TABLE_CONFIG[rule.object_type];
       const isLineItemScoped = rule.schedule_date_scope === 'line_item' && !!liConfig;
 
+      // "Date field to watch" lets the rule builder pick a custom field
+      // (e.g. "Trial Date"), which — like every other custom field in the
+      // app — is stored as "custom:<api_name>" and lives inside the
+      // custom_data JSONB column, not as its own top-level column. Passing
+      // that raw "custom:trial_date" string straight to .gte()/.lte() below
+      // used to query a column that doesn't exist ("custom:trial_date" is
+      // not a real column name), so PostgREST rejected the request, the
+      // catch block below swallowed it, and the rule silently never found
+      // any candidates — it looked exactly like "the notification just
+      // doesn't fire". A custom field now resolves to the JSONB path
+      // operator PostgREST expects instead.
+      const isCustomDateField = rule.schedule_date_field?.startsWith('custom:');
+      const queryDateField = isCustomDateField
+        ? `custom_data->>${rule.schedule_date_field.slice(7)}`
+        : rule.schedule_date_field;
+
       // Broad candidate fetch (next few days) — exact time-window
       // precision happens in JS below, since a date-only column can't
       // express "within N hours" directly in the query.
       let candidates: any[] = [];
       try {
         if (isLineItemScoped) {
-          let q = supabase.from(liConfig!.table).select('*').gte(rule.schedule_date_field, todayStr).lte(rule.schedule_date_field, futureStr);
+          let q = supabase.from(liConfig!.table).select('*').gte(queryDateField, todayStr).lte(queryDateField, futureStr);
           if (tid.id && !tid.db_url) q = q.eq('tenant_id', tid.id);
           const { data } = await withTimeout(q, 15000, 'Scheduled workflow candidate fetch');
           candidates = data || [];
         } else {
           const table = getObjectTable(rule.object_type);
-          let q = supabase.from(table).select('*').gte(rule.schedule_date_field, todayStr).lte(rule.schedule_date_field, futureStr);
+          let q = supabase.from(table).select('*').gte(queryDateField, todayStr).lte(queryDateField, futureStr);
           if (tid.id && !tid.db_url) q = q.eq('tenant_id', tid.id);
           const { data } = await withTimeout(q, 15000, 'Scheduled workflow candidate fetch');
           candidates = data || [];
@@ -3194,7 +3411,11 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
       } catch (e) { console.warn('[runScheduledWorkflowRules] candidate fetch failed:', e); continue; }
 
       for (const candidate of candidates) {
-        const dateVal = candidate[rule.schedule_date_field];
+        // Same custom-field gap as the query above: a raw candidate[key]
+        // lookup can't find a value nested inside custom_data.
+        // getRuleFieldValue already knows how to resolve "custom:<name>"
+        // against custom_data for both header records and line items.
+        const dateVal = getRuleFieldValue(candidate, rule.schedule_date_field);
         if (!dateVal) continue;
         const [y, m, d] = String(dateVal).slice(0, 10).split('-').map(Number);
         if (!y || !m || !d) continue;
@@ -3303,11 +3524,12 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     objectType: string,
     recordId: string,
     recordData: any,
-    event: 'on_create' | 'on_update' | 'on_delete'
+    event: 'on_create' | 'on_update' | 'on_delete',
+    previousData?: any
   ) => {
     try {
       await Promise.all([
-        runWorkflowRules(objectType, recordId, recordData, event),
+        runWorkflowRules(objectType, recordId, recordData, event, previousData),
         // Assignment rules now fire on update too (e.g. reassign owner when
         // status changes to "Discontinued"), not just on create — the
         // alreadyAssigned guard in runAssignmentRules prevents this from
@@ -3319,7 +3541,13 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
         event === 'on_create' ? runSLAPolicies(objectType, recordId, recordData) : Promise.resolve(),
       ]);
     } catch(e: any) {
-      console.warn('[Automation] Error:', e.message);
+      // Logging the full error (not just .message) — a thrown non-Error
+      // value (e.g. a raw Supabase error object) has no .message, and
+      // .message alone drops the stack trace that would otherwise pinpoint
+      // which automation (workflow/assignment/SLA) actually failed. This
+      // stays non-blocking on purpose — a broken automation must never
+      // prevent the user's own create/update from completing.
+      console.error('[Automation] Error:', e);
     }
   };
 
@@ -3476,6 +3704,28 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     fetchNotifications();
     const interval = setInterval(fetchNotifications, 30000);
     return () => clearInterval(interval);
+  }, [currentUser?.email]);
+
+  // Realtime — the bell should reflect a new notification the instant it's
+  // created (an assignment, a workflow-rule alert, an SLA escalation),
+  // not up to 30s later. Requires notifications to be added to Supabase's
+  // realtime publication (see 39_workflow_conditions_and_notifications_
+  // hardening.sql) — if that migration hasn't been run yet, .subscribe()
+  // simply never receives events and the 30s poll above silently remains
+  // the only update path, so this degrades gracefully rather than breaking.
+  // Scoped server-side to this user's own recipient_email — RLS on the
+  // table further guarantees the payload itself can't leak another user's
+  // notification even if the filter were ever bypassed.
+  useEffect(() => {
+    if (!supabase || !currentUser?.email) return;
+    const channel = supabase
+      .channel(`notifications:${currentUser.email}`)
+      .on('postgres_changes',
+        { event: '*', schema: 'public', table: 'notifications', filter: `recipient_email=eq.${currentUser.email}` },
+        () => { fetchNotifications(); }
+      )
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
   }, [currentUser?.email]);
 
   const unreadCount = notifications.filter(n => !n.is_read).length;
@@ -3835,13 +4085,17 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
       isPrimary, linkedIn, ownerName, display_number,
       ...rest
     } = data;
+    // Pre-update snapshot — see the matching comment in updateRecord above;
+    // lets runWorkflowRules detect "When Status changes"/"When Field
+    // changes" rules on quotations too.
+    const { data: previousData } = await supabase.from('quotations').select('*').eq('quote_number', quote_number).maybeSingle();
     const { error } = await supabase
       .from('quotations')
       .update({ ...rest, ...buildSystemFields(true) })
       .eq('quote_number', quote_number);
     if(error){ console.error('updateQuotation:',error.message); showAlert('Save failed: '+error.message); return; }
     if(items) await upsertLineItemsGeneric('quotation_line_items','quote_number',quote_number,items);
-    await runAutomations('quotations', quote_number, data, 'on_update');
+    await runAutomations('quotations', quote_number, data, 'on_update', previousData);
     await fetchQuotations();
   };
   const deleteQuotation = async (qNum) => { if(!supabase)return; if(!(await showConfirm('Delete this quotation?', { variant:'danger', confirmLabel:'Delete' })))return; await supabase.from('quotation_line_items').delete().eq('quote_number',qNum); await supabase.from('quotations').delete().eq('quote_number',qNum); await fetchQuotations(); };
@@ -4224,7 +4478,7 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     fetchInvoiceTemplates, saveInvoiceTemplate, deleteInvoiceTemplate, setDefaultInvoiceTemplate,
     listViewPrefs, fetchListViewPrefs, saveListViewPrefs,
     workflowRules, assignmentRules, slaPolicies, approvalProcesses, approvalRequests,
-    notifications, unreadCount, markNotificationRead, markAllNotificationsRead,
+    notifications, unreadCount, notificationsHasMore, loadMoreNotifications, markNotificationRead, markAllNotificationsRead,
     retailCustomers, retailProducts, retailActivities, retailOrders, retailInvoices,
     fetchRetailCustomers, fetchRetailProducts, fetchRetailActivities, fetchRetailOrders, fetchRetailInvoices,
     fetchRetailLineItems, upsertRetailLineItems, checkRentalConflict, isRentalBlockingStatus, validateRentalDateRange,

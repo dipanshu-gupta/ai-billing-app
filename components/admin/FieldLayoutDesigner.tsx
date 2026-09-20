@@ -107,19 +107,32 @@ export const LINE_ITEM_STANDARD_FIELDS: Record<string, { key: string; label: str
     { key: 'tax_pct',      label: 'Tax %',       type: 'number' },
     { key: 'extended_price', label: 'Extended (Line Total)', type: 'number', computed: true },
   ],
+  // orderLineItems/invoiceLineItems previously listed 'unit_price' and
+  // 'discount_pct' here, copied from the retail/quotation line-item field
+  // lists above — but order_line_items and invoice_line_items (verified
+  // directly against the live DB schema) were never given those columns;
+  // their real columns are 'price' and 'discount' (LineItemsTable.tsx,
+  // the actual editor for these two objects, reads/writes item.price
+  // throughout — never unit_price). Since this same field list feeds the
+  // "Line Items" group in the Workflow Rules notification field picker and
+  // the line-item condition scope in Workflow/Assignment/SLA rules
+  // (getLineItemFieldsFor/getLineItemFieldsWithCustom in AdminToolsPage.tsx),
+  // picking "Unit Price" or "Discount %" for an Order or Invoice always
+  // resolved to nothing server-side — the same class of bug as the
+  // "Customer" field, just on line items instead of the header record.
   orderLineItems: [
     { key: 'product_name', label: 'Product',     type: 'text' },
     { key: 'quantity',     label: 'Quantity',    type: 'number' },
-    { key: 'unit_price',   label: 'Unit Price',  type: 'number' },
-    { key: 'discount_pct', label: 'Discount %',  type: 'number' },
+    { key: 'price',        label: 'Price',       type: 'number' },
+    { key: 'discount',     label: 'Discount',    type: 'number' },
     { key: 'tax_pct',      label: 'Tax %',       type: 'number' },
     { key: 'extended_price', label: 'Extended (Line Total)', type: 'number', computed: true },
   ],
   invoiceLineItems: [
     { key: 'product_name', label: 'Product',     type: 'text' },
     { key: 'quantity',     label: 'Quantity',    type: 'number' },
-    { key: 'unit_price',   label: 'Unit Price',  type: 'number' },
-    { key: 'discount_pct', label: 'Discount %',  type: 'number' },
+    { key: 'price',        label: 'Price',       type: 'number' },
+    { key: 'discount',     label: 'Discount',    type: 'number' },
     { key: 'tax_pct',      label: 'Tax %',       type: 'number' },
     { key: 'extended_price', label: 'Extended (Line Total)', type: 'number', computed: true },
   ],
