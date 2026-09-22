@@ -14,7 +14,7 @@ import LoadingSpinner from '@/components/shared/LoadingSpinner';
  * in a KPI + carousel + chart + table layout.
  */
 export default function BookingsDashboard({ onSelectProduct, onOpenRecord }) {
-  const { retailProducts, applyDataSecurity, currentUser, permissionsLoaded } = useApp();
+  const { retailProducts, applyDataSecurity, currentUser, permissionsLoaded, appearance, appPreferences } = useApp();
   const { supabase, tenant } = useTenant();
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -98,17 +98,37 @@ export default function BookingsDashboard({ onSelectProduct, onOpenRecord }) {
 
   const totalActive = categorized.upcoming.length + categorized.inprogress.length;
 
+  // Same brand/accent-derived gradient palette as the CRM dashboard's
+  // StatCard (components/dashboard/DashboardPage.tsx) — keeps these KPI
+  // cards in whatever theme is selected under Admin Tools → Appearances,
+  // instead of unrelated hardcoded blue/amber/green/purple.
+  const brand = appPreferences?.brand_color || appearance?.themeColors?.sidebar || '#0F172A';
+  const accent = appPreferences?.accent_color || appearance?.themeColors?.accent || '#2563EB';
+  const darken = (hex, pct) => {
+    const n = parseInt((hex || '#0F172A').replace('#', ''), 16);
+    const r = Math.max(0, Math.min(255, ((n >> 16) & 0xFF) * (1 - pct)));
+    const g = Math.max(0, Math.min(255, ((n >> 8) & 0xFF) * (1 - pct)));
+    const b = Math.max(0, Math.min(255, (n & 0xFF) * (1 - pct)));
+    return '#' + [r, g, b].map(x => Math.round(x).toString(16).padStart(2, '0')).join('');
+  };
+  const kpiPalette = [
+    { from: brand, to: darken(brand, 0.2) },
+    { from: accent, to: darken(accent, 0.2) },
+    { from: darken(brand, 0.1), to: darken(brand, 0.3) },
+    { from: accent, to: brand },
+  ];
+
   return (
     <div className="space-y-5">
-      {/* KPI cards */}
+      {/* KPI cards — brand/accent gradient shades, themed via Appearances */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
         {[
-          { label: 'Upcoming', value: categorized.upcoming.length, icon: '📅', color: 'from-blue-500 to-blue-700' },
-          { label: 'In Progress', value: categorized.inprogress.length, icon: '🔄', color: 'from-amber-500 to-orange-600' },
-          { label: 'Completed (recent)', value: categorized.completed.length, icon: '✅', color: 'from-green-500 to-emerald-600' },
-          { label: 'Revenue This Month', value: formatCurrency(revenueThisMonth), icon: '💰', color: 'from-purple-500 to-purple-700' },
-        ].map(kpi => (
-          <div key={kpi.label} className={`bg-gradient-to-br ${kpi.color} rounded-[20px] p-4 text-white shadow-lg`}>
+          { label: 'Upcoming', value: categorized.upcoming.length, icon: '📅' },
+          { label: 'In Progress', value: categorized.inprogress.length, icon: '🔄' },
+          { label: 'Completed (recent)', value: categorized.completed.length, icon: '✅' },
+          { label: 'Revenue This Month', value: formatCurrency(revenueThisMonth), icon: '💰' },
+        ].map((kpi, i) => (
+          <div key={kpi.label} className="rounded-[20px] p-4 text-white shadow-lg" style={{ background: `linear-gradient(135deg, ${kpiPalette[i].from}, ${kpiPalette[i].to})` }}>
             <div className="text-2xl mb-1">{kpi.icon}</div>
             <div className="text-2xl font-bold">{kpi.value}</div>
             <div className="text-xs text-white/80 font-semibold uppercase tracking-wide">{kpi.label}</div>

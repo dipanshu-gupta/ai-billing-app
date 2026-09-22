@@ -2,6 +2,7 @@
 'use client';
 
 import React, { useEffect, useState, useRef } from 'react';
+import { Target, ShoppingBag, Receipt, CalendarCheck, MessageCircle, CheckCircle2, BarChart3, Settings } from 'lucide-react';
 import { AppProvider, useApp } from '@/context/AppContext';
 import { THEMES } from '@/lib/i18n';
 import { TenantProvider, useTenant } from '@/context/TenantContext';
@@ -81,15 +82,18 @@ function LoginPage() {
 
   // The platform's actual modules, sheltered under the umbrella illustration —
   // not generic ERP terms, the real feature set this specific app ships.
+  // Line-art icons (lucide-react, same set used in the app's own nav —
+  // see lib/icons.tsx ICON_MAP) rather than emoji, for a cleaner, more
+  // professional first impression.
   const MODULES = [
-    { icon: '🎯', label: 'CRM & Sales' },
-    { icon: '🛍️', label: 'Retail & Orders' },
-    { icon: '🧾', label: 'Invoicing' },
-    { icon: '🛎️', label: 'Bookings' },
-    { icon: '💬', label: 'WhatsApp' },
-    { icon: '✅', label: 'Workflows' },
-    { icon: '⚡', label: 'Reports' },
-    { icon: '⚙️', label: 'Automation' },
+    { Icon: Target,        label: 'CRM & Sales' },
+    { Icon: ShoppingBag,   label: 'Retail & Orders' },
+    { Icon: Receipt,       label: 'Invoicing' },
+    { Icon: CalendarCheck, label: 'Bookings' },
+    { Icon: MessageCircle, label: 'WhatsApp' },
+    { Icon: CheckCircle2,  label: 'Workflows' },
+    { Icon: BarChart3,     label: 'Reports' },
+    { Icon: Settings,      label: 'Automation' },
   ];
 
   return (
@@ -201,7 +205,12 @@ function LoginPage() {
       <div className="hidden lg:flex flex-1 relative overflow-hidden bg-gradient-to-b from-[#DBEAFE] via-[#EFF6FF] to-white border-l border-black/10">
         <div className="relative z-10 flex flex-col w-full h-full px-16 pt-16 pb-10">
           <div>
-            <h2 className="text-[2.75rem] leading-[1.1] font-bold text-[#0F172A] max-w-lg">
+            {/* No max-w cap (previously max-w-lg/512px forced an awkward
+                3-line wrap with a lot of unused width to the right) —
+                lets the line use the full panel width, growing with the
+                viewport so it reads as one clean line on typical desktop
+                sizes instead of a cramped ragged wrap. */}
+            <h2 className="text-[2rem] md:text-[2.5rem] xl:text-[2.9rem] 2xl:text-[3.25rem] leading-[1.15] font-bold text-[#0F172A] text-balance">
               Every part of your business, under one umbrella.
             </h2>
             <p className="text-slate-500 text-lg mt-4 max-w-md">
@@ -223,7 +232,7 @@ function LoginPage() {
             <div className="grid grid-cols-4 gap-3 w-full max-w-2xl">
               {MODULES.map(m => (
                 <div key={m.label} className="bg-white rounded-xl border border-blue-100 shadow-sm px-3 py-3 flex flex-col items-center gap-1.5 text-center">
-                  <span className="text-xl">{m.icon}</span>
+                  <m.Icon size={20} strokeWidth={1.75} style={{ color: themeObj.colors[0] }} />
                   <span className="text-[11px] font-semibold text-slate-600 leading-tight">{m.label}</span>
                 </div>
               ))}
