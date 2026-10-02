@@ -1,6 +1,6 @@
 // @ts-nocheck
 
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
 // supabase client injected via AppProvider props (from TenantContext)
 import type {
   EnterpriseUser, Organization, BusinessUnit, Role, Permission,
@@ -359,6 +359,28 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
       );
     });
   }, [currentUser, currentUserPermissions, userDataScope]);
+
+  // Same scope decision applyDataSecurity makes above, exposed as plain data
+  // rather than a client-side array filter — needed wherever pagination/
+  // counts have to happen in the database itself (lib/serverList.ts) rather
+  // than on an already-fetched JS array, so a scoped user's server-side
+  // page count and page contents are correct instead of being computed
+  // against the full unfiltered tenant table and only filtered afterward.
+  const dataSecurityScope = useMemo(() => {
+    if (!currentUser || !permissionsLoaded) return { ready: false, dataScope: 'own', isAdmin: false, viewAll: false, viewTeam: false };
+    const isAdmin   = currentUserPermissions.includes('__admin__') || (currentUser as any)?.is_admin === true;
+    const dataScope = userDataScope || (currentUser as any)?.data_scope || (isAdmin ? 'all' : 'own');
+    const viewAll   = currentUserPermissions.includes('view_all_records');
+    const viewTeam  = currentUserPermissions.includes('view_team_records');
+    return {
+      ready: true, isAdmin, dataScope, viewAll, viewTeam,
+      userId: (currentUser as any).id,
+      authUserId: (currentUser as any).auth_user_id,
+      userEmail: (currentUser as any).email,
+      organizationId: (currentUser as any).organization_id,
+      businessUnitId: (currentUser as any).business_unit_id,
+    };
+  }, [currentUser, currentUserPermissions, userDataScope, permissionsLoaded]);
 
   // \u2500\u2500\u2500 Auth \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 
@@ -789,9 +811,21 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
   const fetchLineItems = async (table: string, field: string, id: string): Promise<LineItem[]> => {
     if (!supabase) return [];
     const { data } = await tScope(supabase.from(table).select('*')).eq(field, id);
+    // Previously truncated every line item to just {id, product, quantity,
+    // price} — dropping discount/configuration/product_id entirely. This
+    // is used to carry line items forward during Lead→Opportunity and
+    // Opportunity→Quotation conversion, so a discount already recorded on
+    // the source record's line items was always silently lost (reset to 0)
+    // on conversion. Now spreads the full row (all real DB columns, so
+    // downstream consumers keyed on either the raw column name or one of
+    // the aliases below both keep working) plus the pre-existing aliases.
     return (data || []).map((item: any) => ({
+      ...item,
       id: item.id, product: item.product_name,
       quantity: Number(item.quantity || 1), price: Number(item.price || 0),
+      discount: Number(item.discount || 0),
+      configuration: item.configuration || {},
+      product_id: item.product_id || null,
     }));
   }
 
@@ -802,13 +836,25 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     const effectiveTenantId = tenantId
       || (typeof window !== 'undefined' ? (window as any).__bp_tenant?.id : null)
       || null;
-    await supabase.from(table).delete().eq(fkField, id);
+    // Partial-fulfillment counter fix (quotation_line_items.ordered_qty) —
+    // same issue and same fix as upsertLineItems' order_line_items.invoiced_qty
+    // above: the delete-then-reinsert below assigns new row ids, so without
+    // this, editing a quote's line items after it's partially converted to
+    // an order silently resets how much has already been ordered.
+    let prevOrderedById: Record<string, number> = {};
+    if (table === 'quotation_line_items') {
+      const { data: prevRows } = await supabase.from(table).select('id, ordered_qty').eq(fkField, id);
+      for (const r of (prevRows || [])) prevOrderedById[String(r.id)] = Number(r.ordered_qty || 0);
+    }
+    const { error: delErr } = await supabase.from(table).delete().eq(fkField, id);
+    if (delErr) { console.error('[upsertLineItemsGeneric] delete error:', delErr.message); return; }
     if (items.length) {
       const { error } = await supabase.from(table).insert(items.map((i: any, idx: number) => ({
         [fkField]:      id,
         product_name:   i.product_name || i.product || '',
         product_code:   i.product_code || '',
         description:    i.description  || '',
+        product_id:     i.product_id || null,
         quantity:       Number(i.quantity   || 1),
         unit_price:     Number(i.unit_price ?? i.price ?? 0),
         list_price:     Number(i.list_price ?? i.unit_price ?? i.price ?? 0),
@@ -818,6 +864,7 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
         sort_order:     idx,
         configuration:  i.configuration || {},
         custom_data:    i.custom_data || {},
+        ...(table === 'quotation_line_items' ? { ordered_qty: prevOrderedById[String(i._id)] || 0 } : {}),
         ...(effectiveTenantId ? { tenant_id: effectiveTenantId } : {}),
       })));
       if (error) console.error('[upsertLineItemsGeneric] insert error:', error.message, 'tenantId:', effectiveTenantId);
@@ -1976,72 +2023,154 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
             if (!ok) return null;
           }
           const id = generateId('CUST');
-          const { error } = await supabase.from('customers').insert([{ ...sys, custom_data: data.custom_data||{}, owner: data.owner||currentUser?.email||'', owner_id: data.owner_id||currentUser?.id||null, comments: data.comments||'', customer_number: id, name: data.name, company: data.company, industry: data.industry, email: data.email, phone: data.phone, website: data.website, billing_address: data.billingAddress, shipping_address: data.shippingAddress, city: data.city, state: data.state, postal_code: data.postalCode, country: data.country, gst_number: data.gstNumber, status: data.status || 'Active' }]);
+          const { data: insertedCust, error } = await supabase.from('customers').insert([{ ...sys, custom_data: data.custom_data||{}, owner: data.owner||currentUser?.email||'', owner_id: data.owner_id||currentUser?.id||null, comments: data.comments||'', description: data.description||'', customer_number: id, name: data.name, company: data.company, industry: data.industry, email: data.email, phone: data.phone, website: data.website, billing_address: data.billingAddress, shipping_address: data.shippingAddress, city: data.city, state: data.state, postal_code: data.postalCode, country: data.country, gst_number: data.gstNumber, status: data.status || 'Active' }]).select().single();
           if (error) throw error;
           await logAudit({ recordType: 'customer', recordId: id, recordName: data.name, action: 'created' });
           await runAutomations('customers', id, data, 'on_create');
-          await fetchCustomers(); return { id, name: data.name };
+          await fetchCustomers();
+          // Return the fully DB-mapped record (mirrors fetchCustomers' row
+          // mapping), not just {id,name} — CRMListPage's onCreated opens the
+          // detail panel with whatever this resolves to, immediately, before
+          // the list refetch above is guaranteed to have re-rendered state;
+          // a stub here means every other field shows blank on first view
+          // even though it was correctly saved (Bug A).
+          const c: any = insertedCust || {};
+          return { id, name: data.name, ...c,
+            id: c.customer_number || id, displayNumber: c.display_number, primaryContactId: c.primary_contact_id, primaryContact: c.primary_contact||'',
+            billingAddress: c.billing_address, shippingAddress: c.shipping_address,
+            postalCode: c.postal_code, gstNumber: c.gst_number,
+            owner: c.owner||'', owner_id: c.owner_id||null,
+          } as any;
         }
         case 'products': {
           const id = generateId('PROD');
-          const { data: insertedProd, error } = await supabase.from('products').insert([{ ...sys, custom_data: data.custom_data||{}, product_number: id, owner: data.owner||currentUser?.email||'', owner_id: data.owner_id||currentUser?.id||null, comments: data.comments||'', name: data.name, category: data.category, price: Number(data.price || 0), status: data.status || 'Active', stock_quantity: Number(data.stock_quantity || 0), reorder_level: Number(data.reorder_level ?? 10), track_inventory: data.track_inventory !== false }]).select().single();
+          const { data: insertedProd, error } = await supabase.from('products').insert([{ ...sys, custom_data: data.custom_data||{}, product_number: id, owner: data.owner||currentUser?.email||'', owner_id: data.owner_id||currentUser?.id||null, comments: data.comments||'', name: data.name, category: data.category, price: Number(data.price || 0), status: data.status || 'Active', stock_quantity: Number(data.stock_quantity || 0), reorder_level: Number(data.reorder_level ?? 10), track_inventory: data.track_inventory !== false,
+            product_family: data.productFamily||data.product_family||'', sku: data.sku||'', cost: Number(data.cost||0), unit: data.unit||'',
+            tax_rate: Number(data.taxRate||data.tax_rate||0), hsn_code: data.hsn_code||'', gst_rate: data.gst_rate!=null?Number(data.gst_rate):null,
+            taxable: data.taxable||'', tax_category: data.tax_category||'', vat_rate: data.vat_rate!=null?Number(data.vat_rate):null,
+            description: data.description||'',
+          }]).select().single();
           if (error) throw error;
           await runAutomations('products', insertedProd?.id ?? id, { ...data, id: insertedProd?.id, product_number: id }, 'on_create');
-          await fetchProducts(); return { id, name: data.name };
+          await fetchProducts();
+          const p: any = insertedProd || {};
+          return { id, name: data.name, ...p,
+            id: p.product_number || id, displayNumber: p.display_number, _uuid: p.id,
+            price: Number(p.price||0), productFamily: p.product_family, taxRate: p.tax_rate,
+            stock_quantity: Number(p.stock_quantity||0), reorder_level: Number(p.reorder_level ?? 10),
+            track_inventory: p.track_inventory !== false,
+          } as any;
         }
         case 'leads': {
           const id = generateId('LEAD');
-          const { error } = await supabase.from('leads').insert([{ ...sys, custom_data: data.custom_data||{}, owner: data.owner||currentUser?.email||'', owner_id: data.owner_id||currentUser?.id||null, comments: data.comments||'', lead_number: id, name: data.name, customer: data.customer, customer_id: data.customerId, contact: data.contact, contact_id: data.contactId, email: data.email, phone: data.phone, source: data.source, amount: Number(data.amount || 0), status: data.status || 'New' }]);
+          const { data: insertedLead, error } = await supabase.from('leads').insert([{ ...sys, custom_data: data.custom_data||{}, owner: data.owner||currentUser?.email||'', owner_id: data.owner_id||currentUser?.id||null, comments: data.comments||'', lead_number: id, name: data.name, customer: data.customer, customer_id: data.customerId, contact: data.contact, contact_id: data.contactId, email: data.email, phone: data.phone, source: data.source, amount: Number(data.amount || 0), status: data.status || 'New',
+            expected_close_date: data.expectedCloseDate||data.expected_close_date||null,
+            billing_address: data.billingAddress||data.billing_address||'', shipping_address: data.shippingAddress||data.shipping_address||'',
+            description: data.description||'',
+          }]).select().single();
           if (error) throw error;
-          if (lineItems.length) await supabase.from('lead_line_items').insert(lineItems.map(i => ({ lead_number: id, product_name: i.product, quantity: i.quantity, price: i.price })));
+          if (lineItems.length) { const { error: liErr } = await supabase.from('lead_line_items').insert(lineItems.map(i => ({ lead_number: id, product_name: i.product, quantity: i.quantity, price: i.price, discount: Number((i as any).discount||0), configuration: (i as any).configuration||{}, product_id: (i as any).product_id||null }))); if (liErr) console.error('[createRecord:leads] line item insert failed:', liErr.message); }
           await logAudit({ recordType: 'lead', recordId: id, recordName: data.name, action: 'created' });
           await runAutomations('leads', id, data, 'on_create');
-          await fetchLeads(); await autoSetCustomerStatus(data.customerId, 'Prospect'); return { id, name: data.name };
+          await fetchLeads(); await autoSetCustomerStatus(data.customerId, 'Prospect');
+          const l: any = insertedLead || {};
+          return { id, name: data.name, ...l,
+            id: l.lead_number || id, displayNumber: l.display_number, customerId: l.customer_id, contactId: l.contact_id,
+            amount: Number(l.amount||0), expectedCloseDate: l.expected_close_date, billingAddress: l.billing_address, shippingAddress: l.shipping_address,
+          } as any;
         }
         case 'opportunities': {
           const id = generateId('OPP');
-          const { error } = await supabase.from('opportunities').insert([{ ...sys, custom_data: data.custom_data||{}, owner: data.owner||currentUser?.email||'', owner_id: data.owner_id||currentUser?.id||null, comments: data.comments||'', opportunity_number: id, name: data.name, customer: data.customer, customer_id: data.customerId, contact: data.contact, contact_id: data.contactId, stage: data.stage || 'Qualification', amount: Number(data.amount || 0), close_date: data.closeDate || null, status: data.status || 'Open' }]);
+          const { data: insertedOpp, error } = await supabase.from('opportunities').insert([{ ...sys, custom_data: data.custom_data||{}, owner: data.owner||currentUser?.email||'', owner_id: data.owner_id||currentUser?.id||null, comments: data.comments||'', opportunity_number: id, name: data.name, customer: data.customer, customer_id: data.customerId, contact: data.contact, contact_id: data.contactId, stage: data.stage || 'Qualification', amount: Number(data.amount || 0), close_date: data.closeDate || null, status: data.status || 'Open',
+            probability: Number(data.probability||0), campaign: data.campaign||'',
+            billing_address: data.billingAddress||data.billing_address||'', shipping_address: data.shippingAddress||data.shipping_address||'',
+            description: data.description||'',
+          }]).select().single();
           if (error) throw error;
-          if (lineItems.length) await supabase.from('opportunity_line_items').insert(lineItems.map(i => ({ opportunity_number: id, product_name: i.product, quantity: i.quantity, price: i.price })));
+          if (lineItems.length) { const { error: liErr } = await supabase.from('opportunity_line_items').insert(lineItems.map(i => ({ opportunity_number: id, product_name: i.product, quantity: i.quantity, price: i.price, discount: Number((i as any).discount||0), configuration: (i as any).configuration||{}, product_id: (i as any).product_id||null }))); if (liErr) console.error('[createRecord:opportunities] line item insert failed:', liErr.message); }
           await logAudit({ recordType: 'opportunity', recordId: id, recordName: data.name, action: 'created' });
           await runAutomations('opportunities', id, data, 'on_create');
-          await fetchOpportunities(); await autoSetCustomerStatus(data.customerId, 'Prospect'); return { id, name: data.name };
+          await fetchOpportunities(); await autoSetCustomerStatus(data.customerId, 'Prospect');
+          const o: any = insertedOpp || {};
+          return { id, name: data.name, ...o,
+            id: o.opportunity_number || id, displayNumber: o.display_number, customerId: o.customer_id, contactId: o.contact_id,
+            amount: Number(o.amount||0), closeDate: o.close_date, billingAddress: o.billing_address, shippingAddress: o.shipping_address,
+          } as any;
         }
         case 'orders': {
           const id = generateId('ORD');
-          const { error } = await supabase.from('orders').insert([{ ...sys, custom_data: data.custom_data||{}, owner: data.owner||currentUser?.email||'', owner_id: data.owner_id||currentUser?.id||null, comments: data.comments||'', order_number: id, name: data.name, customer: data.customer, customer_id: data.customerId, contact: data.contact, contact_id: data.contactId, amount: calcAmount, shipping_address: data.shippingAddressOrder || '', delivery_date: data.deliveryDate || null, status: data.status || 'Processing' }]);
+          const { data: insertedOrd, error } = await supabase.from('orders').insert([{ ...sys, custom_data: data.custom_data||{}, owner: data.owner||currentUser?.email||'', owner_id: data.owner_id||currentUser?.id||null, comments: data.comments||'', order_number: id, name: data.name, customer: data.customer, customer_id: data.customerId, contact: data.contact, contact_id: data.contactId, amount: calcAmount, shipping_address: data.shippingAddress||data.shipping_address||'', delivery_date: data.deliveryDate || null, status: data.status || 'Processing',
+            currency: data.currency||'INR', payment_terms: data.paymentTerms||data.payment_terms||'', shipping_terms: data.shipping_terms||'',
+            billing_address: data.billingAddress||data.billing_address||'',
+            overall_discount: Number(data.overall_discount||0), shipping_cost: Number(data.shipping_cost||0),
+            subtotal: Number(data.subtotal||0), total_discount: Number(data.total_discount||0), total_tax: Number(data.total_tax||0),
+            notes: data.notes||'',
+          }]).select().single();
           if (error) throw error;
-          if (lineItems.length) await supabase.from('order_line_items').insert(lineItems.map(i => ({ order_number: id, product_name: i.product, quantity: i.quantity, price: i.price })));
+          if (lineItems.length) { const { error: liErr } = await supabase.from('order_line_items').insert(lineItems.map(i => ({ order_number: id, product_name: i.product, quantity: i.quantity, price: i.price, discount: Number((i as any).discount||0), tax_pct: Number((i as any).tax_pct||0), list_price: Number((i as any).list_price||i.price||0), product_code: (i as any).product_code||'', description: (i as any).description||'' }))); if (liErr) console.error('[createRecord:orders] line item insert failed:', liErr.message); }
           await logAudit({ recordType: 'order', recordId: id, recordName: data.name, action: 'created' });
           await runAutomations('orders', id, data, 'on_create');
-          await fetchOrders(); await autoSetCustomerStatus(data.customerId, 'Active'); return { id, name: data.name };
+          await fetchOrders(); await autoSetCustomerStatus(data.customerId, 'Active');
+          const o: any = insertedOrd || {};
+          return { id, name: data.name, ...o,
+            id: o.order_number || id, displayNumber: o.display_number, customerId: o.customer_id, contactId: o.contact_id,
+            amount: Number(o.amount||0), shippingAddress: o.shipping_address, billingAddress: o.billing_address,
+            deliveryDate: o.delivery_date, paymentTerms: o.payment_terms,
+          } as any;
         }
         case 'invoices': {
           const id = generateId('INV');
-          const { error } = await supabase.from('invoices').insert([{ ...sys, custom_data: data.custom_data||{}, owner: data.owner||currentUser?.email||'', owner_id: data.owner_id||currentUser?.id||null, comments: data.comments||'', invoice_number: id, name: data.name, customer: data.customer, customer_id: data.customerId, contact: data.contact, contact_id: data.contactId, amount: calcAmount, due_date: data.dueDate || null, payment_terms: data.paymentTerms || '', billing_address: data.billingAddressInvoice || data.billingAddress || '', status: data.status || 'Pending' }]);
+          const { data: insertedInv, error } = await supabase.from('invoices').insert([{ ...sys, custom_data: data.custom_data||{}, owner: data.owner||currentUser?.email||'', owner_id: data.owner_id||currentUser?.id||null, comments: data.comments||'', invoice_number: id, name: data.name, customer: data.customer, customer_id: data.customerId, contact: data.contact, contact_id: data.contactId, amount: calcAmount, due_date: data.dueDate || null, payment_terms: data.paymentTerms||data.payment_terms || '', billing_address: data.billingAddressInvoice || data.billingAddress || data.billing_address || '', status: data.status || 'Pending',
+            currency: data.currency||'INR', shipping_address: data.shippingAddress||data.shipping_address||'',
+            overall_discount: Number(data.overall_discount||0), shipping_cost: Number(data.shipping_cost||0),
+            subtotal: Number(data.subtotal||0), total_discount: Number(data.total_discount||0), total_tax: Number(data.total_tax||0),
+            notes: data.notes||'',
+          }]).select().single();
           if (error) throw error;
-          if (lineItems.length) await supabase.from('invoice_line_items').insert(lineItems.map(i => ({ invoice_number: id, product_name: i.product, quantity: i.quantity, price: i.price })));
+          if (lineItems.length) { const { error: liErr } = await supabase.from('invoice_line_items').insert(lineItems.map(i => ({ invoice_number: id, product_name: i.product, quantity: i.quantity, price: i.price, discount: Number((i as any).discount||0), tax_pct: Number((i as any).tax_pct||0), list_price: Number((i as any).list_price||i.price||0), product_code: (i as any).product_code||'', description: (i as any).description||'' }))); if (liErr) console.error('[createRecord:invoices] line item insert failed:', liErr.message); }
           await logAudit({ recordType: 'invoice', recordId: id, recordName: data.name, action: 'created' });
           await runAutomations('invoices', id, data, 'on_create');
-          await fetchInvoices(); await autoSetCustomerStatus(data.customerId, 'Active'); return { id, name: data.name };
+          await fetchInvoices(); await autoSetCustomerStatus(data.customerId, 'Active');
+          const inv: any = insertedInv || {};
+          return { id, name: data.name, ...inv,
+            id: inv.invoice_number || id, displayNumber: inv.display_number, customerId: inv.customer_id, contactId: inv.contact_id,
+            amount: Number(inv.amount||0), dueDate: inv.due_date, paymentTerms: inv.payment_terms, billingAddress: inv.billing_address,
+          } as any;
         }
         case 'contacts': {
           const id = generateId('CONT');
-          const { error } = await supabase.from('contacts').insert([{ ...sys, custom_data: data.custom_data||{}, owner: data.owner||currentUser?.email||'', owner_id: data.owner_id||currentUser?.id||null, comments: data.comments||'', is_primary: data.isPrimary||false, contact_number: id, customer: data.customer, customer_id: data.customerId, name: data.name, email: data.email, phone: data.phone, designation: data.designation, department: data.department, status: data.status || 'Active' }]);
+          const { data: insertedContact, error } = await supabase.from('contacts').insert([{ ...sys, custom_data: data.custom_data||{}, owner: data.owner||currentUser?.email||'', owner_id: data.owner_id||currentUser?.id||null, comments: data.comments||'', is_primary: data.isPrimary||false, contact_number: id, customer: data.customer, customer_id: data.customerId, name: data.name, email: data.email, phone: data.phone, designation: data.designation, department: data.department, status: data.status || 'Active',
+            mobile: data.mobile||'', linked_in: data.linkedIn||data.linked_in||'', description: data.description||'',
+          }]).select().single();
+          // Error is checked BEFORE the primary-contact side effects below —
+          // a failed insert must not clear other contacts' primary flags or
+          // point the customer at a contact number that was never written.
+          if (error) throw error;
           if (data.isPrimary && data.customerId) {
             await supabase.from('contacts').update({ is_primary: false }).eq('customer_id', data.customerId).neq('contact_number', id);
             await supabase.from('customers').update({ primary_contact_id: id }).eq('customer_number', data.customerId);
           }
-          if (error) throw error;
           await runAutomations('contacts', id, data, 'on_create');
-          await fetchContacts(); return { id, name: data.name };
+          await fetchContacts();
+          const c: any = insertedContact || {};
+          return { id, name: data.name, ...c,
+            id: c.contact_number || id, displayNumber: c.display_number, customerId: c.customer_id,
+            isPrimary: c.is_primary||false, linkedIn: c.linked_in,
+          } as any;
         }
         case 'activities': {
           const id = generateId('ACT');
-          const { error } = await supabase.from('activities').insert([{ ...sys, custom_data: data.custom_data||{}, owner: data.owner||currentUser?.email||'', owner_id: data.owner_id||currentUser?.id||null, comments: data.comments||'', activity_number: id, name: data.name, customer: data.customer, customer_id: data.customerId, contact: data.contact, contact_id: data.contactId, subject: data.subject, activity_type: data.activityType, activity_date: data.activityDate, notes: data.notes, status: data.status || 'Open' }]);
+          const { data: insertedAct, error } = await supabase.from('activities').insert([{ ...sys, custom_data: data.custom_data||{}, owner: data.owner||currentUser?.email||'', owner_id: data.owner_id||currentUser?.id||null, comments: data.comments||'', activity_number: id, name: data.name, customer: data.customer, customer_id: data.customerId, contact: data.contact, contact_id: data.contactId, subject: data.subject, activity_type: data.activityType, activity_date: data.activityDate, notes: data.notes, status: data.status || 'Open',
+            due_date: data.dueDate||data.due_date||null, priority: data.priority||'Medium', description: data.description||'',
+          }]).select().single();
           if (error) throw error;
           await runAutomations('activities', id, data, 'on_create');
-          await fetchActivities(); return { id, name: data.name };
+          await fetchActivities();
+          const a: any = insertedAct || {};
+          return { id, name: data.name, ...a,
+            id: a.activity_number || id, displayNumber: a.display_number, customerId: a.customer_id, contactId: a.contact_id,
+            activityType: a.activity_type, activityDate: a.activity_date, dueDate: a.due_date,
+          } as any;
         }
       }
       return null;
@@ -2078,17 +2207,58 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
       }
     } catch (e) { console.warn('[updateRecord] pre-update snapshot fetch failed:', e); }
 
+    // CRITICAL fix: opportunity_line_items and lead_line_items do NOT have
+    // product_code/description/custom_data columns (confirmed against the
+    // live DB schema) — inserting those unconditionally used to fail with a
+    // silent PostgREST error (never checked below) *after* the delete had
+    // already succeeded, so every line-item save on a Lead or Opportunity
+    // permanently wiped its line items. order_line_items/invoice_line_items
+    // DO have product_code/description (and tax_pct/list_price, previously
+    // dropped by this same fallback path — see the 'orders'/'invoices'
+    // comments above), so the extra columns are only sent to tables that
+    // actually have them, and the insert's error is now surfaced instead of
+    // swallowed.
+    const LINE_ITEM_EXTRA_COLS: Record<string, boolean> = {
+      opportunity_line_items: false,
+      lead_line_items: false,
+      order_line_items: true,
+      invoice_line_items: true,
+    };
     const upsertLineItems = async (table: string, field: string, id: string) => {
       if (lineItems === null) return; // caller explicitly handles line items itself elsewhere
-      await supabase.from(table).delete().eq(field, id);
+      // Partial-fulfillment counter fix (order_line_items.invoiced_qty): the
+      // delete-then-reinsert pattern below assigns brand-new row ids, so
+      // without this, editing an order's line items after it's been
+      // partially invoiced silently resets how much of each line has
+      // already been invoiced — risking double-invoicing on the next pass.
+      // Fetch the current invoiced_qty per original row id before deleting,
+      // then carry it forward keyed by the line item's own `_id` (the id
+      // RecordDetailPanel/CPQRecordDetail tag each loaded row with).
+      let prevInvoicedById: Record<string, number> = {};
+      if (table === 'order_line_items') {
+        const { data: prevRows } = await supabase.from(table).select('id, invoiced_qty').eq(field, id);
+        for (const r of (prevRows || [])) prevInvoicedById[String(r.id)] = Number(r.invoiced_qty || 0);
+      }
+      const { error: delErr } = await supabase.from(table).delete().eq(field, id);
+      if (delErr) { console.error(`[upsertLineItems] delete failed for ${table}:`, delErr.message); showAlert('Failed to save line items: ' + delErr.message); return; }
       if (lineItems.length) {
-        await supabase.from(table).insert(lineItems.map(i => ({
+        const hasExtra = LINE_ITEM_EXTRA_COLS[table] ?? false;
+        const rows = lineItems.map(i => ({
           [field]: id, product_name: i.product || i.product_name || '',
-          product_code: i.product_code || '', description: i.description || '',
           quantity: i.quantity, price: i.price,
           discount: Number((i as any).discount || 0),
-          custom_data: (i as any).custom_data || {},
-        })));
+          configuration: (i as any).configuration || {},
+          product_id: (i as any).product_id || null,
+          ...(hasExtra ? {
+            product_code: i.product_code || '', description: i.description || '',
+            custom_data: (i as any).custom_data || {},
+            tax_pct: Number((i as any).tax_pct || 0),
+            list_price: Number((i as any).list_price || i.price || 0),
+          } : {}),
+          ...(table === 'order_line_items' ? { invoiced_qty: prevInvoicedById[String((i as any)._id)] || 0 } : {}),
+        }));
+        const { error: insErr } = await supabase.from(table).insert(rows);
+        if (insErr) { console.error(`[upsertLineItems] insert failed for ${table}:`, insErr.message); showAlert('Failed to save line items: ' + insErr.message); }
       }
     };
 
@@ -2190,8 +2360,23 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     const leadItems = await fetchLineItems('lead_line_items', 'lead_number', lead.id);
     const totalAmount = leadItems.reduce((s, i) => s + i.quantity * i.price, 0);
     const id = generateId('OPP');
-    await supabase.from('opportunities').insert([{ ...buildSystemFields(), owner: lead.owner||currentUser?.email||'', owner_id: lead.owner_id||currentUser?.id||null, opportunity_number: id, name: lead.name, customer: lead.customer, customer_id: lead.customerId, contact: lead.contact, contact_id: lead.contactId, stage: 'Qualification', amount: totalAmount, close_date: null, status: 'Open' }]);
-    if (leadItems.length) await supabase.from('opportunity_line_items').insert(leadItems.map(i => ({ opportunity_number: id, product_name: i.product||i.product_name, product_id: i.product_id||null, quantity: i.quantity, price: i.price, unit_price: i.unit_price||i.price, discount_pct: i.discount_pct||i.discount||0, tax_pct: i.tax_pct||0, configuration: i.configuration||{} })));
+    // Bug H fixes: 'Open' is not a valid opportunities status (see
+    // getStatusOptions('opportunities') in lib/utils.ts) — an opportunity
+    // created with it matches no Kanban column and effectively vanishes
+    // from board views, so this now uses the real first-stage status
+    // ('Prospecting'). Also carries the lead's actual expected close date
+    // forward instead of discarding it, and carries billing/shipping
+    // address + custom_data forward too (opportunities supports all three).
+    await supabase.from('opportunities').insert([{ ...buildSystemFields(), owner: lead.owner||currentUser?.email||'', owner_id: lead.owner_id||currentUser?.id||null, opportunity_number: id, name: lead.name, customer: lead.customer, customer_id: lead.customerId, contact: lead.contact, contact_id: lead.contactId, stage: 'Qualification', amount: totalAmount, close_date: (lead as any).expectedCloseDate||(lead as any).expected_close_date||null, status: 'Prospecting', billing_address: (lead as any).billingAddress||(lead as any).billing_address||'', shipping_address: (lead as any).shippingAddress||(lead as any).shipping_address||'', custom_data: (lead as any).custom_data||{} }]);
+    // opportunity_line_items only has {product_name, quantity, price,
+    // discount, configuration, product_id} (confirmed against the live DB
+    // schema) — unit_price/discount_pct/tax_pct don't exist on this table,
+    // so inserting them used to fail silently (error never checked),
+    // dropping every line item on conversion. Error is now checked too.
+    if (leadItems.length) {
+      const { error: liErr } = await supabase.from('opportunity_line_items').insert(leadItems.map(i => ({ opportunity_number: id, product_name: i.product||(i as any).product_name, product_id: (i as any).product_id||null, quantity: i.quantity, price: i.price, discount: Number((i as any).discount||0), configuration: (i as any).configuration||{} })));
+      if (liErr) { console.error('[convertLeadToOpportunity] line item insert failed:', liErr.message); showAlert('Opportunity created, but its line items failed to copy over: ' + liErr.message); }
+    }
     await logAudit({ recordType: 'lead', recordId: lead.id, recordName: lead.name, action: 'converted_to_opportunity' });
     await fetchOpportunities();
   };
@@ -3736,8 +3921,26 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
   // ─── App Preferences (localStorage + Supabase) ────────────────────────────
   // Tenant-scoped localStorage key — prevents cross-tenant preference bleed
   const _LS_KEY = tenantId ? `bp_app_preferences_${tenantId}` : 'bp_app_preferences';
-  const _DEF_PREFS = { crm_enabled:true, cpq_enabled:true, b2c_mode:false, default_currency:'INR', date_format:'DD/MM/YYYY', fiscal_year_start:'April', global_search_enabled:false, business_mode:'B2B', business_type:'general', rental_blocking_statuses:['Draft','Pending','Completed'] };
-  const _cp = (p) => ({ crm_enabled:p?.crm_enabled??true, cpq_enabled:p?.cpq_enabled??true, b2c_mode:p?.b2c_mode??false, default_currency:p?.default_currency||'INR', date_format:p?.date_format||'DD/MM/YYYY', fiscal_year_start:p?.fiscal_year_start||'April', global_search_enabled:p?.global_search_enabled??false, business_mode:(p?.b2c_mode??false)?'B2C':'B2B', business_type:p?.business_type||'general', rental_blocking_statuses:p?.rental_blocking_statuses||['Draft','Pending','Completed'] });
+  // eway_bill_gsp holds the OPTIONAL GSP/NIC API credentials for direct
+  // e-way bill filing (see lib/ewayBill.ts's generateViaDirectAPI) — kept
+  // as a nested object so it round-trips through app_preferences.settings
+  // (jsonb) without needing its own DB column. Left empty until the tenant
+  // fills it in under Admin → App Preferences → E-Way Bill; the JSON-export
+  // filing path works regardless of whether this is ever configured.
+  const _DEF_EWAY_GSP = { provider:'', base_url:'', client_id:'', client_secret:'', username:'', password:'', gstin:'', is_sandbox:true, auth_token:'' };
+  const _DEF_PREFS = { crm_enabled:true, cpq_enabled:true, b2c_mode:false, default_currency:'INR', date_format:'DD/MM/YYYY', fiscal_year_start:'April', global_search_enabled:false, business_mode:'B2B', business_type:'general', rental_blocking_statuses:['Draft','Pending','Completed'],
+    region:'India', eway_bill_enabled:true, company_gstin:'', company_legal_name:'', company_address:'', company_city:'', company_pincode:'', company_state_code:'', eway_bill_gsp: _DEF_EWAY_GSP };
+  const _cp = (p) => ({ crm_enabled:p?.crm_enabled??true, cpq_enabled:p?.cpq_enabled??true, b2c_mode:p?.b2c_mode??false, default_currency:p?.default_currency||'INR', date_format:p?.date_format||'DD/MM/YYYY', fiscal_year_start:p?.fiscal_year_start||'April', global_search_enabled:p?.global_search_enabled??false, business_mode:(p?.b2c_mode??false)?'B2C':'B2B', business_type:p?.business_type||'general', rental_blocking_statuses:p?.rental_blocking_statuses||['Draft','Pending','Completed'],
+    // B2B-only e-way bill / GST profile fields — additive, never read by any
+    // retail code path, so defaulting them in here cannot change retail
+    // behavior. region defaults to 'India' (matching this app's INR/GST-
+    // oriented defaults elsewhere) but is fully togglable to 'Other', which
+    // is what hides the e-Way Bill feature per the tenant's own setting.
+    region:p?.region||'India', eway_bill_enabled:p?.eway_bill_enabled??true,
+    company_gstin:p?.company_gstin||'', company_legal_name:p?.company_legal_name||'', company_address:p?.company_address||'',
+    company_city:p?.company_city||'', company_pincode:p?.company_pincode||'', company_state_code:p?.company_state_code||'',
+    eway_bill_gsp: { ..._DEF_EWAY_GSP, ...(p?.eway_bill_gsp||{}) },
+  });
   // ─── Appearance ───────────────────────────────────────────────────────────
   const _APP_KEY = tenantId ? `bp_appearance_${tenantId}` : 'bp_appearance';
   const _DEF_APP = { company_logo_url:'', company_name:'Umbrella Suite', theme:'navy', language:'en', font:'geist', font_size:'md', font_weight:'normal' };
@@ -4061,6 +4264,67 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     }
     if (prefs.default_currency) fetchExchangeRates(prefs.default_currency);
     return { success: true };
+  };
+
+  // ─── E-Way Bill (India, B2B only — Orders & Invoices) ──────────────────────
+  // A brand-new table/feature, not touched by anything retail. Requires the
+  // `eway_bills` table (see the SQL migration delivered alongside this fix)
+  // — every call below is a no-op (or returns []) if that table doesn't
+  // exist yet, so nothing breaks for a tenant who hasn't run the migration.
+  const [ewayBills, setEwayBills] = useState<any[]>([]);
+  const fetchEwayBills = async (sourceType: 'order'|'invoice', sourceNumber: string) => {
+    if (!supabase || !sourceNumber) return [];
+    const { data, error } = await tScope(supabase.from('eway_bills').select('*'))
+      .eq('source_type', sourceType).eq('source_number', sourceNumber)
+      .order('created_at', { ascending: false });
+    if (error) { console.warn('[fetchEwayBills]', error.message); setEwayBills([]); return []; }
+    setEwayBills(data || []);
+    return data || [];
+  };
+  // `data` carries the full built payload (see lib/ewayBill.ts) plus filing
+  // outcome fields (ewb_no/ewb_date/valid_upto/status/error_message). Every
+  // save is a fresh insert — an e-way bill is filed once and then only
+  // cancelled/superseded, never silently edited in place, mirroring how the
+  // real government system treats it (and how Tally's own e-way bill
+  // register works: each attempt is its own row).
+  const saveEwayBillRecord = async (data: any) => {
+    if (!supabase || !currentUser) return null;
+    const row = {
+      ...buildSystemFields(),
+      tenant_id: tenantId || null,
+      organization_id: currentUser.organization_id || null,
+      business_unit_id: currentUser.business_unit_id || null,
+      owner: currentUser.email || '', owner_id: currentUser.id || null,
+      source_type: data.source_type, source_number: data.source_number,
+      status: data.status || 'draft', generation_mode: data.generation_mode || 'json_export',
+      ewb_no: data.ewb_no || null, ewb_date: data.ewb_date || null, valid_upto: data.valid_upto || null,
+      supply_type: data.supply_type || null, sub_type: data.sub_type || null, document_type: data.document_type || null,
+      transaction_type: data.transaction_type || null,
+      transporter_id: data.transporter_id || null, transporter_name: data.transporter_name || null,
+      transport_mode: data.transport_mode || null, vehicle_no: data.vehicle_no || null,
+      vehicle_type: data.vehicle_type || null, distance_km: data.distance_km || null,
+      from_gstin: data.from_gstin || null, from_state_code: data.from_state_code || null,
+      to_gstin: data.to_gstin || null, to_state_code: data.to_state_code || null,
+      part_a: data.part_a || {}, part_b: data.part_b || {}, request_json: data.request_json || {},
+      api_response: data.api_response || null, error_message: data.error_message || null,
+    };
+    const { data: inserted, error } = await supabase.from('eway_bills').insert([row]).select().single();
+    if (error) { console.error('[saveEwayBillRecord]', error.message); showAlert('Could not save the e-way bill record: ' + error.message); return null; }
+    await fetchEwayBills(data.source_type, data.source_number);
+    return inserted;
+  };
+  const updateEwayBillRecord = async (id: string, patch: any) => {
+    if (!supabase) return null;
+    const { error } = await supabase.from('eway_bills').update({ ...patch, ...buildSystemFields(true) }).eq('id', id);
+    if (error) { console.error('[updateEwayBillRecord]', error.message); showAlert('Could not update the e-way bill record: ' + error.message); return null; }
+    if (patch.source_type && patch.source_number) await fetchEwayBills(patch.source_type, patch.source_number);
+    return true;
+  };
+  const cancelEwayBillRecord = async (id: string, sourceType: string, sourceNumber: string) => {
+    if (!supabase) return;
+    if (!(await showConfirm('Cancel this e-way bill record? This only marks it cancelled in Umbrella Suite — if it was already filed with the government, you must also cancel it on the e-Way Bill portal within 24 hours of generation.', { variant:'danger', confirmLabel:'Cancel Record' }))) return;
+    await supabase.from('eway_bills').update({ status: 'cancelled', ...buildSystemFields(true) }).eq('id', id);
+    await fetchEwayBills(sourceType, sourceNumber);
   };
 
   // ─── Exchange Rates ────────────────────────────────────────────────────────
@@ -4469,9 +4733,9 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     return perms;
   };
   const value: AppContextValue = {
-    session, authLoading, currentUser, currentUserPermissions, permissionsLoaded,
+    session, authLoading, currentUser, currentUserPermissions, permissionsLoaded, userDataScope,
     handleLogin, handleLogout, resetMyPassword, saveMyProfile, loadCurrentUserPermissions,
-    hasPermission, isAdmin, applyOwnerScope,
+    hasPermission, isAdmin, applyOwnerScope, dataSecurityScope,
     customers, contacts, products, leads, opportunities, orders, invoices, activities,
     organizations, businessUnits, enterpriseUsers, userGroups, userGroupMembers,
     roles, permissions, rolePermissions, quoteTemplates, invoiceTemplates,
@@ -4535,6 +4799,7 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     selectedQuoteTemplate, setSelectedQuoteTemplate, selectedQuoteOpportunity, setSelectedQuoteOpportunity,
     templateFormData, setTemplateFormData, editingTemplateId, setEditingTemplateId,
     printableQuoteRef, deleteRecord,
+    ewayBills, fetchEwayBills, saveEwayBillRecord, updateEwayBillRecord, cancelEwayBillRecord,
 
   };
 
