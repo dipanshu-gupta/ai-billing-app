@@ -11,6 +11,7 @@
  * - Values stored in custom_data JSONB column on each retail table
  * - Zero impact on B2B flow — scoped to retail objects only
  */
+import { relabelText } from '@/lib/useRelabel';
 import { useState, useEffect } from 'react';
 import { useTenant } from '@/context/TenantContext';
 import { invalidateCustomFieldCache } from '@/lib/useCustomFields';
@@ -297,7 +298,7 @@ export default function AppComposer() {
                   ? 'bg-[#0F172A] text-white border-transparent shadow'
                   : 'bg-gray-50 text-gray-600 border-gray-200 hover:border-blue-300 hover:bg-blue-50'
               }`}>
-              <span>{o.icon}</span>{o.l}
+              <span>{o.icon}</span>{relabelText(o.l)}
             </button>
           ))}
         </div>
@@ -324,7 +325,7 @@ export default function AppComposer() {
           <div className="text-5xl mb-4">🎛️</div>
           <h4 className="font-bold text-[#0F172A] text-lg mb-2">No custom fields yet</h4>
           <p className="text-sm text-gray-400 mb-6">
-            Add up to {MAX_FIELDS} fields for {objMeta?.l}. They appear in record detail pages after publishing.
+            Add up to {MAX_FIELDS} fields for {relabelText(objMeta?.l)}. They appear in record detail pages after publishing.
           </p>
           <button onClick={addField}
             className="bg-gradient-to-r from-[#0F172A] to-blue-800 text-white px-6 py-3 rounded-2xl text-sm font-bold shadow hover:opacity-90">
@@ -516,7 +517,7 @@ export default function AppComposer() {
         <div className="bg-white rounded-[20px] border border-green-200 shadow-sm overflow-hidden">
           <div className="px-5 py-3 bg-gradient-to-r from-green-50 to-white border-b border-green-100 flex items-center gap-2">
             <span className="text-lg">📐</span>
-            <span className="font-bold text-[#0F172A] text-sm">Live Layout — {objMeta?.l}</span>
+            <span className="font-bold text-[#0F172A] text-sm">Live Layout — {relabelText(objMeta?.l)}</span>
             <span className="ml-auto text-xs text-green-600 font-semibold">Visible in record detail pages</span>
           </div>
           <div className="p-5 grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-3">

@@ -2,6 +2,7 @@
 'use client';
 
 import { useState, useRef, useEffect, useMemo } from 'react';
+import { useObjectLabels } from '@/lib/useObjectLabels';
 
 interface Option {
   value: string;
@@ -21,6 +22,7 @@ interface SearchableSelectProps {
   showEmpty?:   boolean;
   onCreateNew?: (query: string) => void;  // if provided, shows "+ Create New" button
   createLabel?: string;                   // e.g. "Create Customer"
+  createObject?: string;   // object key the create label refers to, so a tenant rename (Customer -> Patient) shows here too
   fallbackLabel?: string;  // shown when value doesn't match any option (e.g. a stale/missing id but a known display name) — never leaves the field looking blank when there's genuinely a name to show
 }
 
@@ -32,9 +34,17 @@ export default function SearchableSelect({
   emptyLabel = 'None',
   showEmpty = true,
   onCreateNew,
-  createLabel = 'Create New',
+  createLabel: createLabelProp = 'Create New',
+  createObject,
   fallbackLabel,
 }: SearchableSelectProps) {
+  const { getObjectLabel } = useObjectLabels();
+  const createLabel = (() => {
+    const m = /^Create (Customer|Contact)$/.exec(createLabelProp);
+    if (!m) return createLabelProp;
+    const key = createObject || (m[1] === 'Customer' ? 'customers' : 'contacts');
+    return `Create ${getObjectLabel(key, m[1], 'singular')}`;
+  })();
   const [open,   setOpen]   = useState(false);
   const [query,  setQuery]  = useState('');
   const [focused,setFocused]= useState(-1);

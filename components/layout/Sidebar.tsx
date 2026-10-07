@@ -4,9 +4,10 @@
 import { useState, useRef, useEffect } from 'react';
 import { t } from '@/lib/i18n';
 import { useApp } from '@/context/AppContext';
-import { SALES_GROUP, RETAIL_GROUP, BOTTOM_ITEMS, makeCanSee } from '@/lib/navPermissions';
+import { SALES_GROUP, RETAIL_GROUP, BOTTOM_ITEMS, makeCanSee, buildCustomObjectNavItems } from '@/lib/navPermissions';
 import { useObjectLabels } from '@/lib/useObjectLabels';
 import { NavIcon } from '@/lib/icons';
+import { ObjectIcon } from '@/lib/lineIcons';
 
 const TOP_ITEMS = [
   { key:'home',      label:'home',          icon:'🏠', permission:null },
@@ -14,9 +15,10 @@ const TOP_ITEMS = [
 ];
 
 export default function Sidebar({ activePage, setActivePage, collapsed, setCollapsed }) {
-  const { currentUser, currentUserPermissions, permissionsLoaded, appPreferences, appearance } = useApp();
+  const { currentUser, currentUserPermissions, permissionsLoaded, appPreferences, appearance, customObjects } = useApp();
   const { getObjectLabel } = useObjectLabels();
   const [salesOpen, setSalesOpen] = useState(true);
+  const CUSTOM_OBJECT_ITEMS = buildCustomObjectNavItems(customObjects);
   const ref = useRef(null);
 
   // Auto-collapse when clicking outside the sidebar
@@ -49,7 +51,7 @@ export default function Sidebar({ activePage, setActivePage, collapsed, setColla
             : 'text-blue-100 hover:bg-white/10 hover:text-white'
           }`}
       >
-        <span className="flex-shrink-0"><NavIcon iconKey={item.key} className="w-[18px] h-[18px]"/></span>
+        <span className="flex-shrink-0">{item.isCustomObject ? <ObjectIcon icon={item.icon} className="w-[18px] h-[18px]"/> : <NavIcon iconKey={item.key} className="w-[18px] h-[18px]"/>}</span>
         {!collapsed && <span className="truncate flex-1 text-left">{displayLabel}</span>}
       </button>
     );
@@ -58,10 +60,15 @@ export default function Sidebar({ activePage, setActivePage, collapsed, setColla
   const lang      = appearance?.language || 'en';
   const sidebarBg = '#1C1917';
 
+  // h-full (not min-h-screen) — this now sits in a height-bounded flex row
+  // (app/page.tsx's AppShell has h-screen overflow-hidden), so the sidebar
+  // fills exactly that height and stays put while only <main> scrolls; its
+  // own nav list scrolls internally via overflow-y-auto below if there are
+  // more items than fit.
   return (
     <aside
       ref={ref}
-      className={`${collapsed ? 'w-16' : 'w-64'} text-white transition-all duration-300 min-h-screen sticky top-0 shadow-2xl border-r-2 border-black/25 flex-shrink-0 flex flex-col z-40`}
+      className={`${collapsed ? 'w-16' : 'w-64'} text-white transition-all duration-300 h-full shadow-2xl border-r-2 border-black/25 flex-shrink-0 flex flex-col z-40`}
       style={{background: sidebarBg}}
     >
       {/* Top: Hamburger menu */}
@@ -142,6 +149,14 @@ export default function Sidebar({ activePage, setActivePage, collapsed, setColla
             <div style={{overflow:'hidden', maxHeight: (!collapsed && !salesOpen) ? '0' : '500px', transition:'max-height 0.3s ease'}}>
               {RETAIL_GROUP.map(item => <NavItem key={item.key} item={item}/>)}
             </div>
+          </div>
+        )}
+
+        {/* Custom Objects — tenant-defined, shown once at least one is published and visible to this user */}
+        {CUSTOM_OBJECT_ITEMS.length > 0 && (
+          <div className="mt-2">
+            {!collapsed && <div className="px-3 py-1.5 text-xs font-bold text-blue-400 uppercase tracking-widest">Custom Objects</div>}
+            {CUSTOM_OBJECT_ITEMS.map(item => <NavItem key={item.key} item={item}/>)}
           </div>
         )}
 

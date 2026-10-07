@@ -461,7 +461,7 @@ const downloadCsv = (filename: string, content: string) => {
 
 // ─── Main Component ────────────────────────────────────────────────────────────
 export default function ImportExportPanel() {
-  const { currentUser, appPreferences, customers, retailCustomers, enterpriseUsers, orders, invoices, quotations, retailOrders, retailInvoices } = useApp() as any;
+  const { currentUser, appPreferences, customers, retailCustomers, enterpriseUsers, orders, invoices, quotations, retailOrders, retailInvoices, applyDataSecurity, permissionsLoaded, statusOptionRows } = useApp() as any;
   const PARENT_LOOKUP: Record<string, any[]> = { orders, invoices, quotations, retail_orders: retailOrders, retail_invoices: retailInvoices };
   const { supabase }  = useTenant();
   const { getObjectLabel } = useObjectLabels();
@@ -594,8 +594,18 @@ export default function ImportExportPanel() {
         page++;
         if (page > 200) break; // safety cap — 200k rows; prevents a runaway loop on an unexpected data shape
       }
-      const data = allRows;
-      console.log('[Export] Total rows fetched:', data.length);
+      // RBAC: the query above is tenant-scoped only — it has no notion of
+      // per-user data_scope (own/org/bu/all), so a user whose role limits
+      // them to their own records could otherwise export every record in
+      // the tenant. Run the same applyDataSecurity() filter used by every
+      // list/dashboard in the app before anything reaches the export file.
+      // permissionsLoaded guards against a race where permissions haven't
+      // resolved yet — applyDataSecurity itself returns [] in that case,
+      // which is the safe (fail-closed) default rather than exporting
+      // unfiltered rows.
+      if (!permissionsLoaded) throw new Error('Your permissions are still loading — please wait a moment and try again.');
+      const data = applyDataSecurity ? applyDataSecurity(allRows) : allRows;
+      console.log('[Export] Total rows fetched:', allRows.length, '· after RBAC filter:', data.length);
 
       // Flatten custom_data fields into each row for export
       const flatData = (data || []).map((row: any) => {
@@ -719,6 +729,8 @@ export default function ImportExportPanel() {
   const ENUM_VALUES: Record<string, string[]> = {
     // Status values — combined across all objects
     status: [
+      // Every value the tenant has configured in Page Layout Designer -> Status Values, for any object
+      ...((statusOptionRows || []).map(r => r.value)),
       // Retail customers
       'Active','Inactive','VIP','Blocked',
       // Retail orders
@@ -766,7 +778,7 @@ export default function ImportExportPanel() {
                       'Education','Real Estate','Media','Hospitality','Automotive',
                       'Logistics','Energy','Agriculture','Consulting','Other'],
     currency:        ['INR','USD','EUR','GBP','AED','SGD','AUD','CAD'],
-    unit:            ['pc','kg','g','l','ml','m','cm','box','pack','set','pair','dozen','Other'],
+    unit:            ['pc','each','kg','g','l','ml','m','cm','box','pack','set','pair','dozen','Other'],
   };
 
   const NUM_FIELDS = new Set([

@@ -1,13 +1,15 @@
 // @ts-nocheck
 'use client';
 
+import RedwoodSkin from '@/components/shared/RedwoodSkin';
 import { useState, useEffect } from 'react';
 import { useCustomFields, invalidateCustomFieldCache } from '@/lib/useCustomFields';
-import { useFieldLayout, resolveFieldRow } from '@/lib/useFieldLayout';
+import { useFieldLayout, resolveFieldRow, resolveFieldDisplay, cfKey } from '@/lib/useFieldLayout';
 import { useObjectLabels } from '@/lib/useObjectLabels';
 import LineItemCustomFieldInput from '@/components/shared/LineItemCustomFieldInput';
 import { Lead360, Contact360, Opportunity360, Quotation360, Order360, Invoice360, Activity360 } from '@/components/crm/Record360';
 import { useApp } from '@/context/AppContext';
+import { useRelabel } from '@/lib/useRelabel';
 import {
   getObjectFields, getStatusOptions, getPageLabel,
   formatCurrency, formatDateTime, getStatusColor,
@@ -18,7 +20,12 @@ import ProductConfigurator from '@/components/products/ProductConfigurator';
 import ConfigureLineItemModal from '@/components/shared/ConfigureLineItemModal';
 import QuickCreateModal from '@/components/shared/QuickCreateModal';
 import CreateRecordModal from '@/components/crm/CreateRecordModal';
+import EwayBillModal from '@/components/crm/EwayBillModal';
 import AISummary from '@/components/ai/AISummary';
+import CustomRelatedLists from '@/components/shared/CustomRelatedLists';
+import { useFieldMappingRules, applyFieldMapping } from '@/lib/useFieldMappingRules';
+import RecordHighlights from '@/components/shared/RecordHighlights';
+import { useRelatedCols, withKeys, viewPermFor } from '@/components/shared/Related360';
 import ProductImages from '@/components/products/ProductImages';
 import { buildInvoiceHTML } from '@/lib/buildInvoiceHTML';
 import SearchableSelect from '@/components/shared/SearchableSelect';
@@ -97,6 +104,8 @@ function LineItemsTable({ items, setItems, products, page }) {
   const [configModal, setConfigModal] = useState(null);
   const LI_OBJ_MAP = { orders:'orderLineItems', invoices:'invoiceLineItems' };
   const { fields: customFields } = useCustomFields(LI_OBJ_MAP[page] || '');
+  // Copy Maps: product -> line item (tenant-scoped, per line object)
+  const { rules: p2lRules } = useFieldMappingRules('product_to_line_item', 'products', LI_OBJ_MAP[page] || '');
 
   const iCls = 'w-full border border-blue-200 rounded-xl px-3 py-2.5 text-sm text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-blue-400';
 
@@ -106,7 +115,9 @@ function LineItemsTable({ items, setItems, products, page }) {
     if (i !== idx) return r;
     if (field === 'product') {
       const pr = products.find(x => x.name === raw);
-      return { ...r, product: raw, price: pr ? pr.price : r.price, product_id: pr?._uuid||pr?.id||null, configuration: {} };
+      const nr = { ...r, product: raw, price: pr ? pr.price : r.price, product_id: pr?._uuid||pr?.id||null, configuration: {} };
+      if (pr && p2lRules.length) applyFieldMapping(p2lRules, pr, nr);
+      return nr;
     }
     return { ...r, [field]: ['quantity','price','discount'].includes(field) ? Number(raw) : raw };
   }));
@@ -216,12 +227,18 @@ function LineItemsTable({ items, setItems, products, page }) {
 }
 
 // ─── Customer 360 ─────────────────────────────────────────────────────────────
+function Customer360Cols({ page, cols, children }) {
+  // Layout-designer aware columns (hidden / relabelled fields, published custom fields)
+  return children(useRelatedCols(page, withKeys(cols)));
+}
+
 function Customer360({ customer, onSubRecordOpen, onCreateFor }) {
-  const { contacts, leads, opportunities, orders, invoices, activities, quotations } = useApp();
+  const { contacts, leads, opportunities, orders, invoices, activities, quotations, hasPermission, applyDataSecurity } = useApp();
   const { getObjectLabel } = useObjectLabels();
   const [tab, setTab] = useState('contacts');
 
   // Match by UUID (customerId), display number (customer.id = customer_number), or name
+  const sec = (a) => (applyDataSecurity ? applyDataSecurity(a) : a);
   const m = r =>
     (r.customerId && (r.customerId === customer._uuid || r.customerId === customer.id)) ||
     (r.customer_id && (r.customer_id === customer._uuid || r.customer_id === customer.id)) ||
@@ -253,7 +270,14 @@ function Customer360({ customer, onSubRecordOpen, onCreateFor }) {
     if (secs[k].createLabel) secs[k].createLabel = getObjectLabel(k, secs[k].createLabel, 'singular');
   });
 
-  const active = secs[tab];
+  // Role permissions + data security, exactly like the list pages
+  Object.keys(secs).forEach(k => {
+    if (hasPermission && !hasPermission(viewPermFor(k))) { delete secs[k]; return; }
+    secs[k].data = sec(secs[k].data);
+  });
+  const activeKey = secs[tab] ? tab : Object.keys(secs)[0];
+  const active = secs[activeKey];
+  if (!active) return null;
 
   return (
     <div className="space-y-4">
@@ -286,17 +310,18 @@ function Customer360({ customer, onSubRecordOpen, onCreateFor }) {
               {active.createLabel&&<button onClick={()=>onCreateFor(tab)} className="mt-3 text-blue-600 text-sm font-semibold hover:underline">+ Create {active.createLabel}</button>}
             </div>
           : <div className="overflow-x-auto">
+              <Customer360Cols page={activeKey} cols={active.cols}>{(cols)=>(
               <table className="w-full text-sm">
                 <thead className="bg-blue-50 border-b border-blue-100">
-                  <tr>{active.cols.map(c=><th key={c.h} className="px-5 py-3 text-left text-xs font-bold uppercase tracking-wide text-gray-500">{c.h}</th>)}<th className="px-5 py-3 w-16"/></tr>
+                  <tr>{cols.map(c=><th key={c.h} className="px-5 py-3 text-left text-xs font-bold uppercase tracking-wide text-gray-500">{c.h}</th>)}<th className="px-5 py-3 w-16"/></tr>
                 </thead>
                 <tbody>
                   {active.data.map((row,i)=>(
                     <tr key={row.id||i}
                       className="border-t border-blue-50 hover:bg-blue-50/60 cursor-pointer transition-all"
-                      onClick={()=>onSubRecordOpen(tab, row)}
+                      onClick={()=>onSubRecordOpen(activeKey, row)}
                     >
-                      {active.cols.map(c=><td key={c.h} className="px-5 py-3 text-[#0F172A]">{c.v(row)}</td>)}
+                      {cols.map(c=><td key={c.h} className="px-5 py-3 text-[#0F172A]">{c.v(row)}</td>)}
                       <td className="px-5 py-3">
                         <span className="text-blue-400 text-xs font-semibold hover:text-blue-700">Open →</span>
                       </td>
@@ -304,9 +329,11 @@ function Customer360({ customer, onSubRecordOpen, onCreateFor }) {
                   ))}
                 </tbody>
               </table>
+              )}</Customer360Cols>
             </div>
         }
       </div>
+      {customer?.id && <CustomRelatedLists parentKind="standard" parentKey="customers" parentId={customer.id} parentName={customer.name} parentPage="customers" parentRecord={customer} returnTab="360" />}
     </div>
   );
 }
@@ -318,6 +345,8 @@ export default function RecordDetailPanel({ page, record, onClose, prefillCustom
   const { supabase } = useTenant();
   const { showAlert, showConfirm } = useAlert();
   const { fields: customFields } = useCustomFields(page);
+  const { getObjectLabel: label360 } = useObjectLabels();
+  const t360 = (def) => `🔄 ${label360(page, def, 'singular')} 360`;
 
   // Always re-fetch custom fields when panel opens (picks up newly published fields)
   useEffect(() => { invalidateCustomFieldCache(page); }, [page]);
@@ -329,6 +358,7 @@ export default function RecordDetailPanel({ page, record, onClose, prefillCustom
     currentUserPermissions, permissionsLoaded, appPreferences, currentUser, appearance,
     invoiceTemplates,
   } = useApp();
+  const L = useRelabel();
   const lang = appearance?.language || 'en';
 
   // Local permission helper (mirrors CRMListPage canDo)
@@ -356,6 +386,7 @@ export default function RecordDetailPanel({ page, record, onClose, prefillCustom
   const [loadingLI,       setLoadingLI]       = useState(false);
   const [saving,          setSaving]          = useState(false);
   const [printingInvoice, setPrintingInvoice] = useState(false);
+  const [showEwayBill,    setShowEwayBill]    = useState(false);
   const [submitting,      setSubmitting]      = useState(false);
   const [tab,             setTab]             = useState(initialTab || 'details');
   const [matchingProcess, setMatchingProcess] = useState(null);
@@ -568,14 +599,32 @@ export default function RecordDetailPanel({ page, record, onClose, prefillCustom
     && !checkingApproval;
 
   const ownerUser = enterpriseUsers.find(u => u.id === edited.owner_id || u.email === edited.owner);
+  const highlightKeys = ({
+    customers: ['industry','phone','email','city'], contacts: ['customer','designation','email','phone'],
+    leads: ['source','amount','expectedCloseDate','customer'], opportunities: ['stage','amount','closeDate','customer'],
+    orders: ['customer','amount','deliveryDate','currency'], invoices: ['customer','amount','dueDate','paymentTerms'],
+    activities: ['activityType','priority','dueDate','customer'], products: ['sku','category','price','stock_quantity'],
+  })[page] || [];
+
+  // Custom fields on the Detail page, through the Page Layout Designer: label, hidden, read-only, order.
+  const detailCF = (customFields || [])
+    .filter(cf => cf.show_on !== 'create')
+    .map((cf, i) => {
+      const r = resolveFieldDisplay(cfKey(cf.api_name), cf.label, fieldLayout.fields || [], { ...edited, ...(edited.custom_data || {}) }, 'detail');
+      const row = resolveFieldRow(cfKey(cf.api_name), fieldLayout.fields || [], 'detail');
+      return { ...cf, label: r.label, _hidden: !r.visible, _ro: !r.editable, _order: row ? row.display_order : 10000 + (cf.sort_order || i) };
+    })
+    .filter(cf => !cf._hidden)
+    .sort((a, b) => a._order - b._order);
 
   return (
     <>
       <div className="fixed inset-0 bg-black/50 z-[110] overflow-y-auto">
-        <div className="bg-white rounded-[28px] shadow-2xl w-[98vw] my-4 mx-auto overflow-hidden flex flex-col" style={{minHeight:'95vh'}}>
+        <div className="rw-panel bg-white rounded-[28px] shadow-2xl w-[98vw] my-4 mx-auto overflow-hidden flex flex-col" style={{minHeight:'95vh'}}>
+          <RedwoodSkin />
 
           {/* Header */}
-          <div className="bg-gradient-to-r from-[#0F172A] to-blue-900 px-8 py-5 text-white flex items-center justify-between flex-shrink-0">
+          <div className="rw-header bg-gradient-to-r from-[#0F172A] to-blue-900 px-8 py-5 text-white flex items-center justify-between flex-shrink-0">
             <div>
               <div className="flex items-center gap-3 flex-wrap">
                 <h2 className="text-2xl font-bold">{edited.name||edited.subject||getPageLabel(page)}</h2>
@@ -594,7 +643,10 @@ export default function RecordDetailPanel({ page, record, onClose, prefillCustom
             <div className="flex items-center gap-2 flex-wrap">
               {page==='leads'&&record.status==='Qualified'&&<button onClick={()=>{convertLeadToOpportunity(record);onClose();}} className="bg-white/20 hover:bg-white/30 text-white px-4 py-2 rounded-xl text-sm font-semibold">🔀 Convert</button>}
 
-              {page==='orders'&&<button onClick={()=>{createInvoiceFromOrder(record);onClose();}} className="bg-white/20 hover:bg-white/30 text-white px-4 py-2 rounded-xl text-sm font-semibold">🧾 Create Invoice</button>}
+              {['orders','invoices'].includes(page) && appPreferences?.region !== 'Other' && appPreferences?.eway_bill_enabled !== false && (
+                <button onClick={()=>setShowEwayBill(true)} className="bg-white/20 hover:bg-white/30 text-white px-4 py-2 rounded-xl text-sm font-semibold">🚚 E-Way Bill</button>
+              )}
+              {page==='orders'&&<button onClick={()=>{createInvoiceFromOrder(record);onClose();}} className="bg-white/20 hover:bg-white/30 text-white px-4 py-2 rounded-xl text-sm font-semibold">🧾 {L('Create Invoice')}</button>}
               {page==='invoices'&&<button onClick={async()=>{
                 setPrintingInvoice(true);
                 try {
@@ -630,7 +682,7 @@ export default function RecordDetailPanel({ page, record, onClose, prefillCustom
             {page === 'opportunities' && appPreferences?.cpq_enabled === false && (
               <button onClick={async () => { await createOrderFromOpportunity(record); showAlert('Order created! View in Orders.', { variant:'success', title:'Order Created' }); onClose(); }}
                 className="flex items-center gap-2 bg-gradient-to-r from-[#0F172A] to-blue-800 text-white px-4 py-2 rounded-xl text-sm font-bold hover:opacity-90 shadow-md">
-                🛒 Create Order
+                🛒 {L('Create Order')}
               </button>
             )}
             {(page!=='customers'||tab==='details') && (
@@ -649,27 +701,30 @@ export default function RecordDetailPanel({ page, record, onClose, prefillCustom
             )}
           </div>
 
+          {/* Highlights — key facts, labelled by the Page Layout Designer */}
+          <RecordHighlights items={highlightKeys.map(k => { const rf = resolveCRMField(k, 0); if (rf.hidden) return null; const raw = edited[k]; const money = ['amount','price','cost','grand_total'].includes(k); return { label: rf.label, value: raw === undefined || raw === null || raw === '' ? '' : (money ? formatCurrency(Number(raw)||0) : String(raw)) }; }).filter(Boolean)} />
+
           {/* Tabs — shown for all pages that have a 360 or secondary tab */}
           {(page==='customers'||page==='products'||page==='leads'||page==='contacts'||page==='opportunities'||page==='quotations'||page==='orders'||page==='invoices'||page==='activities')&&(
-            <div className="flex gap-1 px-8 pt-4 bg-gray-50 border-b border-blue-100">
+            <div className="rw-tabs flex gap-1 px-8 pt-4 bg-gray-50 border-b border-blue-100">
               {(page==='products'
               ? [{key:'details',label:'📋 Details'},{key:'configuration',label:'⚙️ Configuration'}]
               : page==='customers'
-              ? [{key:'details',label:'📋 Details'},{key:'360',label:'🔄 Customer 360'}]
+              ? [{key:'details',label:'📋 Details'},{key:'360',label:t360('Customer')}]
               : page==='leads'
-              ? [{key:'details',label:'📋 Details'},{key:'360',label:'🔄 Lead 360'}]
+              ? [{key:'details',label:'📋 Details'},{key:'360',label:t360('Lead')}]
               : page==='contacts'
-              ? [{key:'details',label:'📋 Details'},{key:'360',label:'🔄 Contact 360'}]
+              ? [{key:'details',label:'📋 Details'},{key:'360',label:t360('Contact')}]
               : page==='opportunities'
-              ? [{key:'details',label:'📋 Details'},{key:'360',label:'🔄 Opportunity 360'}]
+              ? [{key:'details',label:'📋 Details'},{key:'360',label:t360('Opportunity')}]
               : page==='quotations'
-              ? [{key:'details',label:'📋 Details'},{key:'360',label:'🔄 Quotation 360'}]
+              ? [{key:'details',label:'📋 Details'},{key:'360',label:t360('Quotation')}]
               : page==='orders'
-              ? [{key:'details',label:'📋 Details'},{key:'360',label:'🔄 Order 360'}]
+              ? [{key:'details',label:'📋 Details'},{key:'360',label:t360('Order')}]
               : page==='invoices'
-              ? [{key:'details',label:'📋 Details'},{key:'360',label:'🔄 Invoice 360'}]
+              ? [{key:'details',label:'📋 Details'},{key:'360',label:t360('Invoice')}]
               : page==='activities'
-              ? [{key:'details',label:'📋 Details'},{key:'360',label:'🔄 Activity 360'}]
+              ? [{key:'details',label:'📋 Details'},{key:'360',label:t360('Activity')}]
               : [{key:'details',label:'📋 Details'}]
             ).map(tb=>(
                 <button key={tb.key} onClick={()=>setTab(tb.key)} className={`px-5 py-2.5 rounded-t-xl text-sm font-semibold whitespace-nowrap transition-all ${tab===tb.key?'bg-white text-[#0F172A] border border-b-white border-blue-200 -mb-px shadow-sm':'text-gray-500 hover:text-[#0F172A]'}`}>{tb.label}</button>
@@ -856,6 +911,8 @@ export default function RecordDetailPanel({ page, record, onClose, prefillCustom
                   )}
                 </div>
 
+                {record.id && <CustomRelatedLists parentKind="standard" parentKey={page} parentId={record.id} parentName={edited.name} parentPage={page} parentRecord={edited} />}
+
                 {/* Line Items */}
                 {HAS_LI.includes(page) && (loadingLI
                   ? <div className="bg-white rounded-[24px] border border-blue-100 p-8 text-center text-gray-400">Loading line items…</div>
@@ -866,7 +923,7 @@ export default function RecordDetailPanel({ page, record, onClose, prefillCustom
                 )}
 
                 {/* Additional Information — B2B App Composer custom fields */}
-                {customFields.filter(cf => cf.show_on !== 'create').length > 0 && (
+                {detailCF.length > 0 && (
                   <div className="bg-white rounded-[24px] border border-blue-100 shadow-sm overflow-hidden">
                     <div className="px-5 py-3 bg-gradient-to-r from-slate-50 to-blue-50 border-b border-blue-100 flex items-center gap-2">
                       <span>🎛️</span>
@@ -874,11 +931,11 @@ export default function RecordDetailPanel({ page, record, onClose, prefillCustom
                       <a href="#" onClick={e=>{e.preventDefault();}} className="ml-auto text-[10px] bg-blue-100 text-blue-600 px-2 py-0.5 rounded-full font-semibold">App Composer</a>
                     </div>
                     <div className="p-5 grid grid-cols-1 sm:grid-cols-2 gap-4">
-                      {customFields.filter(cf => cf.show_on !== 'create').map(cf => {
+                      {detailCF.map(cf => {
                         const cdVal = (edited.custom_data || {})[cf.api_name];
                         const setCdVal = (val) => { setIsDirty(true); setEdited(p => ({ ...p, custom_data: { ...(p.custom_data||{}), [cf.api_name]: val } })); };
                         return (
-                          <div key={cf.api_name} className={cf.field_type==='multi_select'?'sm:col-span-2':''}>
+                          <fieldset key={cf.api_name} disabled={cf._ro} title={cf._ro ? "Made read-only by this tenant's Page Layout Designer settings" : undefined} className={`min-w-0 border-0 p-0 m-0 ${cf._ro?'opacity-60':''} ${cf.field_type==='multi_select'?'sm:col-span-2':''}`}>
                             {cf.field_type !== 'checkbox' && (
                               <label className="block text-xs font-bold uppercase tracking-wider text-gray-400 mb-1.5">
                                 {cf.label}{cf.required && <span className="text-red-400 ml-1">*</span>}
@@ -908,7 +965,7 @@ export default function RecordDetailPanel({ page, record, onClose, prefillCustom
                                   value={cdVal||''} onChange={e=>setCdVal(e.target.value)} placeholder={cf.label}
                                   className={iCls}/>
                             }
-                          </div>
+                          </fieldset>
                         );
                       })}
                     </div>
@@ -979,6 +1036,9 @@ export default function RecordDetailPanel({ page, record, onClose, prefillCustom
         prefillExtra={quickCreate?.prefillExtra||{}}
         onCreated={(id,name)=>{quickCreate?.onCreated?.(id,name);setQuickCreate(null);}}
       />
+      {showEwayBill && ['orders','invoices'].includes(page) && (
+        <EwayBillModal page={page} record={{ ...record, ...edited }} onClose={()=>setShowEwayBill(false)} />
+      )}
     </>
   );
 }

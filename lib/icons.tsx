@@ -4,7 +4,7 @@ import {
   ShoppingBag, ShoppingCart, Receipt, BarChart3, Settings, LayoutDashboard,
   User, Wallet, CheckCircle2, MessageCircle, Package, CalendarCheck,
   ClipboardList, Home, Ruler, CreditCard, RefreshCw, Undo2, UserPlus,
-  AlertTriangle, DollarSign, TrendingUp,
+  AlertTriangle, DollarSign, TrendingUp, Shapes,
 } from 'lucide-react';
 
 // Keyed by the same object/tab keys navPermissions.ts already uses. This is
@@ -24,7 +24,7 @@ export const ICON_MAP = {
   dashboard: LayoutDashboard, reports: BarChart3, adminTools: Settings,
   whatsappInbox: MessageCircle, home: Home,
   // Springboard tab ids (distinct from the object keys above)
-  me: User, sales: Wallet, operations: Settings,
+  customObjects: Shapes, me: User, sales: Wallet, operations: Settings,
   salesDashboard: LayoutDashboard, adminTool: Settings,
   // Misc
   _profile: User,

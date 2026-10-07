@@ -15,10 +15,12 @@
 import { useState, useEffect } from 'react';
 import { createClient } from '@supabase/supabase-js';
 import { inMemoryLock } from './tenant';
+import { tenantScope } from './utils';
+import { ruleTargetsLine } from './copyMaps';
 
 export interface FieldMappingRule {
   id: string;
-  rule_type: 'product_to_line_item' | 'record_conversion';
+  rule_type: 'product_to_line_item' | 'record_conversion' | 'record_conversion_line';
   name: string | null;
   source_object: string;
   source_field: string;
@@ -36,6 +38,9 @@ function getCacheKey(ruleType: string, sourceObject: string): string {
   const tenantId = typeof window !== 'undefined' ? (window as any).__bp_tenant?.id || 'default' : 'default';
   return `${tenantId}:${ruleType}:${sourceObject}`;
 }
+
+const toSnake = (k: string) => k.replace(/[A-Z]/g, m => '_' + m.toLowerCase());
+const toCamel = (k: string) => k.replace(/_([a-z])/g, (_, c) => c.toUpperCase());
 
 export function invalidateFieldMappingCache() {
   Object.keys(_cache).forEach(k => delete _cache[k]);
@@ -56,18 +61,23 @@ function getClient() {
 // api_name) - the two field types live in different places on a record.
 function readField(record: any, field: string, fieldType: string) {
   if (!record) return undefined;
-  return fieldType === 'custom' ? (record.custom_data || {})[field] : record[field];
+  if (fieldType === 'custom') return (record.custom_data || record.customData || {})[field];
+  // Context records are camelCase, raw DB rows are snake_case — accept either spelling.
+  if (record[field] !== undefined) return record[field];
+  const sn = toSnake(field); if (record[sn] !== undefined) return record[sn];
+  const cc = toCamel(field); if (record[cc] !== undefined) return record[cc];
+  return undefined;
 }
 
 // Writes a field's value onto a record object IN PLACE, the same way -
 // standard fields as a direct property, custom fields nested under
 // custom_data. Returns the (possibly new) custom_data object so callers
 // building an insert/update payload can pick it up correctly.
-function writeField(record: any, field: string, fieldType: string, value: any) {
+function writeField(record: any, field: string, fieldType: string, value: any, asDb = false) {
   if (fieldType === 'custom') {
     record.custom_data = { ...(record.custom_data || {}), [field]: value };
   } else {
-    record[field] = value;
+    record[asDb ? toSnake(field) : field] = value;
   }
 }
 
@@ -84,19 +94,20 @@ const PROTECTED_STANDARD_FIELDS = new Set(['id', 'owner', 'owner_id', 'created_a
 // product_to_line_item this is called synchronously right after a product
 // is selected in a line-item grid; for record_conversion it's called
 // after building the new record but before it's saved.
-export function applyFieldMapping(rules: FieldMappingRule[], sourceRecord: any, targetRecord: any, conversionContext?: string) {
+export function applyFieldMapping(rules: FieldMappingRule[], sourceRecord: any, targetRecord: any, conversionContext?: string, opts: { db?: boolean; applied?: string[] } = {}) {
   for (const rule of rules) {
     if (!rule.is_active) continue;
     if (rule.conversion_context && conversionContext && rule.conversion_context !== conversionContext) continue;
     if (rule.target_field_type === 'standard' && PROTECTED_STANDARD_FIELDS.has(rule.target_field)) continue;
     const value = readField(sourceRecord, rule.source_field, rule.source_field_type);
     if (value === undefined) continue; // nothing to copy — don't overwrite an existing target value with undefined
-    writeField(targetRecord, rule.target_field, rule.target_field_type, value);
+    writeField(targetRecord, rule.target_field, rule.target_field_type, value, !!opts.db);
+    if (opts.applied && rule.target_field_type === 'standard') opts.applied.push(opts.db ? toSnake(rule.target_field) : rule.target_field);
   }
   return targetRecord;
 }
 
-export function useFieldMappingRules(ruleType: string, sourceObject: string) {
+export function useFieldMappingRules(ruleType: string, sourceObject: string, lineObject?: string) {
   const cacheKey = getCacheKey(ruleType, sourceObject);
   const [rules, setRules] = useState<FieldMappingRule[]>(_cache[cacheKey] || []);
   const [loading, setLoading] = useState(!_cache[cacheKey]);
@@ -111,9 +122,9 @@ export function useFieldMappingRules(ruleType: string, sourceObject: string) {
       try {
         const client = getClient();
         if (!client) { setLoading(false); return; }
-        const tenantId = typeof window !== 'undefined' ? (window as any).__bp_tenant?.id || null : null;
-        const { data } = await client.from('field_mapping_rules').select('*')
-          .eq('rule_type', ruleType).eq('source_object', sourceObject).eq('tenant_id', tenantId).eq('is_active', true);
+        // Tenant-scoped exactly like every other table (dedicated DBs need no filter; RLS also enforces it).
+        const { data } = await tenantScope(client.from('field_mapping_rules').select('*'))
+          .eq('rule_type', ruleType).eq('source_object', sourceObject).eq('is_active', true);
         if (!cancelled) { _cache[cacheKey] = data || []; setRules(data || []); }
       } catch (e) {
         if (!cancelled) { _cache[cacheKey] = []; setRules([]); }
@@ -124,7 +135,8 @@ export function useFieldMappingRules(ruleType: string, sourceObject: string) {
     return () => { cancelled = true; };
   }, [ruleType, sourceObject, cacheKey]);
 
-  return { rules, loading };
+  const filtered = lineObject ? rules.filter(r => ruleTargetsLine(r, lineObject)) : rules;
+  return { rules: filtered, loading };
 }
 
 // For contexts that can't use the hook (e.g. inside an async function in
@@ -136,11 +148,39 @@ export function useFieldMappingRules(ruleType: string, sourceObject: string) {
 export async function fetchFieldMappingRules(supabase: any, ruleType: string, sourceObject: string, tenantId: string | null): Promise<FieldMappingRule[]> {
   if (!supabase) return [];
   try {
-    const { data } = await supabase.from('field_mapping_rules').select('*')
-      .eq('rule_type', ruleType).eq('source_object', sourceObject).eq('tenant_id', tenantId).eq('is_active', true);
+    const { data } = await tenantScope(supabase.from('field_mapping_rules').select('*'))
+      .eq('rule_type', ruleType).eq('source_object', sourceObject).eq('is_active', true);
     return data || [];
   } catch (e) {
     console.error('[fetchFieldMappingRules]', e);
     return [];
   }
+}
+
+// All header + line copy maps for one conversion (e.g. 'order_to_invoice').
+export async function fetchConversionRules(supabase: any, conversionContext: string): Promise<{ header: FieldMappingRule[]; lines: FieldMappingRule[] }> {
+  if (!supabase) return { header: [], lines: [] };
+  try {
+    const { data } = await tenantScope(supabase.from('field_mapping_rules').select('*'))
+      .in('rule_type', ['record_conversion', 'record_conversion_line'])
+      .eq('conversion_context', conversionContext).eq('is_active', true);
+    const rows = data || [];
+    return { header: rows.filter(r => r.rule_type === 'record_conversion'), lines: rows.filter(r => r.rule_type === 'record_conversion_line') };
+  } catch (e) {
+    console.error('[fetchConversionRules]', e);
+    return { header: [], lines: [] };
+  }
+}
+
+// If a mapped standard field names a column that does not exist on the target
+// table, retry once without the mapped columns so a mis-configured copy map can
+// never block a conversion.
+export async function insertWithCopyMaps(supabase: any, table: string, payload: any, applied: string[]) {
+  let res = await supabase.from(table).insert([payload]).select().single();
+  if (res.error && applied.length && /column|schema cache/i.test(res.error.message || '')) {
+    const clean = { ...payload }; applied.forEach(k => { delete clean[k]; });
+    console.warn('[copy maps] retrying insert without mapped columns:', applied, res.error.message);
+    res = await supabase.from(table).insert([clean]).select().single();
+  }
+  return res;
 }

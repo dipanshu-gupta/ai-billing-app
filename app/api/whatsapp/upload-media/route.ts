@@ -1,21 +1,7 @@
-import { createClient } from '@supabase/supabase-js';
 import { NextResponse } from 'next/server';
+import { authorizeWhatsAppRequest } from '@/lib/whatsappServer';
 
 const META_API_VERSION = 'v20.0';
-
-// Mirrors the same tenant-resolution pattern used by the other WhatsApp routes.
-async function resolveClient(db_url?: string) {
-  const masterUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-  const masterKey = process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY!;
-  let targetUrl = masterUrl;
-  let targetKey = masterKey;
-  if (db_url && db_url !== masterUrl && masterKey) {
-    const master = createClient(masterUrl, masterKey, { auth: { autoRefreshToken: false, persistSession: false } });
-    const { data: tenant } = await master.from('tenants').select('db_service_key').eq('db_url', db_url).maybeSingle();
-    if (tenant?.db_service_key) { targetUrl = db_url; targetKey = tenant.db_service_key; }
-  }
-  return createClient(targetUrl, targetKey, { auth: { autoRefreshToken: false, persistSession: false } });
-}
 
 export async function POST(request: Request) {
   try {
@@ -29,8 +15,10 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: `The generated file is suspiciously small (${buffer.length} bytes) - this usually means PDF generation failed silently rather than producing a real document. Try again, or check the browser console for errors during PDF creation.` }, { status: 400 });
     }
 
-    const supabase = await resolveClient(db_url);
-    const { data: config } = await supabase.from('whatsapp_config').select('*').eq('tenant_id', tenantId || null).maybeSingle();
+    const auth = await authorizeWhatsAppRequest(request, { db_url, tenantId });
+    if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
+    const supabase = auth.supabase;
+    const { data: config } = await supabase.from('whatsapp_config').select('*').eq('tenant_id', auth.tenantId).maybeSingle();
 
     if (!config?.is_active) return NextResponse.json({ error: 'WhatsApp is not active for this workspace.' }, { status: 400 });
     if (!config.phone_number_id || !config.access_token) {

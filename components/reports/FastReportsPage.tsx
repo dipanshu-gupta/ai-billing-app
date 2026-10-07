@@ -4,11 +4,13 @@
 import { useState, useMemo, useEffect, useCallback } from 'react';
 import { useApp } from '@/context/AppContext';
 import { useTenant } from '@/context/TenantContext';
-import { formatDisplayNumber, PAGE_DISPLAY_PREFIX, formatCurrency, formatDate, withTimeout, tenantScope } from '@/lib/utils';
+import { getStatusColor, formatDisplayNumber, PAGE_DISPLAY_PREFIX, formatCurrency, formatDate, withTimeout, tenantScope } from '@/lib/utils';
 import { useAlert } from '@/components/shared/AlertProvider';
 import { useCustomFields } from '@/lib/useCustomFields';
 import LoadingSpinner from '@/components/shared/LoadingSpinner';
+import { ObjectIcon } from '@/lib/lineIcons';
 import { NavIcon } from '@/lib/icons';
+import { fetchCustomObjectFields, resolveLookupLabelMap, flattenCustomRecord, formatCustomDisplayNumber, CUSTOM_STATUS_OPTIONS } from '@/lib/customObjects';
 import { Table2, BarChart3, LineChart as LineChartIcon, Mountain, PieChart as PieChartIcon, Globe, User, Users, X, Save, Download, Folder, Receipt, AlertTriangle, Calendar, Search, ClipboardList, Trash2, Filter, Columns3 } from 'lucide-react';
 
 // Chart-type icons - a distinct category from navigation/object icons
@@ -433,6 +435,7 @@ export default function FastReportsPage() {
     retailCustomers, retailProducts, retailActivities, retailOrders, retailInvoices,
     reports, saveReport, deleteReport, fetchReports,
     currentUser, appPreferences, enterpriseUsers, applyDataSecurity, permissionsLoaded,
+    customObjects, hasPermission,
   } = useApp();
   const { supabase, tenant } = useTenant();
   const { showAlert } = useAlert();
@@ -441,12 +444,43 @@ export default function FastReportsPage() {
   const isB2C    = appPreferences?.b2c_mode === true;
   const { getObjectLabel } = useObjectLabels();
 
-  const ALL_FIELDS   = { ...OBJECT_FIELDS, ...B2C_OBJECT_FIELDS };
-  const ACTIVE_OBJS  = useMemo(() => (isB2C ? B2C_OBJECTS : B2B_OBJECTS).map(o => ({ ...o, l: getObjectLabel(o.v, o.l) })), [isB2C, getObjectLabel]);
+  // Custom Objects are reportable like any standard object: each published
+  // object the user may view appears in the Data Object list, with the system
+  // fields (record number, name, status, owner, created/updated ...) plus all
+  // of its own fields available as columns, filters, sorts and chart groups.
+  const mode = isB2C ? 'b2c' : 'b2b';
+  const customObjList = useMemo(() => (customObjects || [])
+    .filter(o => (o.module === 'both' || o.module === mode) && (!hasPermission || hasPermission(`custom_${o.api_name}_view`)))
+    .map(o => ({ v: `custom_${o.api_name}`, l: o.plural_label, icon: o.icon, isCustom: true, obj: o })), [customObjects, mode, hasPermission]);
+  const ACTIVE_OBJS  = useMemo(() => [...(isB2C ? B2C_OBJECTS : B2B_OBJECTS).map(o => ({ ...o, l: getObjectLabel(o.v, o.l) })), ...customObjList], [isB2C, getObjectLabel, customObjList]);
   const defaultObj   = isB2C ? 'retailOrders' : 'opportunities';
 
   // ── Config state ───────────────────────────────────────────────────────────
   const [objType,       setObjType]       = useState(defaultObj);
+  const activeCustomObj = customObjList.find(o => o.v === objType)?.obj || null;
+  const [customFieldDefs, setCustomFieldDefs] = useState(null);
+  useEffect(() => {
+    if (!activeCustomObj) { setCustomFieldDefs(null); return; }
+    let cancelled = false;
+    fetchCustomObjectFields(activeCustomObj.id, 'header', true).then(hf => {
+      if (cancelled) return;
+      const typeOf = (ft) => ft === 'number' ? 'number' : ft === 'currency' ? 'currency' : (ft === 'date' || ft === 'datetime') ? 'date' : 'text';
+      setCustomFieldDefs([
+        { k:'record_number_label', l:'Record Number', t:'text' },
+        { k:'name',        l:'Name',          t:'text' },
+        { k:'status',      l:'Status',        t:'status', filterable:true },
+        { k:'owner',       l:'Owner',         t:'text',   filterable:true },
+        ...hf.map(f => ({ k:f.api_name, l:f.label, t:typeOf(f.field_type), filterable:true })),
+        { k:'created_at',  l:'Created Date',  t:'date',   filterable:true },
+        { k:'created_by',  l:'Created By',    t:'text',   filterable:true },
+        { k:'updated_at',  l:'Last Updated Date', t:'date', filterable:true },
+        { k:'updated_by',  l:'Last Updated By',   t:'text', filterable:true },
+        { k:'id',          l:'Record ID',     t:'text' },
+      ]);
+    });
+    return () => { cancelled = true; };
+  }, [activeCustomObj?.id]);
+  const ALL_FIELDS = useMemo(() => ({ ...OBJECT_FIELDS, ...B2C_OBJECT_FIELDS, ...(activeCustomObj && customFieldDefs ? { [objType]: customFieldDefs } : {}) }), [objType, activeCustomObj?.id, customFieldDefs]);
   const [isLineItemMode, setIsLineItemMode] = useState(false);
   const [columns,       setColumns]       = useState([]);
   const [filters,       setFilters]       = useState([]); // [{field, operator, value}]
@@ -504,7 +538,7 @@ export default function FastReportsPage() {
     setGroupBy(isLineItemMode ? 'product_name' : 'status');
     setChartMetric('count');
     setPage(1);
-  }, [objType, isLineItemMode]);
+  }, [objType, isLineItemMode, customFieldDefs]);
 
   // ── Raw data — fetched directly from the database, not the capped,
   // client-side global arrays ────────────────────────────────────────────
@@ -536,8 +570,9 @@ export default function FastReportsPage() {
   useEffect(() => {
     if (!supabase) return;
     const liConfig = LINE_ITEM_TABLE_MAP[objType];
-    const table = isLineItemMode ? liConfig?.table : OBJECT_TABLE_MAP[objType];
+    const table = isLineItemMode ? liConfig?.table : (activeCustomObj ? 'custom_object_records' : OBJECT_TABLE_MAP[objType]);
     if (!table) { setRawData([]); return; }
+    const customObjId = !isLineItemMode && activeCustomObj ? activeCustomObj.id : null;
     setRawDataLoading(true);
     setRawDataProgress(0);
     setRawDataTruncated(false);
@@ -548,7 +583,7 @@ export default function FastReportsPage() {
         let from = 0;
         while (true) {
           const { data, error } = await withTimeout(
-            tenantScope(supabase.from(table).select('*')).range(from, from + REPORT_BATCH_SIZE - 1),
+            (customObjId ? tenantScope(supabase.from(table).select('*')).eq('custom_object_id', customObjId) : tenantScope(supabase.from(table).select('*'))).range(from, from + REPORT_BATCH_SIZE - 1),
             20000, 'Report data fetch'
           );
           if (cancelled) return;
@@ -588,19 +623,52 @@ export default function FastReportsPage() {
             row.customer = parent?.customer ?? null;
             row.parent_status = parent?.status ?? null;
             row.parent_created_at = parent?.created_at ?? null;
+            // Line-item tables (e.g. retail_order_line_items) don't carry
+            // their own owner_id/owner/created_by/organization_id/
+            // business_unit_id columns — ownership lives on the parent
+            // order/invoice. Copy it down onto each row so applyDataSecurity
+            // (below) can actually scope these rows instead of treating
+            // every line item as "unowned" and letting them all through.
+            row.owner_id = parent?.owner_id ?? null;
+            row.owner = parent?.owner ?? null;
+            row.created_by = parent?.created_by ?? null;
+            row.organization_id = parent?.organization_id ?? null;
+            row.business_unit_id = parent?.business_unit_id ?? null;
           }
         }
       } catch (e) {
         console.error('[FastReportsPage] fetch failed', e);
       }
       if (cancelled) return;
-      const withDisplayNumbers = allRows.map(r => ({ ...r, displayNumber: r.display_number }));
-      const secured = isLineItemMode ? withDisplayNumbers : (applyDataSecurity ? applyDataSecurity(withDisplayNumbers) : withDisplayNumbers);
+      let withDisplayNumbers = allRows.map(r => ({ ...r, displayNumber: r.display_number }));
+      if (customObjId) {
+        // expose each custom field under its api_name (and arrays as text) so
+        // columns, filters, sorts and charts read it like any other column
+        const hf = await fetchCustomObjectFields(customObjId, 'header');
+        const flatRows = withDisplayNumbers.map(r => {
+          const flat = flattenCustomRecord(hf, r);
+          Object.keys(flat).forEach(k => { if (Array.isArray(flat[k])) flat[k] = flat[k].join(', '); });
+          flat.record_number_label = formatCustomDisplayNumber(activeCustomObj, r.display_number) || r.record_number;
+          return flat;
+        });
+        // Lookup fields store a record id - show the record's name (or short display number) instead.
+        const lookupMap = await resolveLookupLabelMap(hf.filter(f => f.field_type === 'lookup'), flatRows, customObjects || []);
+        withDisplayNumbers = flatRows.map(r => {
+          const o = { ...r };
+          Object.keys(lookupMap).forEach(k => { const v = r[k]; if (v !== undefined && v !== null && v !== '') o[k] = lookupMap[k][String(v)] || v; });
+          return o;
+        });
+      }
+      // RBAC — always apply, including line-item mode (see the owner-field
+      // copy-down above; this previously skipped RBAC entirely for line
+      // items, exposing every customer's order/invoice line across the
+      // tenant to any user regardless of their data_scope).
+      const secured = applyDataSecurity ? applyDataSecurity(withDisplayNumbers) : withDisplayNumbers;
       setRawData(secured || []);
       setRawDataLoading(false);
     })();
     return () => { cancelled = true; };
-  }, [objType, isLineItemMode, supabase, tenant?.id, currentUser, permissionsLoaded]);
+  }, [objType, isLineItemMode, supabase, tenant?.id, currentUser, permissionsLoaded, activeCustomObj?.id]);
 
   // ── Apply owner scope ──────────────────────────────────────────────────────
   const scopedData = useMemo(() => {
@@ -787,7 +855,7 @@ export default function FastReportsPage() {
   const publicReports = (reports || []).filter(r => r.is_public && r.created_by !== currentUser?.email);
 
   const sCls = 'w-full border border-blue-200 rounded-xl px-3 py-2 text-[#0F172A] bg-white focus:outline-none focus:ring-2 focus:ring-blue-400 text-sm';
-  const objDef = [...B2B_OBJECTS, ...B2C_OBJECTS].find(o => o.v === objType);
+  const objDef = [...B2B_OBJECTS, ...B2C_OBJECTS, ...customObjList].find(o => o.v === objType);
 
   // ─────────────────────────────────────────────────────────────────────────────
   return (
@@ -830,7 +898,7 @@ export default function FastReportsPage() {
               {ACTIVE_OBJS.map(o => (
                 <button key={o.v} onClick={() => setObjType(o.v)}
                   className={`px-3 py-2 rounded-xl text-xs font-semibold transition-all text-left flex items-center gap-1.5 ${objType===o.v ? 'bg-gradient-to-r from-[#0F172A] to-blue-800 text-white shadow' : 'bg-gray-50 text-gray-600 hover:bg-blue-50 border border-gray-100'}`}>
-                  <NavIcon iconKey={o.v} className="w-4 h-4 flex-shrink-0"/><span className="truncate">{o.l}</span>
+                  {o.isCustom ? <ObjectIcon icon={o.icon} className="w-4 h-4 flex-shrink-0"/> : <NavIcon iconKey={o.v} className="w-4 h-4 flex-shrink-0"/>}<span className="truncate">{o.l}</span>
                 </button>
               ))}
             </div>
@@ -1060,7 +1128,7 @@ export default function FastReportsPage() {
                 ))}
               </div>
               <div className="text-xs text-gray-400">
-                <span className="inline-flex items-center gap-1.5"><NavIcon iconKey={objDef?.v} className="w-4 h-4"/> {objDef?.l}</span> · <strong className="text-[#0F172A]">{filteredData.length}</strong> records · {columns.length} columns
+                <span className="inline-flex items-center gap-1.5">{objDef?.isCustom ? <span className="leading-none">{objDef.icon}</span> : <NavIcon iconKey={objDef?.v} className="w-4 h-4"/>} {objDef?.l}</span> · <strong className="text-[#0F172A]">{filteredData.length}</strong> records · {columns.length} columns
                 {sorts.length > 0 && ` · sorted by ${sorts.map(s=>fields.find(f=>f.k===s.field)?.l).join(', ')}`}
               </div>
             </div>
@@ -1117,8 +1185,8 @@ export default function FastReportsPage() {
                                     : fd?.t==='number'
                                     ? <span className="font-medium">{v!=null ? Number(v).toLocaleString('en-IN') : '-'}</span>
                                     : k==='status'
-                                    ? <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-blue-100 text-blue-700 border border-blue-200">{v||'-'}</span>
-                                    : k==='id' && row.displayNumber
+                                    ? <span className={`px-2.5 py-0.5 rounded-full text-xs font-semibold ${v ? getStatusColor(v) : 'bg-gray-100 text-gray-500'}`}>{v||'-'}</span>
+                                    : k==='id' && row.displayNumber && !activeCustomObj
                                 ? <span className="text-xs font-mono font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded-full">{formatDisplayNumber(PAGE_DISPLAY_PREFIX[objType]||'REC', row.displayNumber)}</span>
                                 : <span className="text-gray-700">{v||'-'}</span>
                                   }
@@ -1279,14 +1347,14 @@ export default function FastReportsPage() {
                   ? <div className="text-center py-8 text-gray-400 text-sm">No {savedView==='mine'?'saved':'shared'} reports yet.</div>
                   : <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                       {(savedView==='mine' ? myReports : publicReports).map(r => {
-                        const objInfo = [...B2B_OBJECTS,...B2C_OBJECTS].find(o=>o.v===r.object_type);
+                        const objInfo = [...B2B_OBJECTS,...B2C_OBJECTS,...customObjList].find(o=>o.v===r.object_type);
                         return (
                           <div key={r.id} className="bg-gray-50 rounded-2xl p-4 border border-blue-100 hover:border-blue-300 transition-all">
                             <div className="flex items-start justify-between mb-2">
                               <div>
                                 <div className="font-semibold text-[#0F172A] text-sm">{r.name}</div>
                                 <div className="text-xs text-gray-400 mt-0.5 flex items-center gap-1">
-                                  <NavIcon iconKey={objInfo?.v} className="w-3.5 h-3.5"/><span className="capitalize">{objInfo?.l || r.object_type}</span>
+                                  {objInfo?.isCustom ? <span className="text-xs leading-none">{objInfo.icon}</span> : <NavIcon iconKey={objInfo?.v} className="w-3.5 h-3.5"/>}<span className="capitalize">{objInfo?.l || r.object_type}</span>
                                   <span>·</span><span>{CHART_TYPES.find(c=>c.v===r.chart_type)?.l||'Table'}</span>
                                 </div>
                                 {r.columns?.length > 0 && <div className="text-xs text-gray-300 mt-0.5">{r.columns.length} columns</div>}

@@ -4,6 +4,8 @@ import { useState, useEffect } from 'react';
 import { useApp } from '@/context/AppContext';
 import { useTenant } from '@/context/TenantContext';
 import { GST_STATE_OPTIONS } from '@/lib/ewayBill';
+import { INVOICE_FLOW_MODES } from '@/lib/invoiceFlow';
+import { resolveStatusOptions } from '@/lib/statusOptions';
 
 const CURRENCIES = [
   {v:'INR',l:'₹ Indian Rupee (INR)'}, {v:'USD',l:'$ US Dollar (USD)'},
@@ -292,6 +294,52 @@ export default function AppPreferencesPanel() {
           )}
         </div>
       )}
+
+      {/* Order -> Invoice flow (retail) */}
+      {moduleAllowed('retail') && form.b2c_mode && (() => {
+        const orderStatuses = resolveStatusOptions('retailOrders', ['Draft','Pending','Completed','Cancelled','Refunded']);
+        const triggers = form.invoice_trigger_statuses?.length ? form.invoice_trigger_statuses : ['Completed'];
+        const mode = form.invoice_flow_mode || 'status';
+        const toggle = (st) => s('invoice_trigger_statuses', triggers.includes(st) ? triggers.filter(x => x !== st) : [...triggers, st]);
+        return (
+          <div className="bg-white rounded-[20px] border border-gray-200 shadow-sm p-5 space-y-3">
+            <h3 className="font-bold text-[#0F172A]">🧾 Orders &amp; Invoices</h3>
+            <p className="text-xs text-gray-500">Choose how an order turns into an invoice for your business. Takes effect for every user of this workspace.</p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {INVOICE_FLOW_MODES.map(m => (
+                <button key={m.v} type="button" onClick={() => s('invoice_flow_mode', m.v)}
+                  className={`text-left p-4 rounded-2xl border-2 transition-all ${mode === m.v ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:border-gray-300'}`}>
+                  <div className="font-bold text-[#0F172A] text-sm">{m.l}</div>
+                  <div className="text-xs text-gray-500 mt-1">{m.d}</div>
+                </button>
+              ))}
+            </div>
+            {(mode === 'status' || mode === 'auto') && (
+              <div>
+                <label className="block text-xs font-bold uppercase tracking-wider text-gray-500 mb-1.5">When the order reaches (pick one or more)</label>
+                <div className="flex flex-wrap gap-2">
+                  {orderStatuses.map(st => (
+                    <button key={st} type="button" onClick={() => toggle(st)}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-semibold border transition-all ${triggers.includes(st) ? 'bg-[#0F172A] text-white border-transparent' : 'bg-gray-50 text-gray-600 border-gray-200 hover:border-blue-300'}`}>
+                      {triggers.includes(st) ? '✓ ' : ''}{st}
+                    </button>
+                  ))}
+                </div>
+                <p className="text-[11px] text-gray-400 mt-1.5">These come from your order status list (Page Layout Designer → Status Values).</p>
+              </div>
+            )}
+            {form.business_type === 'rental' && (
+              <label className="flex items-start gap-3 pt-2 cursor-pointer">
+                <input type="checkbox" className="mt-1 w-4 h-4 accent-purple-600" checked={form.rental_booking_prompt !== false} onChange={e => s('rental_booking_prompt', e.target.checked)} />
+                <span>
+                  <span className="block text-sm font-semibold text-[#0F172A]">Offer to create the booking when an invoice is raised directly</span>
+                  <span className="block text-xs text-gray-500">If staff create a rental invoice without an order, they are prompted to create the matching booking order in one click.</span>
+                </span>
+              </label>
+            )}
+          </div>
+        );
+      })()}
 
       <div className="flex items-center justify-end gap-3">
         {isDirty && <span className="text-xs font-semibold text-amber-600">● Unsaved changes — click Save to apply</span>}

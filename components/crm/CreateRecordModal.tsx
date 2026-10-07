@@ -4,7 +4,11 @@
 import { useState, useEffect } from 'react';
 import { useApp } from '@/context/AppContext';
 import { useCustomFields, invalidateCustomFieldCache } from '@/lib/useCustomFields';
-import { useFieldLayout, resolveFieldRow } from '@/lib/useFieldLayout';
+import { useFieldLayout, resolveFieldRow, effectiveRows, cfKey, resolveFieldDisplay, resolveLayoutDefault } from '@/lib/useFieldLayout';
+import { getStatusOptions } from '@/lib/utils';
+import { createGridEnabled } from '@/lib/lineLayout';
+import { CPQLineItems } from '@/components/crm/CPQRecordDetail';
+import RedwoodSkin from '@/components/shared/RedwoodSkin';
 import SearchableSelect from '@/components/shared/SearchableSelect';
 import QuickCreateModal from '@/components/shared/QuickCreateModal';
 import { t } from '@/lib/i18n';
@@ -22,16 +26,23 @@ const CURRENCIES      = ['INR','USD','EUR','GBP','AED','SGD','AUD','CAD','JPY','
 const PAYMENT_TERMS   = ['Due on Receipt','Net 15','Net 30','Net 45','Net 60','Net 90'];
 const PRODUCT_FAMILIES= ['Software','Hardware','Services','Subscription','License','Support','Training','Other'];
 
-// Status options per object
+// Status options per object — previously a separate hand-maintained list here
+// that had drifted out of sync with the canonical getStatusOptions() list
+// used everywhere else (RecordDetailPanel, Kanban boards, status filters).
+// For 'opportunities' specifically, the old list was actually a stale
+// subset of the STAGE names above, not real status values, so the create
+// dialog's "Status" dropdown showed stage names and defaulted new
+// opportunities to a non-standard status. Deriving from getStatusOptions()
+// keeps this single source of truth in sync automatically.
 const STATUS_OPTS = {
-  customers:    ['New','Prospect','Active','On Hold','Inactive'],
-  contacts:     ['Active','Prospect','Key Contact','Inactive'],
-  leads:        ['New','Contacted','Qualified','Unqualified'],
-  opportunities:['Prospecting','Qualification','Needs Analysis','Proposal Sent'],
-  orders:       ['Draft','Confirmed','Processing'],
-  invoices:     ['Draft','Pending','Sent'],
-  activities:   ['Not Started','In Progress'],
-  products:     ['Active','Draft'],
+  get customers() { return getStatusOptions('customers'); },
+  get contacts() { return getStatusOptions('contacts'); },
+  get leads() { return getStatusOptions('leads'); },
+  get opportunities() { return getStatusOptions('opportunities'); },
+  get orders() { return getStatusOptions('orders'); },
+  get invoices() { return getStatusOptions('invoices'); },
+  get activities() { return getStatusOptions('activities'); },
+  get products() { return getStatusOptions('products'); },
 };
 
 // Fields per object — label, key, type, required
@@ -126,7 +137,7 @@ const OBJECT_FIELDS = {
 
 export default function CreateRecordModal({ page, open, prefillCustomer, onClose, onCreated }) {
   const {
-    createRecord, customers, contacts, enterpriseUsers, currentUser, appPreferences, appearance,
+    createRecord, customers, contacts, products, enterpriseUsers, currentUser, appPreferences, appearance,
   } = useApp();
   const { showAlert } = useAlert();
   const lang = appearance?.language || 'en';
@@ -134,6 +145,13 @@ export default function CreateRecordModal({ page, open, prefillCustomer, onClose
   const fields     = OBJECT_FIELDS[page] || [];
   const statusOpts = STATUS_OPTS[page]   || ['Active','Inactive'];
   const fieldLayout = useFieldLayout(page);
+  // Line items on the Create page (B2B Orders / Invoices with CPQ on) — opt-in from the Page Layout Designer
+  // (line-item object → "Show this Line Items grid on the Create page").
+  const lineObj = page === 'orders' ? 'orderLineItems' : page === 'invoices' ? 'invoiceLineItems' : null;
+  const lineLayoutRows = useFieldLayout(lineObj || page);
+  const showLines = !!lineObj && appPreferences?.cpq_enabled !== false && createGridEnabled(lineLayoutRows.fields);
+  const [lineItems, setLineItems] = useState([]);
+  useEffect(() => { if (!open) setLineItems([]); }, [open]);
 
   const defaultForm = () => {
     const base: any = { status: statusOpts[0], currency: appPreferences?.default_currency || 'INR', priority:'Medium' };
@@ -146,6 +164,14 @@ export default function CreateRecordModal({ page, open, prefillCustomer, onClose
       base.owner_id = currentUser.id;
       base.owner    = currentUser.email;
     }
+    // Admin-configured defaults for THIS page (Create Page / Both Pages only - never Detail-only rows)
+    const typeByKey: Record<string,string> = {};
+    (OBJECT_FIELDS[page] || []).forEach(f => { typeByKey[f.key] = f.type === 'date' ? 'date' : (f.type === 'number' ? 'number' : 'text'); });
+    effectiveRows(fieldLayout.fields || [], 'create').forEach(row => {
+      if (row.field_key.startsWith('cf_')) return;
+      const v = resolveLayoutDefault(typeByKey[row.field_key] || 'text', row.default_value, base);
+      if (v !== undefined && !(prefillCustomer && ['customerId','customer'].includes(row.field_key))) base[row.field_key] = v;
+    });
     return base;
   };
 
@@ -158,6 +184,20 @@ export default function CreateRecordModal({ page, open, prefillCustomer, onClose
     }
   }, [open, page]);
   const [customData, setCustomData] = useState({});
+  // Seed custom-field defaults (Page Layout Designer default for this page wins over the App Composer default)
+  useEffect(() => {
+    if (!open) return;
+    setCustomData(prev => {
+      const next = { ...prev };
+      (customFields || []).forEach(cf => {
+        if (next[cf.api_name] !== undefined) return;
+        const row = resolveFieldRow(cfKey(cf.api_name), fieldLayout.fields || [], 'create');
+        const v = resolveLayoutDefault(cf.field_type, row?.default_value ?? cf.default_value);
+        if (v !== undefined) next[cf.api_name] = v;
+      });
+      return next;
+    });
+  }, [open, (customFields || []).length, (fieldLayout.fields || []).length]);
     const [form, setForm]     = useState(defaultForm);
   // Separate from `fields` (used for validation, left untouched) - this is
   // what actually renders, with the tenant's custom labels, hidden fields
@@ -169,7 +209,7 @@ export default function CreateRecordModal({ page, open, prefillCustomer, onClose
       const resolved = fieldLayout.resolve(f.key, f.label, form, 'create');
       const savedRow = resolveFieldRow(f.key, fieldLayout.fields, 'create');
       const sortOrder = savedRow ? savedRow.display_order : 10000 + idx;
-      return { ...f, label: resolved.label, _layoutHidden: !resolved.visible, _sortOrder: sortOrder };
+      return { ...f, label: resolved.label, _layoutHidden: !resolved.visible, _readOnly: !resolved.editable, _sortOrder: sortOrder };
     })
     .filter(f => !f._layoutHidden)
     .sort((a, b) => a._sortOrder - b._sortOrder);
@@ -185,6 +225,19 @@ export default function CreateRecordModal({ page, open, prefillCustomer, onClose
   useEffect(() => {
     if (open) { setForm(defaultForm()); setErrors({}); }
   }, [open, page]);
+
+  // Page Layout Designer defaults can finish loading after the form was seeded (first open of the session) —
+  // re-apply them into fields the user hasn't filled in yet.
+  const layoutDefaultsSig = JSON.stringify(effectiveRows(fieldLayout.fields || [], 'create').map(r => [r.field_key, r.default_value || '']));
+  useEffect(() => {
+    if (!open || fieldLayout.loading) return;
+    const d = defaultForm();
+    setForm(f => {
+      const n = { ...f };
+      Object.keys(d).forEach(k => { if (f[k] === undefined || f[k] === '') n[k] = d[k]; });
+      return n;
+    });
+  }, [open, fieldLayout.loading, layoutDefaultsSig]);
 
   if (!open) return null;
 
@@ -205,7 +258,9 @@ export default function CreateRecordModal({ page, open, prefillCustomer, onClose
   const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
   const validate = () => {
     const errs: Record<string,string> = {};
+    const hiddenKeys = new Set(fields.filter(f => !fieldLayout.resolve(f.key, f.label, form, 'create').visible).map(f => f.key));
     fields.forEach(f => {
+      if (hiddenKeys.has(f.key)) return; // hidden by the Page Layout Designer: nothing the user could fix
       const val = (form[f.key] || '').toString().trim();
       if (f.required && !val) {
         errs[f.key] = `${f.label.replace(' *','')} is required`;
@@ -239,7 +294,14 @@ export default function CreateRecordModal({ page, open, prefillCustomer, onClose
       const u = enterpriseUsers.find(x => x.id === form.owner_id);
       record.owner = u?.email || currentUser?.email || '';
     }
-    const result = await createRecord(page, { ...record, custom_data: customData });
+    const lines = showLines ? lineItems.filter(i => i && i.product_name).map(i => ({ ...i, product: i.product_name })) : [];
+    if (lines.length) {
+      const sub = lines.reduce((a, i) => a + i.quantity * i.price, 0);
+      const disc = lines.reduce((a, i) => a + i.quantity * i.price * (i.discount || 0) / 100, 0);
+      const tax = lines.reduce((a, i) => a + (i.quantity * i.price * (1 - (i.discount || 0) / 100)) * (i.tax_pct || 0) / 100, 0);
+      record.subtotal = sub; record.total_discount = disc; record.total_tax = tax;
+    }
+    const result = await createRecord(page, { ...record, custom_data: customData }, lines);
     setSaving(false);
     if (!result) return; // cancelled (e.g. declined the duplicate warning) or failed — keep the form open so the user can adjust and retry
     setForm(defaultForm());
@@ -325,6 +387,17 @@ export default function CreateRecordModal({ page, open, prefillCustomer, onClose
     return wrap(<input type="text" value={v||''} onChange={e=>s(key,e.target.value)} className={iCls} placeholder={label}/>);
   };
 
+  // Custom fields on the Create page, through the Page Layout Designer: label, hidden, read-only, order.
+  const createCF = (customFields || [])
+    .filter(cf => cf.show_on === 'both' || cf.show_on === 'create')
+    .map((cf, i) => {
+      const r = resolveFieldDisplay(cfKey(cf.api_name), cf.label, fieldLayout.fields || [], { ...form, ...customData }, 'create');
+      const row = resolveFieldRow(cfKey(cf.api_name), fieldLayout.fields || [], 'create');
+      return { ...cf, label: r.label, _hidden: !r.visible, _ro: !r.editable, _order: row ? row.display_order : 10000 + (cf.sort_order || i) };
+    })
+    .filter(cf => !cf._hidden)
+    .sort((a, b) => a._order - b._order);
+
   const pageLabel = { customers:'Customer', contacts:'Contact', leads:'Lead', opportunities:'Opportunity',
     activities:'Activity', products:'Product', orders:'Order', invoices:'Invoice' }[page] || page;
 
@@ -335,9 +408,10 @@ export default function CreateRecordModal({ page, open, prefillCustomer, onClose
       <div className="absolute inset-0 bg-black/50" onClick={onClose}/>
 
       {/* Modal */}
-      <div className="relative bg-white rounded-[28px] shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden">
+      <div className={`rw-panel rw-modal relative bg-white rounded-[28px] shadow-2xl w-full ${showLines ? 'max-w-6xl' : 'max-w-2xl'} max-h-[90vh] flex flex-col overflow-hidden`}>
+        <RedwoodSkin />
         {/* Header */}
-        <div className="bg-gradient-to-r from-[#0F172A] to-blue-900 px-6 py-5 flex items-center justify-between flex-shrink-0">
+        <div className="rw-header bg-gradient-to-r from-[#0F172A] to-blue-900 px-6 py-5 flex items-center justify-between flex-shrink-0">
           <div>
             <h2 className="text-white text-xl font-bold">Create {pageLabel}</h2>
             {prefillCustomer && (
@@ -350,11 +424,13 @@ export default function CreateRecordModal({ page, open, prefillCustomer, onClose
         {/* Fields */}
         <div className="overflow-y-auto flex-1 p-6 space-y-5">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            {displayFields.map(f => renderField(f))}
+            {displayFields.map(f => f._readOnly
+              ? <fieldset key={f.key} disabled className="contents" title="Read-only (Page Layout Designer)"><div className="opacity-60 pointer-events-none contents">{renderField(f)}</div></fieldset>
+              : renderField(f))}
           </div>
 
           {/* Additional Information — custom fields for create */}
-          {customFields.filter(cf => cf.show_on === 'both' || cf.show_on === 'create').length > 0 && (
+          {createCF.length > 0 && (
             <div className="mt-5 bg-blue-50 rounded-[20px] border border-blue-100 overflow-hidden">
               <div className="px-4 py-2.5 border-b border-blue-100 flex items-center gap-2">
                 <span>🎛️</span>
@@ -362,11 +438,11 @@ export default function CreateRecordModal({ page, open, prefillCustomer, onClose
                 <span className="ml-auto text-[10px] bg-blue-100 text-blue-600 px-2 py-0.5 rounded-full font-semibold">App Composer</span>
               </div>
               <div className="p-4 grid grid-cols-1 sm:grid-cols-2 gap-4">
-                {customFields.filter(cf => cf.show_on === 'both' || cf.show_on === 'create').map(cf => {
+                {createCF.map(cf => {
                   const cdVal = (customData || {})[cf.api_name];
                   const setCdVal = (val) => setCustomData(p => ({ ...p, [cf.api_name]: val }));
                   return (
-                    <div key={cf.api_name} className={cf.field_type==='multi_select'?'sm:col-span-2':''}>
+                    <fieldset key={cf.api_name} disabled={cf._ro} className={`min-w-0 border-0 p-0 m-0 ${cf._ro?'opacity-60':''} ${cf.field_type==='multi_select'?'sm:col-span-2':''}`}>
                       {cf.field_type !== 'checkbox' && (
                         <label className="block text-xs font-bold uppercase tracking-wider text-gray-400 mb-1.5">
                           {cf.label}{cf.required && <span className="text-red-400 ml-1">*</span>}
@@ -397,10 +473,16 @@ export default function CreateRecordModal({ page, open, prefillCustomer, onClose
                             value={cdVal||''} onChange={e=>setCdVal(e.target.value)} placeholder={cf.label}
                             className="w-full border border-blue-200 rounded-xl px-3 py-2.5 text-sm text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-blue-400"/>
                       }
-                    </div>
+                    </fieldset>
                   );
                 })}
               </div>
+            </div>
+          )}
+
+          {showLines && (
+            <div className="mt-5">
+              <CPQLineItems items={lineItems} setItems={setLineItems} products={products || []} readOnly={false} currency={form.currency || appPreferences?.default_currency || 'INR'} page={page} scope="create" />
             </div>
           )}
         </div>{/* end overflow-y-auto */}

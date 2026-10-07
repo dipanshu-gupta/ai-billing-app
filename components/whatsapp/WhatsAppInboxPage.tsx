@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useTenant } from '@/context/TenantContext';
 import { useAlert } from '@/components/shared/AlertProvider';
 import { tenantScope } from '@/lib/utils';
+import { waFetch } from '@/lib/waFetch';
 
 // Normalizes a phone number for grouping - strips everything but digits, so
 // the same customer's number formatted slightly differently (with/without a
@@ -71,7 +72,7 @@ export default function WhatsAppInboxPage() {
     if (!replyText.trim() || !activeConversation) return;
     setSending(true);
     try {
-      const res = await fetch('/api/whatsapp/send', {
+      const res = await waFetch('/api/whatsapp/send', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           db_url: tenant?.db_url, tenantId: tenant?.id, to: activeConversation.phone,

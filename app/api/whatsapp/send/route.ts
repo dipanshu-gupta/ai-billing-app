@@ -1,31 +1,18 @@
-import { createClient } from '@supabase/supabase-js';
 import { NextResponse } from 'next/server';
+import { authorizeWhatsAppRequest } from '@/lib/whatsappServer';
 
 const META_API_VERSION = 'v20.0';
 
-// Resolves which Supabase client to use for a given tenant - shared DB
-// (master project, filtered by tenant_id) or a dedicated tenant DB (its own
-// project, no tenant_id filter needed since there's only one tenant there).
-// Mirrors the same resolution pattern used by /api/admin/reset-password.
-async function resolveClient(db_url?: string) {
-  const masterUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-  const masterKey = process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY!;
-  let targetUrl = masterUrl;
-  let targetKey = masterKey;
-  if (db_url && db_url !== masterUrl && masterKey) {
-    const master = createClient(masterUrl, masterKey, { auth: { autoRefreshToken: false, persistSession: false } });
-    const { data: tenant } = await master.from('tenants').select('db_service_key').eq('db_url', db_url).maybeSingle();
-    if (tenant?.db_service_key) { targetUrl = db_url; targetKey = tenant.db_service_key; }
-  }
-  return createClient(targetUrl, targetKey, { auth: { autoRefreshToken: false, persistSession: false } });
-}
+// Caller identity and tenant are verified server-side (lib/whatsappServer.ts):
+// the tenant is derived from the signed-in user's membership, never taken on
+// trust from the request body.
 
 export async function POST(request: Request) {
   try {
     const body = await request.json();
     const {
       db_url, tenantId,           // which tenant's config to use
-      to,                          // recipient phone, digits only, with country code, no leading +
+      to: toRaw,                   // recipient phone, with country code. Optional when recipientType is 'business' (resolved server-side from the saved business_notify_phone)
       recordType, recordId,        // for logging + reminder dedup, e.g. 'retailOrders', 'RORD-00042'
       recipientType,               // 'customer' | 'owner' | 'business'
       sendMode = 'manual',         // 'manual' | 'automatic'
@@ -35,27 +22,50 @@ export async function POST(request: Request) {
       freeformText,                // only valid within Meta's 24h customer-service window — used instead of templateKey
       documentMediaId,             // optional: a media ID from /api/whatsapp/upload-media, to attach a document (e.g. an invoice PDF)
       documentFilename,            // display filename for the attached document, e.g. "Invoice RINV-00042.pdf"
+      dedupeHours,                 // optional: skip if this same template was already sent for this same record within N hours (used by the recurring rental-return reminder check)
     } = body;
 
-    if (!to) return NextResponse.json({ error: 'Recipient phone number is required.' }, { status: 400 });
+    if (!toRaw && recipientType !== 'business') return NextResponse.json({ error: 'Recipient phone number is required.' }, { status: 400 });
     if (!templateKey && !freeformText && !documentMediaId) return NextResponse.json({ error: 'One of templateKey, freeformText, or documentMediaId is required.' }, { status: 400 });
 
-    const supabase = await resolveClient(db_url);
+    const auth = await authorizeWhatsAppRequest(request, { db_url, tenantId });
+    if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
+    const supabase = auth.supabase;
+    const effectiveTenantId = auth.tenantId;
 
     const { data: config, error: configError } = await supabase
       .from('whatsapp_config')
       .select('*')
-      .eq('tenant_id', tenantId || null)
+      .eq('tenant_id', effectiveTenantId)
       .maybeSingle();
 
-    if (configError || !config) {
-      return NextResponse.json({ error: 'WhatsApp is not configured for this workspace yet. Set it up in Admin Tools first.' }, { status: 400 });
-    }
-    if (!config.is_active) {
-      return NextResponse.json({ error: 'WhatsApp sending is turned off for this workspace. Enable it in Admin Tools.' }, { status: 400 });
-    }
-    if (!config.phone_number_id || !config.access_token) {
-      return NextResponse.json({ error: 'WhatsApp configuration is incomplete — missing phone number ID or access token.' }, { status: 400 });
+    // Background (automatic) sends - reminders, workflow actions - run for
+    // every tenant whether or not WhatsApp is set up, so "not set up" is a
+    // quiet skip for them, not an error. Manual sends still get a clear
+    // message telling the user what to configure.
+    const notReady = (msg: string) => sendMode === 'automatic'
+      ? NextResponse.json({ skipped: true, reason: msg })
+      : NextResponse.json({ error: msg }, { status: 400 });
+    if (configError || !config) return notReady('WhatsApp is not configured for this workspace yet. Set it up in Admin Tools first.');
+    if (!config.is_active) return notReady('WhatsApp sending is turned off for this workspace. Enable it in Admin Tools.');
+    if (!config.phone_number_id || !config.access_token) return notReady('WhatsApp configuration is incomplete — missing phone number ID or access token.');
+
+    // Recipient: digits only. 'business' messages go to the number saved in
+    // this tenant's own settings, so the browser never needs to read it.
+    let to = String(toRaw || '').replace(/\D/g, '');
+    if (!to && recipientType === 'business') to = String(config.business_notify_phone || '').replace(/\D/g, '');
+    if (to.length < 8) return notReady('No valid recipient phone number is available.');
+
+    // Idempotency for recurring background checks: the rental-return reminder
+    // runs on every app load, so the server (not the caller) guarantees the
+    // same customer isn't messaged twice about the same booking. A failed
+    // earlier attempt doesn't count, so it can be retried.
+    if (Number(dedupeHours) > 0 && recordType && recordId && templateKey) {
+      const since = new Date(Date.now() - Number(dedupeHours) * 3600_000).toISOString();
+      const { data: dup } = await supabase.from('whatsapp_message_log').select('id')
+        .eq('tenant_id', effectiveTenantId).eq('record_type', recordType).eq('record_id', recordId)
+        .eq('template_key', templateKey).neq('status', 'failed').gte('created_at', since).limit(1);
+      if (dup && dup.length) return NextResponse.json({ skipped: true, reason: 'Already sent recently.' });
     }
 
     let metaBody: any;
@@ -68,7 +78,7 @@ export async function POST(request: Request) {
       const { data: template } = await supabase
         .from('whatsapp_templates')
         .select('*')
-        .eq('tenant_id', tenantId || null)
+        .eq('tenant_id', effectiveTenantId)
         .eq('template_key', templateKey)
         .eq('is_active', true)
         .maybeSingle();
@@ -170,7 +180,7 @@ export async function POST(request: Request) {
       || (templateKey ? `[Template: ${templateKey}]${resolvedParamsForLog?.length ? ' ' + resolvedParamsForLog.join(' | ') : ''}${resolvedParamsForLog?.length && effectiveParamsForLog?.length !== resolvedParamsForLog?.length ? ` (WARNING: only ${effectiveParamsForLog?.length || 0} of ${resolvedParamsForLog.length} values were actually sent - check this template's configured placeholder count in Admin Tools)` : ''}` : null)
       || (documentMediaId ? `[Document: ${documentFilename || 'document.pdf'}]` : null);
     await supabase.from('whatsapp_message_log').insert({
-      tenant_id: tenantId || null,
+      tenant_id: effectiveTenantId,
       record_type: recordType || null,
       record_id: recordId || null,
       recipient_phone: to,

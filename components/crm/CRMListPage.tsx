@@ -1,8 +1,10 @@
 // @ts-nocheck
 'use client';
 
+import RedwoodSkin from '@/components/shared/RedwoodSkin';
 import { useState, useMemo, useEffect, useRef } from 'react';
 import { useApp } from '@/context/AppContext';
+import { useRelabel } from '@/lib/useRelabel';
 import { useTenant } from '@/context/TenantContext';
 import { fetchServerPage, timePeriodToRange } from '@/lib/serverList';
 import { getPageLabel, getStatusOptions, getStatusColor, formatCurrency, formatDate, formatDisplayNumber, PAGE_DISPLAY_PREFIX, getObjectFields } from '@/lib/utils';
@@ -44,7 +46,7 @@ const getFieldMeta = (page) => {
   return keys.map(k => ({ key:k, label: fieldLabel(k), type: fieldType(page,k) }));
 };
 
-const OPERATORS = {
+export const OPERATORS = {
   text:    [{v:'contains',l:'contains'},{v:'equals',l:'is exactly'},{v:'not_equals',l:'is not'},{v:'is_empty',l:'is empty'},{v:'is_not_empty',l:'is not empty'}],
   number:  [{v:'eq',l:'='},{v:'neq',l:'≠'},{v:'gt',l:'>'},{v:'gte',l:'≥'},{v:'lt',l:'<'},{v:'lte',l:'≤'},{v:'is_empty',l:'is empty'}],
   date:    [{v:'on',l:'on'},{v:'before',l:'before'},{v:'after',l:'after'},{v:'is_empty',l:'is empty'}],
@@ -95,7 +97,7 @@ const matchesCondition = (record, cond) => {
   }
 };
 
-const TIME_PERIODS = [
+export const TIME_PERIODS = [
   { v:'',           l:'All Time' },
   { v:'today',      l:'Today' },
   { v:'yesterday',  l:'Yesterday' },
@@ -135,7 +137,7 @@ function StatusBadge({ status }) {
   return <span className={`px-3 py-1 rounded-full text-xs font-semibold ${getStatusColor(status)}`}>{status}</span>;
 }
 
-function SavedSearchPanel({ page, currentFilters, onApply, onClose }) {
+export function SavedSearchPanel({ page, currentFilters, onApply, onClose, labelOf = null }) {
   const { currentUser, savedSearches, fetchSavedSearches, createSavedSearch, updateSavedSearch, deleteSavedSearch, setDefaultSavedSearch,
     appPreferences, createOrderFromOpportunity, fetchOrders, pendingRecord, setPendingRecord,
   } = useApp();
@@ -156,9 +158,9 @@ function SavedSearchPanel({ page, currentFilters, onApply, onClose }) {
     if (f.search)       parts.push(`Search: "${f.search}"`);
     if (f.status && f.status !== 'All') parts.push(`Status: ${f.status}`);
     if (f.timePeriod)   parts.push(TIME_PERIODS.find(t=>t.v===f.timePeriod)?.l || f.timePeriod);
-    (f.advFilters||[]).forEach(c => { if (c.field && (c.value || c.op==='is_empty' || c.op==='is_not_empty' || c.op==='is_true' || c.op==='is_false')) parts.push(`${fieldLabel(c.field)} ${operatorLabel(c.op)} ${c.value||''}`.trim()); });
+    (f.advFilters||[]).forEach(c => { if (c.field && (c.value || c.op==='is_empty' || c.op==='is_not_empty' || c.op==='is_true' || c.op==='is_false')) parts.push(`${(labelOf||fieldLabel)(c.field)} ${operatorLabel(c.op)} ${c.value||''}`.trim()); });
     if (f.owner)        parts.push(`Owner: ${f.owner}`);
-    if (f.sortField)    parts.push(`Sorted by ${fieldLabel(f.sortField)} (${f.sortDir==='desc'?'descending':'ascending'})`);
+    if (f.sortField)    parts.push(`Sorted by ${(labelOf||fieldLabel)(f.sortField)} (${f.sortDir==='desc'?'descending':'ascending'})`);
     return parts.length ? parts.join(' · ') : 'All records, no filters';
   };
 
@@ -372,8 +374,9 @@ export default function CRMListPage({ page }) {
     currentUserPermissions, permissionsLoaded, appPreferences, appearance, hasPermission, currentUser,
     fetchOrders, pendingReturnTo, setPendingReturnTo, pendingRecord, setPendingRecord,
     fetchListCount, listViewPrefs, fetchListViewPrefs, saveListViewPrefs,
-    updateRecord, applyDataSecurity,
+    updateRecord, applyDataSecurity, dataSecurityScope,
   } = useApp();
+  const L = useRelabel();
   const { showAlert, showConfirm } = useAlert();
   const lang = appearance?.language || 'en';
 
@@ -549,6 +552,7 @@ export default function CRMListPage({ page }) {
       sortAscending: sortDir === 'asc',
       page: currentPage,
       pageSize,
+      security: dataSecurityScope,
     }).then(({ data, error, totalCount }) => {
       if (cancelled) return;
       if (error) { console.error('[CRMListPage server fetch]', error.message); setServerRows([]); setServerTotal(0); }
@@ -571,7 +575,7 @@ export default function CRMListPage({ page }) {
       setServerLoading(false);
     });
     return () => { cancelled = true; };
-  }, [supabase, page, debouncedSearch, statusFilter, timePeriod, advFilters, ownerFilter, sortField, sortDir, currentPage, pageSize, tenant?.id, currentUser, permissionsLoaded, refreshTick]);
+  }, [supabase, page, debouncedSearch, statusFilter, timePeriod, advFilters, ownerFilter, sortField, sortDir, currentPage, pageSize, tenant?.id, currentUser, permissionsLoaded, refreshTick, dataSecurityScope]);
 
   useEffect(() => { setCurrentPage(1); }, [debouncedSearch, statusFilter, timePeriod, advFilters, ownerFilter, sortField, sortDir]);
 
@@ -647,6 +651,7 @@ export default function CRMListPage({ page }) {
       sortAscending: false,
       page: 1,
       pageSize: CRM_BOARD_FETCH_CAP,
+      security: dataSecurityScope,
     }).then(({ data, error, totalCount }) => {
       if (cancelled) return;
       if (error) { console.error('[CRMListPage board fetch]', error.message); setBoardRows([]); setBoardTotal(0); }
@@ -665,7 +670,7 @@ export default function CRMListPage({ page }) {
       }
     });
     return () => { cancelled = true; };
-  }, [viewMode, supabase, page, debouncedSearch, timePeriod, advFilters, ownerFilter, tenant?.id, currentUser, permissionsLoaded]);
+  }, [viewMode, supabase, page, debouncedSearch, timePeriod, advFilters, ownerFilter, tenant?.id, currentUser, permissionsLoaded, dataSecurityScope]);
 
   const pageLabel    = getPageLabel(page);
   const activeCount  = (search?1:0) + (statusFilter!=='All'?1:0) + (timePeriod?1:0) + advFilters.filter(c=>c.field).length + (ownerFilter?1:0);
@@ -688,7 +693,8 @@ export default function CRMListPage({ page }) {
   };
 
   return (
-    <div className="space-y-4">
+    <div className="rw-list space-y-4">
+      <RedwoodSkin />
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
@@ -929,7 +935,7 @@ export default function CRMListPage({ page }) {
                               )}
                             </>)}
                             {page==='orders' && (
-                              <button onClick={()=>{createInvoiceFromOrder(record);setMenuOpenId(null);}} className="w-full text-left px-4 py-3 rounded-xl text-sm font-medium hover:bg-blue-800 text-white">🧾 Create Invoice</button>
+                              <button onClick={()=>{createInvoiceFromOrder(record);setMenuOpenId(null);}} className="w-full text-left px-4 py-3 rounded-xl text-sm font-medium hover:bg-blue-800 text-white">🧾 {L('Create Invoice')}</button>
                             )}
                           </div>
                         )}

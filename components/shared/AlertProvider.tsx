@@ -3,6 +3,7 @@
 import { createContext, useContext, useState, useCallback, useRef } from 'react';
 import { Info, Check, AlertTriangle, X } from 'lucide-react';
 import { t } from '@/lib/i18n';
+import { relabelText } from '@/lib/useRelabel';
 
 // Reads the current language from the window global AppContext publishes —
 // this component wraps TenantProvider/AppProvider at the app root (see
@@ -71,8 +72,8 @@ export function AlertProvider({ children }) {
               <div className={`w-10 h-10 rounded-full ${VARIANT_META[current.variant].iconBg} flex items-center justify-center mx-auto mb-3`}>
                 {(() => { const Icon = VARIANT_META[current.variant].Icon; return <Icon size={18} strokeWidth={2.25} className={VARIANT_META[current.variant].iconColor} />; })()}
               </div>
-              {current.title && <h3 className="text-base font-bold text-[#0F172A] mb-1.5">{current.title}</h3>}
-              <p className="text-gray-500 text-sm leading-relaxed whitespace-pre-line">{current.message}</p>
+              {current.title && <h3 className="text-base font-bold text-[#0F172A] mb-1.5">{relabelText(current.title)}</h3>}
+              <p className="text-gray-500 text-sm leading-relaxed whitespace-pre-line">{typeof current.message === 'string' ? relabelText(current.message) : current.message}</p>
             </div>
             <div className="px-6 pb-6 flex gap-3">
               {current.kind === 'confirm' && (
@@ -84,7 +85,7 @@ export function AlertProvider({ children }) {
                 onClick={() => dismiss(true)}
                 className={`flex-1 px-4 py-2.5 rounded-2xl text-sm font-bold text-white shadow-lg ${VARIANT_META[current.variant].accent}`}
               >
-                {current.kind === 'confirm' ? current.confirmLabel : t(currentLang(), 'ok')}
+                {current.kind === 'confirm' ? relabelText(current.confirmLabel) : t(currentLang(), 'ok')}
               </button>
             </div>
           </div>

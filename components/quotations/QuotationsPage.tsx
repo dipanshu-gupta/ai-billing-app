@@ -1,8 +1,11 @@
 // @ts-nocheck
 'use client';
 
+import RedwoodSkin from '@/components/shared/RedwoodSkin';
+import { buildDocumentHTML } from '@/lib/documentCanvas';
 import { useState, useEffect, useMemo } from 'react';
 import { useApp } from '@/context/AppContext';
+import { useRelabel } from '@/lib/useRelabel';
 import { useTenant } from '@/context/TenantContext';
 import { formatCurrency, getStatusColor, formatDisplayNumber, formatDate, tenantScope } from '@/lib/utils';
 import AISummary from '@/components/ai/AISummary';
@@ -13,14 +16,31 @@ import AddressSelector from '@/components/shared/AddressSelector';
 import BalanceConversionModal from '@/components/shared/BalanceConversionModal';
 import { useAlert } from '@/components/shared/AlertProvider';
 import { useCustomFields } from '@/lib/useCustomFields';
-import { useFieldLayout } from '@/lib/useFieldLayout';
+import { useFieldMappingRules, applyFieldMapping } from '@/lib/useFieldMappingRules';
+import { useFieldLayout, resolveFieldDisplay, resolveFieldRow, effectiveRows, resolveLayoutDefault, cfKey } from '@/lib/useFieldLayout';
+import OrderedRow from '@/components/shared/OrderedRow';
+import { useLineLayout, createGridEnabled } from '@/lib/lineLayout';
+import RecordHighlights from '@/components/shared/RecordHighlights';
 import { fetchServerPage, timePeriodToRange } from '@/lib/serverList';
 import LineItemCustomFieldInput from '@/components/shared/LineItemCustomFieldInput';
+import { resolveStatusOptions, overrideStatusColor } from '@/lib/statusOptions';
 import LoadingSpinner from '@/components/shared/LoadingSpinner';
 
-// ─── Constants ────────────────────────────────────────────────────────────────
-const QUOTE_STATUSES = ['Draft','Submitted','Pending Approval','Approved','Sent to Customer','Accepted','Partially Ordered','Ordered','Rejected','Expired','Cancelled'];
+import { relabelText } from '@/lib/useRelabel';
+const RL = relabelText;
 
+// ─── Constants ────────────────────────────────────────────────────────────────
+const DEFAULT_QUOTE_STATUSES = ['Draft','Submitted','Pending Approval','Approved','Sent to Customer','Accepted','Partially Ordered','Ordered','Rejected','Expired','Cancelled'];
+
+// The tenant's own quotation status list (Page Layout Designer -> Status Values) when set, else the built-in one.
+const quoteStatuses = () => resolveStatusOptions('quotations', DEFAULT_QUOTE_STATUSES);
+// Icon/colour/label for a status: tenant colour first, then the built-in look, then a neutral default.
+const metaFor = (status) => {
+  const base = STATUS_META[status];
+  const tint = overrideStatusColor(status, 'quotations');
+  if (base && !tint) return base;
+  return { color: `${tint || 'bg-gray-100 text-gray-700'} border-transparent`, icon: base?.icon || '•', label: status };
+};
 const STATUS_META = {
   'Draft':              { color:'bg-gray-100 text-gray-700 border-gray-200',    icon:'📝', label:'Draft' },
   'Submitted':          { color:'bg-blue-100 text-blue-700 border-blue-200',    icon:'📤', label:'Submitted' },
@@ -71,6 +91,8 @@ const DEFAULT_SECTIONS = [
 ];
 
 const buildQuoteHTML = (quote, items, template, products) => {
+  // Canvas (free-form) templates render through the shared document engine
+  if (template && template._canvas) return buildDocumentHTML(template, quote, items, { docType: 'quotation', products });
   const sections    = template?.sections?.length ? template.sections : DEFAULT_SECTIONS;
   const pageSettings= template?.page_settings || {};
   const font        = pageSettings.fontFamily || 'Arial, sans-serif';
@@ -111,15 +133,46 @@ const buildQuoteHTML = (quote, items, template, products) => {
 };
 
 // ─── Line Items Editor ─────────────────────────────────────────────────────────
-function QuoteLineItems({ items, setItems, products, currency }) {
+const NUMERIC_LINE_KEYS = ['quantity','unit_price','list_price','discount_pct','tax_pct'];
+function QuoteLineItems({ items, setItems, products, currency, scope = 'detail' }) {
   const [configModal, setConfigModal] = useState(null);
   const { supabase } = useTenant();
-  const { fields: customFields } = useCustomFields('quotationLineItems');
+  const { fields: customFieldsAll } = useCustomFields('quotationLineItems');
+  // Page Layout Designer (this grid's page scope): column label / hidden / read-only / order, incl. custom fields.
+  const LL = useLineLayout('quotationLineItems', scope);
+  const customFields = LL.customCols(customFieldsAll);
+  const cProd = LL.col('product_name','Product'), cQty = LL.col('quantity','Qty'), cPrice = LL.col('unit_price','Unit Price'),
+        cDisc = LL.col('discount_pct','Disc %'), cTax = LL.col('tax_pct','Tax %'), cExt = LL.col('extended_price','Extended');
+  const lineOrder = {};
+  effectiveRows(LL.rows, scope).forEach(r => { lineOrder[r.field_key] = r.display_order; });
+  const colCount = 3 + [cProd,cQty,cPrice,cDisc,cTax,cExt].filter(c=>c.visible).length + customFields.length; // description + available + list price
+  // Copy Maps: product -> quotation line item (tenant-scoped)
+  const { rules: p2lRules } = useFieldMappingRules('product_to_line_item', 'products', 'quotationLineItems');
   const fmt = n => new Intl.NumberFormat('en-IN',{style:'currency',currency:currency||'INR',maximumFractionDigits:0}).format(n||0);
   const iCls = 'w-full border border-blue-200 rounded-lg px-2 py-2 text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-blue-400 text-xs';
   const sCls = 'w-full border border-blue-200 rounded-lg px-2 py-2 text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-blue-400 text-xs';
 
-  const add    = () => setItems(p => [...p, { _id:Date.now(), product_name:'', product_code:'', description:'', quantity:1, unit_price:0, list_price:0, discount_pct:0, tax_pct:18, extended_price:0, configuration:{}, custom_data:{} }]);
+
+  // Page Layout Designer defaults for a brand-new line (standard + custom columns), for this grid's page scope.
+  const withLayoutDefaults = (row) => {
+    const out = { ...row, custom_data: { ...(row.custom_data || {}) } };
+    effectiveRows(LL.rows, scope).forEach(r => {
+      if (!r.default_value || r.field_key.startsWith('__')) return;
+      if (r.field_key.startsWith('cf_')) {
+        const f = (customFieldsAll || []).find(x => cfKey(x.api_name) === r.field_key);
+        if (!f) return;
+        const v = resolveLayoutDefault(f.field_type, r.default_value, out);
+        if (v !== undefined) out.custom_data[f.api_name] = v;
+      } else {
+        const v = resolveLayoutDefault(NUMERIC_LINE_KEYS.includes(r.field_key) ? 'number' : 'text', r.default_value, out);
+        if (v !== undefined) out[r.field_key] = v;
+      }
+    });
+    const net = Number(out.quantity) * Number(out.unit_price) * (1 - Number(out.discount_pct) / 100);
+    out.extended_price = net * (1 + Number(out.tax_pct || 0) / 100);
+    return out;
+  };
+  const add    = () => setItems(p => [...p, withLayoutDefaults({ _id:Date.now(), product_name:'', product_code:'', description:'', quantity:1, unit_price:0, list_price:0, discount_pct:0, tax_pct:18, extended_price:0, configuration:{}, custom_data:{} })]);
   const updCustom = (idx, apiName, val) => setItems(p => p.map((r,i) => i!==idx ? r : { ...r, custom_data: { ...(r.custom_data||{}), [apiName]: val } }));
   // Live availability lookup — always reads the current products array rather
   // than a stored snapshot, so stock changes elsewhere reflect immediately.
@@ -144,7 +197,7 @@ function QuoteLineItems({ items, setItems, products, currency }) {
   const upd    = (idx, field, val) => setItems(p => p.map((r,i) => {
     if (i !== idx) return r;
     const u = { ...r, [field]: ['quantity','unit_price','list_price','discount_pct','tax_pct'].includes(field) ? Number(val) : val };
-    if (field === 'product_name') { const pr=products.find(x=>x.name===val); if (pr) { u.unit_price=pr.price; u.list_price=pr.price; } }
+    if (field === 'product_name') { const pr=products.find(x=>x.name===val); if (pr) { u.unit_price=pr.price; u.list_price=pr.price; if (p2lRules.length) applyFieldMapping(p2lRules, pr, u); } }
     const net = u.quantity * u.unit_price * (1 - u.discount_pct/100);
     u.extended_price = net * (1 + u.tax_pct/100);
     return u;
@@ -163,19 +216,29 @@ function QuoteLineItems({ items, setItems, products, currency }) {
       </div>
       <div className="overflow-x-auto">
         <table className="w-full text-xs">
-          <thead><tr className="bg-blue-50 border-b border-blue-100">
-            {['Product','Description','Qty','Available','List Price','Unit Price','Disc %','Tax %','Extended'].map(h=><th key={h} className="px-3 py-2.5 text-left font-bold text-gray-500 uppercase whitespace-nowrap">{h}</th>)}
-            {customFields.map(f=><th key={f.id} className="px-3 py-2.5 text-left font-bold text-gray-500 uppercase whitespace-nowrap">{f.label}</th>)}
-            <th className="px-3 py-2.5"></th>
-          </tr></thead>
+          <thead><OrderedRow order={lineOrder} className="bg-blue-50 border-b border-blue-100">
+            {(() => { const H = "px-3 py-2.5 text-left font-bold text-gray-500 uppercase whitespace-nowrap"; return (<>
+              {cProd.visible && <th data-col="product_name" className={H}>{cProd.label}</th>}
+              <th data-col="description" className={H}>Description</th>
+              {cQty.visible && <th data-col="quantity" className={H}>{cQty.label}</th>}
+              <th data-col="available" className={H}>Available</th>
+              <th data-col="list_price" className={H}>List Price</th>
+              {cPrice.visible && <th data-col="unit_price" className={H}>{cPrice.label}</th>}
+              {cDisc.visible && <th data-col="discount_pct" className={H}>{cDisc.label}</th>}
+              {cTax.visible && <th data-col="tax_pct" className={H}>{cTax.label}</th>}
+              {cExt.visible && <th data-col="extended_price" className={H}>{cExt.label}</th>}
+              {customFields.map(f=><th key={f.id} data-col={'cf_'+f.api_name} className={H}>{f.label}</th>)}
+              <th data-col="__actions" className="px-3 py-2.5"></th>
+            </>); })()}
+          </OrderedRow></thead>
           <tbody>
             {items.length===0
-              ? <tr><td colSpan={10+customFields.length} className="px-5 py-8 text-center text-gray-400">No line items. Click + Add Line.</td></tr>
+              ? <tr><td colSpan={colCount+1} className="px-5 py-8 text-center text-gray-400">No line items. Click + Add Line.</td></tr>
               : items.map((row,idx)=>{
                 const avail = getAvailability(row);
                 return (
-                <tr key={row._id??idx} className="border-t border-blue-50 hover:bg-blue-50/30">
-                  <td className="px-3 py-2" style={{minWidth:180}}>
+                <OrderedRow key={row._id??idx} order={lineOrder} className="border-t border-blue-50 hover:bg-blue-50/30">
+                  {cProd.visible && <td data-col="product_name" className="px-3 py-2" style={{minWidth:180}}><fieldset disabled={cProd.readOnly} className="contents">
                   <div className="flex items-center gap-1">
                     <div className="flex-1"><SearchableSelect
                       value={row.product_name||''}
@@ -189,33 +252,33 @@ function QuoteLineItems({ items, setItems, products, currency }) {
                     )}
                   </div>
                   {Object.keys(row.configuration||{}).length>0&&<div className="text-xs text-blue-600 mt-0.5 truncate">✓ {Object.keys(row.configuration).length} configured</div>}
-                </td>
-                  <td className="px-3 py-2" style={{minWidth:140}}><input value={row.description||''} onChange={e=>upd(idx,'description',e.target.value)} placeholder="Description" className={iCls}/></td>
-                  <td className="px-3 py-2 w-16"><input type="number" min={1} value={row.quantity} onChange={e=>upd(idx,'quantity',e.target.value)} className={`${iCls} text-center ${avail?.short?'border-red-300 bg-red-50':''}`}/></td>
-                  <td className="px-3 py-2 w-24 whitespace-nowrap">
+                </fieldset></td>}
+                  <td data-col="description" className="px-3 py-2" style={{minWidth:140}}><input value={row.description||''} onChange={e=>upd(idx,'description',e.target.value)} placeholder="Description" className={iCls}/></td>
+                  {cQty.visible && <td data-col="quantity" className="px-3 py-2 w-16"><input disabled={cQty.readOnly} type="number" min={1} value={row.quantity} onChange={e=>upd(idx,'quantity',e.target.value)} className={`${iCls} text-center ${avail?.short?'border-red-300 bg-red-50':''}`}/></td>}
+                  <td data-col="available" className="px-3 py-2 w-24 whitespace-nowrap">
                     {avail === null ? <span className="text-gray-300">—</span> : (
                       <span className={`text-xs font-bold px-2 py-1 rounded-full ${avail.short?'bg-red-100 text-red-600':avail.low?'bg-amber-100 text-amber-600':'bg-green-100 text-green-600'}`} title={avail.short?`Only ${avail.available} in stock — quote exceeds availability`:avail.low?'Low stock':'In stock'}>
                         {avail.short?`⚠ ${avail.available} left`:avail.low?`⚡ ${avail.available} left`:`✓ ${avail.available} in stock`}
                       </span>
                     )}
                   </td>
-                  <td className="px-3 py-2 text-right text-gray-400 whitespace-nowrap">{fmt(row.list_price)}</td>
-                  <td className="px-3 py-2 w-24"><input type="number" min={0} value={row.unit_price} onChange={e=>upd(idx,'unit_price',e.target.value)} className={`${iCls} text-right`}/></td>
-                  <td className="px-3 py-2 w-16"><input type="number" min={0} max={100} value={row.discount_pct} onChange={e=>upd(idx,'discount_pct',e.target.value)} className={`${iCls} text-center ${row.discount_pct>0?'border-green-300 bg-green-50':''}`}/></td>
-                  <td className="px-3 py-2 w-16"><input type="number" min={0} max={100} value={row.tax_pct} onChange={e=>upd(idx,'tax_pct',e.target.value)} className={`${iCls} text-center`}/></td>
-                  <td className="px-3 py-2 text-right font-bold text-[#0F172A] whitespace-nowrap">{fmt(row.extended_price)}</td>
-                  {customFields.map(f=><td key={f.id} className="px-3 py-2" style={{minWidth:110}}><LineItemCustomFieldInput field={f} value={(row.custom_data||{})[f.api_name]} onChange={v=>updCustom(idx,f.api_name,v)}/></td>)}
-                  <td className="px-2 py-2"><button onClick={()=>remove(idx)} className="w-6 h-6 rounded-full bg-red-100 hover:bg-red-200 text-red-500 text-xs font-bold flex items-center justify-center">✕</button></td>
-                </tr>
+                  <td data-col="list_price" className="px-3 py-2 text-right text-gray-400 whitespace-nowrap">{fmt(row.list_price)}</td>
+                  {cPrice.visible && <td data-col="unit_price" className="px-3 py-2 w-24"><input disabled={cPrice.readOnly} type="number" min={0} value={row.unit_price} onChange={e=>upd(idx,'unit_price',e.target.value)} className={`${iCls} text-right`}/></td>}
+                  {cDisc.visible && <td data-col="discount_pct" className="px-3 py-2 w-16"><input disabled={cDisc.readOnly} type="number" min={0} max={100} value={row.discount_pct} onChange={e=>upd(idx,'discount_pct',e.target.value)} className={`${iCls} text-center ${row.discount_pct>0?'border-green-300 bg-green-50':''}`}/></td>}
+                  {cTax.visible && <td data-col="tax_pct" className="px-3 py-2 w-16"><input disabled={cTax.readOnly} type="number" min={0} max={100} value={row.tax_pct} onChange={e=>upd(idx,'tax_pct',e.target.value)} className={`${iCls} text-center`}/></td>}
+                  {cExt.visible && <td data-col="extended_price" className="px-3 py-2 text-right font-bold text-[#0F172A] whitespace-nowrap">{fmt(row.extended_price)}</td>}
+                  {customFields.map(f=><td key={f.id} data-col={'cf_'+f.api_name} className="px-3 py-2" style={{minWidth:110}}><fieldset disabled={f._readOnly} className="contents"><LineItemCustomFieldInput field={f} value={(row.custom_data||{})[f.api_name]} onChange={v=>updCustom(idx,f.api_name,v)}/></fieldset></td>)}
+                  <td data-col="__actions" className="px-2 py-2"><button onClick={()=>remove(idx)} className="w-6 h-6 rounded-full bg-red-100 hover:bg-red-200 text-red-500 text-xs font-bold flex items-center justify-center">✕</button></td>
+                </OrderedRow>
               );})
             }
           </tbody>
           {items.length>0&&(
             <tfoot className="border-t-2 border-blue-100">
-              <tr className="bg-gray-50"><td colSpan={8+customFields.length} className="px-5 py-2 text-right text-xs text-gray-500 font-medium">Subtotal</td><td className="px-3 py-2 text-right text-xs font-semibold">{fmt(subtotal)}</td><td/></tr>
-              {totalDisc>0&&<tr className="bg-green-50"><td colSpan={8+customFields.length} className="px-5 py-2 text-right text-xs text-green-600">Total Discount</td><td className="px-3 py-2 text-right text-xs font-semibold text-green-600">- {fmt(totalDisc)}</td><td/></tr>}
-              {totalTax>0&&<tr className="bg-blue-50"><td colSpan={8+customFields.length} className="px-5 py-2 text-right text-xs text-blue-600">Total Tax</td><td className="px-3 py-2 text-right text-xs font-semibold text-blue-600">+ {fmt(totalTax)}</td><td/></tr>}
-              <tr className="bg-[#0F172A]"><td colSpan={8+customFields.length} className="px-5 py-3 text-right font-bold text-white text-sm">Net Total</td><td className="px-3 py-3 text-right font-bold text-white text-base">{fmt(subtotal-totalDisc+totalTax)}</td><td/></tr>
+              <tr className="bg-gray-50"><td colSpan={Math.max(1,colCount-1)} className="px-5 py-2 text-right text-xs text-gray-500 font-medium">Subtotal</td><td className="px-3 py-2 text-right text-xs font-semibold">{fmt(subtotal)}</td><td/></tr>
+              {totalDisc>0&&<tr className="bg-green-50"><td colSpan={Math.max(1,colCount-1)} className="px-5 py-2 text-right text-xs text-green-600">Total Discount</td><td className="px-3 py-2 text-right text-xs font-semibold text-green-600">- {fmt(totalDisc)}</td><td/></tr>}
+              {totalTax>0&&<tr className="bg-blue-50"><td colSpan={Math.max(1,colCount-1)} className="px-5 py-2 text-right text-xs text-blue-600">Total Tax</td><td className="px-3 py-2 text-right text-xs font-semibold text-blue-600">+ {fmt(totalTax)}</td><td/></tr>}
+              <tr className="bg-[#0F172A]"><td colSpan={Math.max(1,colCount-1)} className="px-5 py-3 text-right font-bold text-white text-sm">Net Total</td><td className="px-3 py-3 text-right font-bold text-white text-base">{fmt(subtotal-totalDisc+totalTax)}</td><td/></tr>
             </tfoot>
           )}
         </table>
@@ -276,6 +339,14 @@ function QuotationDetail({ quote, onClose, onSaved }) {
   }, [quote.id, quote.status]);
 
   const s = (k,v) => setForm(p => ({ ...p, [k]:v }));
+  // Page Layout Designer (Detail scope, falling back to Both Pages)
+  const detailLayout = useFieldLayout('quotations');
+  const FL = (key, defLabel, idx = 0) => {
+    const r = resolveFieldDisplay(key, defLabel, detailLayout.fields || [], form, 'detail');
+    const row = resolveFieldRow(key, detailLayout.fields || [], 'detail');
+    return { label: r.label, hidden: !r.visible, ro: !r.editable, order: row ? row.display_order : 10000 + idx };
+  };
+  const _od = FL('overall_discount','Overall Discount (%)',4), _sc = FL('shipping_cost','Shipping Cost',5);
 
   const subtotal    = items.reduce((s,i) => s + i.quantity*i.unit_price, 0);
   const totalDisc   = items.reduce((s,i) => s + i.quantity*i.unit_price*i.discount_pct/100, 0);
@@ -376,7 +447,7 @@ function QuotationDetail({ quote, onClose, onSaved }) {
   };
 
   // ── Action buttons based on current status ────────────────────────────────
-  const statusMeta = STATUS_META[form.status] || STATUS_META['Draft'];
+  const statusMeta = metaFor(form.status);
   const isPendingApproval = form.status === 'Pending Approval';
 
   const renderActionButtons = () => {
@@ -422,7 +493,7 @@ function QuotationDetail({ quote, onClose, onSaved }) {
         ];
       case 'Accepted':
         return [
-          btn('Create Order', '🛒',
+          btn(RL('Create Order'), '🛒',
             () => setDialog({ type:'order' }),
             'bg-green-600 hover:bg-green-700'),
         ];
@@ -462,10 +533,11 @@ function QuotationDetail({ quote, onClose, onSaved }) {
   return (
     <>
       <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[110] overflow-y-auto">
-        <div className="bg-white rounded-[28px] shadow-2xl w-[98vw] my-4 mx-auto flex flex-col" style={{minHeight:'95vh'}}>
+        <div className="rw-panel bg-white rounded-[28px] shadow-2xl w-[98vw] my-4 mx-auto flex flex-col" style={{minHeight:'95vh'}}>
+          <RedwoodSkin />
 
           {/* Header */}
-          <div className="bg-gradient-to-r from-[#0F172A] to-blue-900 px-8 py-5 text-white flex items-center justify-between flex-shrink-0">
+          <div className="rw-header bg-gradient-to-r from-[#0F172A] to-blue-900 px-8 py-5 text-white flex items-center justify-between flex-shrink-0">
             <div>
               <div className="flex items-center gap-3 flex-wrap">
                 <h2 className="text-2xl font-bold">{form.name || (form.display_number ? formatDisplayNumber('QUO', form.display_number) : 'Untitled Quotation')}</h2>
@@ -548,6 +620,13 @@ function QuotationDetail({ quote, onClose, onSaved }) {
             </div>
           )}
 
+          {!loading && (
+            <RecordHighlights items={[
+              ['customer','Customer',form.customer],['validity_date','Valid Until',form.validity_date],['currency','Currency',form.currency||appPreferences?.default_currency||'INR'],
+            ].map(([k,l,v])=>{const r=FL(k,l);return r.hidden?null:{label:r.label,value:v};}).filter(Boolean).concat([
+              {label:'Line Items',value:String(items.length)},{label:'Grand Total',value:fmtCur(grandTotal)},
+            ])}/>
+          )}
           {/* Body */}
           {loading ? (
             <div className="flex-1 flex items-center justify-center"><div className="text-4xl animate-pulse">📄</div></div>
@@ -584,12 +663,15 @@ function QuotationDetail({ quote, onClose, onSaved }) {
                   { l:'Currency',       field:'currency',       type:'select', opts:CURRENCIES },
                   { l:'Template',       field:'template_id',    type:'template_select' },
                   { l:'Owner',          field:'owner_select' },
-                ].map(({ l, field, type, opts }) => (
-                  <div key={field} className="bg-white rounded-2xl border border-blue-100 p-4 shadow-sm">
-                    <label className="text-xs font-bold uppercase tracking-wider text-gray-400 block mb-2">{l}</label>
+                ].map((d, i) => {
+                  const lk = { customer_select:'customer', contact_select:'contact', owner_select:'owner', template_id:'template_id' }[d.field] || d.field;
+                  return { ...d, _fl: FL(lk, d.l, i) };
+                }).filter(d => !d._fl.hidden).map(({ l, field, type, opts, _fl }) => (
+                  <fieldset key={field} disabled={_fl.ro} style={{order:_fl.order}} className="bg-white rounded-2xl border border-blue-100 p-4 shadow-sm min-w-0 m-0">
+                    <label className="text-xs font-bold uppercase tracking-wider text-gray-400 block mb-2">{_fl.label}</label>
                     {field==='customer_select' ? <SearchableSelect
               value={form.customer_id||''}
-              onChange={v=>{const c=[...customers,...(pendingCustomers||[])].find(x=>x.id===v);if(c){sf('customer_id',c.id);sf('customer',c.name);}else if(v){sf('customer_id',v);}}}
+              onChange={v=>{const c=[...customers,...(pendingCustomers||[])].find(x=>x.id===v);if(c){s('customer_id',c.id);s('customer',c.name);}else if(v){s('customer_id',v);}}}
               options={[...customers,...(pendingCustomers||[]).filter(pc=>!customers.find(c=>c.id===pc.id))].map(c=>({value:c.id,label:c.name,sub:[c.email,c.phone,c.industry,c.city].filter(Boolean).join(' · ')}))}
               placeholder="Select customer" emptyLabel="No customer"
               onCreateNew={q=>setQuickCreate({type:'customer',prefillName:q,onCreated:(id,name)=>{setForm(f=>({...f,customer_id:id,customer:name}));setPendingCustomers(p=>[...p,{id,name}]);}})}
@@ -609,31 +691,31 @@ function QuotationDetail({ quote, onClose, onSaved }) {
                     :type==='date'             ? <input type="date" value={form[field]||''} onChange={e=>s(field,e.target.value)} className={iCls}/>
                     :                           <input type="text" value={form[field]||''} onChange={e=>s(field,e.target.value)} className={iCls}/>
                     }
-                  </div>
+                  </fieldset>
                 ))}
               </div>
 
               {/* Addresses */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="bg-white rounded-2xl border border-blue-100 p-4 shadow-sm">
+              {(()=>{ const ab=FL('billingAddress','Billing Address',0), ash=FL('shippingAddress','Shipping Address',1); return (<div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {!ab.hidden && <fieldset disabled={ab.ro} className="bg-white rounded-2xl border border-blue-100 p-4 shadow-sm min-w-0 m-0" style={{order:ab.order}}>
                   <AddressSelector
                     customerId={form.customer_id}
                     value={form.billing_address||''}
                     onChange={v=>s('billing_address',v)}
-                    label="Billing Address"
+                    label={ab.label}
                     placeholder="Select saved billing address or type"
                   />
-                </div>
-                <div className="bg-white rounded-2xl border border-blue-100 p-4 shadow-sm">
+                </fieldset>}
+                {!ash.hidden && <fieldset disabled={ash.ro} className="bg-white rounded-2xl border border-blue-100 p-4 shadow-sm min-w-0 m-0" style={{order:ash.order}}>
                   <AddressSelector
                     customerId={form.customer_id}
                     value={form.shipping_address||''}
                     onChange={v=>s('shipping_address',v)}
-                    label="Shipping Address"
+                    label={ash.label}
                     placeholder="Select saved shipping address or type"
                   />
-                </div>
-              </div>
+                </fieldset>}
+              </div>); })()}
 
               {/* Line Items */}
               <QuoteLineItems items={items} setItems={setItems} products={products} currency={form.currency||appPreferences?.default_currency||'INR'}/>
@@ -642,8 +724,8 @@ function QuotationDetail({ quote, onClose, onSaved }) {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div className="bg-white rounded-2xl border border-blue-100 p-5 shadow-sm space-y-4">
                   <h3 className="font-bold text-[#0F172A]">Additional Charges</h3>
-                  <div><label className="text-xs font-bold uppercase text-gray-400 block mb-2">Overall Discount (%)</label><input type="number" min={0} max={100} value={form.overall_discount||0} onChange={e=>s('overall_discount',e.target.value)} className={iCls}/></div>
-                  <div><label className="text-xs font-bold uppercase text-gray-400 block mb-2">Shipping Cost ({form.currency||'INR'})</label><input type="number" min={0} value={form.shipping_cost||0} onChange={e=>s('shipping_cost',e.target.value)} className={iCls}/></div>
+                  {!_od.hidden && <fieldset disabled={_od.ro} className="contents"><div><label className="text-xs font-bold uppercase text-gray-400 block mb-2">{_od.label}</label><input type="number" min={0} max={100} value={form.overall_discount||0} onChange={e=>s('overall_discount',e.target.value)} className={iCls}/></div></fieldset>}
+                  {!_sc.hidden && <fieldset disabled={_sc.ro} className="contents"><div><label className="text-xs font-bold uppercase text-gray-400 block mb-2">{_sc.label} ({form.currency||'INR'})</label><input type="number" min={0} value={form.shipping_cost||0} onChange={e=>s('shipping_cost',e.target.value)} className={iCls}/></div></fieldset>}
                 </div>
                 <div className="bg-gradient-to-br from-[#0F172A] to-blue-900 rounded-2xl p-5 text-white shadow-xl">
                   <h3 className="font-bold mb-4">Price Summary ({form.currency||'INR'})</h3>
@@ -661,11 +743,11 @@ function QuotationDetail({ quote, onClose, onSaved }) {
 
               {/* Notes */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {[['Customer Notes (shown on quote)','notes'],['Internal Notes','internal_notes']].map(([l,f])=>(
-                  <div key={f} className="bg-white rounded-2xl border border-blue-100 p-4 shadow-sm">
-                    <label className="text-xs font-bold uppercase tracking-wider text-gray-400 block mb-2">{l}</label>
+                {[['Customer Notes (shown on quote)','notes'],['Internal Notes','internal_notes']].map(([l,f])=>({l,f,_fl:FL(f,l,f==='notes'?2:3)})).filter(x=>!x._fl.hidden).map(({l,f,_fl})=>(
+                  <fieldset key={f} disabled={_fl.ro} className="bg-white rounded-2xl border border-blue-100 p-4 shadow-sm min-w-0 m-0">
+                    <label className="text-xs font-bold uppercase tracking-wider text-gray-400 block mb-2">{_fl.label}</label>
                     <textarea rows={3} value={form[f]||''} onChange={e=>s(f,e.target.value)} className="w-full border border-blue-200 rounded-xl px-3 py-2.5 text-sm text-[#0F172A] focus:outline-none focus:ring-2 focus:ring-blue-400 resize-none"/>
-                  </div>
+                  </fieldset>
                 ))}
               </div>
 
@@ -734,8 +816,8 @@ function QuotationDetail({ quote, onClose, onSaved }) {
         open={dialog?.type==='order'}
         onClose={()=>setDialog(null)}
         onConfirm={doCreateOrder}
-        title="Create Order"
-        confirmLabel="Create Order" confirmClass="bg-green-600 hover:bg-green-700"
+        title={RL('Create Order')}
+        confirmLabel={RL('Create Order')} confirmClass="bg-green-600 hover:bg-green-700"
         items={items} doneField="ordered_qty" priceField="unit_price" currency={form.currency||'INR'}
         submitting={creatingOrder}
       />
@@ -762,7 +844,8 @@ function QuotationDetail({ quote, onClose, onSaved }) {
 
 // ─── Quotations List Page ──────────────────────────────────────────────────────
 export default function QuotationsPage() {
-  const { quotations, fetchQuotations, customers, createQuotation, deleteQuotation, appPreferences, fetchListCount, currentUser, permissionsLoaded, applyDataSecurity } = useApp();
+  const { quotations, fetchQuotations, customers, products, createQuotation, deleteQuotation, appPreferences, fetchListCount, currentUser, permissionsLoaded, applyDataSecurity, dataSecurityScope, pendingRecord, setPendingRecord, pendingReturnTo, setPendingReturnTo } = useApp();
+  const L = useRelabel();
   const { supabase, tenant } = useTenant();
   const fieldLayout = useFieldLayout('quotations');
   const { showAlert, showConfirm } = useAlert();
@@ -770,6 +853,22 @@ export default function QuotationsPage() {
   const [createOpen,    setCreateOpen]    = useState(false);
   const [quickCreate,   setQuickCreate]   = useState(null);
   const [pendingCustomers, setPendingCustomers] = useState([]);
+
+  // Open a record handed over from Customer 360 / global search / related lists (survives the page switch)
+  useEffect(() => {
+    if (pendingRecord && pendingRecord.page === 'quotations' && pendingRecord.record) {
+      setSelectedQuote(pendingRecord.record);
+      setPendingRecord(null);
+    }
+  }, [pendingRecord]);
+  // Closing a record opened from elsewhere goes back to where the user came from (e.g. Customer 360)
+  const closeQuote = () => {
+    setSelectedQuote(null);
+    if (pendingReturnTo) {
+      const rt = pendingReturnTo; setPendingReturnTo(null);
+      window.dispatchEvent(new CustomEvent('open-crm-record', { detail: rt }));
+    }
+  };
 
   // Keep selectedQuote in sync when quotations list refreshes (e.g. after status change)
   useEffect(() => {
@@ -821,6 +920,7 @@ export default function QuotationsPage() {
       sortAscending: false,
       page: currentPage,
       pageSize,
+      security: dataSecurityScope,
     }).then(({ data, error, totalCount }) => {
       if (error) { console.error('[QuotationsPage server fetch]', error.message); setServerRows([]); setServerTotal(0); }
       else {
@@ -830,11 +930,51 @@ export default function QuotationsPage() {
       }
       setServerLoading(false);
     });
-  }, [supabase, debouncedSearch, statusFilter, currentPage, pageSize, tenant?.id, currentUser, permissionsLoaded]);
+  }, [supabase, debouncedSearch, statusFilter, currentPage, pageSize, tenant?.id, currentUser, permissionsLoaded, dataSecurityScope]);
 
   const sf = (k,v) => setForm(p => ({...p,[k]:v}));
   const iCls = 'w-full border border-blue-200 rounded-xl px-3 py-2.5 text-[#0F172A] bg-white focus:outline-none focus:ring-2 focus:ring-blue-400 text-sm placeholder:text-gray-400';
   const sCls = 'w-full border border-blue-200 rounded-xl px-3 py-2.5 text-[#0F172A] bg-white focus:outline-none focus:ring-2 focus:ring-blue-400 text-sm';
+
+  // ── Create page: Page Layout Designer (label / hidden / read-only / order / default) + optional line items ──
+  const qLineLayout = useFieldLayout('quotationLineItems');
+  const qShowLines = createGridEnabled(qLineLayout.fields);
+  const [qItems, setQItems] = useState([]);
+  useEffect(() => { if (!createOpen) setQItems([]); }, [createOpen]);
+  const qCreateFields = [
+    { key: 'name', label: 'Quotation Name' }, { key: 'customer', label: 'Customer' },
+    { key: 'validity_date', label: 'Validity Date' }, { key: 'currency', label: 'Currency' },
+  ].map((f, i) => {
+    const r = resolveFieldDisplay(f.key, f.label, fieldLayout.fields || [], form, 'create');
+    const row = resolveFieldRow(f.key, fieldLayout.fields || [], 'create');
+    return { ...f, label: r.label, hidden: !r.visible, ro: !r.editable, order: row ? row.display_order : 10000 + i };
+  }).filter(f => !f.hidden).sort((a, b) => a.order - b.order);
+  useEffect(() => {
+    if (!createOpen) return;
+    const seeded = {};
+    effectiveRows(fieldLayout.fields || [], 'create').forEach(r => {
+      if (!r.default_value || ['name','customer','validity_date','currency'].indexOf(r.field_key) < 0) return;
+      const v = resolveLayoutDefault(r.field_key === 'validity_date' ? 'date' : 'text', r.default_value, form);
+      if (v !== undefined && !form[r.field_key]) seeded[r.field_key] = v;
+    });
+    if (Object.keys(seeded).length) setForm(f => ({ ...seeded, ...f }));
+  }, [createOpen]);
+  const handleQCreate = async () => {
+    const nameVisible = qCreateFields.some(f => f.key === 'name');
+    if (nameVisible && !form.name?.trim()) { showAlert('Name required.', { variant:'warning' }); return; }
+    setSaving(true);
+    const lines = qShowLines ? qItems.filter(i => i && (i.product_name || i.product)) : [];
+    let payload = form;
+    if (lines.length) {
+      const sub = lines.reduce((a, i) => a + i.quantity * i.unit_price, 0);
+      const disc = lines.reduce((a, i) => a + i.quantity * i.unit_price * i.discount_pct / 100, 0);
+      const tax = lines.reduce((a, i) => a + (i.quantity * i.unit_price * (1 - i.discount_pct / 100)) * i.tax_pct / 100, 0);
+      payload = { ...form, subtotal: sub, total_discount: disc, total_tax: tax, grand_total: sub - disc + tax };
+    }
+    const q = await createQuotation(payload, lines);
+    setSaving(false);
+    if (q) { setCreateOpen(false); setSelectedQuote(q); }
+  };
 
   const totalRecords = serverTotal ?? 0;
   const totalPages   = Math.max(1, Math.ceil(totalRecords / pageSize));
@@ -854,16 +994,17 @@ export default function QuotationsPage() {
   }), [quotations]);
 
   return (
-    <div className="space-y-6">
-      <div className="bg-gradient-to-r from-[#0F172A] to-blue-900 rounded-[28px] p-6 text-white flex items-center justify-between">
+    <div className="rw-list space-y-6">
+      <RedwoodSkin />
+      <div className="rw-banner bg-gradient-to-r from-[#0F172A] to-blue-900 rounded-[28px] p-6 text-white flex items-center justify-between">
         <div><h1 className="text-3xl font-bold">Quotations</h1><p className="text-blue-200 mt-1">CPQ — Configure, Price, Quote</p></div>
-        <button onClick={()=>{setForm({status:'Draft',currency:appPreferences.default_currency||'INR',version:1,overall_discount:0,shipping_cost:0});setCreateOpen(true);}} className="bg-white text-[#0F172A] px-5 py-2.5 rounded-2xl font-bold text-sm shadow-lg hover:bg-blue-50">+ Create Quotation</button>
+        <button onClick={()=>{setForm({status:'Draft',currency:appPreferences.default_currency||'INR',version:1,overall_discount:0,shipping_cost:0});setCreateOpen(true);}} className="bg-white text-[#0F172A] px-5 py-2.5 rounded-2xl font-bold text-sm shadow-lg hover:bg-blue-50">+ {L('Create Quotation')}</button>
       </div>
 
       {/* Stats */}
       <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
         {[{l:'Total Quotes',v:stats.total,c:'from-[#0F172A] to-blue-900',i:'📄'},{l:'Drafts',v:stats.draft,c:'from-gray-500 to-gray-700',i:'📝'},{l:'Sent',v:stats.sent,c:'from-purple-500 to-purple-700',i:'📤'},{l:'Accepted',v:stats.accepted,c:'from-green-500 to-emerald-600',i:'✅'},{l:'Accepted Value',v:fmtCur(stats.value),c:'from-amber-500 to-orange-500',i:'💰'}].map(stat=>(
-          <div key={stat.l} className={`bg-gradient-to-r ${stat.c} text-white rounded-2xl p-4 shadow-lg`}><div className="text-2xl mb-1">{stat.i}</div><div className="text-2xl font-bold">{stat.v}</div><div className="text-xs opacity-80 mt-1">{stat.l}</div></div>
+          <div key={stat.l} className={`rw-stat bg-gradient-to-r ${stat.c} text-white rounded-2xl p-4 shadow-lg`}><div className="text-2xl mb-1">{stat.i}</div><div className="text-2xl font-bold">{stat.v}</div><div className="text-xs opacity-80 mt-1">{stat.l}</div></div>
         ))}
       </div>
 
@@ -871,7 +1012,7 @@ export default function QuotationsPage() {
       <div className="bg-white rounded-2xl border border-blue-100 p-4 shadow-sm flex flex-col sm:flex-row gap-3">
         <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search quotations..." className="flex-1 border border-blue-200 rounded-xl px-4 py-2.5 text-sm text-[#0F172A] focus:outline-none focus:ring-2 focus:ring-blue-300 placeholder:text-gray-400"/>
         <select value={statusFilter} onChange={e=>setStatusFilter(e.target.value)} className="border border-blue-200 rounded-xl px-4 py-2.5 text-sm text-[#0F172A] bg-white focus:outline-none focus:ring-2 focus:ring-blue-300">
-          <option>All</option>{QUOTE_STATUSES.map(s=><option key={s}>{s}</option>)}
+          <option>All</option>{quoteStatuses().map(s=><option key={s}>{s}</option>)}
         </select>
       </div>
 
@@ -891,7 +1032,7 @@ export default function QuotationsPage() {
                 : pagedQuotes.length===0
                 ? <tr><td colSpan={8} className="px-5 py-16 text-center"><div className="text-5xl mb-3">📄</div><div className="font-bold text-[#0F172A] text-lg mb-2">No quotations yet</div><p className="text-gray-400">Create a quotation or generate one from an Opportunity.</p></td></tr>
                 : pagedQuotes.map(q => {
-                    const sm = STATUS_META[q.status] || STATUS_META['Draft'];
+                    const sm = metaFor(q.status);
                     return (
                       <tr key={q.id} className="border-t border-blue-50 hover:bg-blue-50/40">
                         <td className="px-5 py-3.5">
@@ -953,33 +1094,42 @@ export default function QuotationsPage() {
       </div>
 
       {/* Detail panel */}
-      {selectedQuote && <QuotationDetail quote={selectedQuote} onClose={()=>setSelectedQuote(null)} onSaved={async()=>{ await fetchQuotations(); }}/>}
+      {selectedQuote && <QuotationDetail quote={selectedQuote} onClose={closeQuote} onSaved={async()=>{ await fetchQuotations(); }}/>}
 
       {/* Create modal */}
       {createOpen && (
         <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-[32px] shadow-2xl w-full max-w-lg">
-            <div className="px-8 py-6 border-b border-blue-100 flex items-center justify-between">
-              <div><h2 className="text-2xl font-bold text-[#0F172A]">Create Quotation</h2><p className="text-gray-400 text-sm mt-1">Start a new quotation from scratch.</p></div>
+          <div className={`rw-panel rw-modal bg-white rounded-[24px] shadow-2xl w-full ${qShowLines ? 'max-w-6xl' : 'max-w-xl'} max-h-[92vh] flex flex-col overflow-hidden`}>
+            <RedwoodSkin />
+            <div className="rw-header px-8 py-6 border-b border-blue-100 flex items-center justify-between flex-shrink-0">
+              <div><h2 className="text-2xl font-bold text-[#0F172A]">{RL('Create Quotation')}</h2><p className="text-gray-400 text-sm mt-1">Start a new quotation from scratch.</p></div>
               <button onClick={()=>setCreateOpen(false)} className="w-10 h-10 rounded-2xl bg-gray-100 text-[#0F172A] font-bold flex items-center justify-center text-lg hover:bg-gray-200">✕</button>
             </div>
-            <div className="p-8 space-y-4">
-              <div><label className="text-xs font-bold uppercase text-gray-400 block mb-1.5">Quotation Name *</label><input value={form.name||''} onChange={e=>sf('name',e.target.value)} placeholder="e.g. Enterprise Software Proposal" className={iCls}/></div>
-              <div><label className="text-xs font-bold uppercase text-gray-400 block mb-1.5">Customer</label><SearchableSelect
+            <div className="p-8 space-y-4 overflow-y-auto flex-1">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              {qCreateFields.map(f => (
+                <fieldset key={f.key} disabled={f.ro} className={`min-w-0 border-0 p-0 m-0 ${f.ro ? 'opacity-60' : ''} ${f.key==='name'||f.key==='customer' ? 'sm:col-span-2' : ''}`} style={{order:f.order}}>
+                  <label className="text-xs font-bold uppercase text-gray-400 block mb-1.5">{f.label}{f.key==='name' && ' *'}</label>
+                  {f.key==='name' ? <input value={form.name||''} onChange={e=>sf('name',e.target.value)} placeholder="e.g. Q4 Enterprise Deal" className={iCls}/>
+                  : f.key==='customer' ? (<SearchableSelect
               value={form.customer_id||''}
               onChange={v=>{const c=[...customers,...(pendingCustomers||[])].find(x=>x.id===v);if(c){sf('customer_id',c.id);sf('customer',c.name);}else if(v){sf('customer_id',v);}}}
               options={[...customers,...(pendingCustomers||[]).filter(pc=>!customers.find(c=>c.id===pc.id))].map(c=>({value:c.id,label:c.name,sub:[c.email,c.phone,c.industry,c.city].filter(Boolean).join(' · ')}))}
               placeholder="Select customer" emptyLabel="No customer"
               onCreateNew={q=>setQuickCreate({type:'customer',prefillName:q,onCreated:(id,name)=>{setForm(f=>({...f,customer_id:id,customer:name}));setPendingCustomers(p=>[...p,{id,name}]);}})}
               createLabel="Create Customer"
-            /></div>
-              <div><label className="text-xs font-bold uppercase text-gray-400 block mb-1.5">Validity Date</label><input type="date" value={form.validity_date||''} onChange={e=>sf('validity_date',e.target.value)} className={iCls}/></div>
-              <div><label className="text-xs font-bold uppercase text-gray-400 block mb-1.5">Currency</label><select value={form.currency||'INR'} onChange={e=>sf('currency',e.target.value)} className={sCls}>{CURRENCIES.map(c=><option key={c}>{c}</option>)}</select></div>
+            />)
+                  : f.key==='validity_date' ? <input type="date" value={form.validity_date||''} onChange={e=>sf('validity_date',e.target.value)} className={iCls}/>
+                  : <select value={form.currency||'INR'} onChange={e=>sf('currency',e.target.value)} className={sCls}>{CURRENCIES.map(c=><option key={c}>{c}</option>)}</select>}
+                </fieldset>
+              ))}
+              </div>
+              {qShowLines && <div className="pt-2"><QuoteLineItems items={qItems} setItems={setQItems} products={products} currency={form.currency||'INR'} scope="create"/></div>}
             </div>
-            <div className="px-8 py-5 border-t border-blue-100 flex justify-end gap-3">
+            <div className="px-8 py-5 border-t border-blue-100 flex justify-end gap-3 flex-shrink-0">
               <button onClick={()=>setCreateOpen(false)} className="px-6 py-3 text-sm rounded-2xl font-semibold bg-white border border-blue-200 text-[#0F172A] hover:bg-blue-50">Cancel</button>
-              <button onClick={async()=>{if(!form.name?.trim()){showAlert('Name required.', { variant:'warning' });return;}setSaving(true);const q=await createQuotation(form,[]);setSaving(false);if(q){setCreateOpen(false);setSelectedQuote(q);}}} disabled={saving} className="px-6 py-3 text-sm rounded-2xl font-semibold bg-gradient-to-r from-[#0F172A] to-blue-800 text-white hover:opacity-90 disabled:opacity-50 shadow-lg">
-                {saving?'Creating...':'Create Quotation'}
+              <button onClick={handleQCreate} disabled={saving} className="px-6 py-3 text-sm rounded-2xl font-semibold bg-gradient-to-r from-[#0F172A] to-blue-800 text-white hover:opacity-90 disabled:opacity-50 shadow-lg">
+                {saving?'Creating...':RL('Create Quotation')}
               </button>
             </div>
           </div>

@@ -19,6 +19,7 @@ export interface CustomField {
   sort_order: number;
   show_on: string;
   is_published: boolean;
+  default_value?: string | null;
 }
 
 // Module-level cache — keyed by tenantId:objectType to avoid cross-tenant bleed
@@ -81,7 +82,7 @@ export function useCustomFields(objectType: string) {
 
         const { data, error } = await client
           .from('app_custom_fields')
-          .select('id, label, api_name, field_type, options, required, sort_order, show_on, is_published')
+          .select('id, label, api_name, field_type, options, required, sort_order, show_on, is_published, default_value')
           .eq('object_type', objectType)
           .eq('is_active', true)
           .eq('is_published', true)

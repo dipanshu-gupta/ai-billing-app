@@ -1,5 +1,6 @@
 // @ts-nocheck
 
+import { loadCanvasTemplates, mergeTemplates } from '@/lib/useDocumentTemplates';
 import React, { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
 // supabase client injected via AppProvider props (from TenantContext)
 import type {
@@ -11,8 +12,11 @@ import type {
   Notification, AuditLog,
 } from '@/lib/types';
 import { generateId, formatDisplayNumber, withTimeout, todayLocalISO } from '@/lib/utils';
-import { fetchFieldMappingRules, applyFieldMapping } from '@/lib/useFieldMappingRules';
+import { fetchFieldMappingRules, applyFieldMapping, fetchConversionRules, insertWithCopyMaps } from '@/lib/useFieldMappingRules';
 import { useAlert } from '@/components/shared/AlertProvider';
+import { waFetch } from '@/lib/waFetch';
+import { fetchCustomObjects as fetchPublishedCustomObjects } from '@/lib/customObjects';
+import { setStatusOverrides } from '@/lib/statusOptions';
 
 // ─── Enterprise-scale hardening ──────────────────────────────────────────────
 // TODO(pagination): The main list-fetch functions below (fetchCustomers,
@@ -1107,23 +1111,21 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
         });
       }
 
-      // WhatsApp — only attempted if the tenant has API sending configured,
-      // active, and a template mapped for this key. Silently skipped
-      // otherwise (the in-app notification above is unconditional and
-      // always the baseline), never blocking or erroring the reminder loop
-      // if WhatsApp isn't set up.
+      // WhatsApp - attempted for every reminder; the server decides whether
+      // this tenant has WhatsApp configured/active and quietly skips if not
+      // (sendMode 'automatic'). This used to pre-check whatsapp_config from
+      // the browser, but that table is service-role-only (RLS, no client
+      // policy) so the check always came back empty and the reminder was
+      // never sent for anyone.
       try {
-        const { data: waConfig } = await supabase.from('whatsapp_config').select('is_active').eq('tenant_id', tid.id || null).maybeSingle();
-        if (waConfig?.is_active) {
+        if (order.customer_phone) {
           const params = [order.customer || 'Customer', b.product_name || 'your item', targetISO, displayNum];
-          if (order.customer_phone) {
-            const rawPhone = String(order.customer_phone).replace(/\D/g, '');
-            const phone = rawPhone.length === 10 ? '91' + rawPhone : rawPhone;
-            fetch('/api/whatsapp/send', {
-              method: 'POST', headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ db_url: tid.db_url, tenantId: tid.id, to: phone, recordType: 'retailOrders', recordId: b.order_number, recipientType: 'customer', sendMode: 'automatic', templateKey: 'rental_return_reminder', templateParams: params }),
-            }).catch(() => {}); // fire-and-forget — a failed WhatsApp send should never break the reminder loop or surface as a UI error for an automatic background check
-          }
+          const rawPhone = String(order.customer_phone).replace(/\D/g, '');
+          const phone = rawPhone.length === 10 ? '91' + rawPhone : rawPhone;
+          waFetch('/api/whatsapp/send', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ db_url: tid.db_url, tenantId: tid.id, to: phone, recordType: 'retailOrders', recordId: b.order_number, recipientType: 'customer', sendMode: 'automatic', dedupeHours: 72, templateKey: 'rental_return_reminder', templateParams: params }),
+          }).catch(() => {}); // fire-and-forget — a failed WhatsApp send should never break the reminder loop or surface as a UI error for an automatic background check
         }
       } catch (e) { /* WhatsApp not configured or unreachable — the in-app notification above already covers the reminder */ }
     }
@@ -1135,7 +1137,18 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     const effectiveTenantId = (typeof window !== 'undefined' ? (window as any).__bp_tenant?.id : null)
       || tenantId
       || null;
-    const rentalModeOn = appPreferences?.business_type === 'rental' && table === 'retail_order_line_items';
+    // Both tables carry rental_start_date/rental_end_date when the tenant is
+    // in rental mode — Orders always; Invoices too, now that Page Layout
+    // Designer can make those two fields editable there instead of
+    // read-only-for-reference. `id` here is the order_number OR
+    // invoice_number depending on `table`, which is fine for the exclude
+    // param below: checkRentalConflict only ever matches it against
+    // retail_order_line_items' own order_number, so passing an
+    // invoice_number there simply never matches anything — a harmless
+    // no-op, not a bug — since an invoice has no booking of its own in that
+    // table to exclude from the conflict scan.
+    const rentalFieldsOn = appPreferences?.business_type === 'rental'
+      && (table === 'retail_order_line_items' || table === 'retail_invoice_line_items');
 
     // Conflict check runs BEFORE the delete+insert below — if any item would
     // conflict, abort entirely and touch nothing, rather than partially
@@ -1143,9 +1156,13 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     // through the insert. Runs regardless of the order's current status —
     // see the matching comment in createRetailRecord/updateRetailRecord for
     // why status must never gate whether to check against existing bookings.
-    if (rentalModeOn && items && items.length) {
+    if (rentalFieldsOn && items && items.length) {
       for (const i of items) {
         if (!i.product_id || !i.rental_start_date || !i.rental_end_date) continue;
+        // An invoice is normally written up after the rental already
+        // started (or finished), so it allows a past start date the same
+        // way an order UPDATE does — only a brand-new order booking
+        // enforces "today or later".
         const dateError = validateRentalDateRange(i.rental_start_date, i.rental_end_date, true);
         if (dateError) return { error: { message: `"${i.product_name || 'This item'}": ${dateError}` } };
         const { conflict, withOrder, unresolved } = await checkRentalConflict(i.product_id, i.rental_start_date, i.rental_end_date, id);
@@ -1177,23 +1194,21 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
         )),
         sort_order:     idx,
         custom_data:    i.custom_data || {},
-        ...(rentalModeOn ? {
+        ...(rentalFieldsOn ? {
           product_id:         i.product_id || null,
           rental_start_date:  i.rental_start_date || null,
           rental_end_date:    i.rental_end_date || null,
           // is_blocking is deliberately NOT set here — a database trigger
           // (see 13_rental_is_blocking_trigger.sql) computes it
           // automatically from the order's current status and the tenant's
-          // configured blocking statuses. This is the single source of
-          // truth for that computation now, so every client that writes to
-          // this table — web, mobile, any future integration — gets
+          // configured blocking statuses, and only exists as a column on
+          // retail_order_line_items (the trigger is scoped to that table) —
+          // not written for invoices either way. This is the single source
+          // of truth for that computation now, so every client that writes
+          // to this table — web, mobile, any future integration — gets
           // correct behavior without needing to replicate this business
           // logic itself.
-        } : (table === 'retail_invoice_line_items' && appPreferences?.business_type === 'rental' ? {
-          product_id:         i.product_id || null,
-          rental_start_date:  i.rental_start_date || null,
-          rental_end_date:    i.rental_end_date || null,
-        } : {})),
+        } : {}),
         ...(effectiveTenantId ? { tenant_id: effectiveTenantId } : {}),
       })));
       if (error) {
@@ -1240,7 +1255,7 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
   // Allowed columns per retail table — prevents cross-object default fields leaking into wrong table
   const RETAIL_ALLOWED_COLS: Record<string, string[]> = {
     retail_customers:  ['name','phone','email','date_of_birth','gender','address_line1','address_line2','city','state','postal_code','country','loyalty_points','loyalty_tier','preferred_contact','marketing_opt_in','notes','comments','status','owner','owner_id','owner_name','organization_id','business_unit_id','custom_data'],
-    retail_products:   ['name','category','brand','sku','barcode','unit','price','mrp','cost','stock_quantity','reorder_level','description','hsn_code','gst_rate','taxable','tax_category','vat_rate','tax_rate','status','owner','owner_id','owner_name','comments','organization_id','business_unit_id','custom_data','is_rentable','rent_per_day'],
+    retail_products:   ['name','category','brand','sku','barcode','unit','price','mrp','cost','stock_quantity','reorder_level','description','hsn_code','gst_rate','taxable','tax_category','vat_rate','tax_rate','status','owner','owner_id','owner_name','comments','organization_id','business_unit_id','custom_data','is_rentable','rent_per_day','rental_pricing_basis'],
     retail_activities: ['subject','activity_type','customer','customer_id','customer_phone','related_order_number','activity_date','due_date','priority','status','description','notes','comments','owner','owner_id','owner_name','organization_id','business_unit_id','custom_data'],
     retail_orders:     ['customer','customer_id','customer_phone','order_date','channel','currency','payment_method','payment_status','delivery_method','delivery_address','delivery_date','subtotal','total_discount','total_tax','header_discount_pct','header_discount_amount','shipping_cost','amount','place_of_supply','gstin','tax_state','resale_certificate','vat_registration_number','tax_registration_number','status','notes','comments','owner','owner_id','owner_name','organization_id','business_unit_id','custom_data'],
     retail_invoices:   ['order_number','customer','customer_id','customer_phone','billing_address','invoice_date','due_date','currency','subtotal','total_discount','total_tax','header_discount_pct','header_discount_amount','shipping_cost','amount','payment_method','payment_status','place_of_supply','gstin','tax_state','resale_certificate','vat_registration_number','tax_registration_number','status','notes','comments','owner','owner_id','owner_name','organization_id','business_unit_id','custom_data','invoice_template_id'],
@@ -1293,10 +1308,19 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     // (see is_blocking below); it must never decide whether to check
     // against OTHER existing bookings, or a conflict could slip through
     // anytime the order isn't already in a blocking status at save time.
-    if (page === 'retailOrders' && appPreferences?.business_type === 'rental') {
+    //
+    // Also runs for a retail Invoice now — Page Layout Designer can make
+    // its rental dates editable instead of read-only-for-reference, and an
+    // editable-but-unchecked date would let an invoice silently record a
+    // window that's double-booked against a real order, with nothing
+    // catching it before save. An invoice allows a past start date
+    // (allowPast=true) since it's normally written up after the rental
+    // already started; a brand-new order booking still requires today-or-
+    // later (allowPast defaults to false below).
+    if ((page === 'retailOrders' || page === 'retailInvoices') && appPreferences?.business_type === 'rental') {
       for (const i of items) {
         if (!i.product_id || !i.rental_start_date || !i.rental_end_date) continue;
-        const dateError = validateRentalDateRange(i.rental_start_date, i.rental_end_date);
+        const dateError = validateRentalDateRange(i.rental_start_date, i.rental_end_date, page === 'retailInvoices');
         if (dateError) { showAlert(`"${i.product_name || 'This item'}": ${dateError}`, { variant:'warning', title:'Invalid Dates' }); return null; }
         const { conflict, withOrder, unresolved } = await checkRentalConflict(i.product_id, i.rental_start_date, i.rental_end_date);
         if (conflict) {
@@ -1385,8 +1409,9 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     // createRetailRecord above for why the status must never gate this
     // check. Excludes this order's own existing line items from the check,
     // since re-saving an order with unchanged dates on its own existing
-    // booking is not a conflict with itself.
-    if (page === 'retailOrders' && appPreferences?.business_type === 'rental') {
+    // booking is not a conflict with itself. Also runs for a retail Invoice
+    // now — see the matching comment in createRetailRecord above for why.
+    if ((page === 'retailOrders' || page === 'retailInvoices') && appPreferences?.business_type === 'rental') {
       for (const i of items) {
         if (!i.product_id || !i.rental_start_date || !i.rental_end_date) continue;
         const dateError = validateRentalDateRange(i.rental_start_date, i.rental_end_date, true);
@@ -1410,6 +1435,15 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     }
     await runAutomations(page, record.id, record, 'on_update', previousData);
     await cfg.fetch();
+    // Auto order -> invoice: when this tenant chose "auto" and the order just moved into one of
+    // its trigger statuses, raise the invoice immediately (duplicate-safe, silent if one exists).
+    if (page === 'retailOrders' && appPreferences?.invoice_flow_mode === 'auto'
+        && (appPreferences?.invoice_trigger_statuses || ['Completed']).includes(record.status)
+        && previousData && previousData.status !== record.status) {
+      const inv = await createRetailInvoiceFromOrder({ ...previousData, ...record, id: record.id, _uuid: previousData.id, displayNumber: previousData.display_number }, true);
+      if (inv) showAlert(`Invoice ${inv.display_number ? formatDisplayNumber('RINV', inv.display_number) : ''} was created automatically for this order.`, { variant:'success', title:'Invoice Created' });
+    }
+    return true;
     } catch (e: any) {
       console.error('[updateRetailRecord]', e);
       showAlert('Save failed: ' + (e?.message || 'An unexpected error occurred.'));
@@ -1432,7 +1466,64 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
   };
 
   // ─── Retail Order → Retail Invoice conversion ──────────────────────────────
-  const createRetailInvoiceFromOrder = async (order: any) => {
+  /**
+   * Rental mode: an invoice raised directly (no order behind it) has no booking, so the
+   * dates are not reserved and the item can be double-booked. This creates the matching
+   * booking order from the invoice in one step - header + line items copied across - and
+   * links the invoice to it. Past start dates are allowed (an invoice is often written up
+   * after the rental began); a real clash with another booking still blocks it.
+   */
+  const createBookingFromInvoice = async (invoice: any, items: any[]) => {
+    if (!supabase || !currentUser) return null;
+    const lines = (items || []).map(i => {
+      const { id, _id, invoice_number, order_number, tenant_id, created_at, updated_at, ...rest } = i;
+      return rest;
+    });
+    if (!lines.some(i => i.product_id && i.rental_start_date && i.rental_end_date)) {
+      showAlert('This invoice has no rental dates yet - add the rental dates on the line items first.', { variant:'warning' });
+      return null;
+    }
+    const blocking: string[] = appPreferences?.rental_blocking_statuses || ['Draft','Pending','Completed'];
+    const status = blocking.includes('Pending') ? 'Pending' : (blocking[0] || 'Pending');
+    const today = new Date();
+    const orderDate = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-${String(today.getDate()).padStart(2,'0')}`;
+    const invLabel = invoice.displayNumber ? formatDisplayNumber('RINV', invoice.displayNumber) : (invoice.id || '');
+    const allowed = RETAIL_ALLOWED_COLS['retail_orders'] || [];
+    const src: any = {
+      ...invoice, order_date: orderDate, channel: 'In-Store', status,
+      notes: [invoice.notes, `Booking created from invoice ${invLabel}`].filter(Boolean).join(' · '),
+    };
+    const filtered: any = {};
+    allowed.forEach(k => { if (src[k] !== undefined) filtered[k] = src[k]; });
+    const newId = generateId('RORD');
+    const payload: any = {
+      ...buildSystemFields(), order_number: newId, ...filtered,
+      owner: invoice.owner || currentUser.email, owner_id: invoice.owner_id || currentUser.id,
+      ...(tenantId ? { tenant_id: tenantId } : {}),
+    };
+    delete payload.id; delete payload._uuid;
+    // Copy Maps: Retail Invoice → Booking (header + line items)
+    const cmB = await fetchConversionRules(supabase, 'retailInvoice_to_retailOrder');
+    const cmBApplied: string[] = [];
+    applyFieldMapping(cmB.header, invoice, payload, undefined, { db: true, applied: cmBApplied });
+    const mappedLines = cmB.lines.length ? lines.map((it: any) => applyFieldMapping(cmB.lines, it, { ...it }, undefined, { db: true })) : lines;
+    const { data: inserted, error } = await insertWithCopyMaps(supabase, 'retail_orders', payload, cmBApplied);
+    if (error) { showAlert('Could not create the booking: ' + error.message, { variant:'danger' }); return null; }
+    const { error: liError } = await upsertRetailLineItems('retail_order_line_items', 'order_number', newId, mappedLines, status);
+    if (liError) {
+      // Do not leave an empty order behind if the dates clash with another booking.
+      await supabase.from('retail_orders').delete().eq('order_number', newId);
+      showAlert('Booking not created: ' + liError.message, { variant:'danger', title:'Booking Conflict' });
+      return null;
+    }
+    const orderLabel = inserted.display_number ? formatDisplayNumber('RORD', inserted.display_number) : newId;
+    await supabase.from('retail_invoices').update({ order_number: orderLabel }).eq('invoice_number', invoice.id);
+    await fetchRetailOrders();
+    await fetchRetailInvoices();
+    return { ...inserted, id: inserted.order_number, _uuid: inserted.id, label: orderLabel };
+  };
+
+  const createRetailInvoiceFromOrder = async (order: any, silent = false) => {
     if (!supabase || !currentUser) return null;
     // Check if invoice already exists for this order.
     // Invoices may have been created against the order's UUID, its raw order_number,
@@ -1452,7 +1543,7 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     const existing = existingList?.[0];
     if (existing) {
       const existingLabel = existing.display_number ? formatDisplayNumber('RINV', existing.display_number) : 'this order';
-      showAlert(`An invoice already exists for this order (${existingLabel}). Cannot create duplicate.`);
+      if (!silent) showAlert(`An invoice already exists for this order (${existingLabel}). Cannot create duplicate.`);
       return null;
     }
     const items = await fetchRetailLineItems('retail_order_line_items', 'order_number', order.id);
@@ -1508,11 +1599,14 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     // Copy Maps — apply any active record-conversion rules for
     // Order → Invoice, copying mapped fields from the order onto the
     // new invoice payload before it's saved.
-    const conversionRules = await fetchFieldMappingRules(supabase, 'record_conversion', 'retailOrders', getScopeTenantId());
-    applyFieldMapping(conversionRules.filter(r => r.conversion_context === 'retailOrder_to_retailInvoice'), order, payload);
-    const { data: inserted, error } = await supabase.from('retail_invoices').insert([payload]).select().single();
+    // (header AND line-item rules; tenant-scoped; see lib/copyMaps.ts)
+    const cm = await fetchConversionRules(supabase, 'retailOrder_to_retailInvoice');
+    const cmApplied: string[] = [];
+    applyFieldMapping(cm.header, order, payload, undefined, { db: true, applied: cmApplied });
+    const mappedItems = cm.lines.length ? items.map((it: any) => applyFieldMapping(cm.lines, it, { ...it }, undefined, { db: true })) : items;
+    const { data: inserted, error } = await insertWithCopyMaps(supabase, 'retail_invoices', payload, cmApplied);
     if (error) { showAlert('Failed to create invoice: ' + error.message); return null; }
-    if (items.length) await upsertRetailLineItems('retail_invoice_line_items', 'invoice_number', invId, items);
+    if (mappedItems.length) await upsertRetailLineItems('retail_invoice_line_items', 'invoice_number', invId, mappedItems);
     await autoSetRetailCustomerStatus(order.customer_id, 'Active');
     await fetchRetailInvoices();
     return { ...inserted, id: inserted.invoice_number, _uuid: inserted.id };
@@ -1588,13 +1682,16 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     if (!supabase) return;
     const { data } = await tScope(supabase.from('quote_templates').select('*')).order('created_at', { ascending: false });
     if (data) {
-      setQuoteTemplates(data.map((t: any) => ({
+      const legacy = data.map((t: any) => ({
         ...t,
         id: t.id, dbId: t.id, name: t.name, isDefault: t.is_default,
         sections: t.sections || [], page_settings: t.page_settings || {}, global_settings: t.global_settings || {},
         primaryColor: t.primary_color, secondaryColor: t.secondary_color,
         companyName: t.company_name,
-      })));
+      }));
+      // Canvas (free-form) templates first; they take over the default once any exists
+      const canvas = await loadCanvasTemplates(supabase, 'quotation');
+      setQuoteTemplates(mergeTemplates(canvas, legacy));
     }
   };
 
@@ -2107,7 +2204,7 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
             notes: data.notes||'',
           }]).select().single();
           if (error) throw error;
-          if (lineItems.length) { const { error: liErr } = await supabase.from('order_line_items').insert(lineItems.map(i => ({ order_number: id, product_name: i.product, quantity: i.quantity, price: i.price, discount: Number((i as any).discount||0), tax_pct: Number((i as any).tax_pct||0), list_price: Number((i as any).list_price||i.price||0), product_code: (i as any).product_code||'', description: (i as any).description||'' }))); if (liErr) console.error('[createRecord:orders] line item insert failed:', liErr.message); }
+          if (lineItems.length) { const { error: liErr } = await supabase.from('order_line_items').insert(lineItems.map(i => ({ order_number: id, product_name: i.product, quantity: i.quantity, price: i.price, discount: Number((i as any).discount||0), tax_pct: Number((i as any).tax_pct||0), list_price: Number((i as any).list_price||i.price||0), product_code: (i as any).product_code||'', description: (i as any).description||'', custom_data: (i as any).custom_data||{} }))); if (liErr) console.error('[createRecord:orders] line item insert failed:', liErr.message); }
           await logAudit({ recordType: 'order', recordId: id, recordName: data.name, action: 'created' });
           await runAutomations('orders', id, data, 'on_create');
           await fetchOrders(); await autoSetCustomerStatus(data.customerId, 'Active');
@@ -2127,7 +2224,7 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
             notes: data.notes||'',
           }]).select().single();
           if (error) throw error;
-          if (lineItems.length) { const { error: liErr } = await supabase.from('invoice_line_items').insert(lineItems.map(i => ({ invoice_number: id, product_name: i.product, quantity: i.quantity, price: i.price, discount: Number((i as any).discount||0), tax_pct: Number((i as any).tax_pct||0), list_price: Number((i as any).list_price||i.price||0), product_code: (i as any).product_code||'', description: (i as any).description||'' }))); if (liErr) console.error('[createRecord:invoices] line item insert failed:', liErr.message); }
+          if (lineItems.length) { const { error: liErr } = await supabase.from('invoice_line_items').insert(lineItems.map(i => ({ invoice_number: id, product_name: i.product, quantity: i.quantity, price: i.price, discount: Number((i as any).discount||0), tax_pct: Number((i as any).tax_pct||0), list_price: Number((i as any).list_price||i.price||0), product_code: (i as any).product_code||'', description: (i as any).description||'', custom_data: (i as any).custom_data||{} }))); if (liErr) console.error('[createRecord:invoices] line item insert failed:', liErr.message); }
           await logAudit({ recordType: 'invoice', recordId: id, recordName: data.name, action: 'created' });
           await runAutomations('invoices', id, data, 'on_create');
           await fetchInvoices(); await autoSetCustomerStatus(data.customerId, 'Active');
@@ -2367,7 +2464,12 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     // ('Prospecting'). Also carries the lead's actual expected close date
     // forward instead of discarding it, and carries billing/shipping
     // address + custom_data forward too (opportunities supports all three).
-    await supabase.from('opportunities').insert([{ ...buildSystemFields(), owner: lead.owner||currentUser?.email||'', owner_id: lead.owner_id||currentUser?.id||null, opportunity_number: id, name: lead.name, customer: lead.customer, customer_id: lead.customerId, contact: lead.contact, contact_id: lead.contactId, stage: 'Qualification', amount: totalAmount, close_date: (lead as any).expectedCloseDate||(lead as any).expected_close_date||null, status: 'Prospecting', billing_address: (lead as any).billingAddress||(lead as any).billing_address||'', shipping_address: (lead as any).shippingAddress||(lead as any).shipping_address||'', custom_data: (lead as any).custom_data||{} }]);
+    const oppPayload: any = { ...buildSystemFields(), owner: lead.owner||currentUser?.email||'', owner_id: lead.owner_id||currentUser?.id||null, opportunity_number: id, name: lead.name, customer: lead.customer, customer_id: lead.customerId, contact: lead.contact, contact_id: lead.contactId, stage: 'Qualification', amount: totalAmount, close_date: (lead as any).expectedCloseDate||(lead as any).expected_close_date||null, status: 'Prospecting', billing_address: (lead as any).billingAddress||(lead as any).billing_address||'', shipping_address: (lead as any).shippingAddress||(lead as any).shipping_address||'', custom_data: (lead as any).custom_data||{} };
+    // Copy Maps: Lead → Opportunity
+    const cmL = await fetchConversionRules(supabase, 'lead_to_opportunity');
+    const cmLApplied: string[] = [];
+    applyFieldMapping(cmL.header, lead, oppPayload, undefined, { db: true, applied: cmLApplied });
+    await insertWithCopyMaps(supabase, 'opportunities', oppPayload, cmLApplied);
     // opportunity_line_items only has {product_name, quantity, price,
     // discount, configuration, product_id} (confirmed against the live DB
     // schema) — unit_price/discount_pct/tax_pct don't exist on this table,
@@ -2388,7 +2490,7 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     const items = await fetchLineItems('opportunity_line_items', 'opportunity_number', opportunity.id);
     const totalAmount = items.reduce((s, i) => s + i.quantity * i.price, 0);
     const id = generateId('ORD');
-    await supabase.from('orders').insert([{
+    const ordFromOpp: any = {
       ...buildSystemFields(),
       order_number: id,
       name: opportunity.name,
@@ -2405,7 +2507,12 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
       owner: opportunity.owner || currentUser?.email || '',
       owner_id: opportunity.owner_id || currentUser?.id || null,
       status: 'Draft',
-    }]);
+    };
+    // Copy Maps: Opportunity → Order
+    const cmO = await fetchConversionRules(supabase, 'opportunity_to_order');
+    const cmOApplied: string[] = [];
+    applyFieldMapping(cmO.header, opportunity, ordFromOpp, undefined, { db: true, applied: cmOApplied });
+    await insertWithCopyMaps(supabase, 'orders', ordFromOpp, cmOApplied);
     if (items.length) await supabase.from('order_line_items').insert(items.map((i: any, idx: number) => ({
       order_number: id,
       product_name: i.product_name || i.product || '',
@@ -2478,7 +2585,7 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
       ? 'ORD-' + String(order.displayNumber).padStart(5, '0')
       : (order.order_number || order.id);
 
-    const { error } = await supabase.from('invoices').insert([{
+    const invPayload: any = {
       ...buildSystemFields(),
       invoice_number: id,
       name: order.name,
@@ -2502,10 +2609,15 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
       owner: order.owner || currentUser?.email || '',
       owner_id: order.owner_id || currentUser?.id || null,
       status: 'Pending',
-    }]);
+    };
+    // Copy Maps: Order → Invoice (header + line items)
+    const cmI = await fetchConversionRules(supabase, 'order_to_invoice');
+    const cmIApplied: string[] = [];
+    applyFieldMapping(cmI.header, order, invPayload, undefined, { db: true, applied: cmIApplied });
+    const { error } = await insertWithCopyMaps(supabase, 'invoices', invPayload, cmIApplied);
     if (error) { showAlert('Failed to create invoice: ' + error.message); return null; }
 
-    await supabase.from('invoice_line_items').insert(toInvoice.map((i: any, idx: number) => ({
+    const invLineRows = toInvoice.map((i: any, idx: number) => ({
       invoice_number: id,
       product_name:   i.product_name || i.product || '',
       product_code:   i.product_code || '',
@@ -2518,7 +2630,8 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
       extended_price: i.qtyNow * Number(i.price||0) * (1 - Number(i.discount||0)/100) * (1 + Number(i.tax_pct||0)/100),
       sort_order:     idx,
       custom_data:    i.custom_data || {},
-    })));
+    }));
+    await supabase.from('invoice_line_items').insert(cmI.lines.length ? invLineRows.map((row: any, k: number) => applyFieldMapping(cmI.lines, toInvoice[k], row, undefined, { db: true })) : invLineRows);
 
     // Update each order line item's running invoiced_qty.
     await Promise.all(toInvoice.map((i: any) =>
@@ -2570,9 +2683,13 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
   const fetchInvoiceTemplates = async () => {
     if (!supabase) return;
     const { data } = await tScope(supabase.from('invoice_templates').select('*')).order('created_at', { ascending: false });
-    if (data) setInvoiceTemplates(data.map((t: any) => ({
-      ...t, id: t.template_number || t.id, dbId: t.id, isDefault: t.is_default,
-    })));
+    if (data) {
+      const legacy = data.map((t: any) => ({
+        ...t, id: t.template_number || t.id, dbId: t.id, isDefault: t.is_default,
+      }));
+      const canvas = await loadCanvasTemplates(supabase, 'b2b_invoice');
+      setInvoiceTemplates(mergeTemplates(canvas, legacy));
+    }
   };
 
   const saveInvoiceTemplate = async (data: any, editingId?: string | null) => {
@@ -3430,27 +3547,28 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
           // Reuses the exact same send route and param_mappings resolution
           // that manual sends use, so these are just as customizable.
           if (!supabase) break;
-          const { data: waConfigRow } = await supabase.from('whatsapp_config').select('*').eq('tenant_id', getScopeTenantId()).maybeSingle();
-          if (!waConfigRow?.is_active) { console.warn('[Workflow send_whatsapp] WhatsApp is not active for this tenant — skipping.'); break; }
-
           const recipientType = cfg.recipient_type || 'customer'; // 'customer' | 'business'
+          // The browser can't read whatsapp_config (service-role-only), so
+          // for 'business' messages the server resolves the recipient from
+          // this tenant's saved business_notify_phone, and for everything it
+          // decides whether WhatsApp is active - a not-configured tenant is
+          // a quiet skip (sendMode 'automatic').
           let toPhone = '';
-          if (recipientType === 'business') {
-            toPhone = String(waConfigRow.business_notify_phone || '').replace(/\D/g, '');
-          } else {
+          if (recipientType !== 'business') {
             const rawPhone = String(recordData.customer_phone || recordData.phone || '').replace(/\D/g, '');
             toPhone = rawPhone.length === 10 ? '91' + rawPhone : rawPhone;
-          }
-          if (!toPhone) {
-            console.warn(`[Workflow send_whatsapp] No ${recipientType} phone number available — skipping.`);
-            break;
+            if (!toPhone) {
+              console.warn('[Workflow send_whatsapp] No customer phone number available — skipping.');
+              break;
+            }
           }
 
           try {
-            const res = await fetch('/api/whatsapp/send', {
+            const res = await waFetch('/api/whatsapp/send', {
               method: 'POST', headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
-                tenantId: getScopeTenantId(), to: toPhone,
+                db_url: (typeof window !== 'undefined' ? (window as any).__bp_tenant?.db_url : null) || undefined,
+                tenantId: getScopeTenantId(), to: toPhone || undefined,
                 recordType: objectType, recordId, recipientType, sendMode: 'automatic',
                 templateKey: cfg.template_key, record: recordData,
               }),
@@ -3856,6 +3974,8 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
       fetchRetailCustomers(), fetchRetailProducts(), fetchRetailActivities(),
       fetchWarehouses(),
       fetchRetailOrders(), fetchRetailInvoices(),
+      fetchCustomObjects(),
+      fetchStatusOptions(),
     ]).catch(() => {});
     fetchExchangeRates(appPreferences?.default_currency || 'INR');
   }, [session?.user?.id, supabase]);
@@ -3929,8 +4049,11 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
   // filing path works regardless of whether this is ever configured.
   const _DEF_EWAY_GSP = { provider:'', base_url:'', client_id:'', client_secret:'', username:'', password:'', gstin:'', is_sandbox:true, auth_token:'' };
   const _DEF_PREFS = { crm_enabled:true, cpq_enabled:true, b2c_mode:false, default_currency:'INR', date_format:'DD/MM/YYYY', fiscal_year_start:'April', global_search_enabled:false, business_mode:'B2B', business_type:'general', rental_blocking_statuses:['Draft','Pending','Completed'],
+    invoice_flow_mode:'status', invoice_trigger_statuses:['Completed'], rental_booking_prompt:true,
     region:'India', eway_bill_enabled:true, company_gstin:'', company_legal_name:'', company_address:'', company_city:'', company_pincode:'', company_state_code:'', eway_bill_gsp: _DEF_EWAY_GSP };
   const _cp = (p) => ({ crm_enabled:p?.crm_enabled??true, cpq_enabled:p?.cpq_enabled??true, b2c_mode:p?.b2c_mode??false, default_currency:p?.default_currency||'INR', date_format:p?.date_format||'DD/MM/YYYY', fiscal_year_start:p?.fiscal_year_start||'April', global_search_enabled:p?.global_search_enabled??false, business_mode:(p?.b2c_mode??false)?'B2C':'B2B', business_type:p?.business_type||'general', rental_blocking_statuses:p?.rental_blocking_statuses||['Draft','Pending','Completed'],
+    // Order -> Invoice flow (per tenant): 'status' = button once the order reaches a trigger status (the original behaviour), 'always' = button on any open order, 'auto' = invoice is created automatically when the order reaches a trigger status, 'off' = no conversion, invoices are created on their own.
+    invoice_flow_mode:p?.invoice_flow_mode||'status', invoice_trigger_statuses:(Array.isArray(p?.invoice_trigger_statuses)&&p.invoice_trigger_statuses.length)?p.invoice_trigger_statuses:['Completed'], rental_booking_prompt:p?.rental_booking_prompt??true,
     // B2B-only e-way bill / GST profile fields — additive, never read by any
     // retail code path, so defaulting them in here cannot change retail
     // behavior. region defaults to 'India' (matching this app's INR/GST-
@@ -4271,6 +4394,32 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
   // `eway_bills` table (see the SQL migration delivered alongside this fix)
   // — every call below is a no-op (or returns []) if that table doesn't
   // exist yet, so nothing breaks for a tenant who hasn't run the migration.
+  // Custom Objects — published tenant-defined objects (metadata only; each
+  // object's own records live in the shared custom_object_records table and
+  // are fetched by DynamicObjectPage itself via lib/customObjects.ts, same
+  // separation CRM/Retail already have between "what objects exist" and
+  // "that object's records").
+  const [customObjects, setCustomObjects] = useState<any[]>([]);
+  const fetchCustomObjects = async () => {
+    try {
+      const list = await fetchPublishedCustomObjects(true);
+      setCustomObjects(list || []);
+    } catch (e) { console.warn('[fetchCustomObjects]', e); }
+  };
+
+  // Tenant-configurable status lists (Page Layout Designer -> Status Values).
+  // Pushed into the lib/statusOptions registry that getStatusOptions /
+  // RETAIL_CONFIG read; the state bump re-renders consumers.
+  const [statusOptionRows, setStatusOptionRows] = useState<any[]>([]);
+  const fetchStatusOptions = async () => {
+    try {
+      const { data, error } = await tScope(supabase.from('status_options').select('*').order('sort_order'));
+      if (error) { console.warn('[fetchStatusOptions]', error.message); return; }
+      setStatusOverrides(data || []);
+      setStatusOptionRows(data || []);
+    } catch (e) { console.warn('[fetchStatusOptions]', e); }
+  };
+
   const [ewayBills, setEwayBills] = useState<any[]>([]);
   const fetchEwayBills = async (sourceType: 'order'|'invoice', sourceNumber: string) => {
     if (!supabase || !sourceNumber) return [];
@@ -4373,7 +4522,11 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     const totalDisc = items.reduce((s,i)=>s+Number(i.quantity||1)*Number(i.price||i.unit_price||0)*Number(i.discount||i.discount_pct||0)/100,0);
     const totalTax  = items.reduce((s,i)=>{const net=Number(i.quantity||1)*Number(i.price||i.unit_price||0)*(1-Number(i.discount||i.discount_pct||0)/100);return s+net*Number(i.tax_pct||0)/100;},0);
     const grandTotal = items.length ? (subtotal - totalDisc + totalTax) : Number(opp.amount||0);
-    const{data:inserted,error}=await supabase.from('quotations').insert([{...buildSystemFields(),quote_number:qNum,name:`Quote - ${opp.name}`,status:'Draft',version:1,customer:opp.customer||'',customer_id:opp.customerId||null,contact:opp.contact||'',contact_id:opp.contactId||null,opportunity_id:opp.id,currency:opp.currency||'INR',subtotal:Number(subtotal.toFixed(2)),total_discount:Number(totalDisc.toFixed(2)),total_tax:Number(totalTax.toFixed(2)),grand_total:Number(grandTotal.toFixed(2)),billing_address:opp.billingAddress||opp.billing_address||'',shipping_address:opp.shippingAddress||opp.shipping_address||'',payment_terms:opp.paymentTerms||opp.payment_terms||'',owner:opp.owner||currentUser.email,owner_id:opp.owner_id||currentUser.id}]).select().single(); if(error){showAlert('Failed: '+error.message);return null;} if(items.length)await supabase.from('quotation_line_items').insert(items.map((i,idx)=>({quote_number:qNum,product_name:i.product||i.product_name||'',product_id:i.product_id||null,quantity:Number(i.quantity||1),unit_price:Number(i.price||0),list_price:Number(i.list_price||i.price||0),discount_pct:Number(i.discount||i.discount_pct||0),tax_pct:Number(i.tax_pct||0),extended_price:Number(i.quantity||1)*Number(i.price||0)*(1-Number(i.discount||i.discount_pct||0)/100),sort_order:idx,configuration:i.configuration||{}}))); await autoSetCustomerStatus(opp.customerId, 'Prospect'); await supabase.from('opportunities').update({ status:'Negotiation', stage:'Negotiation', updated_at:new Date().toISOString() }).eq('opportunity_number', opp.id);
+    const quoPayload:any={...buildSystemFields(),quote_number:qNum,name:`Quote - ${opp.name}`,status:'Draft',version:1,customer:opp.customer||'',customer_id:opp.customerId||null,contact:opp.contact||'',contact_id:opp.contactId||null,opportunity_id:opp.id,currency:opp.currency||'INR',subtotal:Number(subtotal.toFixed(2)),total_discount:Number(totalDisc.toFixed(2)),total_tax:Number(totalTax.toFixed(2)),grand_total:Number(grandTotal.toFixed(2)),billing_address:opp.billingAddress||opp.billing_address||'',shipping_address:opp.shippingAddress||opp.shipping_address||'',payment_terms:opp.paymentTerms||opp.payment_terms||'',owner:opp.owner||currentUser.email,owner_id:opp.owner_id||currentUser.id};
+    // Copy Maps: Opportunity → Quotation
+    const cmQ = await fetchConversionRules(supabase, 'opportunity_to_quotation'); const cmQApplied:string[]=[];
+    applyFieldMapping(cmQ.header, opp, quoPayload, undefined, { db: true, applied: cmQApplied });
+    const{data:inserted,error}=await insertWithCopyMaps(supabase,'quotations',quoPayload,cmQApplied); if(error){showAlert('Failed: '+error.message);return null;} if(items.length)await supabase.from('quotation_line_items').insert(items.map((i,idx)=>({quote_number:qNum,product_name:i.product||i.product_name||'',product_id:i.product_id||null,quantity:Number(i.quantity||1),unit_price:Number(i.price||0),list_price:Number(i.list_price||i.price||0),discount_pct:Number(i.discount||i.discount_pct||0),tax_pct:Number(i.tax_pct||0),extended_price:Number(i.quantity||1)*Number(i.price||0)*(1-Number(i.discount||i.discount_pct||0)/100),sort_order:idx,configuration:i.configuration||{}}))); await autoSetCustomerStatus(opp.customerId, 'Prospect'); await supabase.from('opportunities').update({ status:'Negotiation', stage:'Negotiation', updated_at:new Date().toISOString() }).eq('opportunity_number', opp.id);
     await fetchOpportunities();
     await fetchQuotations(); return{...inserted, customerId: inserted.customer_id}; };
 
@@ -4426,7 +4579,7 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     const gt = sub - disc + tax - od + shippingCost;
     const ordId = generateId('ORD');
 
-    const { error } = await supabase.from('orders').insert([{
+    const ordPayload: any = {
       ...buildSystemFields(),
       order_number: ordId,
       name: quotation.name || `Order - ${quotation.display_number ? formatDisplayNumber('QUO', quotation.display_number) : 'New Quotation'}`,
@@ -4440,17 +4593,23 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
       subtotal: Number(sub.toFixed(2)), total_discount: Number((disc + od).toFixed(2)),
       total_tax: Number(tax.toFixed(2)), amount: Number(gt.toFixed(2)),
       status: 'Draft', owner: quotation.owner || currentUser.email, owner_id: quotation.owner_id || currentUser.id,
-    }]);
+    };
+    // Copy Maps: Quotation → Order (header + line items)
+    const cmR = await fetchConversionRules(supabase, 'quotation_to_order');
+    const cmRApplied: string[] = [];
+    applyFieldMapping(cmR.header, quotation, ordPayload, undefined, { db: true, applied: cmRApplied });
+    const { error } = await insertWithCopyMaps(supabase, 'orders', ordPayload, cmRApplied);
     if (error) { showAlert('Failed to create order: ' + error.message); return null; }
 
-    await supabase.from('order_line_items').insert(toOrder.map((i: any, idx: number) => ({
+    const ordLineRows = toOrder.map((i: any, idx: number) => ({
       order_number: ordId,
       product_name: i.product_name || '', product_code: i.product_code || '', description: i.description || '',
       quantity: i.qtyNow, price: Number(i.unit_price || i.price || 0), list_price: Number(i.unit_price || i.price || 0),
       discount: Number(i.discount_pct || i.discount || 0), tax_pct: Number(i.tax_pct || 0),
       extended_price: i.qtyNow * Number(i.unit_price || i.price || 0) * (1 - Number(i.discount_pct || 0) / 100),
       sort_order: idx, invoiced_qty: 0, custom_data: i.custom_data || {},
-    })));
+    }));
+    await supabase.from('order_line_items').insert(cmR.lines.length ? ordLineRows.map((row: any, k: number) => applyFieldMapping(cmR.lines, toOrder[k], row, undefined, { db: true })) : ordLineRows);
 
     // Update each quotation line item's running ordered_qty.
     await Promise.all(toOrder.map((i: any) =>
@@ -4746,7 +4905,7 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     retailCustomers, retailProducts, retailActivities, retailOrders, retailInvoices,
     fetchRetailCustomers, fetchRetailProducts, fetchRetailActivities, fetchRetailOrders, fetchRetailInvoices,
     fetchRetailLineItems, upsertRetailLineItems, checkRentalConflict, isRentalBlockingStatus, validateRentalDateRange,
-    createRetailRecord, updateRetailRecord, deleteRetailRecord, createRetailInvoiceFromOrder,
+    createRetailRecord, updateRetailRecord, deleteRetailRecord, createRetailInvoiceFromOrder, createBookingFromInvoice,
     fetchCustomers, fetchContacts, fetchProducts, fetchLeads, fetchOpportunities,
     fetchOrders, fetchInvoices, fetchActivities, fetchOrganizations, fetchBusinessUnits,
     fetchEnterpriseUsers, fetchUserGroups, fetchGroupMembers, fetchRoles, fetchPermissions,
@@ -4800,6 +4959,7 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     templateFormData, setTemplateFormData, editingTemplateId, setEditingTemplateId,
     printableQuoteRef, deleteRecord,
     ewayBills, fetchEwayBills, saveEwayBillRecord, updateEwayBillRecord, cancelEwayBillRecord,
+    customObjects, fetchCustomObjects, statusOptionRows, fetchStatusOptions,
 
   };
 

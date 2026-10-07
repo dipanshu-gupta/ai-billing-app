@@ -1,6 +1,76 @@
 // @ts-nocheck
 import { tenantScope } from './utils';
 
+// ─── RBAC push-down for server-side pagination ──────────────────────────────
+// applyDataSecurity() (context/AppContext.tsx) filters an already-fetched
+// JS array by the current user's data_scope. That's fine for the context's
+// own small "load once, keep in memory" arrays, but fetchServerPage() below
+// runs a fresh DB query + COUNT + range() per page — filtering AFTER that
+// query still returns a totalCount and a page of rows drawn from the WHOLE
+// tenant table, not the scoped subset, so a scoped user sees an inflated
+// "N records" total and can have their own rows scattered across pages
+// (page 1 may come back empty even though they have visible records on
+// page 3). This mirrors applyDataSecurity's exact same branches as real
+// PostgREST filters, applied to the query itself, so the count and the
+// page both reflect only what the user is allowed to see — same decision,
+// same fields (organization_id, business_unit_id, owner_id, owner,
+// created_by), just expressed as SQL instead of an array filter.
+//
+// `security` is context's `dataSecurityScope` (useApp().dataSecurityScope),
+// passed straight through by the caller — see CRMListPage.tsx/
+// RetailListPage.tsx/QuotationsPage.tsx for the call-site pattern.
+function applySecurityScope(q, security) {
+  if (!security) return q; // no security object passed — caller opted out (e.g. genuinely tenant-wide by design)
+  const { ready, isAdmin, dataScope, viewAll, viewTeam, userId, authUserId, userEmail, organizationId, businessUnitId } = security;
+  // Not loaded yet: fail closed exactly like applyDataSecurity does (returns
+  // [] until permissions resolve) — an impossible filter yields zero rows
+  // rather than a moment of unfiltered data.
+  if (!ready) return q.eq('id', '00000000-0000-0000-0000-000000000000');
+  if (isAdmin || dataScope === 'all' || viewAll) return q; // no filtering, same as applyDataSecurity
+
+  // Every id/email is guarded before being spliced into a filter string —
+  // an undefined/null value embedded literally (e.g. "organization_id.eq.
+  // undefined") would either throw a PostgREST 400 or, worse, silently
+  // fail to match anything, so a missing value just drops that OR branch
+  // instead (falls back to the "is.null" branch, same net effect as
+  // applyDataSecurity's `!r.organization_id || r.organization_id === undefined`).
+  const orgOr = (col) => [`${col}.is.null`, organizationId ? `${col}.eq.${organizationId}` : null].filter(Boolean).join(',');
+
+  // Same branch ORDER as applyDataSecurity: 'org' and 'bu' are checked
+  // first regardless of viewTeam, and viewTeam only matters for any other
+  // scope value (falling through to the 'own' default otherwise).
+  if (dataScope === 'org') {
+    return q.or(orgOr('organization_id'));
+  }
+  if (dataScope === 'bu') {
+    // Cartesian product of {org is null, org eq X} × {bu is null, bu eq Y}
+    // — mirrors applyDataSecurity's independent orgMatch/buMatch booleans
+    // ANDed together, expressed as SQL's and(...) groups ORed together.
+    const clauses = [];
+    for (const oClause of [`organization_id.is.null`, organizationId ? `organization_id.eq.${organizationId}` : null].filter(Boolean)) {
+      for (const bClause of [`business_unit_id.is.null`, businessUnitId ? `business_unit_id.eq.${businessUnitId}` : null].filter(Boolean)) {
+        clauses.push(`and(${oClause},${bClause})`);
+      }
+    }
+    return q.or(clauses.join(','));
+  }
+  if (viewTeam) {
+    return q.or(orgOr('organization_id'));
+  }
+  // Default 'own' scope — same OR set as applyDataSecurity: owned by this
+  // user (by id, auth id, or email), created by this user's email, or has
+  // no owner/created_by at all (unassigned records stay visible to all,
+  // matching the client-side behavior exactly).
+  const ors = [
+    userId ? `owner_id.eq.${userId}` : null,
+    authUserId ? `owner_id.eq.${authUserId}` : null,
+    userEmail ? `owner.eq.${userEmail}` : null,
+    userEmail ? `created_by.eq.${userEmail}` : null,
+    'and(owner_id.is.null,owner.is.null,created_by.is.null)',
+  ].filter(Boolean).join(',');
+  return q.or(ors);
+}
+
 // ─── Server-side list query ─────────────────────────────────────────────────
 // Replaces the old pattern of loading up to LIST_FETCH_LIMIT rows into
 // browser memory once, then filtering/sorting/paginating that fixed
@@ -34,11 +104,15 @@ export async function fetchServerPage(supabase, opts) {
     sortAscending = false,
     page = 1,
     pageSize = 25,
+    extraEq = null,  // { column: value } hard filters, e.g. custom_object_id
+    security = null, // useApp().dataSecurityScope — see applySecurityScope() above
   } = opts;
 
   if (!supabase || !table) return { data: [], error: null, totalCount: 0 };
 
   let q = tenantScope(supabase.from(table).select('*', { count: 'exact' }));
+  if (extraEq) for (const [k, v] of Object.entries(extraEq)) q = q.eq(k, v);
+  q = applySecurityScope(q, security);
 
   if (searchTerm && searchTerm.trim() && searchColumns.length) {
     const term = searchTerm.trim().replace(/[%,]/g, ''); // strip characters that would break the ilike/or syntax

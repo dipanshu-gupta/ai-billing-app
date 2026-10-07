@@ -51,6 +51,8 @@ export interface TaxRegimeConfig {
 // within this tax-agnostic utility.
 export function computeLineNet(line: any): number {
   const base = Number(line.quantity || 1) * Number(line.unit_price ?? line.price ?? 0) * (1 - Number(line.discount_pct ?? line.discount ?? 0) / 100);
+  // Fixed-price items (memberships, packages): the price entered is the all-in price for the period - never multiplied by days.
+  if (line.custom_data && line.custom_data.__fixed_price) return base;
   if (line.rental_start_date && line.rental_end_date) {
     const start = new Date(line.rental_start_date + 'T00:00:00');
     const end = new Date(line.rental_end_date + 'T00:00:00');
@@ -65,6 +67,7 @@ export function computeLineNet(line: any): number {
 // than the discount already baked in.
 export function computeLineGross(line: any): number {
   const base = Number(line.quantity || 1) * Number(line.unit_price ?? line.price ?? 0);
+  if (line.custom_data && line.custom_data.__fixed_price) return base;
   if (line.rental_start_date && line.rental_end_date) {
     const start = new Date(line.rental_start_date + 'T00:00:00');
     const end = new Date(line.rental_end_date + 'T00:00:00');

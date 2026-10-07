@@ -4,8 +4,13 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { useApp } from '@/context/AppContext';
 import { useObjectLabels } from '@/lib/useObjectLabels';
+import { relabelText, withTerminology } from '@/lib/useRelabel';
 import { formatCurrency } from '@/lib/utils';
 import { useAlert } from '@/components/shared/AlertProvider';
+import { useTenant } from '@/context/TenantContext';
+import {
+  fetchCustomObjectFields, createCustomObjectRecord, flattenCustomRecord, formatCustomDisplayNumber,
+} from '@/lib/customObjects';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 type Message = {
@@ -106,6 +111,40 @@ WHEN GENERATING A CHART:
 <chart>{"type":"bar|line|pie","title":"...","labels":[...],"data":[...]}</chart>`;
 };
 
+// ─── Custom Objects → AI context ──────────────────────────────────────────────
+// Custom objects are described to the model (name, fields, record count, a
+// sample of recent records) and are searchable by the user's question, so the
+// advisor can analyse them and create records in them like any standard object.
+const compactCustomRecord = (obj, fields, r) => {
+  const flat = flattenCustomRecord(fields, r);
+  const o: any = { number: formatCustomDisplayNumber(obj, r.display_number) || r.record_number, name: r.name || '', status: r.status || '', owner: r.owner_name || r.owner || '' };
+  fields.forEach(f => {
+    let v = flat[f.api_name];
+    if (Array.isArray(v)) v = v.join(', ');
+    if (v !== undefined && v !== null && v !== '' && f.field_type !== 'lookup') o[f.label] = v;
+  });
+  if (r.created_at) o.created = String(r.created_at).slice(0, 10);
+  Object.keys(o).forEach(k => (o[k] === '' || o[k] === undefined) && delete o[k]);
+  return JSON.stringify(o);
+};
+
+const buildCustomObjectsPrompt = (summaries) => {
+  if (!summaries.length) return '';
+  const blocks = summaries.map(({ obj, fields, count, rows }) => {
+    const fieldList = fields.map(f => `${f.label} [${f.api_name}, ${f.field_type}${f.required ? ', required' : ''}${f.field_type === 'single_select' && f.options?.length ? ': ' + f.options.join('/') : ''}]`).join('; ');
+    return `• ${obj.plural_label} (object key: custom_${obj.api_name}) — ${count} record${count === 1 ? '' : 's'}
+  Fields: Name [name]${fieldList ? '; ' + fieldList : ''}; Status [status]; Owner
+  Recent records:
+${rows.length ? rows.map(r => '  ' + compactCustomRecord(obj, fields, r)).join('\n') : '  (none yet)'}`;
+  }).join('\n');
+  return `
+
+CUSTOM OBJECTS (tenant-defined; treat exactly like the standard objects for analysis, counts, lists and reports):
+${blocks}
+To create a record in a custom object, add at the very end:
+<action>{"type":"create_record","object":"custom_<api_name>","data":{"name":"...","<field api_name>":"value"}}</action>`;
+};
+
 // ─── Action Parser ────────────────────────────────────────────────────────────
 const parseResponse = (text) => {
   let action = null;
@@ -178,12 +217,16 @@ function MessageBubble({ msg, onActionExecuted }) {
   const [executing, setExecuting] = useState(false);
   const [executed,  setExecuted]  = useState(false);
   const [actionMsg, setActionMsg] = useState('');
-  const { createRecord, updateRecord, createRetailRecord } = useApp();
+  const { createRecord, updateRecord, createRetailRecord, customObjects, currentUser, hasPermission } = useApp();
+  const { supabase, tenant } = useTenant();
+  const { showAlert } = useAlert();
   const { getObjectLabel } = useObjectLabels();
 
-  const { cleanText, action, chart } = parseResponse(msg.content);
+  const { cleanText: _rawText, action, chart } = parseResponse(msg.content);
+  const cleanText = msg.role === 'assistant' ? relabelText(_rawText) : _rawText;
 
   const OBJECT_LABELS = {
+    ...Object.fromEntries((customObjects || []).map(o => [`custom_${o.api_name}`, o.singular_label])),
     customers:getObjectLabel('customers','Customer','singular'), leads:'Lead', opportunities:'Opportunity', contacts:'Contact',
     activities:'Activity', orders:'Order', invoices:'Invoice', quotations:'Quotation',
     products:'Product', retailCustomers:getObjectLabel('retailCustomers','Retail Customer','singular'), retailProducts:getObjectLabel('retailProducts','Product','singular'),
@@ -202,7 +245,25 @@ function MessageBubble({ msg, onActionExecuted }) {
     setExecuting(true);
     try {
       const isRetail = action.object?.startsWith('retail');
-      if (action.type === 'create_record') {
+      const customObj = action.object?.startsWith('custom_') ? (customObjects || []).find(o => `custom_${o.api_name}` === action.object) : null;
+      if (action.type === 'create_record' && action.object?.startsWith('custom_')) {
+        if (!customObj) throw new Error('Unknown custom object.');
+        if (hasPermission && !hasPermission(`${action.object}_create`)) throw new Error(`You don't have permission to create ${customObj.plural_label}.`);
+        const fields = await fetchCustomObjectFields(customObj.id, 'header');
+        const d = action.data || {};
+        // accept either the field api_name or its label as the key
+        const values: any = { __name: d.name || d.Name || '', __status: d.status || d.Status || 'Active' };
+        fields.forEach(f => {
+          const v = d[f.api_name] ?? d[f.label];
+          if (v !== undefined) values[f.api_name] = v;
+        });
+        if (!String(values.__name).trim()) throw new Error('A name is required.');
+        const rec = await createCustomObjectRecord({ supabase, tenantId: tenant?.id, currentUser, showAlert }, customObj, fields, values, [], []);
+        if (!rec) throw new Error('The record could not be saved.');
+        setExecuted(true);
+        setActionMsg(`✅ ${customObj.singular_label} created successfully!`);
+        if (onActionExecuted) onActionExecuted(action);
+      } else if (action.type === 'create_record') {
         if (isRetail) await createRetailRecord(action.object, action.data, []);
         else await createRecord(action.object, action.data, []);
         setExecuted(true);
@@ -348,12 +409,14 @@ export default function AIAdvisorChat() {
     currentUser, customers, leads, opportunities, orders, invoices,
     contacts, activities, quotations, products, appPreferences,
     retailCustomers, retailProducts, retailOrders, retailInvoices, retailActivities,
+    customObjects, hasPermission, applyDataSecurity,
   } = useApp();
+  const { supabase } = useTenant();
   const { getObjectLabel } = useObjectLabels();
 
   const isB2C = appPreferences?.b2c_mode === true;
 
-  const QUICK_PROMPTS = isB2C ? B2C_PROMPTS : B2B_PROMPTS;
+  const QUICK_PROMPTS = (isB2C ? B2C_PROMPTS : B2B_PROMPTS).map(q => ({ label: relabelText(q.label), prompt: relabelText(q.prompt) }));
 
   const [open,       setOpen]       = useState(false);
   const [minimized,  setMinimized]  = useState(false);
@@ -395,6 +458,47 @@ export default function AIAdvisorChat() {
   const crmData = isB2C
     ? { retailCustomers: enrichedRetailCustomers, retailProducts, retailOrders, retailInvoices, retailActivities }
     : { customers: enrichedCustomers, leads, opportunities, orders, invoices, contacts, activities, quotations, products };
+
+  // Custom-object snapshot for the model: refreshed when the chat opens and
+  // whenever the set of objects changes. Only objects the user may view, and
+  // only records their data-security scope allows.
+  const customSummariesRef = useRef([]);
+  const loadCustomSummaries = async () => {
+    if (!supabase) return [];
+    const mode = isB2C ? 'b2c' : 'b2b';
+    const visible = (customObjects || []).filter(o => (o.module === 'both' || o.module === mode) && (!hasPermission || hasPermission(`custom_${o.api_name}_view`)));
+    const out = [];
+    for (const obj of visible.slice(0, 12)) {
+      try {
+        const fields = await fetchCustomObjectFields(obj.id, 'header');
+        const { data, count } = await supabase.from('custom_object_records').select('*', { count: 'exact' }).eq('custom_object_id', obj.id).order('created_at', { ascending: false }).limit(40);
+        const rows = applyDataSecurity ? applyDataSecurity(data || []) : (data || []);
+        out.push({ obj, fields, count: count ?? rows.length, rows: rows.slice(0, 25) });
+      } catch (e) { /* skip an object that fails to load */ }
+    }
+    customSummariesRef.current = out;
+    return out;
+  };
+  useEffect(() => { if (open) loadCustomSummaries(); }, [open, (customObjects || []).length, isB2C]);
+
+  // Server-side lookup of custom records matching the user's question (the
+  // snapshot above only holds the most recent ones).
+  const findRelevantCustomRecords = async (query) => {
+    const tokens = String(query).toLowerCase().split(/[^a-z0-9@.+-]+/).filter(t => t.length >= 3).slice(0, 4);
+    const sums = customSummariesRef.current;
+    if (!tokens.length || !sums.length || !supabase) return '';
+    const lines = [];
+    for (const { obj, fields } of sums) {
+      const textCols = fields.filter(f => ['text', 'email', 'url'].includes(f.field_type) && /^text_\d+$/.test(f.storage_column)).slice(0, 6).map(f => f.storage_column);
+      const ors = tokens.flatMap(tk => ['name', 'record_number', ...textCols].map(c => `${c}.ilike.%${tk.replace(/[%,()]/g, '')}%`)).join(',');
+      try {
+        const { data } = await supabase.from('custom_object_records').select('*').eq('custom_object_id', obj.id).or(ors).limit(6);
+        const rows = applyDataSecurity ? applyDataSecurity(data || []) : (data || []);
+        rows.forEach(r => lines.push(`{"type":"${obj.plural_label}",` + compactCustomRecord(obj, fields, r).slice(1)));
+      } catch (e) { /* ignore */ }
+    }
+    return lines.length ? `\n\nMATCHED CUSTOM-OBJECT RECORDS (real data relevant to the user's latest question):\n${lines.slice(0, 12).join('\n')}` : '';
+  };
 
   useEffect(() => { messagesEnd.current?.scrollIntoView({ behavior:'smooth' }); }, [messages, open]);
 
@@ -453,8 +557,11 @@ export default function AIAdvisorChat() {
     setLoading(true);
 
     try {
-      const systemPrompt = buildSystemPrompt(userWithRole, crmData, appPreferences, isB2C, getObjectLabel)
-        + findRelevantRecords(userText);
+      const customSums = customSummariesRef.current.length ? customSummariesRef.current : await loadCustomSummaries();
+      const systemPrompt = withTerminology(buildSystemPrompt(userWithRole, crmData, appPreferences, isB2C, getObjectLabel))
+        + buildCustomObjectsPrompt(customSums)
+        + findRelevantRecords(userText)
+        + await findRelevantCustomRecords(userText);
       // Cap history to the last 12 turns — keeps the model sharp and within context
       const apiMessages = newMessages
         .filter((m,i) => !(m.role==='assistant' && i===0))

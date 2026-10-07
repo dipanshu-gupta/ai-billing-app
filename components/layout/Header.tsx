@@ -1,5 +1,6 @@
 // @ts-nocheck
 'use client';
+import { relabelText } from '@/lib/useRelabel';
 import React, { useRef, useEffect, useState } from 'react';
 import { useApp } from '@/context/AppContext';
 import { getPageLabel } from '@/lib/utils';
@@ -7,32 +8,100 @@ import { t } from '@/lib/i18n';
 import GlobalSearch from '@/components/layout/GlobalSearch';
 import { Bot, User, Info, LogOut, ClipboardList, Settings, CheckCircle2, Clock, Bell } from 'lucide-react';
 
+// Page mapping from record_type to app page key — module scope since it's
+// static and now shared between the dropdown and the full Notification
+// Center below.
+const NOTIFICATION_PAGE_MAP = {
+  lead: 'leads', leads: 'leads',
+  opportunity: 'opportunities', opportunities: 'opportunities',
+  customer: 'customers', customers: 'customers',
+  contact: 'contacts', contacts: 'contacts',
+  order: 'orders', orders: 'orders',
+  invoice: 'invoices', invoices: 'invoices',
+  quotation: 'quotations', quotations: 'quotations',
+  activity: 'activities', activities: 'activities',
+  product: 'products', products: 'products',
+  // Retail (B2C) object types were entirely missing here — a notification
+  // created for e.g. a retail order (record_type: 'retailOrders', the exact
+  // page key retail workflow/assignment/SLA rules use as objectType) had no
+  // entry, so resolveNotificationTarget() always returned null for it and
+  // the row rendered as non-navigable no matter what. This is why clicking
+  // a retail notification did nothing even though CRM notifications already
+  // worked.
+  retailCustomers: 'retailCustomers', retailProducts: 'retailProducts',
+  retailActivities: 'retailActivities', retailOrders: 'retailOrders',
+  retailInvoices: 'retailInvoices',
+  workflow: null, assignment: null, sla: null, approval: 'approvals',
+};
+
+const NOTIFICATION_TYPE_ICONS = {
+  assignment: ClipboardList, workflow: Settings, approval: CheckCircle2,
+  sla: Clock, notification: Bell, info: Info,
+};
+
+// B2B/B2C record-type visibility filtering — shared between the dropdown
+// and the full Notification Center so "View all" doesn't briefly show
+// notifications for the other business mode before navigating away.
+const B2B_RECORD_TYPES = new Set([
+  'lead','leads','opportunity','opportunities','customer','customers',
+  'contact','contacts','order','orders','invoice','invoices',
+  'quotation','quotations','activity','activities','product','products',
+]);
+const B2C_RECORD_TYPES = new Set([
+  'retailCustomers','retailProducts','retailActivities',
+  'retailOrders','retailInvoices',
+]);
+
+function visibleNotificationsFor(notifications, isB2C) {
+  return (notifications || []).filter(n => {
+    if (!n.record_type) return true; // system notifications always visible
+    if (isB2C) return !B2B_RECORD_TYPES.has(n.record_type);
+    return !B2C_RECORD_TYPES.has(n.record_type);
+  });
+}
+
+function notificationTimeAgo(ts) {
+  if (!ts) return '';
+  const diff = Date.now() - new Date(ts).getTime();
+  const mins  = Math.floor(diff / 60000);
+  const hours = Math.floor(diff / 3600000);
+  const days  = Math.floor(diff / 86400000);
+  if (mins < 1)   return 'just now';
+  if (mins < 60)  return `${mins}m ago`;
+  if (hours < 24) return `${hours}h ago`;
+  return `${days}d ago`;
+}
+
+// Resolves a notification's target record so both the dropdown and the
+// full Notification Center can navigate to it the same way — extracted so
+// that logic (and the id-field guessing it has to do, since notifications
+// only ever store one generic record_id) lives in exactly one place.
+function resolveNotificationTarget(n, recordArrays) {
+  const page = NOTIFICATION_PAGE_MAP[n.record_type];
+  if (!page || !n.record_id) return null;
+  if (page === 'approvals') return { page: 'approvals', record: null };
+  const arr = recordArrays[page] || [];
+  const fullRecord = arr.find(r =>
+    r.id === n.record_id || r._uuid === n.record_id || r.lead_number === n.record_id ||
+    r.opportunity_number === n.record_id || r.customer_number === n.record_id ||
+    r.order_number === n.record_id || r.invoice_number === n.record_id ||
+    r.quote_number === n.record_id || r.contact_number === n.record_id ||
+    r.activity_number === n.record_id || r.product_number === n.record_id
+  );
+  return { page, record: fullRecord || { id: n.record_id } };
+}
+
 function NotificationBell() {
   const {
     notifications, markNotificationRead, markAllNotificationsRead,
     leads, opportunities, customers, contacts, orders,
     invoices, quotations, activities, products,
-    appPreferences,
+    retailCustomers, retailProducts, retailActivities, retailOrders, retailInvoices,
+    appPreferences, notificationDrawerOpen, setNotificationDrawerOpen,
   } = useApp();
   const isB2C = appPreferences?.b2c_mode === true;
 
-  // B2B record types — hidden in B2C mode
-  const B2B_RECORD_TYPES = new Set([
-    'lead','leads','opportunity','opportunities','customer','customers',
-    'contact','contacts','order','orders','invoice','invoices',
-    'quotation','quotations','activity','activities','product','products',
-  ]);
-  // B2C record types — hidden in B2B mode
-  const B2C_RECORD_TYPES = new Set([
-    'retailCustomers','retailProducts','retailActivities',
-    'retailOrders','retailInvoices',
-  ]);
-
-  const visibleNotifications = (notifications || []).filter(n => {
-    if (!n.record_type) return true; // system notifications always visible
-    if (isB2C) return !B2B_RECORD_TYPES.has(n.record_type);
-    return !B2C_RECORD_TYPES.has(n.record_type);
-  });
+  const visibleNotifications = visibleNotificationsFor(notifications, isB2C);
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
   const unread = visibleNotifications.filter(n => !n.is_read).length;
@@ -43,75 +112,37 @@ function NotificationBell() {
     return () => document.removeEventListener('mousedown', h);
   }, []);
 
-  // Page mapping from record_type to app page key
-  const PAGE_MAP = {
-    lead: 'leads', leads: 'leads',
-    opportunity: 'opportunities', opportunities: 'opportunities',
-    customer: 'customers', customers: 'customers',
-    contact: 'contacts', contacts: 'contacts',
-    order: 'orders', orders: 'orders',
-    invoice: 'invoices', invoices: 'invoices',
-    quotation: 'quotations', quotations: 'quotations',
-    activity: 'activities', activities: 'activities',
-    product: 'products', products: 'products',
-    workflow: null, assignment: null, sla: null, approval: 'approvals',
-  };
-
-  const TYPE_ICONS = {
-    assignment: ClipboardList, workflow: Settings, approval: CheckCircle2,
-    sla: Clock, notification: Bell, info: Info,
-  };
+  const PAGE_MAP = NOTIFICATION_PAGE_MAP;
+  const TYPE_ICONS = NOTIFICATION_TYPE_ICONS;
+  const timeAgo = notificationTimeAgo;
 
   const handleClick = async (n) => {
     // Mark as read first
     if (!n.is_read) await markNotificationRead(n.id);
-
-    const page = PAGE_MAP[n.record_type];
-    if (!page || !n.record_id) { setOpen(false); return; }
-
     setOpen(false);
 
-    if (page === 'approvals') {
+    const target = resolveNotificationTarget(n, {
+      leads, opportunities, customers, contacts, orders,
+      invoices, quotations, activities, products,
+      retailCustomers, retailProducts, retailActivities, retailOrders, retailInvoices,
+    });
+    if (!target) return;
+
+    if (target.page === 'approvals') {
       // Use the same event mechanism as global search / Customer360
       window.dispatchEvent(new CustomEvent('open-record', { detail: { page: 'approvals' } }));
       return;
     }
 
-    // Look up full record from local arrays
-    const RECORD_ARRAYS: Record<string, any[]> = {
-      leads, opportunities, customers, contacts, orders,
-      invoices, quotations, activities, products,
-    };
-    const arr = RECORD_ARRAYS[page] || [];
-    const fullRecord = arr.find(r =>
-      r.id === n.record_id || r._uuid === n.record_id || r.lead_number === n.record_id ||
-      r.opportunity_number === n.record_id || r.customer_number === n.record_id ||
-      r.order_number === n.record_id || r.invoice_number === n.record_id ||
-      r.quote_number === n.record_id || r.contact_number === n.record_id ||
-      r.activity_number === n.record_id || r.product_number === n.record_id
-    );
-
     // Dispatch open-crm-record event — handled by page.tsx which has the real setActivePage
     window.dispatchEvent(new CustomEvent('open-crm-record', {
-      detail: { page, record: fullRecord || { id: n.record_id }, tab: null }
+      detail: { page: target.page, record: target.record, tab: null }
     }));
   };
 
   const handleMarkAll = async (e) => {
     e.stopPropagation();
     await markAllNotificationsRead();
-  };
-
-  const timeAgo = (ts) => {
-    if (!ts) return '';
-    const diff = Date.now() - new Date(ts).getTime();
-    const mins  = Math.floor(diff / 60000);
-    const hours = Math.floor(diff / 3600000);
-    const days  = Math.floor(diff / 86400000);
-    if (mins < 1)   return 'just now';
-    if (mins < 60)  return `${mins}m ago`;
-    if (hours < 24) return `${hours}h ago`;
-    return `${days}d ago`;
   };
 
   return (
@@ -180,12 +211,12 @@ function NotificationBell() {
                       <div className="flex-1 min-w-0">
                         <div className="flex items-start justify-between gap-2">
                           <p className={`text-sm leading-tight ${!n.is_read ? 'font-semibold text-[#0F172A]' : 'font-medium text-gray-700'}`}>
-                            {n.title}
+                            {relabelText(n.title)}
                           </p>
                           <span className="text-[10px] text-gray-400 flex-shrink-0 mt-0.5">{timeAgo(n.created_at)}</span>
                         </div>
                         {(n.body || n.message) && (
-                          <p className="text-xs text-gray-500 mt-0.5 line-clamp-2">{n.body || n.message}</p>
+                          <p className="text-xs text-gray-500 mt-0.5 line-clamp-2">{relabelText(n.body || n.message)}</p>
                         )}
                         {isNavigable && (
                           <p className="text-[10px] text-blue-500 mt-1 font-medium">Click to open record →</p>
@@ -199,13 +230,154 @@ function NotificationBell() {
           </div>
 
           {/* Footer */}
-          {visibleNotifications.length > 0 && (
-            <div className="px-4 py-2.5 border-t border-gray-100 bg-gray-50 text-center">
-              <span className="text-xs text-gray-400">{visibleNotifications.length} total notification{visibleNotifications.length !== 1 ? 's' : ''}</span>
-            </div>
-          )}
+          <div className="px-4 py-2.5 border-t border-gray-100 bg-gray-50 flex items-center justify-between">
+            <span className="text-xs text-gray-400">
+              {visibleNotifications.length > 0
+                ? `${visibleNotifications.length} shown here`
+                : 'No notifications yet'}
+            </span>
+            <button
+              onClick={() => { setOpen(false); setNotificationDrawerOpen(true); }}
+              className="text-xs font-semibold text-blue-600 hover:text-blue-800 transition-colors"
+            >
+              View all →
+            </button>
+          </div>
         </div>
       )}
+
+      {notificationDrawerOpen && <NotificationCenter onClose={() => setNotificationDrawerOpen(false)} />}
+    </div>
+  );
+}
+
+// ─── Notification Center — full history, beyond the dropdown's 20-row preview ──
+function NotificationCenter({ onClose }) {
+  const {
+    notifications, notificationsHasMore, loadMoreNotifications,
+    markNotificationRead, markAllNotificationsRead,
+    leads, opportunities, customers, contacts, orders,
+    invoices, quotations, activities, products,
+    retailCustomers, retailProducts, retailActivities, retailOrders, retailInvoices,
+    appPreferences,
+  } = useApp();
+  const isB2C = appPreferences?.b2c_mode === true;
+  const [tab, setTab] = useState<'all' | 'unread'>('all');
+  const [loadingMore, setLoadingMore] = useState(false);
+
+  const visibleNotifications = visibleNotificationsFor(notifications, isB2C);
+  const shown = tab === 'unread' ? visibleNotifications.filter(n => !n.is_read) : visibleNotifications;
+  const unread = visibleNotifications.filter(n => !n.is_read).length;
+
+  const handleClick = async (n) => {
+    if (!n.is_read) await markNotificationRead(n.id);
+    const target = resolveNotificationTarget(n, {
+      leads, opportunities, customers, contacts, orders,
+      invoices, quotations, activities, products,
+      retailCustomers, retailProducts, retailActivities, retailOrders, retailInvoices,
+    });
+    if (!target) return;
+    onClose();
+    if (target.page === 'approvals') {
+      window.dispatchEvent(new CustomEvent('open-record', { detail: { page: 'approvals' } }));
+      return;
+    }
+    window.dispatchEvent(new CustomEvent('open-crm-record', {
+      detail: { page: target.page, record: target.record, tab: null }
+    }));
+  };
+
+  const handleLoadMore = async () => {
+    setLoadingMore(true);
+    try { await loadMoreNotifications(); } finally { setLoadingMore(false); }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-start justify-end z-[300]" onClick={onClose}>
+      <div
+        className="bg-white h-full w-full max-w-md shadow-2xl flex flex-col"
+        onClick={e => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="px-5 py-4 bg-gradient-to-r from-[#0F172A] to-blue-900 flex items-center justify-between flex-shrink-0">
+          <div>
+            <h3 className="text-white font-bold text-base">Notification Center</h3>
+            <p className="text-blue-300 text-xs mt-0.5">{unread} unread of {visibleNotifications.length}</p>
+          </div>
+          <button onClick={onClose} className="text-white/70 hover:text-white text-2xl leading-none px-2">×</button>
+        </div>
+
+        {/* Tabs + mark-all */}
+        <div className="px-5 py-3 border-b border-gray-100 flex items-center justify-between flex-shrink-0">
+          <div className="flex gap-1 bg-gray-100 rounded-xl p-1">
+            {(['all', 'unread'] as const).map(k => (
+              <button
+                key={k}
+                onClick={() => setTab(k)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${tab === k ? 'bg-white text-[#0F172A] shadow-sm' : 'text-gray-500'}`}
+              >
+                {k === 'all' ? 'All' : `Unread (${unread})`}
+              </button>
+            ))}
+          </div>
+          {unread > 0 && (
+            <button onClick={() => markAllNotificationsRead()} className="text-xs font-semibold text-blue-600 hover:text-blue-800">
+              Mark all read
+            </button>
+          )}
+        </div>
+
+        {/* List */}
+        <div className="flex-1 overflow-y-auto divide-y divide-gray-50">
+          {!shown.length ? (
+            <div className="px-5 py-16 text-center">
+              <div className="flex justify-center mb-2 text-gray-300"><Bell className="w-10 h-10"/></div>
+              <p className="text-gray-400 text-sm">{tab === 'unread' ? 'No unread notifications' : 'No notifications yet'}</p>
+            </div>
+          ) : (
+            shown.map(n => {
+              const page = NOTIFICATION_PAGE_MAP[n.record_type];
+              const isNavigable = page && n.record_id;
+              const IconCmp = NOTIFICATION_TYPE_ICONS[n.type] || Bell;
+              return (
+                <div
+                  key={n.id}
+                  onClick={() => handleClick(n)}
+                  className={`px-5 py-4 transition-all ${isNavigable ? 'cursor-pointer hover:bg-blue-50' : 'cursor-default'} ${!n.is_read ? 'bg-blue-50/60' : 'bg-white'}`}
+                >
+                  <div className="flex items-start gap-3">
+                    <div className="relative flex-shrink-0 mt-0.5">
+                      <IconCmp className="w-[18px] h-[18px] text-gray-500" strokeWidth={1.75}/>
+                      {!n.is_read && <span className="absolute -top-0.5 -right-0.5 w-2 h-2 bg-blue-500 rounded-full"/>}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-start justify-between gap-2">
+                        <p className={`text-sm leading-tight ${!n.is_read ? 'font-semibold text-[#0F172A]' : 'font-medium text-gray-700'}`}>{relabelText(n.title)}</p>
+                        <span className="text-[10px] text-gray-400 flex-shrink-0 mt-0.5">{notificationTimeAgo(n.created_at)}</span>
+                      </div>
+                      {(n.body || n.message) && <p className="text-xs text-gray-500 mt-0.5">{relabelText(n.body || n.message)}</p>}
+                      {isNavigable && <p className="text-[10px] text-blue-500 mt-1 font-medium">Click to open record →</p>}
+                    </div>
+                  </div>
+                </div>
+              );
+            })
+          )}
+        </div>
+
+        {/* Footer — pagination */}
+        {tab === 'all' && notificationsHasMore && (
+          <div className="px-5 py-3 border-t border-gray-100 flex-shrink-0">
+            <button
+              onClick={handleLoadMore}
+              disabled={loadingMore}
+              className="w-full py-2.5 rounded-xl border border-gray-200 text-sm font-semibold text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+            >
+              {loadingMore ? 'Loading…' : 'Load older notifications'}
+            </button>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -302,15 +474,13 @@ export default function Header({ activePage, onNavigate }) {
               {(appearance?.company_name||'BP').slice(0,2).toUpperCase()}
             </div>
         }
-        {!appearance?.company_logo_url && (
-          <div>
-            <div className="text-base font-bold text-white leading-tight">{appearance?.company_name||'Umbrella Suite'}</div>
-            <p className="text-xs text-blue-300 leading-tight h-4" suppressHydrationWarning>{today}</p>
-          </div>
-        )}
-        {appearance?.company_logo_url && (
-          <p className="text-xs text-blue-300 leading-tight" suppressHydrationWarning>{today}</p>
-        )}
+        {/* Company name always sits above the date - previously it was only
+            rendered when NO logo was uploaded, so a tenant with a logo saw
+            just the date and their configured company name never appeared. */}
+        <div className="min-w-0">
+          <div className="text-base font-bold text-white leading-tight truncate max-w-[220px]">{appearance?.company_name||'Umbrella Suite'}</div>
+          <p className="text-xs text-blue-300 leading-tight h-4" suppressHydrationWarning>{today}</p>
+        </div>
       </div>
 
       {/* Center: Global Search */}

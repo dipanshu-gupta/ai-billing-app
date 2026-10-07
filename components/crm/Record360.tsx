@@ -2,8 +2,11 @@
 'use client';
 import { useState, useEffect, useCallback } from 'react';
 import { useApp } from '@/context/AppContext';
+import { useObjectLabels } from '@/lib/useObjectLabels';
 import { useTenant } from '@/context/TenantContext';
 import { getStatusColor, formatCurrency, formatDisplayNumber } from '@/lib/utils';
+import { useRelatedCols, withKeys, viewPermFor } from '@/components/shared/Related360';
+import CustomRelatedLists from '@/components/shared/CustomRelatedLists';
 
 // ─── Shared helpers ────────────────────────────────────────────────────────────
 const fmt = (n: any) => formatCurrency(n||0);
@@ -15,7 +18,9 @@ const Pill = ({ status }: { status: string }) => (
 );
 
 // ─── Generic 360 Table ────────────────────────────────────────────────────────
-function Section360Table({ icon, label, data, cols, createLabel, onOpen, onCreate }) {
+function Section360Table({ page, icon, label, data, cols: baseCols, createLabel, onOpen, onCreate }) {
+  // Columns follow the Page Layout Designer (hidden / relabelled fields) and pick up published custom fields.
+  const cols = useRelatedCols(page, withKeys(baseCols));
   return (
     <div className="bg-white rounded-[20px] border border-blue-100 shadow-sm overflow-hidden">
       <div className="bg-gradient-to-r from-[#0F172A] to-blue-900 px-5 py-3.5 flex items-center justify-between">
@@ -219,6 +224,25 @@ function RecordTeam({ recordType, recordId }) {
 
 // ─── Generic 360 layout ────────────────────────────────────────────────────────
 function Base360({ record, recordType, sections, onSubRecordOpen, onCreateFor }) {
+  // Tenant renames (Customers -> Patients, ...) apply to every related-list tab and create button here too.
+  const { getObjectLabel } = useObjectLabels();
+  const { hasPermission, applyDataSecurity } = useApp();
+  const DEFAULTS_360 = { customers:['Customer','Customers'], contacts:['Contact','Contacts'], leads:['Lead','Leads'], opportunities:['Opportunity','Opportunities'],
+    activities:['Activity','Activities'], quotations:['Quotation','Quotations'], orders:['Order','Orders'], invoices:['Invoice','Invoices'], products:['Product','Products'] };
+  sections = Object.fromEntries(Object.entries(sections || {}).map(([k, sec]: [string, any]) => {
+    const key = sec.page || k; const d = DEFAULTS_360[key];
+    // Respect role permissions and data-security scope exactly like the list pages do.
+    const canView = !hasPermission || hasPermission(viewPermFor(key));
+    const secured = { ...sec, data: sec.data && applyDataSecurity ? applyDataSecurity(sec.data) : sec.data, hidden: !canView };
+    if (!d) return [k, secured];
+    return [k, {
+      ...secured,
+      ...sec,
+      label: (sec.label === d[0] || sec.label === d[1]) ? getObjectLabel(key, sec.label, sec.label === d[0] ? 'singular' : 'plural') : sec.label,
+      createLabel: sec.createLabel ? getObjectLabel(key, sec.createLabel, 'singular') : sec.createLabel,
+    }];
+  }));
+  sections = Object.fromEntries(Object.entries(sections).filter(([, s]: [string, any]) => !s.hidden));
   const [tab, setTab] = useState(Object.keys(sections)[0] || 'team');
   const active = sections[tab];
 
@@ -250,6 +274,7 @@ function Base360({ record, recordType, sections, onSubRecordOpen, onCreateFor })
         <RecordTeam recordType={recordType} recordId={record.id} />
       ) : active ? (
         <Section360Table
+          page={active.page || tab}
           icon={active.icon}
           label={active.label}
           data={active.data}
@@ -259,6 +284,8 @@ function Base360({ record, recordType, sections, onSubRecordOpen, onCreateFor })
           onCreate={active.createLabel ? () => onCreateFor && onCreateFor(tab) : undefined}
         />
       ) : null}
+      {/* Custom objects that look up to this record show up here too (zero-config related lists) */}
+      {record?.id && <CustomRelatedLists parentKind="standard" parentKey={recordType} parentId={record.id} parentName={record.name} parentPage={recordType} parentRecord={record} returnTab="360" />}
     </div>
   );
 }

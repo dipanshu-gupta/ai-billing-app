@@ -22,6 +22,7 @@ import QuotationsPage from '@/components/quotations/QuotationsPage';
 import AIAdvisorChat from '@/components/ai/AIAdvisorChat';
 import FastReportsPage from '@/components/reports/FastReportsPage';
 import RecordDetailPanel from '@/components/crm/RecordDetailPanel';
+import DynamicObjectPage from '@/components/shared/DynamicObjectPage';
 import Modal from '@/components/shared/Modal';
 import { inputClass, Button } from '@/components/shared';
 
@@ -382,7 +383,7 @@ const NON_CRM_PAGES = ['home', 'dashboard', 'approvals', 'adminTools', 'quotatio
 const RETAIL_PAGES = ['retailCustomers', 'retailProducts', 'retailActivities', 'retailOrders', 'retailInvoices'];
 
 function AppShell() {
-  const { session, authLoading, appPreferences, setPendingReturnTo, setPendingRecord } = useApp();
+  const { session, authLoading, appPreferences, setPendingReturnTo, setPendingRecord, customObjects } = useApp();
   const { tenant } = useTenant();
   // Persist active page in sessionStorage so refresh doesn't reset to home
   const [activePage, setActivePage] = useState(() => {
@@ -466,8 +467,12 @@ function AppShell() {
     return <LoginPage />;
   }
 
+  // h-screen + overflow-hidden bounds this row to the viewport, so <main>
+  // below is the only thing that scrolls — previously this was min-h-screen
+  // (unbounded), which meant the whole document scrolled and took the
+  // "sticky" sidebar along with it instead of pinning it.
   return (
-    <div className="flex min-h-screen bg-gradient-to-br from-slate-50 to-blue-50">
+    <div className="flex h-screen overflow-hidden bg-gradient-to-br from-slate-50 to-blue-50">
       <Sidebar
         activePage={activePage}
         setActivePage={setActivePage}
@@ -487,6 +492,11 @@ function AppShell() {
           {activePage === 'reports' && <FastReportsPage />}
           {activePage === 'approvals' && <ApprovalsInboxPage />}
           {activePage === 'adminTools' && <AdminToolsPage />}
+          {activePage.startsWith('custom_') && (() => {
+            const apiName = activePage.slice('custom_'.length);
+            const obj = (customObjects || []).find(o => o.api_name === apiName);
+            return obj ? <DynamicObjectPage customObject={obj} /> : null;
+          })()}
         </main>
       </div>
       <ProfileModal open={profileOpen} onClose={() => setProfileOpen(false)} />

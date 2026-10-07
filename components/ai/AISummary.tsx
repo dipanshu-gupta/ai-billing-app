@@ -1,6 +1,7 @@
 // @ts-nocheck
 'use client';
 
+import { relabelText, relabelHeadings, terminologyBlock } from '@/lib/useRelabel';
 import { useState, useEffect, useCallback } from 'react';
 import { useApp } from '@/context/AppContext';
 import { formatCurrency, formatDate } from '@/lib/utils';
@@ -79,7 +80,7 @@ Notes: ${record.notes ? record.notes.slice(0,100) : 'None'}`;
     case 'orders': {
       const relInvoices = invoices.filter(i => i.order_number === record.id || (i.customerId === record.customerId && i.customer === record.customer));
       return `Summarise this order for a CRM user:
-Order: ${record.name} (${record.id})
+Order: ${record.name} (${record.displayNumber ? 'ORD-'+String(record.displayNumber).padStart(5,'0') : record.id})
 Status: ${record.status} | Currency: ${record.currency||'INR'}
 Customer: ${record.customer||'N/A'} | Contact: ${record.contact||'N/A'}
 Amount: ${fmt(record.amount)} | Delivery date: ${record.deliveryDate||record.delivery_date||'Not set'}
@@ -93,7 +94,7 @@ Related invoices: ${relInvoices.length} (${relInvoices.filter(i=>i.status==='Pai
       const dueDate  = record.dueDate || record.due_date;
       const isOverdue = dueDate && new Date(dueDate) < new Date() && record.status !== 'Paid';
       return `Summarise this invoice for a CRM user:
-Invoice: ${record.name} (${record.id})
+Invoice: ${record.name} (${record.displayNumber ? 'INV-'+String(record.displayNumber).padStart(5,'0') : record.id})
 Status: ${record.status} | Amount: ${fmt(record.amount)}
 Customer: ${record.customer||'N/A'} | Due date: ${dueDate||'Not set'}
 ${isOverdue ? '⚠️ OVERDUE - payment required' : ''}
@@ -177,8 +178,8 @@ export default function AISummary({ page, record }) {
             ...(session?.access_token ? { 'Authorization': `Bearer ${session.access_token}` } : {}),
           },
           body: JSON.stringify({
-            system: `You are a senior business analyst and CRM expert. Write a concise executive summary (2-3 sentences max) for the CRM record provided. Be specific and data-driven — mention key figures, current status, notable associations, and any urgent attention items. End with one actionable insight or recommended next step. Keep it professional and brief.`,
-            messages: [{ role: 'user', content: context }],
+            system: `You are a senior business analyst and CRM expert. Write a concise executive summary (2-3 sentences max) for the CRM record provided. Be specific and data-driven — mention key figures, current status, notable associations, and any urgent attention items. End with one actionable insight or recommended next step. Keep it professional and brief.` + terminologyBlock(),
+            messages: [{ role: 'user', content: relabelHeadings(context) }],
             max_tokens: 250,
             tenantDbUrl: (window as any).__bp_tenant?.db_url || undefined,
             tenantDbAnonKey: (window as any).__bp_tenant?.db_anon_key || undefined,
@@ -272,7 +273,7 @@ export default function AISummary({ page, record }) {
           )}
 
           {summary && !loading && (
-            <p className="text-sm text-[#0F172A] leading-relaxed">{summary}</p>
+            <p className="text-sm text-[#0F172A] leading-relaxed">{relabelText(summary)}</p>
           )}
         </div>
       </div>

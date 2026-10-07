@@ -1,11 +1,16 @@
 // @ts-nocheck
 'use client';
 
+import RedwoodSkin from '@/components/shared/RedwoodSkin';
 import { useState, useMemo, useEffect, useRef, Fragment } from 'react';
+import { waFetch } from '@/lib/waFetch';
 import { useApp } from '@/context/AppContext';
+import { createGridEnabled } from '@/lib/lineLayout';
+import RecordHighlights from '@/components/shared/RecordHighlights';
 import { getStatusColor, formatCurrency, formatDate, formatDisplayNumber, PAGE_DISPLAY_PREFIX, tenantScope, todayLocalISO } from '@/lib/utils';
 // useCustomFields hook used inline below
 import { useTenant } from '@/context/TenantContext';
+import { resolveStatusOptions } from '@/lib/statusOptions';
 import { getTaxRegime, computeLineNet, computeLineGross } from '@/lib/taxConfig';
 import { useFieldMappingRules, applyFieldMapping } from '@/lib/useFieldMappingRules';
 import SearchableSelect from '@/components/shared/SearchableSelect';
@@ -14,16 +19,26 @@ import RentalBookingCalendar from '@/components/retail/RentalBookingCalendar';
 import KanbanBoard from '@/components/shared/KanbanBoard';
 import { RetailQuickCreateCustomer } from '@/components/retail/RetailQuickCreateCustomer';
 import LoadingSpinner from '@/components/shared/LoadingSpinner';
-import { useFieldLayout, resolveFieldRow } from '@/lib/useFieldLayout';
-import { useObjectLabels } from '@/lib/useObjectLabels';
+import { useFieldLayout, resolveFieldRow, effectiveRows, resolveFieldDisplay, cfKey } from '@/lib/useFieldLayout';
+import { useObjectLabels, labelNow } from '@/lib/useObjectLabels';
+import { useRelatedCols, withKeys, viewPermFor } from '@/components/shared/Related360';
+import CustomRelatedLists from '@/components/shared/CustomRelatedLists';
 import { NavIcon } from '@/lib/icons';
 import { Search } from 'lucide-react';
 import { fetchServerPage, timePeriodToRange } from '@/lib/serverList';
 import { useAlert } from '@/components/shared/AlertProvider';
 import { useCustomFields } from '@/lib/useCustomFields';
+import { canInvoiceOrder } from '@/lib/invoiceFlow';
+import OrderedRow from '@/components/shared/OrderedRow';
 import { generateInvoicePdf, blobToBase64 } from '@/lib/generateInvoicePdf';
+import { buildDocumentHTML } from '@/lib/documentCanvas';
+import { buildBookingReceiptHTML } from '@/lib/buildBookingReceiptHTML';
+import { loadCanvasTemplates, mergeTemplates, pickDefault } from '@/lib/useDocumentTemplates';
 import LineItemCustomFieldInput from '@/components/shared/LineItemCustomFieldInput';
 import { t } from '@/lib/i18n';
+
+import { relabelText } from '@/lib/useRelabel';
+const RL = relabelText;
 
 const iCls = 'w-full border border-blue-200 rounded-xl px-3 py-2.5 text-[#0F172A] bg-white focus:outline-none focus:ring-2 focus:ring-blue-400 text-sm placeholder:text-gray-400';
 const sCls = iCls;
@@ -149,9 +164,9 @@ export const formatCustomerAddress = (c) => {
 
 export const RETAIL_CONFIG = {
   retailCustomers: {
-    title: 'Retail Customers', icon: '🧑‍🤝‍🧑', singular: 'Customer',
+    title: 'Retail Customers', icon: '🧑‍🤝‍🧑', get singular() { return labelNow('retailCustomers','Customer','singular'); },
     idField: 'customer_number',
-    statusOptions: ['Active','Inactive','VIP','Blocked'],
+    get statusOptions() { return resolveStatusOptions('retailCustomers', ['Active','Inactive','VIP','Blocked']); },
     listColumns: [
       { h: 'Name', v: r => r.name },
       { h: 'Phone', v: r => r.phone || '-' },
@@ -189,9 +204,9 @@ export const RETAIL_CONFIG = {
   },
 
   retailProducts: {
-    title: 'Retail Products', icon: '🏷️', singular: 'Product',
+    title: 'Retail Products', icon: '🏷️', get singular() { return labelNow('retailProducts','Product','singular'); },
     idField: 'product_number',
-    statusOptions: ['Active','Inactive','Discontinued'],
+    get statusOptions() { return resolveStatusOptions('retailProducts', ['Active','Inactive','Discontinued']); },
     listColumns: [
       { h: 'Name', v: r => r.name },
       { h: 'Category', v: r => r.category || '-' },
@@ -207,7 +222,7 @@ export const RETAIL_CONFIG = {
         { key:'brand', label:'Brand', type:'text' },
         { key:'sku', label:'SKU', type:'text' },
         { key:'barcode', label:'Barcode', type:'text' },
-        { key:'unit', label:'Unit', type:'select', opts:['pc','kg','g','ltr','ml','box','pack','dozen'] },
+        { key:'unit', label:'Unit', type:'select', opts:['pc','each','kg','g','ltr','ml','box','pack','dozen'] },
         { key:'status', label:'Status', type:'status' },
         { key:'owner', label:'Owner', type:'owner' },
       ]},
@@ -219,13 +234,25 @@ export const RETAIL_CONFIG = {
         { key:'reorder_level', label:'Reorder Level', type:'number' },
         { key:'is_rentable', label:'Rentable Item', type:'checkbox', showIf:(prefs)=>prefs?.business_type==='rental',
           desc:'Bookable for a date range — enables the availability calendar and prevents double-booking for this product.' },
+        { key:'rental_pricing_basis', label:'Pricing Basis', type:'select', opts:['Per Day','Fixed Price'], showIf:(prefs)=>prefs?.business_type==='rental',
+          desc:'Per Day = Rent Per Day x number of days. Fixed Price = the Selling Price is the all-in price for the whole booking or membership period (never multiplied by days) - use this for memberships and packages; Rent Per Day can then be left empty or hidden in the Page Layout Designer.' },
         { key:'rent_per_day', label:'Rent Per Day', type:'number', showIf:(prefs)=>prefs?.business_type==='rental',
           desc:'The daily rental rate for this item — used to price rental orders instead of the regular sale price above.' },
       ]},
       { icon:'🧾', title:'Tax & Description', fields:[
         { key:'hsn_code', label:'HSN/SAC Code', type:'text' },
         { key:'gst_rate', label:'GST Rate (%)', type:'number' },
-        { key:'taxable', label:'Taxable', type:'checkbox' },
+        // Bug fix: DB column retail_products.taxable is TEXT ('Yes'/'No',
+        // default 'Yes') — not boolean. It was previously typed as a
+        // checkbox here, whose renderer does `checked={!!v}` (any non-empty
+        // string, including "No", renders as checked) and writes back a
+        // real boolean `true`/`false` on toggle. That boolean then got
+        // stored into the text column as the literal string "true"/"false",
+        // which the tax engine (lib/taxConfig.ts, `(line.taxable ?? 'Yes')
+        // === 'Yes'`) never recognizes as taxable — so the selection looked
+        // like it reverted on refresh. Matches the type already used for
+        // this same field in FieldLayoutDesigner's standard field list.
+        { key:'taxable', label:'Taxable', type:'select', opts:['Yes','No'], defaultValue:'Yes' },
         { key:'description', label:'Description', type:'textarea', full:true },
         { key:'comments', label:'Comments', type:'textarea', full:true },
       ]},
@@ -233,9 +260,9 @@ export const RETAIL_CONFIG = {
   },
 
   retailActivities: {
-    title: 'Retail Activities', icon: '📅', singular: 'Activity',
+    title: 'Retail Activities', icon: '📅', get singular() { return labelNow('retailActivities','Activity','singular'); },
     idField: 'activity_number',
-    statusOptions: ['Open','In Progress','Completed','Cancelled'],
+    get statusOptions() { return resolveStatusOptions('retailActivities', ['Open','In Progress','Completed','Cancelled']); },
     listColumns: [
       { h: 'Subject', v: r => r.subject },
       { h: 'Type', v: r => r.activity_type || '-' },
@@ -269,9 +296,9 @@ export const RETAIL_CONFIG = {
   },
 
   retailOrders: {
-    title: 'Retail Orders', icon: '🛍️', singular: 'Order',
+    title: 'Retail Orders', icon: '🛍️', get singular() { return labelNow('retailOrders','Order','singular'); },
     idField: 'order_number',
-    statusOptions: ['Draft','Pending','Completed','Cancelled','Refunded'],
+    get statusOptions() { return resolveStatusOptions('retailOrders', ['Draft','Pending','Completed','Cancelled','Refunded']); },
     hasLineItems: true,
     listColumns: [
 
@@ -308,9 +335,9 @@ export const RETAIL_CONFIG = {
   },
 
   retailInvoices: {
-    title: 'Retail Invoices', icon: '🧾', singular: 'Invoice',
+    title: 'Retail Invoices', icon: '🧾', get singular() { return labelNow('retailInvoices','Invoice','singular'); },
     idField: 'invoice_number',
-    statusOptions: ['Draft','Sent','Paid','Overdue','Refunded','Cancelled'],
+    get statusOptions() { return resolveStatusOptions('retailInvoices', ['Draft','Sent','Paid','Overdue','Refunded','Cancelled']); },
     hasLineItems: true,
     listColumns: [
 
@@ -453,28 +480,98 @@ function buildCustomerPrefill(customer) {
   const addressParts = [customer?.address_line1, customer?.address_line2, customer?.city, customer?.state, customer?.postal_code]
     .filter(Boolean);
   if (addressParts.length) prefill.delivery_address = addressParts.join(', ');
-  prefill.place_of_supply = customer?.state || DEFAULT_PLACE_OF_SUPPLY;
+  // Only the customer's own state is a real prefill. When the customer has none, leave the field out so the
+  // Page Layout Designer default (or the built-in fallback) applies instead of being overwritten here.
+  if (customer?.state) prefill.place_of_supply = customer.state;
   return prefill;
 }
 
 // ─── Line items table (Orders / Invoices) ──────────────────────────────────
-function RetailLineItems({ items, setItems, products, taxRegime, page, headerDiscountPct = 0, onHeaderDiscountChange }) {
+function RetailLineItems({ items, setItems, products, taxRegime, page, headerDiscountPct = 0, onHeaderDiscountChange, scope = 'detail' }) {
   const [stockWarning, setStockWarning] = useState(null);
   const [rentalWarnings, setRentalWarnings] = useState<Record<number,string>>({});
   const { appPreferences, checkRentalConflict } = useApp();
   // "Copy Maps" — active rules for automatically copying a product's field
   // (e.g. a "Security Deposit" custom field) onto a line item when that
   // product is selected below.
-  const { rules: productToLineItemRules } = useFieldMappingRules('product_to_line_item', 'retailProducts');
-  const rentalModeOn = appPreferences?.business_type === 'rental' && page === 'retailOrders';
-  // Rental dates should be VISIBLE on an invoice converted from a rental
-  // order (read-only, for reference — the order already secured the
-  // booking, so invoices don't get editing or conflict-checking), even
-  // though rentalModeOn itself stays scoped to orders for those behaviors.
+  const { rules: productToLineItemRules } = useFieldMappingRules('product_to_line_item', 'retailProducts', page === 'retailInvoices' ? 'retailInvoiceLineItems' : 'retailOrderLineItems');
   const showRentalColumns = appPreferences?.business_type === 'rental' && (page === 'retailOrders' || page === 'retailInvoices');
-  const { fields: customFields } = useCustomFields(page === 'retailInvoices' ? 'retailInvoiceLineItems' : 'retailOrderLineItems');
+  const { fields: customFieldsAll } = useCustomFields(page === 'retailInvoices' ? 'retailInvoiceLineItems' : 'retailOrderLineItems');
   const lineItemFieldLayout = useFieldLayout(page === 'retailInvoices' ? 'retailInvoiceLineItems' : 'retailOrderLineItems');
-  const updCustom = (idx, apiName, val) => setItems(p => p.map((r,i) => i!==idx ? r : { ...r, custom_data: { ...(r.custom_data||{}), [apiName]: val } }));
+  // Page Layout Designer, for the page this grid is on (scope = 'detail' | 'create'): custom columns' label / hidden.
+  const customFields = (customFieldsAll || [])
+    .filter(f => !f.show_on || f.show_on === 'both' || f.show_on === scope)
+    .map(f => { const r = resolveFieldDisplay(cfKey(f.api_name), f.label, lineItemFieldLayout.fields || [], {}, scope); return { ...f, label: r.label, _hidden: !r.visible, _ro: !r.editable }; })
+    .filter(f => !f._hidden);
+  // Rental Start/End editability is Page-Layout-Designer-controlled now, the
+  // same as every other standard line-item field — NOT hardcoded to the
+  // page. Falls back to the original behavior (editable on Orders,
+  // read-only on Invoices) only when the admin hasn't published an override
+  // for that field, so nothing changes for a tenant who never opens the
+  // designer. Resolved here (rather than inline where it's used, further
+  // down) because rentalModeOn below also needs it — once an admin makes
+  // these fields editable on Invoices, conflict-checking has to switch on
+  // for invoices too, not just the input's disabled state.
+  const rentalStartRow = resolveFieldRow('rental_start_date', lineItemFieldLayout.fields || [], scope);
+  const rentalEndRow   = resolveFieldRow('rental_end_date',   lineItemFieldLayout.fields || [], scope);
+  const rentalStartReadOnly = rentalStartRow ? rentalStartRow.editability_mode === 'readonly' : page === 'retailInvoices';
+  const rentalEndReadOnly   = rentalEndRow   ? rentalEndRow.editability_mode   === 'readonly' : page === 'retailInvoices';
+  // Booking-conflict checking (the live debounced warning below, and the
+  // required/past-date validation) now also runs on Invoices once an admin
+  // has made their rental dates editable there — editable-but-unchecked
+  // would let an invoice silently record a date range that's double-booked
+  // against a real order, with nothing catching it before save.
+  const rentalModeOn = appPreferences?.business_type === 'rental'
+    && (page === 'retailOrders' || (page === 'retailInvoices' && !rentalStartReadOnly && !rentalEndReadOnly));
+  const applyLineCascadeAndPricing = (u: any, changedKey: string) => {
+    // Live relative-default recalculation — if any OTHER standard field on
+    // this line has a configured default that's a relative/duration
+    // reference to the field that just changed (a plain day offset like
+    // "rental_start_date+3", or "rental_start_date+duration:<custom field
+    // api_name>" driven by a duration picker), recompute it now, BEFORE the
+    // pricing math below — otherwise rentalDays/extended_price would be
+    // computed against the stale, pre-cascade date. `changedKey` is either
+    // a standard field key (from upd) or a custom field's api_name (from
+    // updCustom) — parseDefaultValueRuntime's refField matches the former,
+    // durationField matches the latter. Always recalculates on a
+    // reference-field change, even if the dependent field already had a
+    // value — simpler and more predictable than partial dirty-tracking; the
+    // user can still edit the dependent field directly afterward.
+    effectiveRows(lineItemFieldLayout.fields || [], scope).forEach(fr => {
+      if (fr.field_key === changedKey) return; // don't recompute the field the user is directly editing
+      const parsed = parseDefaultValueRuntime(fr.default_value);
+      if (parsed?.refField === changedKey || parsed?.durationField === changedKey) {
+        const recalculated = resolveLineDefault('date', fr.default_value, u);
+        if (recalculated !== undefined) u[fr.field_key] = recalculated;
+      }
+    });
+    const { totalTax } = taxRegime.computeLineTax(u);
+    // Rental pricing: for a rentable product with both rental dates set,
+    // the line total is rent_per_day × number of days × quantity — not
+    // just quantity × unit_price the way a normal sale works. Falls back
+    // to the standard calculation for any non-rental line or a rentable
+    // item whose dates aren't both set yet.
+    const rentalDays = (u.rental_start_date && u.rental_end_date)
+      ? Math.max(1, Math.round((new Date(u.rental_end_date+'T00:00:00') - new Date(u.rental_start_date+'T00:00:00')) / 86400000) + 1)
+      : 1;
+    const isFixedPriceLine = !!(u.custom_data && u.custom_data.__fixed_price);
+    const isRentalPricedLine = !isFixedPriceLine && !!(u.product_id && activeProducts.find(x => (x._uuid||x.id) === u.product_id)?.is_rentable && u.rental_start_date && u.rental_end_date);
+    const net = isRentalPricedLine
+      ? u.quantity * u.unit_price * rentalDays * (1 - u.discount_pct/100)
+      : u.quantity * u.unit_price * (1 - u.discount_pct/100);
+    u.extended_price = net + totalTax;
+    u.rental_days = isRentalPricedLine ? rentalDays : undefined; // surfaced in the grid for transparency, not a DB column
+    return u;
+  };
+  const updCustom = (idx, apiName, val) => setItems(p => p.map((r,i) => {
+    if (i !== idx) return r;
+    const u = { ...r, custom_data: { ...(r.custom_data||{}), [apiName]: val } };
+    // Changing a custom field can itself drive a standard date field (the
+    // duration-picker → rental_end_date case) — run the same cascade +
+    // pricing recompute upd() runs below, keyed off the custom field's
+    // api_name instead of a standard field key.
+    return applyLineCascadeAndPricing(u, apiName);
+  }));
 
   // Filter out discontinued products from the product picker
   const activeProducts = products.filter(p => p.status !== 'Discontinued');
@@ -488,8 +585,48 @@ function RetailLineItems({ items, setItems, products, taxRegime, page, headerDis
   // module-level function scoped to a different component - kept in sync
   // by definition (same lines), not by a shared reference.
   const RELATIVE_DEFAULT_RE = /^([a-zA-Z_][a-zA-Z0-9_]*)\s*([+-]\d+)?$/;
+  // "rental_start_date+duration:rental_duration" — set up in Page Layout
+  // Designer on a date field's Default Value as "From Duration Field":
+  // refField is the OTHER date field to measure from (the rental start),
+  // and durationField is a custom select field's api_name on this same
+  // line-item object whose current label (e.g. "1 Month", "Quarter", "Half
+  // Year", "Full Year") decides how far out the end date lands. Distinct
+  // syntax from the plain "+N" day offset above since a duration isn't a
+  // fixed number of days (a month varies 28-31 days) and its length comes
+  // from a value the user picks per-line, not a fixed admin-configured number.
+  const DURATION_DEFAULT_RE = /^([a-zA-Z_][a-zA-Z0-9_]*)\+duration:([a-zA-Z_][a-zA-Z0-9_]*)$/;
+  // Recognizes the handful of duration labels this feature was built for
+  // (1 Month / 1 Quarter / Half Year / Full Year) plus common variants an
+  // admin might type for the same custom field's option list, so the admin
+  // doesn't have to match an exact reserved string. Case/spacing-insensitive.
+  const parseDurationToMonths = (label: string): number | null => {
+    const s = String(label || '').trim().toLowerCase().replace(/[\s-]+/g, ' ');
+    if (!s) return null;
+    if (/^(1 )?month(ly)?$/.test(s)) return 1;
+    if (/^(1 )?quarter(ly)?$/.test(s) || /^3 months?$/.test(s)) return 3;
+    if (/^half year(ly)?$/.test(s) || /^6 months?$/.test(s) || /^semi ?annual(ly)?$/.test(s)) return 6;
+    if (/^(full )?year(ly)?$/.test(s) || /^12 months?$/.test(s) || /^annual(ly)?$/.test(s)) return 12;
+    const mm = s.match(/^(\d+) months?$/); if (mm) return parseInt(mm[1], 10);
+    const my = s.match(/^(\d+) years?$/);  if (my) return parseInt(my[1], 10) * 12;
+    return null;
+  };
+  // Calendar-month-accurate add (Jan 31 + 1 month -> Feb 28/29, not Mar 3),
+  // then back up one day so the result is the LAST day of the rental
+  // period (inclusive), matching how rentalDays elsewhere already counts
+  // both the start and end day as rented — e.g. 1-month rental from Jan 1
+  // ends Jan 31, not Feb 1.
+  const addMonthsInclusiveISO = (startISO: string, months: number): string => {
+    const d = new Date(startISO + 'T00:00:00');
+    const day = d.getDate();
+    d.setMonth(d.getMonth() + months);
+    if (d.getDate() !== day) d.setDate(0); // overflowed into the next month -> clamp to last day of the intended month
+    d.setDate(d.getDate() - 1);
+    return d.toLocaleDateString('en-CA');
+  };
   const parseDefaultValueRuntime = (raw: string) => {
     if (!raw || raw.toLowerCase() === 'today') return null;
+    const dm = raw.match(DURATION_DEFAULT_RE);
+    if (dm) return { refField: dm[1], durationField: dm[2] };
     const m = raw.match(RELATIVE_DEFAULT_RE);
     return m ? { refField: m[1] } : null;
   };
@@ -497,6 +634,14 @@ function RetailLineItems({ items, setItems, products, taxRegime, page, headerDis
     if (rawValue === undefined || rawValue === null || rawValue === '') return undefined;
     if (fieldType === 'date') {
       if (rawValue.toLowerCase() === 'today') return todayLocalISO();
+      const dm = rawValue.match(DURATION_DEFAULT_RE);
+      if (dm) {
+        const refVal = sourceRow?.[dm[1]];
+        if (!refVal) return undefined; // start date not set yet - nothing to measure from
+        const months = parseDurationToMonths(sourceRow?.custom_data?.[dm[2]]);
+        if (!months) return undefined; // duration not picked yet, or not a recognized value
+        return addMonthsInclusiveISO(refVal, months);
+      }
       const m = rawValue.match(RELATIVE_DEFAULT_RE);
       if (m) {
         const refVal = sourceRow?.[m[1]];
@@ -522,17 +667,20 @@ function RetailLineItems({ items, setItems, products, taxRegime, page, headerDis
       ...(taxRegime.regime==='uk_vat' ? { vat_rate:20 } : {}),
       ...(taxRegime.regime==='generic' ? { tax_pct:0 } : {}),
     };
+    // Admin-configured custom line-item field defaults, into custom_data —
+    // applied FIRST, so a duration field's own default (if one is ever
+    // configured) is already in custom_data by the time the standard-field
+    // pass below tries to resolve "rental_start_date+duration:<this field>".
+    (customFieldsAll || []).forEach(f => {
+      const resolved = resolveLineDefault(f.field_type, f.default_value);
+      if (resolved !== undefined) row.custom_data[f.api_name] = resolved;
+    });
     // Admin-configured standard line-item field defaults - dynamic, works
     // for any standard line-item field on this object, not a fixed set.
     const lineFieldTypeByKey: Record<string,string> = { quantity:'number', unit_price:'number', discount_pct:'number', rental_start_date:'date', rental_end_date:'date' };
-    (lineItemFieldLayout.fields || []).forEach(fr => {
+    effectiveRows(lineItemFieldLayout.fields || [], scope).forEach(fr => {
       const resolved = resolveLineDefault(lineFieldTypeByKey[fr.field_key] || 'text', fr.default_value, row);
       if (resolved !== undefined) row[fr.field_key] = resolved;
-    });
-    // Admin-configured custom line-item field defaults, into custom_data.
-    (customFields || []).forEach(f => {
-      const resolved = resolveLineDefault(f.field_type, f.default_value);
-      if (resolved !== undefined) row.custom_data[f.api_name] = resolved;
     });
     return [...p, row];
   });
@@ -576,7 +724,11 @@ function RetailLineItems({ items, setItems, products, taxRegime, page, headerDis
         setRentalWarnings(w => (w[idx] === 'End date must be on or after the start date.' ? w : { ...w, [idx]: 'End date must be on or after the start date.' }));
         return;
       }
-      if (row.rental_start_date < todayISO) {
+      // Only a NEW booking (an Order) must start today or later — an
+      // Invoice with editable rental dates is typically written up after
+      // the rental already started, so a past start date there is normal,
+      // not a mistake worth warning about.
+      if (page === 'retailOrders' && row.rental_start_date < todayISO) {
         setRentalWarnings(w => (w[idx] === 'Start date is in the past.' ? w : { ...w, [idx]: 'Start date is in the past.' }));
         return;
       }
@@ -633,7 +785,10 @@ function RetailLineItems({ items, setItems, products, taxRegime, page, headerDis
           // rent_per_day is the per-day rate; falls back to the normal price
           // if rent_per_day isn't set (e.g. marked rentable before a rate
           // was configured), so this never silently prices at 0.
-          u.unit_price = (pr.is_rentable && pr.rent_per_day) ? Number(pr.rent_per_day) : pr.price;
+          const fixedBasis = !!pr.is_rentable && pr.rental_pricing_basis === 'Fixed Price';
+          u.unit_price = (pr.is_rentable && !fixedBasis && pr.rent_per_day) ? Number(pr.rent_per_day) : pr.price;
+          u.custom_data = { ...(u.custom_data || {}) };
+          if (fixedBasis) u.custom_data.__fixed_price = true; else delete u.custom_data.__fixed_price;
           u.list_price = pr.price; u.product_code = pr.sku || '';
           u.product_id = pr._uuid || pr.id || null;
           // Switching away from a rentable product (or to a non-rentable
@@ -651,40 +806,11 @@ function RetailLineItems({ items, setItems, products, taxRegime, page, headerDis
           u.product_id = null;
         }
       }
-      // Live relative-default recalculation - if any OTHER field on this
-      // line has a configured default that's a relative reference to the
-      // field that just changed (e.g. rental_end_date = "rental_start_date
-      // +3"), recompute it now, BEFORE the pricing math below - otherwise
-      // extended_price/rentalDays would be computed against the stale,
-      // pre-cascade date and never reflect the auto-updated one. Always
-      // recalculates on a reference-field change, even if the dependent
-      // field already had a value - simpler and more predictable than
-      // partial dirty-tracking; the user can still edit the dependent
-      // field directly afterward if they want a different value.
-      (lineItemFieldLayout.fields || []).forEach(fr => {
-        if (fr.field_key === field) return; // don't recompute the field the user is directly editing
-        const parsed = parseDefaultValueRuntime(fr.default_value);
-        if (parsed?.refField === field) {
-          const recalculated = resolveLineDefault('date', fr.default_value, u);
-          if (recalculated !== undefined) u[fr.field_key] = recalculated;
-        }
-      });
-      const { totalTax } = taxRegime.computeLineTax(u);
-      // Rental pricing: for a rentable product with both rental dates set,
-      // the line total is rent_per_day × number of days × quantity — not
-      // just quantity × unit_price the way a normal sale works. Falls back
-      // to the standard calculation for any non-rental line or a rentable
-      // item whose dates aren't both set yet.
-      const rentalDays = (u.rental_start_date && u.rental_end_date)
-        ? Math.max(1, Math.round((new Date(u.rental_end_date+'T00:00:00') - new Date(u.rental_start_date+'T00:00:00')) / 86400000) + 1)
-        : 1;
-      const isRentalPricedLine = !!(u.product_id && activeProducts.find(x => (x._uuid||x.id) === u.product_id)?.is_rentable && u.rental_start_date && u.rental_end_date);
-      const net = isRentalPricedLine
-        ? u.quantity * u.unit_price * rentalDays * (1 - u.discount_pct/100)
-        : u.quantity * u.unit_price * (1 - u.discount_pct/100);
-      u.extended_price = net + totalTax;
-      u.rental_days = isRentalPricedLine ? rentalDays : undefined; // surfaced in the grid for transparency, not a DB column
-      return u;
+      // Cascade any field whose default references this one (plain day
+      // offset or duration-field driven), then recompute pricing — shared
+      // with updCustom() above so a duration custom field change gets
+      // identical treatment. See applyLineCascadeAndPricing's own comment.
+      return applyLineCascadeAndPricing(u, field);
     }));
     // Availability re-checking for rental dates is handled by a dedicated
     // useEffect below, which watches every row's (product_id, start, end)
@@ -703,15 +829,13 @@ function RetailLineItems({ items, setItems, products, taxRegime, page, headerDis
   const headerDiscountAmount = preHeaderDiscTotal * Number(headerDiscountPct || 0) / 100;
   const grandTotal = preHeaderDiscTotal - headerDiscountAmount;
 
-  const taxCols = taxRegime.lineItemFields;
-
   // Column-level visibility/label overrides for the four targeted
   // standard line-item fields - resolved once for the whole column (not
   // per-row), since a column's visibility must stay consistent across
   // every row for the table structure to make sense. Falls back to the
   // field's own built-in label when no override is published.
   const lineCol = (fieldKey, defaultLabel) => {
-    const row = resolveFieldRow(fieldKey, lineItemFieldLayout.fields || [], 'both');
+    const row = resolveFieldRow(fieldKey, lineItemFieldLayout.fields || [], scope);
     return {
       visible: row ? row.visibility_mode !== 'hidden' : true,
       readOnly: row ? row.editability_mode === 'readonly' : false,
@@ -719,6 +843,13 @@ function RetailLineItems({ items, setItems, products, taxRegime, page, headerDis
     };
   };
   const colProduct    = lineCol('product_name', 'Product');
+  // readOnly comes from the page-aware default computed earlier (editable
+  // on Orders, read-only on Invoices, unless an admin published an
+  // override) rather than lineCol's generic false-when-unconfigured
+  // default — these two fields are the one case where "unconfigured"
+  // still needs to mean something other than "editable everywhere".
+  const colRentalStart = { ...lineCol('rental_start_date', 'Rental Start'), readOnly: rentalStartReadOnly };
+  const colRentalEnd   = { ...lineCol('rental_end_date', 'Rental End'), readOnly: rentalEndReadOnly };
   const colQty        = lineCol('quantity', 'Qty');
   const colPrice      = lineCol('unit_price', 'Unit Price');
   const colDiscount   = lineCol('discount_pct', 'Disc %');
@@ -729,7 +860,24 @@ function RetailLineItems({ items, setItems, products, taxRegime, page, headerDis
   // below since the cells are always plain text, never inputs.
   const colNetAmount  = lineCol('net_amount', 'Net Amount');
   const colLineTotal  = lineCol('extended_price', 'Line Total');
+  // Tax-regime fields (HSN, GST rate, VAT rate, taxable, sales tax rate,
+  // etc.) previously bypassed the Page Layout Designer entirely — always
+  // rendered, regardless of what an admin configured for them (they ARE
+  // registered as standard fields in FieldLayoutDesigner.tsx's
+  // LINE_ITEM_STANDARD_FIELDS for retail objects, so hiding one there
+  // silently had no effect on this grid). Resolved the same way as the
+  // other standard columns now, per field key.
+  const taxCols = taxRegime.lineItemFields
+    .map(tc => ({ ...tc, ...lineCol(tc.key, tc.label) }))
+    .filter(tc => tc.visible);
+  // Column order from the Page Layout Designer (display_order per field key).
+  const lineOrder = { __actions: 1e9 };
+  effectiveRows(lineItemFieldLayout.fields || [], scope).forEach(r => {
+    if (r.is_published === false) return;
+    lineOrder[r.field_key] = r.display_order;
+  });
   const visibleStandardColCount = [colProduct, colQty, colPrice, colDiscount, colNetAmount, colLineTotal].filter(c => c.visible).length;
+  const visibleRentalColCount = showRentalColumns ? [colRentalStart, colRentalEnd].filter(c => c.visible).length : 0;
 
   return (
     <div className="bg-white rounded-[20px] border border-blue-100 shadow">
@@ -767,31 +915,29 @@ function RetailLineItems({ items, setItems, products, taxRegime, page, headerDis
       <div className="overflow-x-auto">
         <table className="w-full" style={{ minWidth:'700px' }}>
           <thead>
-            <tr className="bg-blue-50 border-b border-blue-100">
-              {colProduct.visible && <th className="px-4 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider" style={{minWidth:200}}>{colProduct.label}</th>}
-              {showRentalColumns && <>
-                <th className="px-4 py-3 text-center text-xs font-bold text-purple-600 uppercase tracking-wider" style={{minWidth:130}}>Rental Start</th>
-                <th className="px-4 py-3 text-center text-xs font-bold text-purple-600 uppercase tracking-wider" style={{minWidth:130}}>Rental End</th>
-              </>}
-              {colQty.visible && <th className="px-4 py-3 text-center text-xs font-bold text-gray-500 uppercase tracking-wider" style={{minWidth:70}}>{colQty.label}</th>}
-              {colPrice.visible && <th className="px-4 py-3 text-right text-xs font-bold text-gray-500 uppercase tracking-wider" style={{minWidth:100}}>{colPrice.label}</th>}
-              {colDiscount.visible && <th className="px-4 py-3 text-center text-xs font-bold text-gray-500 uppercase tracking-wider" style={{minWidth:70}}>{colDiscount.label}</th>}
-              {taxCols.map(tc=><th key={tc.key} className="px-4 py-3 text-center text-xs font-bold text-gray-500 uppercase tracking-wider whitespace-nowrap" style={{minWidth:tc.type==='select'?110:90}}>{tc.label}</th>)}
-              {colNetAmount.visible && <th className="px-4 py-3 text-right text-xs font-bold text-gray-500 uppercase tracking-wider" style={{minWidth:110}}>{colNetAmount.label}</th>}
-              {colLineTotal.visible && <th className="px-4 py-3 text-right text-xs font-bold text-gray-500 uppercase tracking-wider" style={{minWidth:110}}>{colLineTotal.label} <span className="normal-case font-normal text-gray-400">(incl. tax)</span></th>}
-              {customFields.map(f=><th key={f.id} className="px-4 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider" style={{minWidth:110}}>{f.label}</th>)}
-              <th/>
-            </tr>
+            <OrderedRow order={lineOrder} className="bg-blue-50 border-b border-blue-100">
+              {colProduct.visible && <th data-col="product_name" className="px-4 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider" style={{minWidth:200}}>{colProduct.label}</th>}
+              {showRentalColumns && colRentalStart.visible && <th data-col="rental_start_date" className="px-4 py-3 text-center text-xs font-bold text-purple-600 uppercase tracking-wider" style={{minWidth:130}}>{colRentalStart.label}</th>}
+              {showRentalColumns && colRentalEnd.visible && <th data-col="rental_end_date" className="px-4 py-3 text-center text-xs font-bold text-purple-600 uppercase tracking-wider" style={{minWidth:130}}>{colRentalEnd.label}</th>}
+              {colQty.visible && <th data-col="quantity" className="px-4 py-3 text-center text-xs font-bold text-gray-500 uppercase tracking-wider" style={{minWidth:70}}>{colQty.label}</th>}
+              {colPrice.visible && <th data-col="unit_price" className="px-4 py-3 text-right text-xs font-bold text-gray-500 uppercase tracking-wider" style={{minWidth:100}}>{colPrice.label}</th>}
+              {colDiscount.visible && <th data-col="discount_pct" className="px-4 py-3 text-center text-xs font-bold text-gray-500 uppercase tracking-wider" style={{minWidth:70}}>{colDiscount.label}</th>}
+              {taxCols.map(tc=><th key={tc.key} data-col={tc.key} className="px-4 py-3 text-center text-xs font-bold text-gray-500 uppercase tracking-wider whitespace-nowrap" style={{minWidth:tc.type==='select'?110:90}}>{tc.label}</th>)}
+              {colNetAmount.visible && <th data-col="net_amount" className="px-4 py-3 text-right text-xs font-bold text-gray-500 uppercase tracking-wider" style={{minWidth:110}}>{colNetAmount.label}</th>}
+              {colLineTotal.visible && <th data-col="extended_price" className="px-4 py-3 text-right text-xs font-bold text-gray-500 uppercase tracking-wider" style={{minWidth:110}}>{colLineTotal.label} <span className="normal-case font-normal text-gray-400">(incl. tax)</span></th>}
+              {customFields.map(f=><th key={f.id} data-col={'cf_'+f.api_name} className="px-4 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider" style={{minWidth:110}}>{f.label}</th>)}
+              <th data-col="__actions"/>
+            </OrderedRow>
           </thead>
           <tbody className="divide-y divide-blue-50">
             {items.length === 0
-              ? <tr><td colSpan={visibleStandardColCount + 1 + (showRentalColumns?2:0) + taxCols.length + customFields.length} className="px-5 py-12 text-center text-gray-400 text-sm">
+              ? <tr><td colSpan={visibleStandardColCount + 1 + visibleRentalColCount + taxCols.length + customFields.length} className="px-5 py-12 text-center text-gray-400 text-sm">
                   No items yet — click <span className="font-semibold text-[#0F172A]">+ Add Item</span> to begin.
                 </td></tr>
               : items.map((row, idx) => (
                 <Fragment key={row._id ?? idx}>
-                <tr className="hover:bg-blue-50/40 transition-all">
-                  {colProduct.visible && <td className="px-3 py-3">
+                <OrderedRow order={lineOrder} className="hover:bg-blue-50/40 transition-all">
+                  {colProduct.visible && <td data-col="product_name" className="px-3 py-3">
                     <SearchableSelect
                       value={row.product_name || ''}
                       onChange={v => upd(idx, 'product_name', v)}
@@ -816,79 +962,101 @@ function RetailLineItems({ items, setItems, products, taxRegime, page, headerDis
                       emptyLabel="No active products found"
                     />
                   </td>}
-                  {showRentalColumns && (() => {
+                  {showRentalColumns && colRentalStart.visible && (() => {
                     const selectedProduct = activeProducts.find(p => p.name === row.product_name);
                     const isRentable = !!selectedProduct?.is_rentable;
                     const todayISO = new Date().toLocaleDateString('en-CA');
-                    // Invoices show rental dates read-only, for reference —
-                    // the order already secured the booking, so there's
-                    // nothing to edit or conflict-check here.
-                    const readOnly = page === 'retailInvoices';
-                    const isDisabled = readOnly || !isRentable;
-                    return <>
-                      <td className="px-3 py-3">
-                        <input type="date" value={row.rental_start_date || ''} disabled={isDisabled} min={todayISO}
+                    // Read-only by default on Invoices (the order already
+                    // secured the booking — see rentalStartReadOnly's own
+                    // comment above), but now follows whatever Page Layout
+                    // Designer publishes for these two fields instead of
+                    // being hardcoded to the page.
+                    const isDisabled = colRentalStart.readOnly || !isRentable;
+                    // An invoice allows a rental start date already in the
+                    // past (it's typically written up after the booking was
+                    // already made/started) — only Orders, where a NEW
+                    // booking is being created, enforce "today or later".
+                    const minStart = page === 'retailOrders' ? todayISO : undefined;
+                    // Required once a rentable product is on the row — save is
+                    // blocked (see handleSave's rental validation) until this
+                    // is filled in, so flag it visually here too.
+                    const startMissing = !isDisabled && isRentable && !row.rental_start_date;
+                    return (
+                      <td data-col="rental_start_date" className="px-3 py-3">
+                        <input type="date" value={row.rental_start_date || ''} disabled={isDisabled} min={minStart}
                           onChange={e => upd(idx, 'rental_start_date', e.target.value)}
-                          className={`${iCls} text-center ${isDisabled ? 'bg-gray-50 text-gray-500 cursor-not-allowed' : ''}`}/>
+                          title={startMissing ? 'Required for a rentable item' : undefined}
+                          className={`${iCls} text-center ${isDisabled ? 'bg-gray-50 text-gray-500 cursor-not-allowed' : startMissing ? 'border-red-400 ring-1 ring-red-200' : ''}`}/>
                       </td>
-                      <td className="px-3 py-3">
-                        <input type="date" value={row.rental_end_date || ''} disabled={isDisabled} min={row.rental_start_date || todayISO}
+                    );
+                  })()}
+                  {showRentalColumns && colRentalEnd.visible && (() => {
+                    const selectedProduct = activeProducts.find(p => p.name === row.product_name);
+                    const isRentable = !!selectedProduct?.is_rentable;
+                    const todayISO = new Date().toLocaleDateString('en-CA');
+                    const isDisabled = colRentalEnd.readOnly || !isRentable;
+                    return (
+                      <td data-col="rental_end_date" className="px-3 py-3">
+                        <input type="date" value={row.rental_end_date || ''} disabled={isDisabled} min={row.rental_start_date || (page === 'retailOrders' ? todayISO : undefined)}
                           onChange={e => upd(idx, 'rental_end_date', e.target.value)}
                           className={`${iCls} text-center ${isDisabled ? 'bg-gray-50 text-gray-500 cursor-not-allowed' : ''}`}/>
                       </td>
-                    </>;
+                    );
                   })()}
-                  {colQty.visible && <td className="px-3 py-3">
+                  {colQty.visible && <td data-col="quantity" className="px-3 py-3">
                     <input type="number" min={1} value={row.quantity} disabled={colQty.readOnly}
                       onChange={e => { const v = Number(e.target.value); if (v < 1) return; upd(idx, 'quantity', v); }}
                       className={`${iCls} text-center ${colQty.readOnly ? 'bg-gray-50 text-gray-500 cursor-not-allowed' : ''}`}/>
                   </td>}
-                  {colPrice.visible && <td className="px-3 py-3">
+                  {colPrice.visible && <td data-col="unit_price" className="px-3 py-3">
                     <input type="number" min={0} value={row.unit_price} disabled={colPrice.readOnly}
                       onChange={e => upd(idx, 'unit_price', Math.max(0, Number(e.target.value)))}
                       className={`${iCls} text-right ${colPrice.readOnly ? 'bg-gray-50 text-gray-500 cursor-not-allowed' : ''}`}/>
                   </td>}
-                  {colDiscount.visible && <td className="px-3 py-3">
+                  {colDiscount.visible && <td data-col="discount_pct" className="px-3 py-3">
                     <input type="number" min={0} max={100} value={row.discount_pct} disabled={colDiscount.readOnly}
                       onChange={e => upd(idx, 'discount_pct', Math.min(100, Math.max(0, Number(e.target.value))))}
                       className={`${iCls} text-center ${colDiscount.readOnly ? 'bg-gray-50 text-gray-500 cursor-not-allowed' : row.discount_pct > 0 ? 'border-green-300 bg-green-50 text-green-800' : ''}`}/>
                   </td>}
                   {taxCols.map(tc => (
-                    <td key={tc.key} className="px-3 py-3">
+                    <td key={tc.key} data-col={tc.key} className="px-3 py-3">
                       {tc.type === 'select'
                         ? <select value={row[tc.key] ?? tc.defaultValue ?? ''}
+                            disabled={tc.readOnly}
                             onChange={e => upd(idx, tc.key, e.target.value)}
-                            className={`${sCls} text-center`}>
+                            className={`${sCls} text-center ${tc.readOnly ? 'bg-gray-50 text-gray-500 cursor-not-allowed' : ''}`}>
                             {tc.opts.map(o => <option key={o} value={o}>{o}</option>)}
                           </select>
                         : <input type={tc.type === 'number' ? 'number' : 'text'}
                             value={row[tc.key] ?? tc.defaultValue ?? ''}
+                            disabled={tc.readOnly}
                             onChange={e => upd(idx, tc.key, e.target.value)}
-                            className={`${iCls} text-center`}/>
+                            className={`${iCls} text-center ${tc.readOnly ? 'bg-gray-50 text-gray-500 cursor-not-allowed' : ''}`}/>
                       }
                     </td>
                   ))}
-                  {colNetAmount.visible && <td className="px-3 py-3 text-right font-semibold text-gray-600 text-sm">
+                  {colNetAmount.visible && <td data-col="net_amount" className="px-3 py-3 text-right font-semibold text-gray-600 text-sm">
                     {formatCurrency(computeLineNet(row))}
                   </td>}
-                  {colLineTotal.visible && <td className="px-3 py-3 text-right font-bold text-[#0F172A] text-sm">
+                  {colLineTotal.visible && <td data-col="extended_price" className="px-3 py-3 text-right font-bold text-[#0F172A] text-sm">
                     {formatCurrency(row.extended_price || 0)}
+                    {row.custom_data?.__fixed_price && <div className="text-[10px] font-normal text-teal-600">Fixed price</div>}
                     {row.rental_days > 0 && (
                       <div className="text-[10px] font-normal text-purple-500">× {row.rental_days} day{row.rental_days!==1?'s':''}</div>
                     )}
                     <div className="text-[10px] font-normal text-gray-400">+{formatCurrency((row.extended_price||0) - computeLineNet(row))} tax</div>
                   </td>}
-                  {customFields.map(f=><td key={f.id} className="px-3 py-3"><LineItemCustomFieldInput field={f} value={(row.custom_data||{})[f.api_name]} onChange={v=>updCustom(idx,f.api_name,v)}/></td>)}
-                  <td className="px-3 py-3 text-center">
+                  {customFields.map(f=><td key={f.id} data-col={'cf_'+f.api_name} className="px-3 py-3"><fieldset disabled={f._ro} className="contents"><LineItemCustomFieldInput field={f} value={(row.custom_data||{})[f.api_name]} onChange={v=>updCustom(idx,f.api_name,v)}/></fieldset></td>)}
+                  <td data-col="__actions" className="px-3 py-3 text-center">
                     <button type="button" onClick={() => remove(idx)}
                       className="w-7 h-7 flex items-center justify-center rounded-lg text-red-400 hover:text-red-600 hover:bg-red-50 transition-all font-bold text-lg mx-auto">
                       ×
                     </button>
                   </td>
-                </tr>
+                </OrderedRow>
                 {rentalWarnings[idx] ? (
                   <tr>
-                    <td colSpan={visibleStandardColCount + (showRentalColumns?2:0) + taxCols.length + customFields.length} className="px-4 pb-2 -mt-1">
+                    <td colSpan={visibleStandardColCount + visibleRentalColCount + taxCols.length + customFields.length} className="px-4 pb-2 -mt-1">
                       <div className="flex items-center gap-2 text-xs font-semibold text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-1.5">
                         <span>⚠️</span><span>{rentalWarnings[idx]}</span>
                       </div>
@@ -962,6 +1130,8 @@ function RetailLineItems({ items, setItems, products, taxRegime, page, headerDis
 
 // ─── Print HTML Builder ──────────────────────────────────────────────────────
 function buildRetailPrintHTML(t, record, items, products, customFieldsMeta = []) {
+  // Canvas (free-form) templates render through the shared document engine
+  if (t && t._canvas) return buildDocumentHTML(t, record, items, { docType: 'retail_invoice', products });
   const isTh = t.paper_size?.startsWith('thermal');
   const widthMM = t.paper_size==='thermal_58'||t.paper_size==='thermal_57' ? 58 : t.paper_size==='thermal_80' ? 80 : t.paper_size==='A5' ? 148 : 210;
   const font   = t.font_family || 'Arial, sans-serif';
@@ -1155,7 +1325,7 @@ function RetailInvoicePrintModal({ template, record, items, products, onClose, o
   const html = buildRetailPrintHTML(template, record, items, products, customFieldsMeta);
   const ps   = template.paper_size;
   const isTh = ps?.startsWith('thermal');
-  const previewW = ps==='thermal_58'||ps==='thermal_57' ? 219 : ps==='thermal_80' ? 303 : ps==='A5' ? 480 : 595;
+  const previewW = template._canvas ? (template.page_width || 794) : (ps==='thermal_58'||ps==='thermal_57' ? 219 : ps==='thermal_80' ? 303 : ps==='A5' ? 480 : 595);
 
   return (
     <div className="fixed inset-0 bg-black/70 z-[200] flex items-center justify-center p-4" onClick={onClose}>
@@ -1181,7 +1351,7 @@ function RetailInvoicePrintModal({ template, record, items, products, onClose, o
           <div style={{width:previewW,flexShrink:0}}>
             <iframe
               srcDoc={html}
-              style={{width:'100%',height:isTh?800:1000,border:'none',borderRadius:8,boxShadow:'0 4px 20px rgba(0,0,0,0.15)',background:'white'}}
+              style={{width:'100%',height:template._canvas ? Math.max(500, (template.page_height||1123)+16) : (isTh?800:1000),border:'none',borderRadius:8,boxShadow:'0 4px 20px rgba(0,0,0,0.15)',background:'white'}}
               title="Invoice Preview"/>
           </div>
         </div>
@@ -1199,8 +1369,77 @@ function RetailInvoicePrintModal({ template, record, items, products, onClose, o
   );
 }
 
+// ─── Booking Receipt print/PDF preview ───────────────────────────────────────
+// Mirrors RetailInvoicePrintModal above, but for the free-form-canvas Booking
+// Receipt Designer (components/admin/BookingReceiptDesigner.tsx) — carries
+// its own template dropdown inline since Orders have no per-record "Booking
+// Receipt Template" field the way Invoices do, so the picker lives here
+// instead of on the form.
+function BookingReceiptPrintModal({ templates, templateId, onTemplateChange, record, items, onClose, onPrint, onDownloadPdf, downloading }) {
+  const template = templates.find(t => t.id === templateId) || templates[0] || null;
+
+  if (!templates.length) return (
+    <div className="fixed inset-0 bg-black/60 z-[200] flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-white rounded-[20px] p-8 max-w-md text-center shadow-2xl" onClick={e=>e.stopPropagation()}>
+        <div className="text-4xl mb-4">🎫</div>
+        <h3 className="font-bold text-[#0F172A] text-lg mb-2">No Booking Receipt Template</h3>
+        <p className="text-gray-500 text-sm mb-5">Design one first in Admin Tools → B2C Retail → Booking Receipt Designer.</p>
+        <button onClick={onClose} className="bg-[#0F172A] text-white px-6 py-2.5 rounded-xl font-bold text-sm">Close</button>
+      </div>
+    </div>
+  );
+
+  const html = buildBookingReceiptHTML(template, record, items);
+  const previewW = template?.page_width || 794;
+
+  return (
+    <div className="fixed inset-0 bg-black/70 z-[200] flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-white rounded-[24px] shadow-2xl flex flex-col overflow-hidden" style={{maxWidth:900,width:'100%',maxHeight:'90vh'}} onClick={e=>e.stopPropagation()}>
+        <div className="bg-gradient-to-r from-[#0F172A] to-purple-900 px-6 py-4 flex items-center justify-between flex-shrink-0 flex-wrap gap-2">
+          <div>
+            <h3 className="text-white font-bold text-lg">🎫 Booking Receipt Preview</h3>
+            {templates.length > 1 ? (
+              <select value={template?.id||''} onChange={e=>onTemplateChange(e.target.value)}
+                className="mt-1 bg-white/10 border border-white/20 text-white text-xs rounded-lg px-2 py-1 focus:outline-none">
+                {templates.map(tp=><option key={tp.id} value={tp.id} className="text-black">{tp.is_default?'★ ':''}{tp.name}</option>)}
+              </select>
+            ) : <p className="text-purple-200 text-xs mt-0.5">Template: {template?.name}</p>}
+          </div>
+          <div className="flex items-center gap-3">
+            <button onClick={onDownloadPdf} disabled={downloading}
+              className="bg-white/15 hover:bg-white/25 text-white px-4 py-2.5 rounded-xl text-sm font-semibold border border-white/20 disabled:opacity-50">
+              {downloading ? '⏳ Preparing…' : '⬇️ Download PDF'}
+            </button>
+            <button onClick={onPrint}
+              className="bg-green-500 hover:bg-green-600 text-white px-5 py-2.5 rounded-xl text-sm font-bold shadow transition-all">
+              🖨️ Print Now
+            </button>
+            <button onClick={onClose} className="text-white/60 hover:text-white text-2xl leading-none">✕</button>
+          </div>
+        </div>
+
+        <div className="flex-1 overflow-auto bg-gray-100 p-6 flex justify-center">
+          <div style={{width:previewW,flexShrink:0}}>
+            <iframe srcDoc={html} style={{width:'100%',height:Math.max(500,(template?.page_height||1123)+16),border:'none',borderRadius:8,boxShadow:'0 4px 20px rgba(0,0,0,0.15)',background:'white'}} title="Booking Receipt Preview"/>
+          </div>
+        </div>
+
+        <div className="px-6 py-4 border-t border-gray-100 flex items-center justify-between bg-gray-50 flex-shrink-0">
+          <p className="text-xs text-gray-400">Preview may differ slightly from printed output depending on printer settings.</p>
+          <div className="flex gap-3">
+            <button onClick={onClose} className="px-4 py-2 border border-gray-200 rounded-xl text-sm font-semibold text-gray-600 hover:bg-gray-100">Close</button>
+            <button onClick={onPrint} className="bg-green-500 hover:bg-green-600 text-white px-5 py-2.5 rounded-xl text-sm font-bold">🖨️ Print</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Retail Customer 360 ─────────────────────────────────────────────────────
-function RC360Table({ cols, rows, emptyMsg, onRowClick }) {
+function RC360Table({ page, cols: baseCols, rows, emptyMsg, onRowClick }) {
+  // Columns follow the Page Layout Designer and pick up published custom fields of the related object
+  const cols = useRelatedCols(page, withKeys(baseCols));
   if (!rows || rows.length === 0) return (
     <div className="px-5 py-10 text-center text-gray-400 text-sm">{emptyMsg}</div>
   );
@@ -1236,6 +1475,9 @@ function RC360Table({ cols, rows, emptyMsg, onRowClick }) {
 
 function RetailCustomer360({ customer, onNavigate, onOpenCreate }) {
   const { supabase } = useTenant();
+  const { getObjectLabel } = useObjectLabels();
+  const { currentUserPermissions, permissionsLoaded, applyDataSecurity } = useApp();
+  const can360 = (pg) => !permissionsLoaded || (currentUserPermissions||[]).includes('__admin__') || (currentUserPermissions||[]).includes(viewPermFor(pg));
   const [tab, setTab]         = useState('orders');
   const [data, setData]       = useState({ orders: [], invoices: [], activities: [] });
   const [loading, setLoading] = useState(true);
@@ -1251,7 +1493,8 @@ function RetailCustomer360({ customer, onNavigate, onOpenCreate }) {
       tenantScope(supabase.from('retail_invoices')  .select('*')).or(`customer_id.eq.${custId},customer.eq.${customer.name||''}`).order('created_at', { ascending: false }),
       tenantScope(supabase.from('retail_activities').select('*')).or(`customer_id.eq.${custId},customer.eq.${customer.name||''}`).order('created_at', { ascending: false }),
     ]).then(([{ data: orders }, { data: invoices }, { data: activities }]) => {
-      setData({ orders: orders || [], invoices: invoices || [], activities: activities || [] });
+      const sec = (a) => (applyDataSecurity ? applyDataSecurity(a || []) : (a || []));
+      setData({ orders: sec(orders), invoices: sec(invoices), activities: sec(activities) });
       setLoading(false);
     });
   }, [customer?.id]);
@@ -1261,11 +1504,12 @@ function RetailCustomer360({ customer, onNavigate, onOpenCreate }) {
   const paidInvoices = data.invoices.filter(i => i.payment_status === 'Paid' || i.status === 'Paid').length;
   const openActs     = data.activities.filter(a => a.status === 'Open' || a.status === 'In Progress').length;
 
+  // Tab names follow tenant renames; tabs the role cannot view are dropped
   const TABS = [
-    { k: 'orders',     icon: '🛍️', label: 'Orders',     count: data.orders.length },
-    { k: 'invoices',   icon: '🧾', label: 'Invoices',   count: data.invoices.length },
-    { k: 'activities', icon: '📅', label: 'Activities', count: data.activities.length },
-  ];
+    { k: 'orders',     pg: 'retailOrders',     icon: '🛍️', label: getObjectLabel('retailOrders', 'Orders', 'plural'),         count: data.orders.length },
+    { k: 'invoices',   pg: 'retailInvoices',   icon: '🧾', label: getObjectLabel('retailInvoices', 'Invoices', 'plural'),     count: data.invoices.length },
+    { k: 'activities', pg: 'retailActivities', icon: '📅', label: getObjectLabel('retailActivities', 'Activities', 'plural'), count: data.activities.length },
+  ].filter(t => can360(t.pg));
 
   const SP = ({ status }) => (
     <span className={`px-2.5 py-0.5 rounded-full text-xs font-semibold ${getStatusColor(status)}`}>{status || '-'}</span>
@@ -1273,7 +1517,7 @@ function RetailCustomer360({ customer, onNavigate, onOpenCreate }) {
 
   const orderCols = [
     { h: 'Order #',   v: r => {
-      const num = r.display_number ? 'RORD-'+String(r.display_number).padStart(5,'0') : r.order_number || '-';
+      const num = r.display_number ? formatDisplayNumber(PAGE_DISPLAY_PREFIX.retailOrders || 'RORD', r.display_number) : r.order_number || '-';
       return <span className="font-mono text-xs text-blue-600 font-bold">{num}</span>;
     }},
     { h: 'Date',      v: r => (<span className="text-gray-600">{r.order_date || r.created_at?.slice(0, 10) || '-'}</span>) },
@@ -1286,7 +1530,7 @@ function RetailCustomer360({ customer, onNavigate, onOpenCreate }) {
 
   const invoiceCols = [
     { h: 'Invoice #',  v: r => {
-      const num = r.display_number ? 'RINV-'+String(r.display_number).padStart(5,'0') : r.invoice_number || '-';
+      const num = r.display_number ? formatDisplayNumber(PAGE_DISPLAY_PREFIX.retailInvoices || 'RINV', r.display_number) : r.invoice_number || '-';
       return <span className="font-mono text-xs text-purple-600 font-bold">{num}</span>;
     }},
     { h: 'Date',       v: r => (<span className="text-gray-600">{r.invoice_date || r.created_at?.slice(0, 10) || '-'}</span>) },
@@ -1317,9 +1561,10 @@ function RetailCustomer360({ customer, onNavigate, onOpenCreate }) {
     { l: 'Open Activities', v: openActs,                         icon: '📅', bg: 'bg-amber-50',  border: 'border-amber-200',  text: 'text-amber-700' },
   ];
 
-  const activeCols = tab === 'orders' ? orderCols : tab === 'invoices' ? invoiceCols : activityCols;
-  const activeRows = tab === 'orders' ? data.orders : tab === 'invoices' ? data.invoices : data.activities;
-  const activeTab  = TABS.find(t => t.k === tab);
+  const effTab = TABS.find(t => t.k === tab) ? tab : (TABS[0]?.k || 'orders');
+  const activeCols = effTab === 'orders' ? orderCols : effTab === 'invoices' ? invoiceCols : activityCols;
+  const activeRows = effTab === 'orders' ? data.orders : effTab === 'invoices' ? data.invoices : data.activities;
+  const activeTab  = TABS.find(t => t.k === effTab);
 
   // Open create modal for the given type, pre-filled with this customer
   const handleCreateFor = (type) => {
@@ -1327,7 +1572,12 @@ function RetailCustomer360({ customer, onNavigate, onOpenCreate }) {
     const pageMap  = { order: 'retailOrders', invoice: 'retailInvoices', activity: 'retailActivities' };
     const prefill  = {
       ...buildCustomerPrefill(customer),
-      ...(type === 'order'    ? { order_date:    todayLocalISO(), status: 'Open',  channel: 'In-Store' } : {}),
+      // Bug fix: this Customer 360 "Create Order" path defaulted new orders
+      // to status 'Open', inconsistent with the plain customer-list 3-dot
+      // menu's "Create Order" (which already correctly defaults to 'Draft').
+      // A brand-new order shouldn't start life as Open before it's even
+      // been reviewed/confirmed — default it to Draft here too.
+      ...(type === 'order'    ? { order_date:    todayLocalISO(), status: 'Draft', channel: 'In-Store' } : {}),
       ...(type === 'invoice'  ? { invoice_date:  todayLocalISO(), status: 'Draft', payment_status: 'Pending' } : {}),
       ...(type === 'activity' ? { activity_date: todayLocalISO(), subject: 'Follow up with '+custName, activity_type: 'Call', status: 'Planned' } : {}),
     };
@@ -1338,9 +1588,9 @@ function RetailCustomer360({ customer, onNavigate, onOpenCreate }) {
     <div className="space-y-5">
       {/* Quick Actions */}
       <div className="flex gap-2 flex-wrap">
-        <button onClick={()=>handleCreateFor('order')} className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-white px-3 py-2 rounded-xl text-xs font-bold shadow-sm">🛒 New Order</button>
-        <button onClick={()=>handleCreateFor('invoice')} className="flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-2 rounded-xl text-xs font-bold shadow-sm">🧾 New Invoice</button>
-        <button onClick={()=>handleCreateFor('activity')} className="flex items-center gap-1.5 bg-green-600 hover:bg-green-700 text-white px-3 py-2 rounded-xl text-xs font-bold shadow-sm">📅 New Activity</button>
+        <button onClick={()=>handleCreateFor('order')} className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-white px-3 py-2 rounded-xl text-xs font-bold shadow-sm">🛒 {RL('New Order')}</button>
+        <button onClick={()=>handleCreateFor('invoice')} className="flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-2 rounded-xl text-xs font-bold shadow-sm">🧾 {RL('New Invoice')}</button>
+        <button onClick={()=>handleCreateFor('activity')} className="flex items-center gap-1.5 bg-green-600 hover:bg-green-700 text-white px-3 py-2 rounded-xl text-xs font-bold shadow-sm">📅 {RL('New Activity')}</button>
       </div>
       {/* KPI row */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
@@ -1398,7 +1648,7 @@ function RetailCustomer360({ customer, onNavigate, onOpenCreate }) {
             <span className="font-bold text-[#0F172A] text-sm">{activeTab?.label}</span>
             <span className="ml-auto text-xs text-gray-400">{activeRows.length} records</span>
           </div>
-          <RC360Table cols={activeCols} rows={activeRows} emptyMsg={`No ${activeTab?.label?.toLowerCase()} found for this customer`} onRowClick={(r) => {
+          <RC360Table page={activeTab?.pg || 'retailOrders'} cols={activeCols} rows={activeRows} emptyMsg={`No ${activeTab?.label?.toLowerCase()} found for this customer`} onRowClick={(r) => {
               const pageMap = { orders: 'retailOrders', invoices: 'retailInvoices', activities: 'retailActivities' };
               const idMap   = { orders: 'order_number', invoices: 'invoice_number', activities: 'activity_number' };
               const pg = pageMap[activeTab?.k];
@@ -1410,6 +1660,8 @@ function RetailCustomer360({ customer, onNavigate, onOpenCreate }) {
             }}/>
         </div>
       )}
+      {/* Custom objects with a lookup to this customer show up as related lists */}
+      {customer?.id && <CustomRelatedLists parentKind="standard" parentKey="retailCustomers" parentId={customer.id} parentName={customer.name} parentPage="retailCustomers" parentRecord={customer} returnTab="360" />}
     </div>
   );
 }
@@ -1419,13 +1671,15 @@ function RetailCustomer360({ customer, onNavigate, onOpenCreate }) {
 // shared with RentalBookingCalendar.tsx without a circular import.
 
 // ─── Detail Panel ───────────────────────────────────────────────────────────
-function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo, onC360Navigate, onC360Create }) {
+const _bookingPromptShown = new Set<string>();
+function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo, onC360Navigate, onC360Create, initialTab = null }) {
   const { updateRetailRecord, deleteRetailRecord, retailCustomers, retailProducts, retailOrders, enterpriseUsers, currentUser,
-          fetchRetailLineItems, fetchRetailCustomers, createRetailRecord, appPreferences, appearance, setPendingReturnTo, createRetailInvoiceFromOrder,
+          fetchRetailLineItems, fetchRetailCustomers, createRetailRecord, appPreferences, appearance, setPendingReturnTo, createRetailInvoiceFromOrder, createBookingFromInvoice,
           checkMatchingApprovalProcess, submitForApproval, currentUserPermissions, permissionsLoaded, setPendingRecord } = useApp();
   const { supabase, tenant } = useTenant();
   const { showAlert, showConfirm } = useAlert();
   const { fields: retailInvoiceCustomFieldsMeta } = useCustomFields('retailInvoices');
+  const { getObjectLabel } = useObjectLabels();
   const lang = appearance?.language || 'en';
   const [showBookingCalendar, setShowBookingCalendar] = useState(false);
   const [relatedOrderDisplay, setRelatedOrderDisplay] = useState('');
@@ -1441,7 +1695,7 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo, on
   useEffect(() => {
     if (page !== 'retailInvoices' && page !== 'retailActivities' && page !== 'retailOrders') return;
     const qs = new URLSearchParams({ ...(tenant?.db_url ? { db_url: tenant.db_url } : {}), ...(tenant?.id ? { tenantId: tenant.id } : {}) });
-    fetch(`/api/whatsapp/config?${qs}`).then(r => r.json()).then(d => setWaConfig(d.config)).catch(() => setWaConfig(null));
+    waFetch(`/api/whatsapp/config?${qs}`).then(r => r.json()).then(d => setWaConfig(d.config)).catch(() => setWaConfig(null));
   }, [page, tenant?.db_url, tenant?.id]);
 
   const [edited, setEdited] = useState({ ...record });
@@ -1459,7 +1713,7 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo, on
       .then(({ data }) => { if (!cancelled) setRelatedActivities(data || []); });
     return () => { cancelled = true; };
   }, [page, edited.id, supabase]);
-  const [activeTab, setActiveTab] = useState('details');
+  const [activeTab, setActiveTab] = useState(initialTab || 'details');
   const [quickCreateCustomer, setQuickCreateCustomer] = useState(null); // {prefillName, onCreated} // 'details' | '360'
   // Retail invoice templates (for retailInvoices page)
   const [invoiceTemplates,    setInvoiceTemplates]    = useState([]);
@@ -1468,18 +1722,73 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo, on
 
   useEffect(() => {
     if (page !== 'retailInvoices' || !supabase) return;
-    tenantScope(supabase.from('retail_invoice_templates').select('*')).order('created_at')
-      .then(({ data }) => {
-        if (!data) return;
+    Promise.all([
+      tenantScope(supabase.from('retail_invoice_templates').select('*')).order('created_at'),
+      loadCanvasTemplates(supabase, 'retail_invoice'),
+    ]).then(([{ data: legacy }, canvas]) => {
+        const data = mergeTemplates(canvas || [], legacy || []);
+        if (!data.length) return;
         setInvoiceTemplates(data);
-        // Auto-select: use record's saved template, else the default, else first
-        const saved    = data.find(t => t.id === (record?.invoice_template_id || edited.invoice_template_id));
-        const defTpl   = data.find(t => t.is_default);
-        const fallback = data[0];
-        const pick = saved || defTpl || fallback;
+        // Auto-select: use record's saved template, else the default (canvas first), else first
+        const saved = data.find(t => t.id === (record?.invoice_template_id || edited.invoice_template_id));
+        const pick = saved || pickDefault(data);
         if (pick) setSelectedTemplateId(pick.id);
       });
   }, [page, record?.id]);
+
+  // Booking Receipt templates (for retailOrders page, rental mode only) —
+  // same fetch shape as the invoice templates above, but there's no
+  // per-record "template" column to remember a prior pick against (Orders
+  // don't carry a booking_receipt_template_id the way Invoices carry
+  // invoice_template_id), so it just falls back to the tenant default, then
+  // the first template. The user can still switch templates from the
+  // dropdown inside the preview modal itself.
+  const [bookingReceiptTemplates, setBookingReceiptTemplates] = useState([]);
+  const [selectedBookingTemplateId, setSelectedBookingTemplateId] = useState('');
+  const [showBookingReceiptPreview, setShowBookingReceiptPreview] = useState(false);
+  const [bookingReceiptPdfBusy, setBookingReceiptPdfBusy] = useState(false);
+
+  useEffect(() => {
+    if (page !== 'retailOrders' || appPreferences?.business_type !== 'rental' || !supabase) return;
+    tenantScope(supabase.from('booking_receipt_templates').select('*')).order('created_at')
+      .then(({ data }) => {
+        if (!data) return;
+        setBookingReceiptTemplates(data);
+        const defTpl   = data.find(t => t.is_default);
+        const fallback = data[0];
+        const pick = defTpl || fallback;
+        if (pick) setSelectedBookingTemplateId(pick.id);
+      });
+  }, [page, appPreferences?.business_type]);
+
+  function handleBookingReceiptPrint(template, orderRecord, lineItems) {
+    if (!template) { showAlert('Please design a Booking Receipt template first.', { variant:'warning' }); return; }
+    const html = buildBookingReceiptHTML(template, orderRecord, lineItems);
+    const win = window.open('', '_blank', 'width=800,height=900');
+    if (!win) { showAlert('Pop-up blocked. Please allow pop-ups for this site.', { variant:'warning' }); return; }
+    win.document.write(html);
+    win.document.close();
+    win.focus();
+    setTimeout(() => { win.print(); win.close(); }, 600);
+  }
+
+  async function handleBookingReceiptPdf(template, orderRecord, lineItems) {
+    if (!template) { showAlert('Please design a Booking Receipt template first.', { variant:'warning' }); return; }
+    setBookingReceiptPdfBusy(true);
+    try {
+      const html = buildBookingReceiptHTML(template, orderRecord, lineItems);
+      const blob = await generateInvoicePdf(html, (template.paper_size||'a4').toLowerCase());
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      const num = (orderRecord?.displayNumber || orderRecord?.display_number) ? 'RORD-'+String(orderRecord.displayNumber||orderRecord.display_number).padStart(5,'0') : 'booking-receipt';
+      a.href = url; a.download = `${num}.pdf`; document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (e:any) {
+      showAlert('Could not generate PDF: ' + (e?.message || 'Unknown error'), { variant:'danger' });
+    } finally {
+      setBookingReceiptPdfBusy(false);
+    }
+  }
 
   // Custom fields — fetch directly, bypass cache issues
   const [customFields, setCustomFields] = useState([]);
@@ -1571,7 +1880,7 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo, on
 
   const handleSubmitForApproval = async () => {
     setSubmittingApproval(true);
-    await submitForApproval(page, record.id, record.name || record.customer || record.subject || record.id, matchingProcess || undefined);
+    await submitForApproval(page, record.id, record.name || record.customer || record.subject || (record.displayNumber ? formatDisplayNumber(PAGE_DISPLAY_PREFIX[page]||'REC', record.displayNumber) : record.id), matchingProcess || undefined);
     setSubmittingApproval(false);
     setEdited(p => ({ ...p, status: 'Pending Approval' }));
     setMatchingProcess(null);
@@ -1660,6 +1969,22 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo, on
       showAlert(`Please fix the following: ${activeErrors.map(([,e])=>e).join(', ')}`, { variant:'warning', title:'Fix Required' });
       return;
     }
+      // Rental validation: a line item for a rentable product must have a
+      // Rental Start Date before the record can be saved — without it the
+      // rental period (and the availability/booking calendar) has nothing
+      // to anchor to. Only enforced for rows that actually reference a
+      // rentable product; ordinary (non-rental) line items are unaffected.
+      if (cfg.hasLineItems && Array.isArray(items)) {
+        for (let ri = 0; ri < items.length; ri++) {
+          const row = items[ri];
+          if (!row || !row.product_id) continue;
+          const prod = retailProducts.find(x => (x._uuid||x.id) === row.product_id);
+          if (prod?.is_rentable && !row.rental_start_date) {
+            showAlert(`Rental Start Date is required for rentable item "${row.product_name || prod.name || `Line ${ri+1}`}" before this record can be saved.`, { variant:'warning', title:'Rental Start Date Required' });
+            return;
+          }
+        }
+      }
       // Strip client-side computed fields that don't exist as DB columns
       // Strip client-side computed fields — keep custom_data as it's a real DB column
       const { displayNumber, _uuid, ...editedClean } = edited;
@@ -1674,14 +1999,31 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo, on
         // Update edited state so Preview & Print immediately reflects correct totals
         setEdited(p => ({ ...p, ...computed }));
       }
-      await updateRetailRecord(page, payload, items);
+      const savedOk = await updateRetailRecord(page, payload, items);
+      // Rental: an invoice raised without an order has no booking behind it - offer to create one.
+      if (savedOk === true) await offerBookingForInvoice(items);
+      // Bug fix: onSaved() (wired to fetchMap[page]?.() by the parent) used to
+      // only be called on the andClose=true path. That left the in-memory
+      // retailOrders/etc. context array holding the PRE-edit row after a
+      // plain "Save" (stay-open) — so closing the panel afterwards and
+      // reopening the same record (row click sources `record` straight from
+      // that array) showed the stale old values, even though the DB write
+      // itself succeeded. Only a full page reload forced a fresh fetch and
+      // showed the correct data. Refresh the list on every successful save,
+      // regardless of whether the panel is closing.
+      onSaved?.();
       if (andClose) {
-        onSaved?.();
-        console.log('[RetailDetailPanel] handleSave(andClose) - pendingReturnTo:', pendingReturnTo);
-        if (pendingReturnTo) {
-          const rt = pendingReturnTo; setPendingReturnTo(null);
-          window.dispatchEvent(new CustomEvent('open-crm-record', { detail: rt }));
-        } else onClose();
+        // Bug fix: this used to dispatch the pendingReturnTo navigation
+        // directly here, bypassing the onClose prop entirely whenever
+        // pendingReturnTo was set. The parent's onClose (RetailListPage)
+        // is what clears selectedRecord — skipping it left the just-closed
+        // record (e.g. a freshly created Order) sitting in selectedRecord
+        // while the page navigated back to the source page (e.g. the
+        // Customer list), so a second, mismatched/blank detail panel
+        // rendered on top of the list. Always delegate to onClose, which
+        // implements the identical pendingReturnTo-dispatch logic AFTER
+        // clearing selectedRecord first.
+        onClose();
       } else { setSaveSuccess(true); setTimeout(()=>setSaveSuccess(false),2500); }
     } catch (e: any) {
       console.error('[RetailDetailPanel] handleSave', e);
@@ -1692,11 +2034,32 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo, on
   };
 
   const handleClose = () => {
-    console.log('[RetailDetailPanel] handleClose - pendingReturnTo:', pendingReturnTo);
-    if (pendingReturnTo) {
-      const rt = pendingReturnTo; setPendingReturnTo(null);
-      window.dispatchEvent(new CustomEvent('open-crm-record', { detail: rt }));
-    } else onClose();
+    // See note in handleSave above — always delegate to the onClose prop
+    // so selectedRecord is cleared before any pendingReturnTo navigation
+    // fires. Do not dispatch 'open-crm-record' directly from here.
+    onClose();
+  };
+
+  // Rental mode: invoice created directly (no order) -> offer a one-click booking so the dates are
+  // actually reserved. Asked once per invoice per session; always available later under Actions.
+  const invoiceNeedsBooking = (lineRows = items) =>
+    page === 'retailInvoices' && appPreferences?.business_type === 'rental'
+    && !edited.order_number && !record.order_number
+    && (lineRows || []).some(i => i.product_id && i.rental_start_date && i.rental_end_date);
+  const runCreateBooking = async (lineRows = items) => {
+    const ord = await createBookingFromInvoice({ ...edited, id: record.id, displayNumber: record.displayNumber }, lineRows);
+    if (ord) {
+      showAlert(`Booking ${ord.label} created and linked to this invoice.`, { variant:'success', title:'Booking Created' });
+      setEdited(p => ({ ...p, order_number: ord.label }));
+      onSaved?.();
+    }
+  };
+  const offerBookingForInvoice = async (lineRows) => {
+    if (appPreferences?.rental_booking_prompt === false || !invoiceNeedsBooking(lineRows)) return;
+    if (_bookingPromptShown.has(record.id)) return;
+    _bookingPromptShown.add(record.id);
+    const ok = await showConfirm('This invoice has rental items but is not linked to a booking, so those dates are not reserved. Create the booking now from this invoice?', { title: 'Create Booking?', confirmLabel: 'Create Booking', cancelLabel: 'Not now' });
+    if (ok) await runCreateBooking(lineRows);
   };
 
   const handleCreateInvoice = async () => {
@@ -1715,6 +2078,16 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo, on
 
   // Resolve TAX_PRODUCT / TAX_DOCUMENT placeholder field sets dynamically
   const fieldLayout = useFieldLayout(page);
+  // Custom fields on the Detail page through the Page Layout Designer: label, hidden, read-only, order.
+  const detailCF = (customFields || [])
+    .filter(cf => cf.show_on !== 'create')
+    .map((cf, i) => {
+      const r = resolveFieldDisplay(cfKey(cf.api_name), cf.label, fieldLayout.fields || [], { ...edited, ...(edited.custom_data || {}) }, 'detail');
+      const row = resolveFieldRow(cfKey(cf.api_name), fieldLayout.fields || [], 'detail');
+      return { ...cf, label: r.label, _hidden: !r.visible, _ro: !r.editable, _order: row ? row.display_order : 10000 + (cf.sort_order || i) };
+    })
+    .filter(cf => !cf._hidden)
+    .sort((a, b) => a._order - b._order);
   const resolveFields = (fields) => {
     let out = fields;
     if (fields === 'TAX_PRODUCT') out = taxRegime.productFields.map(f => ({ ...f }));
@@ -1888,13 +2261,14 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo, on
   return (
     <>
     <div className="fixed inset-0 bg-black/50 z-[110] overflow-y-auto">
-      <div className="bg-white rounded-[28px] shadow-2xl w-[98vw] my-4 mx-auto flex flex-col" style={{minHeight:'95vh'}}>
+      <div className="rw-panel bg-white rounded-[28px] shadow-2xl w-[98vw] my-4 mx-auto flex flex-col" style={{minHeight:'95vh'}}>
+        <RedwoodSkin />
         {/* Header */}
-        <div className="bg-gradient-to-r from-[#0F172A] to-blue-900 px-6 py-5 rounded-t-[28px] flex items-center justify-between flex-shrink-0">
+        <div className="rw-header bg-gradient-to-r from-[#0F172A] to-blue-900 px-6 py-5 rounded-t-[28px] flex items-center justify-between flex-shrink-0">
           <div>
             <div className="flex items-center gap-2">
               <NavIcon iconKey={page} className="w-5 h-5 text-white"/>
-              <h2 className="text-white text-xl font-bold">{edited.name || edited.subject || edited[cfg.idField]}</h2>
+              <h2 className="text-white text-xl font-bold">{edited.name || edited.subject || (record.displayNumber ? `${cfg.singular || ""} ${formatDisplayNumber(PAGE_DISPLAY_PREFIX[page]||"REC", record.displayNumber)}`.trim() : edited[cfg.idField])}</h2>
               <span className={`px-2.5 py-0.5 rounded-full text-xs font-semibold ${getStatusColor(edited.status)}`}>{edited.status}</span>
             </div>
             <p className="text-blue-300 text-xs mt-1 flex items-center gap-2">
@@ -1903,7 +2277,7 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo, on
                   {formatDisplayNumber(PAGE_DISPLAY_PREFIX[page]||'REC', record.displayNumber)}
                 </span>
               )}
-              <span className="font-mono opacity-60">{edited[cfg.idField]}</span>
+              {!record.displayNumber && <span className="font-mono opacity-60">{edited[cfg.idField]}</span>}
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -1922,10 +2296,21 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo, on
                     <>
                       <div className="fixed inset-0 z-[119]" onClick={() => setActionsMenuOpen(false)} />
                       <div className="absolute right-0 top-full mt-2 w-64 bg-white rounded-2xl shadow-2xl border border-gray-100 py-2 z-[120] text-left">
-                        {edited.status==='Completed' && (
+                        {canInvoiceOrder(appPreferences, edited.status) && (
                           <button onClick={() => { setActionsMenuOpen(false); handleCreateInvoice(); }} disabled={creatingInvoice}
                             className="w-full text-left px-4 py-2.5 text-sm font-semibold text-gray-700 hover:bg-blue-50 flex items-center gap-2.5 disabled:opacity-50">
-                            🧾 {creatingInvoice?t(lang,'loading'):`${t(lang,'create')} ${t(lang,'invoices')}`}
+                            {/* Bug fix: was `${t(lang,'create')} ${t(lang,'invoices')}` — 'invoices'
+                                is the plural nav-label translation key, so this rendered as
+                                "Create Invoices". This action creates exactly one invoice from
+                                this order, so it reads "Create Invoice" (singular), matching the
+                                wording used everywhere else this same action appears. */}
+                            🧾 {creatingInvoice?t(lang,'loading'):RL('Create Invoice')}
+                          </button>
+                        )}
+                        {appPreferences?.business_type === 'rental' && (
+                          <button onClick={() => { setActionsMenuOpen(false); setShowBookingReceiptPreview(true); }}
+                            className="w-full text-left px-4 py-2.5 text-sm font-semibold text-gray-700 hover:bg-blue-50 flex items-center gap-2.5">
+                            🎫 Booking Receipt
                           </button>
                         )}
                         {appPreferences?.business_type === 'rental' && (
@@ -1946,7 +2331,7 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo, on
                             setActionsMenuOpen(false);
                             setWaSending(true);
                             try {
-                              const res = await fetch('/api/whatsapp/send', {
+                              const res = await waFetch('/api/whatsapp/send', {
                                 method: 'POST', headers: { 'Content-Type': 'application/json' },
                                 body: JSON.stringify({
                                   db_url: tenant?.db_url, tenantId: tenant?.id, to: phone,
@@ -1990,6 +2375,12 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo, on
                   <>
                     <div className="fixed inset-0 z-[119]" onClick={() => setActionsMenuOpen(false)} />
                     <div className="absolute right-0 top-full mt-2 w-64 bg-white rounded-2xl shadow-2xl border border-gray-100 py-2 z-[120] text-left">
+                      {invoiceNeedsBooking() && (
+                        <button onClick={() => { setActionsMenuOpen(false); runCreateBooking(); }}
+                            className="w-full text-left px-4 py-2.5 text-sm font-semibold text-purple-700 hover:bg-purple-50 flex items-center gap-2.5">
+                            📅 Create Booking from Invoice
+                          </button>
+                        )}
                       <button
                         onClick={() => { setActionsMenuOpen(false); setShowPrintPreview(true); }}
                         className="w-full text-left px-4 py-2.5 text-sm font-semibold text-gray-700 hover:bg-blue-50 flex items-center gap-2.5">
@@ -2009,7 +2400,7 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo, on
                           const invNum = (record?.displayNumber || edited.display_number) ? 'RINV-'+String(record?.displayNumber || edited.display_number).padStart(5,'0') : 'this invoice';
                           setWaSending(true);
                           try {
-                            const res = await fetch('/api/whatsapp/send', {
+                            const res = await waFetch('/api/whatsapp/send', {
                               method: 'POST', headers: { 'Content-Type': 'application/json' },
                               body: JSON.stringify({
                                 db_url: tenant?.db_url, tenantId: tenant?.id, to: phone,
@@ -2043,7 +2434,7 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo, on
                             const pdfBlob = await generateInvoicePdf(html, template.paper_size);
                             const fileBase64 = await blobToBase64(pdfBlob);
                             const filename = `Invoice ${invNum}.pdf`;
-                            const uploadRes = await fetch('/api/whatsapp/upload-media', {
+                            const uploadRes = await waFetch('/api/whatsapp/upload-media', {
                               method: 'POST', headers: { 'Content-Type': 'application/json' },
                               body: JSON.stringify({ db_url: tenant?.db_url, tenantId: tenant?.id, fileBase64, filename, mimeType: 'application/pdf' }),
                             });
@@ -2053,7 +2444,7 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo, on
                             // works within Meta's 24h customer-service
                             // window without needing the approved template
                             // to have a Document header specially configured.
-                            const sendRes = await fetch('/api/whatsapp/send', {
+                            const sendRes = await waFetch('/api/whatsapp/send', {
                               method: 'POST', headers: { 'Content-Type': 'application/json' },
                               body: JSON.stringify({
                                 db_url: tenant?.db_url, tenantId: tenant?.id, to: phone,
@@ -2145,7 +2536,7 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo, on
                             setActionsMenuOpen(false);
                             setWaSending(true);
                             try {
-                              const res = await fetch('/api/whatsapp/send', {
+                              const res = await waFetch('/api/whatsapp/send', {
                                 method: 'POST', headers: { 'Content-Type': 'application/json' },
                                 body: JSON.stringify({
                                   db_url: tenant?.db_url, tenantId: tenant?.id, to: phone,
@@ -2201,10 +2592,10 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo, on
 
         {/* Tab bar — only for retailCustomers */}
         {page === 'retailCustomers' && (
-          <div className="flex bg-slate-800 border-b border-slate-700 px-6 flex-shrink-0">
+          <div className="rw-tabs flex bg-slate-800 border-b border-slate-700 px-6 flex-shrink-0">
             {[
               {k:'details', l:'📋 Details'},
-              {k:'360',     l:'🔄 Customer 360'},
+              {k:'360',     l:`🔄 ${getObjectLabel('retailCustomers', 'Customer', 'singular')} 360`},
             ].map(tb => (
               <button key={tb.k} onClick={()=>setActiveTab(tb.k)}
                 className={`px-5 py-3 text-sm font-semibold border-b-2 transition-all ${
@@ -2217,6 +2608,20 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo, on
             ))}
           </div>
         )}
+
+        {!(page === 'retailCustomers' && activeTab === '360') && (() => {
+          const hl = [];
+          for (const sec of (cfg.sections || [])) for (const f of (Array.isArray(sec.fields) ? sec.fields : [])) {
+            if (hl.length >= 5) break;
+            if (f.key === 'name' || f.type === 'textarea') continue;
+            const r = resolveFieldDisplay(f.key, f.label, fieldLayout.fields || [], edited, 'detail');
+            if (!r.visible) continue;
+            let v = edited[f.key];
+            if (typeof v === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-/i.test(v)) { const b = f.key.replace(/_id$/, ''); v = edited[b + '_name'] || (typeof edited[b] === 'string' && !/^[0-9a-f]{8}-/i.test(edited[b]) ? edited[b] : '') || ''; if (!v) continue; }
+            hl.push({ label: r.label, value: v === undefined || v === null || v === '' ? '' : (f.type === 'number' && /amount|price|total|cost/i.test(f.key) ? formatCurrency(Number(v)||0) : String(v)) });
+          }
+          return hl.length ? <RecordHighlights items={hl} /> : null;
+        })()}
 
         {/* Body — single scrollable container switching between tabs */}
         <div className="flex-1 overflow-y-auto p-6 space-y-6">
@@ -2234,7 +2639,7 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo, on
           {page === 'retailCustomers' && activeTab === '360' ? (
             <RetailCustomer360
               customer={record}
-              onNavigate={(targetPage, rec) => onC360Navigate?.(targetPage, rec)}
+              onNavigate={(targetPage, rec) => onC360Navigate?.(targetPage, rec, { page, record, tab: '360' })}
               onOpenCreate={(targetPage, prefill) => onC360Create?.(targetPage, prefill)}
             />
           ) : (
@@ -2329,7 +2734,7 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo, on
 
 
           {/* Additional Information — App Composer custom fields, only when published */}
-          {customFields.filter(cf => cf.show_on !== 'create').length > 0 && (
+          {detailCF.length > 0 && (
             <div className="bg-white rounded-[20px] border border-blue-100 shadow-sm">
               <div className="px-5 py-3 bg-gradient-to-r from-slate-50 to-blue-50 border-b border-blue-100 rounded-t-[20px] flex items-center gap-2">
                 <span>🎛️</span>
@@ -2337,11 +2742,11 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo, on
                 <span className="text-[10px] bg-blue-100 text-blue-600 px-2 py-0.5 rounded-full font-semibold ml-auto">App Composer</span>
               </div>
               <div className="p-5 grid grid-cols-1 sm:grid-cols-2 gap-4">
-                {customFields.filter(cf => cf.show_on !== 'create').map(cf => {
+                {detailCF.map(cf => {
                   const cdVal = (edited.custom_data || {})[cf.api_name];
                   const setCdVal = (val) => setEdited(p => ({ ...p, custom_data: { ...(p.custom_data||{}), [cf.api_name]: val } }));
                   return (
-                    <div key={cf.api_name} className={cf.field_type==='multi_select'?'sm:col-span-2':''}>
+                    <fieldset key={cf.api_name} disabled={cf._ro} title={cf._ro ? 'Read-only (Page Layout Designer)' : undefined} className={`min-w-0 border-0 p-0 m-0 ${cf._ro?'opacity-60':''} ${cf.field_type==='multi_select'?'sm:col-span-2':''}`}>
                       {cf.field_type !== 'checkbox' && (
                         <label className="block text-xs font-bold uppercase tracking-wider text-gray-400 mb-1.5">
                           {cf.label}{cf.required && <span className="text-red-400 ml-1">*</span>}
@@ -2371,7 +2776,7 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo, on
                             value={cdVal||''} onChange={e=>setCdVal(e.target.value)} placeholder={cf.label}
                             className="w-full border border-blue-200 rounded-xl px-3 py-2.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-400 text-[#0F172A]"/>
                       }
-                    </div>
+                    </fieldset>
                   );
                 })}
               </div>
@@ -2460,13 +2865,26 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo, on
         }}
       />
     )}
+    {showBookingReceiptPreview && page==='retailOrders' && (
+      <BookingReceiptPrintModal
+        templates={bookingReceiptTemplates}
+        templateId={selectedBookingTemplateId}
+        onTemplateChange={setSelectedBookingTemplateId}
+        record={edited}
+        items={items}
+        onClose={()=>setShowBookingReceiptPreview(false)}
+        onPrint={()=>handleBookingReceiptPrint(bookingReceiptTemplates.find(t=>t.id===selectedBookingTemplateId), edited, items)}
+        onDownloadPdf={()=>handleBookingReceiptPdf(bookingReceiptTemplates.find(t=>t.id===selectedBookingTemplateId), edited, items)}
+        downloading={bookingReceiptPdfBusy}
+      />
+    )}
     </>
   );
 }
 
 // ─── Create Modal ───────────────────────────────────────────────────────────
 export function RetailCreateModal({ page, open, onClose, onCreated, prefill = null }) {
-  const { createRetailRecord, retailCustomers, enterpriseUsers, currentUser, appPreferences, appearance } = useApp();
+  const { createRetailRecord, retailCustomers, retailProducts, enterpriseUsers, currentUser, appPreferences, appearance } = useApp();
   const { supabase } = useTenant();
   const { showAlert } = useAlert();
   const lang = appearance?.language || 'en';
@@ -2504,7 +2922,7 @@ export function RetailCreateModal({ page, open, onClose, onCreated, prefill = nu
     return rawValue;
   };
 
-  const defaultForm = () => {
+  const defaultForm = (withLayout = true) => {
     const base: any = {
       status: cfg.statusOptions[0],
       currency: appPreferences?.default_currency || 'INR',
@@ -2529,7 +2947,9 @@ export function RetailCreateModal({ page, open, onClose, onCreated, prefill = nu
     // requiring a code change per field.
     const fieldTypeByKey: Record<string,string> = {};
     (cfg.sections||[]).forEach(s => (s.fields||[]).forEach(f => { fieldTypeByKey[f.key] = f.type; }));
-    (fieldLayout.fields || []).forEach(row => {
+    // Only rows that apply to the CREATE page (Create-only + Both Pages) - never Detail-only rows.
+    if (withLayout) effectiveRows(fieldLayout.fields || [], 'create').forEach(row => {
+      if (row.field_key.startsWith('cf_')) return;
       const resolved = resolveDefaultValue(fieldTypeByKey[row.field_key] || 'text', row.default_value, base);
       if (resolved !== undefined) base[row.field_key] = resolved;
     });
@@ -2537,7 +2957,8 @@ export function RetailCreateModal({ page, open, onClose, onCreated, prefill = nu
     // mechanism, works for any custom field defined on this object.
     const custom_data: Record<string, any> = {};
     (headerCustomFields || []).forEach(f => {
-      const resolved = resolveDefaultValue(f.field_type, f.default_value);
+      const cfRow = withLayout ? resolveFieldRow(cfKey(f.api_name), fieldLayout.fields || [], 'create') : undefined;
+      const resolved = resolveDefaultValue(f.field_type, cfRow?.default_value ?? f.default_value);
       if (resolved !== undefined) custom_data[f.api_name] = resolved;
     });
     if (Object.keys(custom_data).length) base.custom_data = custom_data;
@@ -2558,8 +2979,39 @@ export function RetailCreateModal({ page, open, onClose, onCreated, prefill = nu
     }
     wasOpenRef.current = open;
   }, [open, page]);
+
+  // The Page Layout Designer config can finish loading AFTER the form was first seeded (first open of the
+  // session, or published while open). Re-apply the configured defaults then — but only into fields the
+  // user hasn't touched (still empty, or still holding the built-in fallback) and that the caller didn't prefill.
+  const layoutDefaultsSig = JSON.stringify(effectiveRows(fieldLayout.fields || [], 'create').map(r => [r.field_key, r.default_value || '']))
+    + '|' + JSON.stringify((headerCustomFields || []).map(f => [f.api_name, f.default_value || '']));
+  useEffect(() => {
+    if (!open || fieldLayout.loading) return;
+    const withL = defaultForm(true), noL = defaultForm(false);
+    setForm(f => {
+      const n = { ...f };
+      Object.keys(withL).forEach(k => {
+        if (k === 'custom_data') return;
+        if (prefill && Object.prototype.hasOwnProperty.call(prefill, k)) return;
+        if (withL[k] === noL[k]) return;
+        if (f[k] === undefined || f[k] === '' || f[k] === noL[k]) n[k] = withL[k];
+      });
+      if (withL.custom_data) {
+        const cd = { ...(f.custom_data || {}) };
+        Object.keys(withL.custom_data).forEach(k => { if (cd[k] === undefined || cd[k] === '') cd[k] = withL.custom_data[k]; });
+        n.custom_data = cd;
+      }
+      return n;
+    });
+  }, [open, fieldLayout.loading, layoutDefaultsSig]);
   const [saving, setSaving] = useState(false);
   const [errors, setErrors] = useState({});
+  // Line items on the Create page — opt-in from the Page Layout Designer (line-item object → "Show this Line Items grid on the Create page").
+  const [items, setItems] = useState([]);
+  const lineLayoutObj = page === 'retailInvoices' ? 'retailInvoiceLineItems' : 'retailOrderLineItems';
+  const lineLayoutRows = useFieldLayout(cfg.hasLineItems ? lineLayoutObj : page);
+  const showLines = !!cfg.hasLineItems && createGridEnabled(lineLayoutRows.fields);
+  useEffect(() => { if (!open) setItems([]); }, [open]);
   const [createCustomFields, setCreateCustomFields] = useState([]);
 
   useEffect(() => {
@@ -2603,13 +3055,24 @@ export function RetailCreateModal({ page, open, onClose, onCreated, prefill = nu
         const resolved = fieldLayout.resolve(f.key, f.label, form, 'create');
         const savedRow = resolveFieldRow(f.key, fieldLayout.fields, 'create');
         const sortOrder = savedRow ? savedRow.display_order : 10000 + originalIdx;
-        return { ...f, label: resolved.label, _layoutHidden: !resolved.visible, _sortOrder: sortOrder };
+        return { ...f, label: resolved.label, _layoutHidden: !resolved.visible, _layoutReadOnly: !resolved.editable, _sortOrder: sortOrder };
       })
       .filter(f => !f._layoutHidden)
       .sort((a, b) => a._sortOrder - b._sortOrder);
   }, [page, appPreferences, fieldLayout.fields, form]);
 
   if (!open) return null;
+
+  // Custom fields on the Create page through the Page Layout Designer: label, hidden, read-only, order.
+  const createCF = createCustomFields
+    .filter(cf => !cf.show_on || cf.show_on === 'both' || cf.show_on === 'create')
+    .map((cf, i) => {
+      const r = resolveFieldDisplay(cfKey(cf.api_name), cf.label, fieldLayout.fields || [], { ...form, ...(form.custom_data || {}) }, 'create');
+      const row = resolveFieldRow(cfKey(cf.api_name), fieldLayout.fields || [], 'create');
+      return { ...cf, label: r.label, _hidden: !r.visible, _ro: !r.editable, _order: row ? row.display_order : 10000 + (cf.sort_order || i) };
+    })
+    .filter(cf => !cf._hidden)
+    .sort((a, b) => a._order - b._order);
 
   const validate = () => {
     const errs: Record<string,string> = {};
@@ -2644,7 +3107,21 @@ export function RetailCreateModal({ page, open, onClose, onCreated, prefill = nu
     if (!validate()) return;
     setSaving(true);
     try {
-      const rec = await createRetailRecord(page, form, []);
+      let payload = form;
+      const lines = showLines ? items.filter(i => i && (i.product_id || i.product_name)) : [];
+      if (showLines && lines.length) {
+        const sub = lines.reduce((a, i) => a + computeLineGross(i), 0);
+        const disc = lines.reduce((a, i) => a + computeLineGross(i) * Number(i.discount_pct || 0) / 100, 0);
+        const tax = lines.reduce((a, i) => a + taxRegime.computeLineTax(i).totalTax, 0);
+        const pre = sub - disc + tax;
+        const hd = pre * Number(form.header_discount_pct || 0) / 100;
+        payload = { ...form, subtotal: sub, total_discount: disc, total_tax: tax, header_discount_pct: Number(form.header_discount_pct || 0), header_discount_amount: hd, amount: pre - hd };
+        for (const row of lines) {
+          const prod = (retailProducts || []).find(x => (x._uuid || x.id) === row.product_id);
+          if (prod?.is_rentable && !row.rental_start_date) { showAlert(`Rental Start Date is required for rentable item "${row.product_name || prod.name}".`, { variant: 'warning', title: 'Rental Start Date Required' }); setSaving(false); return; }
+        }
+      }
+      const rec = await createRetailRecord(page, payload, lines);
       if (rec) { onCreated?.(rec); onClose(); }
     } catch (e: any) {
       console.error('[RetailCreateModal] handleCreate', e);
@@ -2742,38 +3219,39 @@ export function RetailCreateModal({ page, open, onClose, onCreated, prefill = nu
     <>
     <div className="fixed inset-0 z-[500] flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/50" onClick={onClose}/>
-      <div className="relative bg-white rounded-[28px] shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden">
-        <div className="bg-gradient-to-r from-[#0F172A] to-blue-900 px-6 py-5 flex items-center justify-between flex-shrink-0">
+      <div className={`rw-panel rw-modal relative bg-white rounded-[28px] shadow-2xl w-full ${showLines ? 'max-w-6xl' : 'max-w-2xl'} max-h-[90vh] flex flex-col overflow-hidden`}>
+        <RedwoodSkin />
+        <div className="rw-header bg-gradient-to-r from-[#0F172A] to-blue-900 px-6 py-5 flex items-center justify-between flex-shrink-0">
           <h2 className="text-white text-xl font-bold flex items-center gap-2"><NavIcon iconKey={page} className="w-5 h-5"/> Create {getObjectLabel(page, cfg.singular, 'singular')}</h2>
           <button onClick={onClose} className="text-white/70 hover:text-white text-2xl leading-none">✕</button>
         </div>
         <div className="overflow-y-auto flex-1 p-6">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             {createFields.map(f => (
-              <div key={f.key} className={f.type==='textarea'?'sm:col-span-2':''}>
+              <fieldset key={f.key} disabled={f._layoutReadOnly} title={f._layoutReadOnly ? 'Read-only (Page Layout Designer)' : undefined} className={`min-w-0 border-0 p-0 m-0 ${f._layoutReadOnly?'opacity-60':''} ${f.type==='textarea'?'sm:col-span-2':''}`}>
                 {f.type!=='checkbox' && (
                   <label className="block text-xs font-bold uppercase tracking-wider text-gray-500 mb-1.5">
                     {f.label}{f.required && <span className="text-red-400 ml-1">*</span>}
                   </label>
                 )}
                 {renderField(f)}
-              </div>
+              </fieldset>
             ))}
           </div>
 
           {/* Additional Information — custom fields shown on create */}
-          {createCustomFields.filter(cf=>!cf.show_on||cf.show_on==='both'||cf.show_on==='create').length > 0 && (
+          {createCF.length > 0 && (
             <div className="mt-4 bg-blue-50/40 rounded-[18px] border border-blue-100 p-4">
               <h4 className="text-xs font-bold uppercase tracking-wider text-gray-400 mb-3 flex items-center gap-2">
                 <span>🎛️</span> Additional Information
               </h4>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                {createCustomFields.filter(cf=>!cf.show_on||cf.show_on==='both'||cf.show_on==='create').map(cf=>{
+                {createCF.map(cf=>{
                   const cdVal=(form.custom_data||{})[cf.api_name];
                   const setCdVal=(val)=>setForm(p=>({...p,custom_data:{...(p.custom_data||{}),[cf.api_name]:val}}));
                   const isWide=cf.field_type==='multi_select';
                   return (
-                    <div key={cf.api_name} className={isWide?'sm:col-span-2':''}>
+                    <fieldset key={cf.api_name} disabled={cf._ro} className={`min-w-0 border-0 p-0 m-0 ${cf._ro?'opacity-60':''} ${isWide?'sm:col-span-2':''}`}>
                       {cf.field_type!=='checkbox'&&<label className="block text-xs font-bold uppercase tracking-wider text-gray-500 mb-1.5">{cf.label}{cf.required&&<span className="text-red-400 ml-1">*</span>}</label>}
                       {cf.field_type==='single_select'
                         ?<select value={cdVal||''} onChange={e=>setCdVal(e.target.value)} className="w-full border border-blue-200 rounded-xl px-3 py-2 text-sm bg-white focus:outline-none focus:ring-1 focus:ring-blue-400"><option value="">Select {cf.label}...</option>{cf.options.map(o=><option key={o}>{o}</option>)}</select>
@@ -2783,10 +3261,17 @@ export function RetailCreateModal({ page, open, onClose, onCreated, prefill = nu
                         ?<label className="flex items-center gap-2 cursor-pointer pt-1"><input type="checkbox" className="w-4 h-4 accent-blue-600" checked={!!cdVal} onChange={e=>setCdVal(e.target.checked)}/><span className="text-sm font-semibold">{cf.label}</span></label>
                         :<input type={cf.field_type==='number'||cf.field_type==='currency'?'number':cf.field_type==='date'?'date':cf.field_type==='datetime'?'datetime-local':cf.field_type==='email'?'email':cf.field_type==='url'?'url':'text'} value={cdVal||''} onChange={e=>setCdVal(e.target.value)} placeholder={cf.label} className="w-full border border-blue-200 rounded-xl px-3 py-2.5 text-sm bg-white focus:outline-none focus:ring-1 focus:ring-blue-400"/>
                       }
-                    </div>
+                    </fieldset>
                   );
                 })}
               </div>
+            </div>
+          )}
+
+          {showLines && (
+            <div className="mt-5">
+              <RetailLineItems items={items} setItems={setItems} products={retailProducts} taxRegime={taxRegime} page={page} scope="create"
+                headerDiscountPct={form.header_discount_pct} onHeaderDiscountChange={v => s('header_discount_pct', v)} />
             </div>
           )}
         </div>
@@ -3078,7 +3563,7 @@ export default function RetailListPage({ page }) {
     deleteSavedSearch, setDefaultSavedSearch, currentUser, appPreferences,
     createRetailInvoiceFromOrder, currentUserPermissions, permissionsLoaded,
     fetchListCount, listViewPrefs, fetchListViewPrefs, saveListViewPrefs, appearance,
-    updateRetailRecord, applyDataSecurity,
+    updateRetailRecord, applyDataSecurity, dataSecurityScope,
   } = useApp();
   const lang = appearance?.language || 'en';
 
@@ -3151,6 +3636,7 @@ export default function RetailListPage({ page }) {
   }, [viewMode, page]);
   const [createOpen,     setCreateOpen]     = useState(false);
   const [createPrefill,  setCreatePrefill]  = useState(null);
+  const [initialTab,     setInitialTab]     = useState(null); // tab to reopen on (Customer 360 return)
   const [c360Record,     setC360Record]     = useState(null); // {page, data} for cross-object creates
   const [searchPanel,    setSearchPanel]    = useState(false);
   const [menuOpenId,     setMenuOpenId]     = useState(null);
@@ -3206,7 +3692,10 @@ export default function RetailListPage({ page }) {
   // Cross-object navigation from Customer 360 — runs as an effect, never during render
   useEffect(() => {
     if (!c360Record) return;
+    // Remember where the user came from (Customer 360 of this customer) so closing the opened record returns there
+    if (c360Record.returnTo) setPendingReturnTo(c360Record.returnTo);
     setPendingRecord({ page: c360Record.page, record: c360Record.record });
+    setSelectedRecord(null);
     window.dispatchEvent(new CustomEvent('retail-navigate', { detail: { page: c360Record.page } }));
     setC360Record(null);
   }, [c360Record]);
@@ -3273,6 +3762,7 @@ export default function RetailListPage({ page }) {
       sortAscending: sortDir === 'asc',
       page: currentPage,
       pageSize,
+      security: dataSecurityScope,
     }).then(({ data, error, totalCount }) => {
       if (cancelled) return;
       if (error) { console.error('[RetailListPage server fetch]', error.message); setServerRows([]); setServerTotal(0); }
@@ -3311,7 +3801,7 @@ export default function RetailListPage({ page }) {
       setServerLoading(false);
     });
     return () => { cancelled = true; };
-  }, [supabase, page, cfg, debouncedSearch, statusFilter, timePeriod, advFilters, ownerFilter, sortField, sortDir, currentPage, pageSize, tenant?.id, currentUser, permissionsLoaded, refreshTick]);
+  }, [supabase, page, cfg, debouncedSearch, statusFilter, timePeriod, advFilters, ownerFilter, sortField, sortDir, currentPage, pageSize, tenant?.id, currentUser, permissionsLoaded, refreshTick, dataSecurityScope]);
 
   // Reset to page 1 whenever a filter/search/sort actually changes the
   // result set — otherwise a user could land on a now-empty page 4 after
@@ -3330,6 +3820,7 @@ export default function RetailListPage({ page }) {
     if (!pendingRecord) return;
     if (pendingRecord.page === page) {
       if (pendingRecord.record) {
+        setInitialTab(pendingRecord.tab || null);
         setSelectedRecord(pendingRecord.record);
         setPendingRecord(null);
       } else if (pendingRecord.openCreate) {
@@ -3395,6 +3886,7 @@ export default function RetailListPage({ page }) {
       sortAscending: false,
       page: 1,
       pageSize: BOARD_FETCH_CAP,
+      security: dataSecurityScope,
     }).then(({ data, error, totalCount }) => {
       if (cancelled) return;
       if (error) { console.error('[RetailListPage board fetch]', error.message); setBoardRows([]); setBoardTotal(0); }
@@ -3419,7 +3911,7 @@ export default function RetailListPage({ page }) {
       setBoardLoading(false);
     });
     return () => { cancelled = true; };
-  }, [viewMode, supabase, page, cfg, debouncedSearch, timePeriod, advFilters, ownerFilter, tenant?.id, currentUser, permissionsLoaded]);
+  }, [viewMode, supabase, page, cfg, debouncedSearch, timePeriod, advFilters, ownerFilter, tenant?.id, currentUser, permissionsLoaded, dataSecurityScope]);
   const clearFilters = () => { setSearch(''); setStatusFilter('All'); setTimePeriod(''); setAdvFilters([]); setOwnerFilter(''); setCurrentPage(1); };
   const addFilterRow = () => { const f = fieldMeta.find(f=>f.key!=='id')||fieldMeta[0]; setAdvFilters(p=>[...p,{field:f.key,type:f.type,op:RETAIL_OPERATORS[f.type][0].v,value:''}]); };
   const updateFilterRow = (idx, patch) => setAdvFilters(p => p.map((c,i) => i===idx ? {...c,...patch} : c));
@@ -3445,7 +3937,8 @@ export default function RetailListPage({ page }) {
   if (!cfg) return <div className="p-6 text-gray-400">Unknown retail page: {page}</div>;
 
   return (
-    <div className="space-y-4">
+    <div className="rw-list space-y-4">
+      <RedwoodSkin />
 
       {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-3">
@@ -3646,7 +4139,7 @@ export default function RetailListPage({ page }) {
                   <div className="mb-3 flex justify-center text-gray-300">
                     {activeCount>0 ? <Search className="w-12 h-12"/> : <NavIcon iconKey={page} className="w-12 h-12"/>}
                   </div>
-                  <div className="font-bold text-[#0F172A] text-lg mb-1">{activeCount>0?t(lang,'noRecordsFound'):`No ${cfg.title.toLowerCase()} yet`}</div>
+                  <div className="font-bold text-[#0F172A] text-lg mb-1">{activeCount>0?t(lang,'noRecordsFound'):`No ${getObjectLabel(page, cfg.title).toLowerCase()} yet`}</div>
                   <p className="text-gray-400 text-sm">{activeCount>0?t(lang,'tryAdjustingFilters'):`Click "+ Create ${cfg.singular}" to add your first record.`}</p>
                   {activeCount>0 && <button onClick={clearFilters} className="mt-3 text-blue-600 text-sm font-semibold hover:underline">{t(lang,'clearFilters')}</button>}
                 </td></tr>
@@ -3688,10 +4181,10 @@ export default function RetailListPage({ page }) {
                           <button onClick={()=>{setSelectedRecord(r);setMenuOpenId(null);}} className="w-full text-left px-4 py-3 rounded-xl text-sm font-medium hover:bg-blue-800 text-white">📄 Open Details</button>
                           {page==='retailCustomers' && (<>
                             <div className="border-t border-blue-800 my-1"/>
-                            <button onClick={()=>{setMenuOpenId(null);setCreatePrefill({page:'retailOrders',data:{...buildCustomerPrefill(r),order_date:todayLocalISO(),status:'Draft',channel:'In-Store'}});}} className="w-full text-left px-4 py-3 rounded-xl text-sm font-medium hover:bg-blue-800 text-white">🛒 Create Order</button>
-                            <button onClick={()=>{setMenuOpenId(null);setCreatePrefill({page:'retailInvoices',data:{...buildCustomerPrefill(r),invoice_date:todayLocalISO(),status:'Draft',payment_status:'Pending'}});}} className="w-full text-left px-4 py-3 rounded-xl text-sm font-medium hover:bg-blue-800 text-white">🧾 Create Invoice</button>
+                            <button onClick={()=>{setMenuOpenId(null);setCreatePrefill({page:'retailOrders',data:{...buildCustomerPrefill(r),order_date:todayLocalISO(),status:'Draft',channel:'In-Store'}});}} className="w-full text-left px-4 py-3 rounded-xl text-sm font-medium hover:bg-blue-800 text-white">🛒 {RL('Create Order')}</button>
+                            <button onClick={()=>{setMenuOpenId(null);setCreatePrefill({page:'retailInvoices',data:{...buildCustomerPrefill(r),invoice_date:todayLocalISO(),status:'Draft',payment_status:'Pending'}});}} className="w-full text-left px-4 py-3 rounded-xl text-sm font-medium hover:bg-blue-800 text-white">🧾 {RL('Create Invoice')}</button>
                           </>)}
-                          {page==='retailOrders' && r.status==='Completed' && (
+                          {page==='retailOrders' && canInvoiceOrder(appPreferences, r.status) && (
                             <button onClick={async()=>{
                               setMenuOpenId(null);
                               const inv = await createRetailInvoiceFromOrder(r);
@@ -3701,7 +4194,7 @@ export default function RetailListPage({ page }) {
                                 setPendingRecord({ page: 'retailInvoices', record: inv });
                                 window.dispatchEvent(new CustomEvent('retail-navigate', { detail: { page: 'retailInvoices' } }));
                               }
-                            }} className="w-full text-left px-4 py-3 rounded-xl text-sm font-medium hover:bg-blue-800 text-white">🧾 Create Invoice</button>
+                            }} className="w-full text-left px-4 py-3 rounded-xl text-sm font-medium hover:bg-blue-800 text-white">🧾 {RL('Create Invoice')}</button>
                           )}
                         </div>
                       )}
@@ -3747,11 +4240,27 @@ export default function RetailListPage({ page }) {
         <RetailDetailPanel
           page={page} record={selectedRecord} pendingReturnTo={pendingReturnTo}
           onClose={()=>{
-            setSelectedRecord(null);
+            setSelectedRecord(null); setInitialTab(null);
             if (pendingReturnTo) { const rt=pendingReturnTo; setPendingReturnTo(null); window.dispatchEvent(new CustomEvent('open-crm-record',{detail:rt})); }
           }}
-          onSaved={()=>fetchMap[page]?.()}
-          onC360Navigate={(targetPage, rec) => setC360Record({ page: targetPage, record: rec })}
+          onSaved={()=>{
+            // Root cause of "edit saves, but reopening the record shows the
+            // old value until a full browser refresh": the table's rows
+            // (serverRows/pagedRows, below) come from a SEPARATE server-side
+            // paginated/filtered query, not from the retailOrders/etc.
+            // context array that fetchMap[page]() refreshes. refreshTick was
+            // only ever bumped after a CREATE (see RetailCreateModal
+            // onCreated below), never after an UPDATE — so the row object
+            // handed to setSelectedRecord() on the next click was always the
+            // pre-edit snapshot until something else (a filter change, or a
+            // full page reload) re-ran that query. Bump it here too so an
+            // edit is reflected the moment the record is reopened, with no
+            // refresh needed.
+            fetchMap[page]?.();
+            setRefreshTick(t => t + 1);
+          }}
+          initialTab={initialTab}
+          onC360Navigate={(targetPage, rec, ret) => setC360Record({ page: targetPage, record: rec, returnTo: ret || null })}
           onC360Create={(targetPage, prefill) => setCreatePrefill({ page: targetPage, data: prefill })}
         />
       )}
@@ -3793,7 +4302,7 @@ export default function RetailListPage({ page }) {
             const typeLabel = createPrefill.page === 'retailOrders' ? 'Order' : createPrefill.page === 'retailInvoices' ? 'Invoice' : 'Activity';
             showAlert(`${typeLabel} created successfully.`, { variant: 'success' });
             if (rec) {
-              setPendingReturnTo({ page: 'retailCustomers', record: selectedRecord });
+              setPendingReturnTo({ page: 'retailCustomers', record: selectedRecord, tab: '360' });
               setPendingRecord({ page: createPrefill.page, record: rec });
               window.dispatchEvent(new CustomEvent('retail-navigate', { detail: { page: createPrefill.page } }));
             }

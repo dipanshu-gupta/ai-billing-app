@@ -3,6 +3,8 @@
 
 import { useState, useMemo } from 'react';
 import { useApp } from '@/context/AppContext';
+import { useRelabel } from '@/lib/useRelabel';
+import { resolveStatusOptions } from '@/lib/statusOptions';
 import { formatCurrency } from '@/lib/utils';
 import { NavIcon } from '@/lib/icons';
 import {
@@ -49,7 +51,8 @@ const fmtShort = n => {
 };
 
 export default function DashboardPage() {
-  const { leads, opportunities, customers, orders, invoices, activities, quotations, contacts, currentUser, appPreferences , appearance } = useApp();
+  const { leads, opportunities, customers, orders, invoices, activities, quotations, contacts, currentUser, appPreferences , appearance, statusOptionRows } = useApp();
+  const L = useRelabel();
   const [dateRange,   setDateRange]   = useState('month');
   const [activeChart, setActiveChart] = useState('pipeline');
 
@@ -72,6 +75,14 @@ export default function DashboardPage() {
     overdueInv:      invoices.filter(i=>i.status==='Overdue').reduce((s,i)=>s+Number(i.amount||0),0),
     ordersValue:     fOrders.reduce((s,o)=>s+Number(o.amount||0),0),
     invoicedValue:   fInv.reduce((s,i)=>s+Number(i.amount||0),0),
+    // Invoices Issued is a live, all-time count of every invoice this user
+    // is permitted to see for the tenant — not date-range scoped, same as
+    // Total Customers below. `invoices` is already RBAC-filtered upstream
+    // in AppContext's fetchInvoices() (applyDataSecurity is applied there
+    // before this component ever sees the array), so no extra security
+    // call is needed here — just don't re-derive it from a filtered/scoped
+    // subset like fInv.
+    invoicesIssued:  invoices.length,
     // Total Customers is also deliberately a live roster size, not period-scoped.
     totalCustomers:  customers.length,
     quotesOut:       fQuotes.filter(q=>q.status==='Sent to Customer').length,
@@ -122,9 +133,10 @@ export default function DashboardPage() {
 
   // Quote status funnel — respects the selected date range (fQuotes), not all-time
   const quoteFunnel = useMemo(()=>{
-    const stages = ['Draft','Submitted','Approved','Sent to Customer','Accepted','Partially Ordered','Ordered'];
+    // Stages come from the tenant's own quotation status list (Page Layout Designer -> Status Values).
+    const stages = resolveStatusOptions('quotations', ['Draft','Submitted','Approved','Sent to Customer','Accepted','Partially Ordered','Ordered']);
     return stages.map(s=>({ name:s, value: fQuotes.filter(q=>q.status===s).length })).filter(s=>s.value>0);
-  },[fQuotes]);
+  },[fQuotes, statusOptionRows]);
 
   // Recent records — respects the selected date range for consistency with the rest of the page
   const recentLeads = [...fLeads].sort((a,b)=>new Date(b.created_at)-new Date(a.created_at)).slice(0,5);
@@ -167,9 +179,9 @@ export default function DashboardPage() {
     <div className="rounded-[20px] p-5 text-white shadow-lg" style={cardStyle}>
       <div className="flex items-start justify-between">
         <div>
-          <div className="text-white/70 text-xs font-semibold uppercase tracking-wider mb-1">{label}</div>
+          <div className="text-white/70 text-xs font-semibold uppercase tracking-wider mb-1">{L(label)}</div>
           <div className="text-2xl font-bold leading-tight">{value}</div>
-          {sub && <div className="text-white/70 text-xs mt-1">{sub}</div>}
+          {sub && <div className="text-white/70 text-xs mt-1">{L(sub)}</div>}
         </div>
         <div className="text-3xl opacity-80">{icon}</div>
       </div>
@@ -227,6 +239,7 @@ export default function DashboardPage() {
 
       <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-8 gap-4">
         <div className="col-span-2"><StatCard label="Invoiced This Period" paletteIdx={2} value={fmtShort(kpis.invoicedValue)} sub={`${fInv.length} invoices raised`} icon="🧾"/></div>
+        <div className="col-span-2"><StatCard label="Invoices Issued" paletteIdx={4} value={kpis.invoicesIssued} sub="all time" icon="🧾"/></div>
       </div>
 
       {/* Main Charts */}
@@ -237,7 +250,7 @@ export default function DashboardPage() {
             {chartTabs.map(t=>(
               <button key={t.k} onClick={()=>setActiveChart(t.k)}
                 className={`px-4 py-2 rounded-xl text-sm font-semibold transition-all ${activeChart===t.k?'bg-white text-[#0F172A] shadow':'text-gray-500 hover:text-[#0F172A]'}`}>
-                {t.l}
+                {L(t.l)}
               </button>
             ))}
           </div>
@@ -252,7 +265,7 @@ export default function DashboardPage() {
                   <XAxis dataKey="stage" tick={{fontSize:12}}/>
                   <YAxis tickFormatter={v=>fmtShort(v)} tick={{fontSize:11}}/>
                   <Tooltip formatter={v=>fmt(v)} labelFormatter={l=>`Stage: ${l}`} contentStyle={{ backgroundColor: '#fff', border: '1px solid #e2e8f0', borderRadius: 12 }} labelStyle={{ fontWeight: 'bold', color: '#0F172A' }} itemStyle={{ color: '#334155' }}/>
-                  <Bar dataKey="value" name="Pipeline Value" radius={[8,8,0,0]}>
+                  <Bar dataKey="value" name={L("Pipeline Value")} radius={[8,8,0,0]}>
                     {pipelineData.map((_,i)=><Cell key={i} fill={COLORS[i%COLORS.length]}/>)}
                   </Bar>
                 </BarChart>
@@ -273,8 +286,8 @@ export default function DashboardPage() {
                   <YAxis tickFormatter={v=>fmtShort(v)} tick={{fontSize:11}}/>
                   <Tooltip formatter={v=>fmt(v)} contentStyle={{ backgroundColor: '#fff', border: '1px solid #e2e8f0', borderRadius: 12 }} labelStyle={{ fontWeight: 'bold', color: '#0F172A' }} itemStyle={{ color: '#334155' }}/>
                   <Legend/>
-                  <Area type="monotone" dataKey="orders" name="Orders" stroke="#0F172A" fill="url(#gOrders)" strokeWidth={2}/>
-                  <Area type="monotone" dataKey="invoices" name="Paid Invoices" stroke="#3B82F6" fill="url(#gInv)" strokeWidth={2}/>
+                  <Area type="monotone" dataKey="orders" name={L("Orders")} stroke="#0F172A" fill="url(#gOrders)" strokeWidth={2}/>
+                  <Area type="monotone" dataKey="invoices" name={L("Paid Invoices")} stroke="#3B82F6" fill="url(#gInv)" strokeWidth={2}/>
                 </AreaChart>
               </ResponsiveContainer>
             </div>
@@ -333,7 +346,7 @@ export default function DashboardPage() {
                   <XAxis dataKey="name" tick={{fontSize:12}}/>
                   <YAxis tick={{fontSize:12}}/>
                   <Tooltip contentStyle={{ backgroundColor: '#fff', border: '1px solid #e2e8f0', borderRadius: 12 }} labelStyle={{ fontWeight: 'bold', color: '#0F172A' }} itemStyle={{ color: '#334155' }}/>
-                  <Bar dataKey="value" name="Quotations" radius={[8,8,0,0]}>
+                  <Bar dataKey="value" name={L("Quotations")} radius={[8,8,0,0]}>
                     {quoteFunnel.map((_,i)=><Cell key={i} fill={COLORS[i%COLORS.length]}/>)}
                   </Bar>
                 </BarChart>
@@ -347,7 +360,7 @@ export default function DashboardPage() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
         {/* Recent Leads */}
         <div className="bg-white rounded-[24px] border border-blue-100 shadow overflow-hidden">
-          <div className="bg-gradient-to-r from-[#0F172A] to-blue-900 px-5 py-3.5"><h3 className="text-white font-bold">🎯 Recent Leads</h3></div>
+          <div className="bg-gradient-to-r from-[#0F172A] to-blue-900 px-5 py-3.5"><h3 className="text-white font-bold">{L("🎯 Recent Leads")}</h3></div>
           <div className="divide-y divide-blue-50">
             {recentLeads.length===0
               ? <div className="p-6 text-center text-gray-400 text-sm">No leads yet</div>
@@ -366,7 +379,7 @@ export default function DashboardPage() {
 
         {/* Recent Opportunities */}
         <div className="bg-white rounded-[24px] border border-blue-100 shadow overflow-hidden">
-          <div className="bg-gradient-to-r from-[#0F172A] to-blue-900 px-5 py-3.5"><h3 className="text-white font-bold">💼 Hot Opportunities</h3></div>
+          <div className="bg-gradient-to-r from-[#0F172A] to-blue-900 px-5 py-3.5"><h3 className="text-white font-bold">{L("💼 Hot Opportunities")}</h3></div>
           <div className="divide-y divide-blue-50">
             {recentOpps.length===0
               ? <div className="p-6 text-center text-gray-400 text-sm">No opportunities yet</div>
@@ -388,7 +401,7 @@ export default function DashboardPage() {
 
         {/* Quick Stats */}
         <div className="bg-white rounded-[24px] border border-blue-100 shadow overflow-hidden">
-          <div className="bg-gradient-to-r from-[#0F172A] to-blue-900 px-5 py-3.5"><h3 className="text-white font-bold">📊 Quick Metrics</h3></div>
+          <div className="bg-gradient-to-r from-[#0F172A] to-blue-900 px-5 py-3.5"><h3 className="text-white font-bold">{L("📊 Quick Metrics")}</h3></div>
           <div className="p-5 space-y-4">
             {[
               { l:'Avg Deal Size', v: fOpps.length ? fmt(fOpps.reduce((s,o)=>s+Number(o.amount||0),0)/fOpps.length) : '—', icon:'avgDealSize' },
@@ -400,7 +413,7 @@ export default function DashboardPage() {
               <div key={m.l} className="flex items-center justify-between p-3 bg-blue-50 rounded-2xl">
                 <div className="flex items-center gap-2">
                   <NavIcon iconKey={m.icon} className="w-[18px] h-[18px] text-blue-500"/>
-                  <span className="text-sm text-gray-600">{m.l}</span>
+                  <span className="text-sm text-gray-600">{L(m.l)}</span>
                 </div>
                 <span className="font-bold text-[#0F172A]">{m.v}</span>
               </div>

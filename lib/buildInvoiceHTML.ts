@@ -1,4 +1,5 @@
 // @ts-nocheck
+import { buildDocumentHTML } from '@/lib/documentCanvas';
 // Builds the printable HTML for a B2B invoice using the same `sections` JSON
 // shape that DocumentTemplateDesigner.tsx (docType="invoice") edits and
 // previews — so template customization actually renders in the real PDF,
@@ -82,6 +83,8 @@ function numberToWords(num) {
 }
 
 export function buildInvoiceHTML(record, items, template, products) {
+  // Canvas (free-form) templates render through the shared document engine
+  if (template && template._canvas) return buildDocumentHTML(template, record, items, { docType: 'b2b_invoice', products });
   const sections    = template?.sections?.length ? template.sections : DEFAULT_INVOICE_SECTIONS;
   const pageSettings= template?.page_settings || {};
   const globalSettings = template?.global_settings || {};

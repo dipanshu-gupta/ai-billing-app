@@ -5,7 +5,10 @@ import { useState, useEffect, useRef, useMemo } from 'react';
 import { useApp } from '@/context/AppContext';
 import { useObjectLabels } from '@/lib/useObjectLabels';
 import { getStatusColor } from '@/lib/utils';
+import { ObjectIcon } from '@/lib/lineIcons';
 import { NavIcon } from '@/lib/icons';
+import { useTenant } from '@/context/TenantContext';
+import { fetchCustomObjectFields, formatCustomDisplayNumber } from '@/lib/customObjects';
 
 const B2B_SEARCH_CONFIG = [
   { page:'customers',     icon:'👥', label:'Customers',    fields:['name','email','company','city'],            secondary: r => r.industry || r.email || r.city },
@@ -32,8 +35,9 @@ export default function GlobalSearch({ onNavigate }) {
     customers, leads, opportunities, contacts, activities,
     quotations, orders, invoices, products,
     retailCustomers, retailProducts, retailOrders, retailInvoices, retailActivities,
-    appPreferences,
+    appPreferences, customObjects, hasPermission, applyDataSecurity,
   } = useApp();
+  const { supabase } = useTenant();
   const isB2C = appPreferences?.b2c_mode === true;
   const { getObjectLabel } = useObjectLabels();
   const SEARCH_CONFIG = isB2C ? B2C_SEARCH_CONFIG : B2B_SEARCH_CONFIG;
@@ -52,8 +56,10 @@ export default function GlobalSearch({ onNavigate }) {
     if (!query.trim() || query.length < 2) { setResults([]); setOpen(false); return; }
     // Check if any data is loaded
     const totalItems = Object.values(dataMap).reduce((s, arr) => s + (arr?.length || 0), 0);
-    if (totalItems === 0) { setResults([]); setOpen(true); return; } // show 'no data' state
-    const timer = setTimeout(() => {
+    const hasCustom = (customObjects || []).length > 0;
+    if (totalItems === 0 && !hasCustom) { setResults([]); setOpen(true); return; } // show 'no data' state
+    let cancelled = false;
+    const timer = setTimeout(async () => {
       const q = query.toLowerCase();
       const found = [];
       SEARCH_CONFIG.forEach(cfg => {
@@ -65,12 +71,37 @@ export default function GlobalSearch({ onNavigate }) {
           found.push({ ...cfg, label: getObjectLabel(cfg.page, cfg.label), matches });
         }
       });
+      // Custom objects: searched server-side (their records are not held in
+      // memory like the standard objects). Name, record number and the
+      // object's text-type fields are matched; only objects the user may view.
+      try {
+        const term = query.trim().replace(/[%,()]/g, '');
+        const mode = isB2C ? 'b2c' : 'b2b';
+        const visible = (customObjects || []).filter(o => (o.module === 'both' || o.module === mode) && (!hasPermission || hasPermission(`custom_${o.api_name}_view`)));
+        if (supabase && term && visible.length) {
+          const groups = await Promise.all(visible.map(async (o) => {
+            const fields = await fetchCustomObjectFields(o.id, 'header');
+            const textCols = fields.filter(f => ['text','email','url'].includes(f.field_type) && /^text_\d+$/.test(f.storage_column)).slice(0, 6).map(f => f.storage_column);
+            const ors = ['name', 'record_number', ...textCols].map(c => `${c}.ilike.%${term}%`).join(',');
+            const { data } = await supabase.from('custom_object_records').select('*').eq('custom_object_id', o.id).or(ors).order('created_at', { ascending: false }).limit(8);
+            const rows = (applyDataSecurity ? applyDataSecurity(data || []) : (data || [])).slice(0, 4);
+            if (!rows.length) return null;
+            return {
+              page: `custom_${o.api_name}`, icon: o.icon, label: o.plural_label, isCustom: true,
+              fields: [], secondary: r => [formatCustomDisplayNumber(o, r.display_number), r.status].filter(Boolean).join(' · '),
+              matches: rows.map(r => ({ ...r, name: r.name || r.record_number })),
+            };
+          }));
+          groups.filter(Boolean).forEach(g => found.push(g));
+        }
+      } catch (e) { console.error('[GlobalSearch custom objects]', e); }
+      if (cancelled) return;
       setResults(found);
       setOpen(found.length > 0);
       setFocused(0);
     }, 200);
-    return () => clearTimeout(timer);
-  }, [query, customers, leads, opportunities, contacts, activities, quotations, orders, invoices, products, retailCustomers, retailProducts, retailOrders, retailInvoices, retailActivities, isB2C, getObjectLabel]);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [query, customObjects, supabase, customers, leads, opportunities, contacts, activities, quotations, orders, invoices, products, retailCustomers, retailProducts, retailOrders, retailInvoices, retailActivities, isB2C, getObjectLabel, getObjectLabel]);
 
   // Close on outside click
   useEffect(() => {
@@ -151,7 +182,7 @@ export default function GlobalSearch({ onNavigate }) {
             <div key={group.page}>
               {/* Group header */}
               <div className="px-4 py-2 bg-gray-50 border-b border-gray-100 flex items-center gap-2">
-                <NavIcon iconKey={group.page} className="w-4 h-4 text-gray-500"/>
+                {group.isCustom ? <ObjectIcon icon={group.icon} className="w-4 h-4"/> : <NavIcon iconKey={group.page} className="w-4 h-4 text-gray-500"/>}
                 <span className="text-xs font-bold uppercase tracking-wider text-gray-500">{group.label}</span>
                 <span className="ml-auto text-xs text-gray-400">{group.matches.length} result{group.matches.length!==1?'s':''}</span>
               </div>
@@ -170,7 +201,7 @@ export default function GlobalSearch({ onNavigate }) {
                   >
                     <div className={`w-8 h-8 rounded-xl flex items-center justify-center flex-shrink-0
                       ${isFocused ? 'bg-[#0F172A] text-white' : 'bg-blue-100 text-blue-700'}`}>
-                      <NavIcon iconKey={group.page} className="w-4 h-4"/>
+                      {group.isCustom ? <ObjectIcon icon={group.icon} className="w-4 h-4"/> : <NavIcon iconKey={group.page} className="w-4 h-4"/>}
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="text-sm font-semibold text-[#0F172A] truncate">{name}</div>

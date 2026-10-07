@@ -26,9 +26,9 @@ export async function generateInvoicePdf(html: string, paperSize: string = 'a4')
   // content simply not fill the rest of the page.
   const PAPER_MM: Record<string, { w: number; h: number }> = {
     a4: { w: 210, h: 297 }, a5: { w: 148, h: 210 }, letter: { w: 216, h: 279 }, legal: { w: 216, h: 356 },
-    thermal_80: { w: 80, h: 297 }, thermal_58: { w: 58, h: 297 },
+    thermal_80: { w: 80, h: 297 }, thermal_58: { w: 58, h: 297 }, thermal_57: { w: 57, h: 297 }, a4_l: { w: 297, h: 210 },
   };
-  const dims = PAPER_MM[paperSize] || PAPER_MM.a4;
+  let dims = PAPER_MM[String(paperSize || 'a4').toLowerCase()] || PAPER_MM.a4;
 
   // Render into a hidden, off-screen container - not display:none, since
   // browsers don't lay out or paint anything with display:none, and
@@ -42,6 +42,15 @@ export async function generateInvoicePdf(html: string, paperSize: string = 'a4')
   container.style.background = '#ffffff';
   container.innerHTML = html;
   document.body.appendChild(container);
+  // Canvas documents carry their own exact page size (px) — size the capture
+  // container and the PDF page from it, so custom sizes and thermal rolls
+  // (height = content) come out right instead of being squeezed into A4.
+  const canvasPage = container.querySelector('.dc-page') as HTMLElement | null;
+  if (canvasPage) {
+    const pxToMm = 25.4 / 96;
+    container.style.width = `${canvasPage.offsetWidth}px`;
+    dims = { w: Math.round(canvasPage.offsetWidth * pxToMm * 10) / 10, h: Math.round(canvasPage.offsetHeight * pxToMm * 10) / 10 };
+  }
 
   try {
     // Let the browser complete layout/paint before capturing - a capture
@@ -72,7 +81,7 @@ export async function generateInvoicePdf(html: string, paperSize: string = 'a4')
     pdf.addImage(imgData, 'JPEG', 0, position, imgWidthMm, imgHeightMm);
     heightLeft -= dims.h;
 
-    while (heightLeft > 0) {
+    while (heightLeft > 1) {
       position = heightLeft - imgHeightMm;
       pdf.addPage([dims.w, dims.h]);
       pdf.addImage(imgData, 'JPEG', 0, position, imgWidthMm, imgHeightMm);

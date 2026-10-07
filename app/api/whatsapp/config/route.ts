@@ -1,18 +1,5 @@
-import { createClient } from '@supabase/supabase-js';
 import { NextResponse } from 'next/server';
-
-async function resolveClient(db_url?: string) {
-  const masterUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-  const masterKey = process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY!;
-  let targetUrl = masterUrl;
-  let targetKey = masterKey;
-  if (db_url && db_url !== masterUrl && masterKey) {
-    const master = createClient(masterUrl, masterKey, { auth: { autoRefreshToken: false, persistSession: false } });
-    const { data: tenant } = await master.from('tenants').select('db_service_key').eq('db_url', db_url).maybeSingle();
-    if (tenant?.db_service_key) { targetUrl = db_url; targetKey = tenant.db_service_key; }
-  }
-  return createClient(targetUrl, targetKey, { auth: { autoRefreshToken: false, persistSession: false } });
-}
+import { authorizeWhatsAppRequest, findConfigOwners } from '@/lib/whatsappServer';
 
 // Masks a secret for display — shows only the last 4 characters, so the
 // admin can confirm "yes, a token is saved" and roughly which one, without
@@ -29,9 +16,14 @@ export async function GET(request: Request) {
     const db_url = searchParams.get('db_url') || undefined;
     const tenantId = searchParams.get('tenantId') || null;
 
-    const supabase = await resolveClient(db_url);
-    const { data: config } = await supabase.from('whatsapp_config').select('*').eq('tenant_id', tenantId).maybeSingle();
-    const { data: templates } = await supabase.from('whatsapp_templates').select('*').eq('tenant_id', tenantId);
+    // Any member of the workspace may read the (masked) settings - the order
+    // screens need to know whether WhatsApp is switched on - but only for
+    // their OWN workspace: the tenant comes from the verified session.
+    const auth = await authorizeWhatsAppRequest(request, { db_url, tenantId });
+    if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
+    const supabase = auth.supabase;
+    const { data: config } = await supabase.from('whatsapp_config').select('*').eq('tenant_id', auth.tenantId).maybeSingle();
+    const { data: templates } = await supabase.from('whatsapp_templates').select('*').eq('tenant_id', auth.tenantId);
 
     return NextResponse.json({
       config: config ? { ...config, access_token: maskSecret(config.access_token), webhook_verify_token: maskSecret(config.webhook_verify_token) } : null,
@@ -46,11 +38,25 @@ export async function POST(request: Request) {
   try {
     const body = await request.json();
     const { db_url, tenantId, config, templates } = body;
-    const supabase = await resolveClient(db_url);
+
+    // Changing credentials and templates is an administrator action.
+    const auth = await authorizeWhatsAppRequest(request, { db_url, tenantId, requireAdmin: true });
+    if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
+    const supabase = auth.supabase;
+    const effectiveTenantId = auth.tenantId;
 
     if (config) {
+      // One WhatsApp business number can belong to only one workspace:
+      // Meta's webhook identifies the receiving number, nothing else, so two
+      // workspaces sharing one would have their customers' replies mixed up.
+      if (config.phone_number_id) {
+        const owners = await findConfigOwners(String(config.phone_number_id), true);
+        if (owners.some(o => o.tenantId !== effectiveTenantId)) {
+          return NextResponse.json({ error: 'This WhatsApp Phone Number ID is already connected to another workspace. A number can only be used by one workspace — use a different number, or disconnect it there first.' }, { status: 409 });
+        }
+      }
       const payload: any = {
-        tenant_id: tenantId || null,
+        tenant_id: effectiveTenantId,
         is_active: !!config.is_active,
         phone_number_id: config.phone_number_id || null,
         business_account_id: config.business_account_id || null,
@@ -73,7 +79,7 @@ export async function POST(request: Request) {
     if (Array.isArray(templates)) {
       for (const tpl of templates) {
         await supabase.from('whatsapp_templates').upsert({
-          tenant_id: tenantId || null,
+          tenant_id: effectiveTenantId,
           template_key: tpl.template_key,
           meta_template_name: tpl.meta_template_name || null,
           preview_text: tpl.preview_text || null,

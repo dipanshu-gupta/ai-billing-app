@@ -4,6 +4,7 @@
 import { useState, useMemo, useEffect } from 'react';
 import { useApp } from '@/context/AppContext';
 import { useTenant } from '@/context/TenantContext';
+import { overrideStatusHex } from '@/lib/statusOptions';
 import { getStatusColor, roundPercentagesTo100, tenantScope } from '@/lib/utils';
 import { THEMES } from '@/lib/i18n';
 import { useObjectLabels } from '@/lib/useObjectLabels';
@@ -26,7 +27,8 @@ const STATUS_HEX: Record<string,string> = {
   Draft:'#94A3B8', Overdue:'#EF4444', Cancelled:'#EF4444', Failed:'#EF4444',
   Refunded:'#8B5CF6', Unknown:'#CBD5E1',
 };
-const statusHex = (name: string, fallbackIdx: number) => STATUS_HEX[name] || COLORS[fallbackIdx % COLORS.length];
+// Tenant-chosen status colours (Page Layout Designer -> Status Values) win over the built-in semantic map.
+const statusHex = (name: string, fallbackIdx: number) => overrideStatusHex(name) || STATUS_HEX[name] || COLORS[fallbackIdx % COLORS.length];
 
 const DATE_RANGES = [
   { v:'today',  l:'Today' },

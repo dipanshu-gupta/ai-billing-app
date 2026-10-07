@@ -1,20 +1,14 @@
-import { createClient } from '@supabase/supabase-js';
 import { NextResponse } from 'next/server';
-
-// Mirrors the same tenant-resolution pattern used by the other WhatsApp routes.
-async function getMasterClient() {
-  const masterUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-  const masterKey = process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY!;
-  return createClient(masterUrl, masterKey, { auth: { autoRefreshToken: false, persistSession: false } });
-}
+import {
+  masterClient, findConfigOwners, pickTenantByLastOutbound, verifyMetaSignature,
+  type WaDestination,
+} from '@/lib/whatsappServer';
 
 /**
  * GET — Meta's one-time webhook verification handshake.
- * When you click "Verify and Save" in Meta for Developers, Meta sends a
- * GET request here with hub.mode=subscribe, hub.verify_token=<whatever you
- * configured>, and hub.challenge=<a random string>. This must check the
- * token matches WHATSAPP_WEBHOOK_VERIFY_TOKEN and echo the challenge back
- * as plain text - anything else and Meta considers verification failed.
+ * Accepts the platform-wide WHATSAPP_WEBHOOK_VERIFY_TOKEN, or a verify token
+ * a tenant saved in its own WhatsApp settings (for tenants running their own
+ * Meta app). Anything else is rejected.
  */
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
@@ -22,68 +16,108 @@ export async function GET(request: Request) {
   const token = searchParams.get('hub.verify_token');
   const challenge = searchParams.get('hub.challenge');
 
-  if (mode === 'subscribe' && token === process.env.WHATSAPP_WEBHOOK_VERIFY_TOKEN) {
-    return new NextResponse(challenge, { status: 200 });
+  if (mode === 'subscribe' && token) {
+    if (token === process.env.WHATSAPP_WEBHOOK_VERIFY_TOKEN) return new NextResponse(challenge, { status: 200 });
+    try {
+      const { data } = await masterClient().from('whatsapp_config').select('id').eq('webhook_verify_token', token).limit(1);
+      if (data && data.length) return new NextResponse(challenge, { status: 200 });
+    } catch { /* fall through to Forbidden */ }
   }
   return new NextResponse('Forbidden', { status: 403 });
 }
 
 /**
- * POST — actual webhook events from Meta: message status updates
- * (sent/delivered/read/failed) and incoming customer messages.
- * Must always respond 200 quickly, or Meta will retry and eventually
- * disable the webhook - so failures here are logged, never thrown.
+ * Inserts an inbound message exactly once. Meta retries deliveries, and the
+ * same message id arriving twice used to create duplicate rows.
+ */
+async function logInbound(dest: { tenantId: string | null; supabase: any }, msg: any) {
+  if (msg.id) {
+    const { data: existing } = await dest.supabase.from('whatsapp_message_log').select('id').eq('meta_message_id', msg.id).limit(1);
+    if (existing && existing.length) return;
+  }
+  const { error } = await dest.supabase.from('whatsapp_message_log').insert({
+    tenant_id: dest.tenantId,
+    record_type: 'inbound',
+    record_id: msg.from,
+    recipient_phone: msg.from,
+    recipient_type: 'customer',
+    send_mode: 'inbound',
+    status: 'received',
+    direction: 'inbound',
+    meta_message_id: msg.id,
+    message_body: msg.text?.body || '[non-text message]',
+  });
+  // 23505 = lost a race with a concurrent retry of the same message: already stored.
+  if (error && error.code !== '23505') console.error('[WhatsApp webhook] failed to log inbound message:', error.message);
+}
+
+/**
+ * POST — message status updates and incoming customer messages.
+ * Must respond 200 quickly for valid events or Meta retries and eventually
+ * disables the subscription, so processing failures are logged, never thrown.
+ * Unsigned/forged requests are the one exception: they get a 403.
  */
 export async function POST(request: Request) {
   try {
-    const body = await request.json();
-    const supabase = await getMasterClient();
+    const raw = await request.text();
+
+    const sig = verifyMetaSignature(raw, request.headers.get('x-hub-signature-256'));
+    if (sig === 'bad') return new NextResponse('Invalid signature', { status: 403 });
+    if (sig === 'unconfigured') console.warn('[WhatsApp webhook] WHATSAPP_APP_SECRET is not set - request signatures are NOT being verified.');
+
+    const body = JSON.parse(raw);
 
     for (const entry of body.entry || []) {
       for (const change of entry.changes || []) {
         const value = change.value;
         if (!value) continue;
         const phoneNumberId = value.metadata?.phone_number_id;
+        if (!phoneNumberId) continue;
 
-        // Message status updates (sent/delivered/read/failed) - matched
-        // back to the row already logged at send time via meta_message_id.
-        for (const status of value.statuses || []) {
-          const metaStatus = status.status; // 'sent' | 'delivered' | 'read' | 'failed'
-          const mapped = metaStatus === 'failed' ? 'failed' : metaStatus === 'sent' ? 'sent' : metaStatus; // keep 'delivered'/'read' as-is for finer-grained tracking than the original sent/failed/pending
-          const { error } = await supabase.from('whatsapp_message_log')
-            .update({ status: mapped, error_message: status.errors?.[0]?.title || null })
-            .eq('meta_message_id', status.id);
-          if (error) console.error('[WhatsApp webhook] failed to update message log:', error.message);
+        // Which tenant(s) does this business number belong to? Looked up in
+        // the shared DB and in each dedicated tenant's own DB.
+        const owners: WaDestination[] = await findConfigOwners(phoneNumberId);
+        if (!owners.length) {
+          console.warn(`[WhatsApp webhook] no tenant is configured for phone_number_id ${phoneNumberId} - ignoring event.`);
+          continue;
         }
 
-        // Incoming customer messages - logged for now. Not yet building
-        // full two-way conversation handling (auto-replies, routing into
-        // an inbox UI) - that's a larger, separate feature. This at least
-        // captures that a reply came in, rather than silently discarding it.
+        // Delivery/read receipts: the row was written at send time in the
+        // owning tenant's database; a Meta message id is globally unique, so
+        // updating by it in each candidate destination only ever touches the
+        // one real row - scoped by tenant on the shared DB as well.
+        for (const status of value.statuses || []) {
+          for (const dest of owners) {
+            let q = dest.supabase.from('whatsapp_message_log')
+              .update({ status: status.status, error_message: status.errors?.[0]?.title || null })
+              .eq('meta_message_id', status.id);
+            if (!dest.dedicated) q = q.eq('tenant_id', dest.tenantId);
+            const { error } = await q;
+            if (error) console.error('[WhatsApp webhook] failed to update message log:', error.message);
+          }
+        }
+
+        // Incoming customer messages -> the owning tenant's inbox.
         for (const msg of value.messages || []) {
-          if (!phoneNumberId) continue;
-          const { data: config } = await supabase.from('whatsapp_config')
-            .select('tenant_id').eq('phone_number_id', phoneNumberId).maybeSingle();
-          await supabase.from('whatsapp_message_log').insert({
-            tenant_id: config?.tenant_id || null,
-            record_type: 'inbound',
-            record_id: msg.from,
-            recipient_phone: msg.from,
-            recipient_type: 'customer',
-            send_mode: 'inbound',
-            status: 'received',
-            direction: 'inbound',
-            meta_message_id: msg.id,
-            message_body: msg.text?.body || '[non-text message]',
-          });
+          let dest: WaDestination | null = owners.length === 1 ? owners[0] : null;
+          if (!dest) {
+            // The same business number is configured on more than one
+            // tenant (a misconfiguration - it should be unique). Attribute
+            // the reply to whoever last messaged this customer; if that's
+            // not clear-cut, keep the message UNattributed (tenant_id NULL,
+            // visible only to the platform workspace) rather than risk
+            // showing one company's customer replies to another.
+            dest = await pickTenantByLastOutbound(owners, msg.from);
+            if (!dest) console.warn(`[WhatsApp webhook] phone_number_id ${phoneNumberId} is configured on ${owners.length} tenants and the reply from ${msg.from} could not be attributed.`);
+          }
+          if (dest) await logInbound({ tenantId: dest.tenantId, supabase: dest.supabase }, msg);
+          else await logInbound({ tenantId: null, supabase: masterClient() }, msg);
         }
       }
     }
 
     return NextResponse.json({ success: true });
   } catch (err: any) {
-    // Always 200 here too - Meta retries aggressively on non-2xx and will
-    // eventually disable the webhook subscription if it keeps failing.
     console.error('[WhatsApp webhook] error:', err.message);
     return NextResponse.json({ success: false }, { status: 200 });
   }

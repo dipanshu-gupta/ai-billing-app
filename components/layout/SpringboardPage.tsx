@@ -4,8 +4,9 @@ import { useState, useMemo } from 'react';
 import { useApp } from '@/context/AppContext';
 import { t, THEMES } from '@/lib/i18n';
 import { useObjectLabels } from '@/lib/useObjectLabels';
-import { SALES_GROUP, RETAIL_GROUP, BOTTOM_ITEMS, DASHBOARD_ITEM, makeCanSee } from '@/lib/navPermissions';
+import { SALES_GROUP, RETAIL_GROUP, BOTTOM_ITEMS, DASHBOARD_ITEM, makeCanSee, buildCustomObjectNavItems } from '@/lib/navPermissions';
 import { NavIcon } from '@/lib/icons';
+import { ObjectIcon } from '@/lib/lineIcons';
 import { Plus } from 'lucide-react';
 
 // Enterprise "textured surface" background, matching the Oracle Fusion
@@ -27,7 +28,7 @@ function generateSurfacePattern(themeObj) {
 }
 
 export default function SpringboardPage({ onNavigate }) {
-  const { currentUser, currentUserPermissions, permissionsLoaded, appPreferences, appearance, setPendingRecord } = useApp();
+  const { currentUser, currentUserPermissions, permissionsLoaded, appPreferences, appearance, setPendingRecord, customObjects } = useApp();
   const [activeTabState, setActiveTabState] = useState(null);
 
   const isAdmin = currentUserPermissions.includes('__admin__') || currentUser?.is_admin === true;
@@ -46,19 +47,19 @@ export default function SpringboardPage({ onNavigate }) {
   const QUICK_ACTIONS = useMemo(() => {
     const list = b2cMode
       ? [
-          { label: 'Create Customer',  icon: '👤', page: 'retailCustomers' },
-          { label: 'Create Order',     icon: '🛍️', page: 'retailOrders' },
-          { label: 'Create Invoice',   icon: '🧾', page: 'retailInvoices' },
-          { label: 'Create Activity',  icon: '📋', page: 'retailActivities' },
+          { label: `Create ${getObjectLabel('retailCustomers', 'Customer', 'singular')}`,  icon: '👤', page: 'retailCustomers' },
+          { label: `Create ${getObjectLabel('retailOrders', 'Order', 'singular')}`,     icon: '🛍️', page: 'retailOrders' },
+          { label: `Create ${getObjectLabel('retailInvoices', 'Invoice', 'singular')}`,   icon: '🧾', page: 'retailInvoices' },
+          { label: `Create ${getObjectLabel('retailActivities', 'Activity', 'singular')}`,  icon: '📋', page: 'retailActivities' },
         ]
       : [
-          { label: 'Create Contact',      icon: '👤', page: 'contacts' },
-          { label: 'Create Lead',         icon: '🎯', page: 'leads' },
-          { label: 'Create Opportunity',  icon: '💼', page: 'opportunities' },
-          { label: 'Create Activity',     icon: '📋', page: 'activities' },
+          { label: `Create ${getObjectLabel('contacts', 'Contact', 'singular')}`,      icon: '👤', page: 'contacts' },
+          { label: `Create ${getObjectLabel('leads', 'Lead', 'singular')}`,         icon: '🎯', page: 'leads' },
+          { label: `Create ${getObjectLabel('opportunities', 'Opportunity', 'singular')}`,  icon: '💼', page: 'opportunities' },
+          { label: `Create ${getObjectLabel('activities', 'Activity', 'singular')}`,     icon: '📋', page: 'activities' },
         ];
     return list.filter(a => canSee({ key: a.page, permission: null }));
-  }, [b2cMode, canSee]);
+  }, [b2cMode, canSee, getObjectLabel]);
 
   // Tab -> items mapping. Swaps in the B2C (retail) or B2B (CRM) item set
   // per tab, pulled from the exact same shared arrays the sidebar uses —
@@ -81,11 +82,12 @@ export default function SpringboardPage({ onNavigate }) {
       { id:'me',             label:'Me',              icon:'🙋', items: meItems },
       { id:'sales',          label:'Sales',           icon:'💰', items: salesItems },
       { id:'operations',     label:'Operations',      icon:'⚙️', items: opsItems },
+      { id:'customObjects',  label:'Custom Objects',  icon:'🧩', items: buildCustomObjectNavItems(customObjects) },
       { id:'reports',        label:'Reports',         icon:'⚡', items: reportsTile },
       { id:'salesDashboard', label:'Sales Dashboard', icon:'📊', items: [DASHBOARD_ITEM] },
       { id:'adminTool',      label:'Admin Tool',      icon:'🔧', items: adminItems },
     ];
-  }, [b2cMode]);
+  }, [b2cMode, customObjects]);
 
   // Only tabs with at least one visible item ever show — e.g. Admin Tool
   // disappears entirely for non-admins, matching how the sidebar hides
@@ -193,7 +195,7 @@ export default function SpringboardPage({ onNavigate }) {
                     className="group relative aspect-square rounded-2xl text-white bg-white/10 hover:bg-white/[0.16] border border-white/15 hover:border-white/30 backdrop-blur-sm shadow-sm hover:shadow-lg hover:-translate-y-0.5 transition-all duration-200 flex flex-col items-center justify-center gap-3 p-4"
                   >
                     <div className="w-12 h-12 rounded-xl bg-white/15 flex items-center justify-center group-hover:scale-110 transition-transform duration-200">
-                      <NavIcon iconKey={item.key} className="w-6 h-6 text-white"/>
+                      {item.isCustomObject ? <ObjectIcon icon={item.icon} className="w-6 h-6 text-white"/> : <NavIcon iconKey={item.key} className="w-6 h-6 text-white"/>}
                     </div>
                     <span className="text-sm font-semibold text-center leading-tight text-white/90">{getObjectLabel(item.key, t(lang, item.label))}</span>
                   </button>

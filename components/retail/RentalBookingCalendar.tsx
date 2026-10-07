@@ -494,7 +494,7 @@ export default function RentalBookingCalendar({ productId, productName, productP
                       }}
                       options={retailCustomers.map(c => ({ value: c._uuid || c.id, label: c.name, sub: c.phone || c.email || '' }))}
                       onCreateNew={(name) => setQuickCreateCustomer(name || true)}
-                      createLabel="Create Customer"
+                      createLabel="Create Customer" createObject="retailCustomers"
                       placeholder="Search customers to complete the booking..."
                     />
                   </div>

@@ -13,6 +13,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { createClient } from '@supabase/supabase-js';
 import { inMemoryLock } from './tenant';
+import { tenantScope } from './utils';
 
 export interface ConditionalRule {
   condition_field: string;
@@ -33,6 +34,9 @@ export interface FieldLayoutRow {
   conditional_rules: ConditionalRule[];
   is_published: boolean;
   page_scope: 'both' | 'detail' | 'create';
+  default_value?: string | null;
+  // true when the row was saved on purpose as a page-specific override (new designer).
+  is_override?: boolean | null;
 }
 
 export interface SectionLayoutRow {
@@ -81,14 +85,39 @@ export function evaluateFieldCondition(rule: ConditionalRule, record: any): bool
   }
 }
 
+// A page-specific row that only repeats the defaults (no label, visible, editable,
+// no rules, no default value) and was NOT saved on purpose as an override. Older
+// versions of the designer wrote one of these for EVERY field whenever a single
+// page tab was saved, which silently masked the "Both Pages" customizations.
+const isDefaultProps = (r: FieldLayoutRow) =>
+  !r.custom_label && r.visibility_mode !== 'hidden' && r.editability_mode !== 'readonly'
+  && !(r.conditional_rules || []).length && !r.default_value;
+
+// Picks the one row that applies to a field on a page:
+//   page-specific row  >  "Both Pages" row  >  nothing.
+// A page-specific row defers to the "Both Pages" row only when it is a redundant
+// default row (see above), so "Both" customizations are never masked.
+export function resolveFieldRow(fieldKey: string, layout: FieldLayoutRow[], pageScope: 'detail' | 'create' = 'detail'): FieldLayoutRow | undefined {
+  let scoped: FieldLayoutRow | undefined, both: FieldLayoutRow | undefined;
+  for (const r of layout || []) {
+    if (r.field_key !== fieldKey || !r.is_published) continue;
+    if (r.page_scope === pageScope) scoped = r;
+    else if (r.page_scope === 'both' || !r.page_scope) both = r;
+  }
+  if (scoped && both && !scoped.is_override && isDefaultProps(scoped)) return both;
+  return scoped || both;
+}
+
+// One effective row per field for a page (used for defaults, ordering, ...).
+export function effectiveRows(layout: FieldLayoutRow[], pageScope: 'detail' | 'create' = 'detail'): FieldLayoutRow[] {
+  const keys = Array.from(new Set((layout || []).map(r => r.field_key)));
+  return keys.map(k => resolveFieldRow(k, layout, pageScope)).filter(Boolean) as FieldLayoutRow[];
+}
+
 // Resolves the effective label/visible/editable for one field, for a
-// specific page (detail or create). If both a page-specific row and a
-// 'both' row exist for the same field, the page-specific one wins - an
-// admin overriding just the Create page for a field shouldn't need to
-// also duplicate whatever the 'both' row already says.
+// specific page (detail or create).
 export function resolveFieldDisplay(fieldKey: string, defaultLabel: string, layout: FieldLayoutRow[], record: any, pageScope: 'detail' | 'create' = 'detail') {
-  const candidates = layout.filter(r => r.field_key === fieldKey && r.is_published && (r.page_scope === pageScope || r.page_scope === 'both' || !r.page_scope));
-  const row = candidates.find(r => r.page_scope === pageScope) || candidates.find(r => r.page_scope === 'both' || !r.page_scope);
+  const row = resolveFieldRow(fieldKey, layout, pageScope);
   if (!row) return { label: defaultLabel, visible: true, editable: true };
 
   let visible = row.visibility_mode !== 'hidden';
@@ -105,16 +134,8 @@ export function resolveFieldDisplay(fieldKey: string, defaultLabel: string, layo
   return { label, visible, editable };
 }
 
-// Companion to resolveFieldDisplay — resolves just the saved row for a
-// field at a given page scope (same precedence: page-specific row wins
-// over a 'both' row), for callers that need display_order directly for
-// reordering rather than the label/visible/editable resolved above.
-// Returns undefined if no row matches, letting the caller fall back to a
-// field's original position.
-export function resolveFieldRow(fieldKey: string, layout: FieldLayoutRow[], pageScope: 'detail' | 'create' = 'detail'): FieldLayoutRow | undefined {
-  const candidates = layout.filter(r => r.field_key === fieldKey && r.is_published && (r.page_scope === pageScope || r.page_scope === 'both' || !r.page_scope));
-  return candidates.find(r => r.page_scope === pageScope) || candidates.find(r => r.page_scope === 'both' || !r.page_scope);
-}
+// Custom (App Composer) fields are keyed 'cf_<api_name>' in the designer.
+export const cfKey = (apiName: string) => 'cf_' + apiName;
 
 export function useFieldLayout(objectType: string) {
   const cacheKey = getCacheKey(objectType);
@@ -140,10 +161,10 @@ export function useFieldLayout(objectType: string) {
         const client = getClient();
         if (!client) { setLoading(false); return; }
 
-        const tenantId = typeof window !== 'undefined' ? (window as any).__bp_tenant?.id || null : null;
+        // Tenant-scoped like every other table (dedicated-DB tenants need no filter).
         const [{ data: fieldRows }, { data: sectionRows }] = await Promise.all([
-          client.from('field_layout_config').select('*').eq('object_type', objectType).eq('tenant_id', tenantId).eq('is_published', true).order('display_order'),
-          client.from('field_layout_sections').select('*').eq('object_type', objectType).eq('tenant_id', tenantId).eq('is_published', true).order('display_order'),
+          tenantScope(client.from('field_layout_config').select('*')).eq('object_type', objectType).eq('is_published', true).order('display_order'),
+          tenantScope(client.from('field_layout_sections').select('*')).eq('object_type', objectType).eq('is_published', true).order('display_order'),
         ]);
 
         if (!cancelled) {
@@ -166,4 +187,29 @@ export function useFieldLayout(objectType: string) {
   }, [fields]);
 
   return { fields, sections, loading, resolve };
+}
+
+// Turns a stored default (always text) into a real value: 'today' / "other_field+3" for dates,
+// booleans for checkboxes, numbers for numeric fields. Same rules the retail create form used.
+const REL_DEFAULT_RE = /^([a-zA-Z_][a-zA-Z0-9_]*)\s*([+-]\d+)?$/;
+export function resolveLayoutDefault(fieldType: string, rawValue: any, sourceRow: any = null) {
+  if (rawValue === undefined || rawValue === null || rawValue === '') return undefined;
+  const raw = String(rawValue);
+  const t = String(fieldType || 'text');
+  if (t === 'date') {
+    if (raw.toLowerCase() === 'today') return new Date().toLocaleDateString('en-CA');
+    const m = raw.match(REL_DEFAULT_RE);
+    if (m) {
+      const refVal = sourceRow?.[m[1]];
+      if (!refVal) return undefined;
+      const d = new Date(refVal + 'T00:00:00');
+      if (isNaN(d.getTime())) return undefined;
+      if (m[2]) d.setDate(d.getDate() + parseInt(m[2], 10));
+      return d.toLocaleDateString('en-CA');
+    }
+    return raw;
+  }
+  if (t === 'checkbox' || t === 'boolean') return raw.toLowerCase() === 'true';
+  if (t === 'number' || t === 'currency') { const n = Number(raw); return Number.isNaN(n) ? undefined : n; }
+  return raw;
 }

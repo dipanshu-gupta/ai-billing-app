@@ -7,6 +7,7 @@
  * invoices, quotations, activities, products
  * Values stored in custom_data JSONB on each B2B table.
  */
+import { relabelText } from '@/lib/useRelabel';
 import { useState, useEffect } from 'react';
 import { useTenant } from '@/context/TenantContext';
 import { invalidateCustomFieldCache } from '@/lib/useCustomFields';
@@ -161,7 +162,7 @@ export default function B2BAppComposer() {
             <button key={obj.v} onClick={()=>setSelectedObj(obj.v)}
               className={`flex flex-col items-center py-3 px-2 rounded-[16px] border text-xs font-bold transition-all gap-1.5 ${selectedObj===obj.v?'bg-[#0F172A] text-white border-transparent shadow-lg':'bg-white text-gray-600 border-gray-200 hover:border-blue-400 hover:text-blue-700'}`}>
               <span className="text-xl">{obj.icon}</span>
-              <span className="text-center leading-tight">{obj.l.replace(' ','')}</span>
+              <span className="text-center leading-tight">{relabelText(obj.l).replace(' ','')}</span>
             </button>
           ))}
         </div>
@@ -173,7 +174,7 @@ export default function B2BAppComposer() {
             <button key={obj.v} onClick={()=>setSelectedObj(obj.v)}
               className={`flex flex-col items-center py-3 px-2 rounded-[16px] border text-xs font-bold transition-all gap-1.5 ${selectedObj===obj.v?'bg-[#0F172A] text-white border-transparent shadow-lg':'bg-white text-gray-600 border-gray-200 hover:border-blue-400 hover:text-blue-700'}`}>
               <span className="text-xl">{obj.icon}</span>
-              <span className="text-center leading-tight">{obj.l.replace(' ','')}</span>
+              <span className="text-center leading-tight">{relabelText(obj.l).replace(' ','')}</span>
             </button>
           ))}
         </div>
@@ -191,7 +192,7 @@ export default function B2BAppComposer() {
           <div className="flex items-center gap-2">
             <span className="text-xl">{selObj?.icon}</span>
             <div>
-              <h3 className="font-bold text-[#0F172A]">{selObj?.l} — Custom Fields</h3>
+              <h3 className="font-bold text-[#0F172A]">{relabelText(selObj?.l)} — Custom Fields</h3>
               <p className="text-xs text-gray-400">{fields.filter(f=>f.is_published).length} published · {fields.length}/{MAX_FIELDS} fields</p>
             </div>
           </div>
@@ -217,7 +218,7 @@ export default function B2BAppComposer() {
           <div className="py-12 text-center">
             <div className="text-5xl mb-4">🧩</div>
             <div className="font-bold text-[#0F172A] mb-1">No custom fields yet</div>
-            <p className="text-sm text-gray-400">Click + Add Field to define custom fields for {selObj?.l}</p>
+            <p className="text-sm text-gray-400">Click + Add Field to define custom fields for {relabelText(selObj?.l)}</p>
             <button onClick={addField} className="mt-4 px-5 py-2.5 bg-[#0F172A] text-white rounded-xl text-sm font-bold hover:bg-blue-900">
               + Add First Field
             </button>

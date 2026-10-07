@@ -1,10 +1,11 @@
 // @ts-nocheck
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import AppearancePanel from '@/components/admin/AppearancePanel';
 import AppComposer from '@/components/admin/AppComposer';
 import FieldLayoutDesigner, { LINE_ITEM_STANDARD_FIELDS } from '@/components/admin/FieldLayoutDesigner';
+import CustomObjectManager from '@/components/admin/CustomObjectManager';
 import FieldMappingPanel from '@/components/admin/FieldMappingPanel';
 import { useObjectLabels } from '@/lib/useObjectLabels';
 import { useCustomFields } from '@/lib/useCustomFields';
@@ -12,6 +13,7 @@ import SecurityConsole from '@/components/admin/SecurityConsole';
 import B2BAppComposer from '@/components/admin/B2BAppComposer';
 import TenantAdminPanel from '@/components/admin/TenantAdminPanel';
 import RetailInvoiceDesigner from '@/components/admin/RetailInvoiceDesigner';
+import BookingReceiptDesigner from '@/components/admin/BookingReceiptDesigner';
 import DocumentTemplateDesigner from '@/components/admin/DocumentTemplateDesigner';
 import WarehousesPanel from '@/components/admin/WarehousesPanel';
 import AppPreferencesPanel from '@/components/admin/AppPreferencesPanel';
@@ -21,6 +23,7 @@ import { useTenant } from '@/context/TenantContext';
 import { formatDate, getStatusOptions, getObjectFields } from '@/lib/utils';
 import Modal from '@/components/shared/Modal';
 import { useAlert } from '@/components/shared/AlertProvider';
+import { waFetch } from '@/lib/waFetch';
 import { getRetailFieldMeta, RETAIL_CONFIG } from '@/components/retail/RetailListPage';
 
 // ─── Shared styles ────────────────────────────────────────────────────────────
@@ -57,7 +60,7 @@ function RetailAdminWrapper({ title, icon, desc, children }) {
 // statuses a retail order can actually have) rather than a separately
 // maintained list — a hardcoded duplicate here previously drifted out of
 // sync and was missing "Pending", which genuinely is a valid order status.
-const RETAIL_ORDER_STATUSES = RETAIL_CONFIG.retailOrders.statusOptions;
+// Read live (not captured at import) so the tenant's own status list is used.
 function RentalSettingsPanel() {
   const { appPreferences, saveAppPreferences } = useApp();
   const { showAlert } = useAlert();
@@ -83,7 +86,7 @@ function RentalSettingsPanel() {
             An order in one of these statuses holds its rental dates — no other order can book the same item for an overlapping date range while it's active. Orders in any other status (e.g. Cancelled, Refunded) free up those dates immediately.
           </p>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            {RETAIL_ORDER_STATUSES.map(status => (
+            {RETAIL_CONFIG.retailOrders.statusOptions.map(status => (
               <label key={status} className={`flex items-center gap-2.5 p-3 rounded-2xl border-2 cursor-pointer transition-all ${selected.includes(status) ? 'border-purple-500 bg-purple-50' : 'border-gray-200 hover:border-gray-300'}`}>
                 <input type="checkbox" checked={selected.includes(status)} onChange={()=>toggle(status)} className="w-4 h-4 accent-purple-600"/>
                 <span className="text-sm font-semibold text-[#0F172A]">{status}</span>
@@ -144,7 +147,7 @@ function WhatsAppSettingsPanel() {
       setLoading(true);
       try {
         const qs = new URLSearchParams({ ...(dbUrl ? { db_url: dbUrl } : {}), ...(tenantId ? { tenantId } : {}) });
-        const res = await fetch(`/api/whatsapp/config?${qs}`);
+        const res = await waFetch(`/api/whatsapp/config?${qs}`);
         const data = await res.json();
         if (data.config) setConfig(data.config);
         const tplMap: Record<string, any> = {};
@@ -161,7 +164,7 @@ function WhatsAppSettingsPanel() {
   const save = async () => {
     setSaving(true);
     try {
-      const res = await fetch('/api/whatsapp/config', {
+      const res = await waFetch('/api/whatsapp/config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -196,10 +199,10 @@ function WhatsAppSettingsPanel() {
     setTesting(true);
     setTestResult(null);
     try {
-      const res = await fetch('/api/whatsapp/test-connection', {
+      const res = await waFetch('/api/whatsapp/test-connection', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phone_number_id: config.phone_number_id, access_token: config.access_token }),
+        body: JSON.stringify({ db_url: dbUrl, tenantId, phone_number_id: config.phone_number_id, access_token: config.access_token }),
       });
       const data = await res.json();
       setTestResult(res.ok ? { success: true, ...data } : { success: false, error: data.error });
@@ -216,7 +219,7 @@ function WhatsAppSettingsPanel() {
     setSubscribing(true);
     setSubscribeResult(null);
     try {
-      const res = await fetch('/api/whatsapp/subscribe-webhook', {
+      const res = await waFetch('/api/whatsapp/subscribe-webhook', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ db_url: tenant?.db_url, tenantId: tenant?.id }),
       });
@@ -1259,7 +1262,14 @@ function ConditionBuilder({ fields, conditions, logic, onChange, objType, appPre
   );
 }
 
-function ActionBuilder({ action, idx, users, fields, objectType, onChange, onRemove }) {
+// Objects that carry their own line-item table — mirrors LINE_ITEM_TABLE_CONFIG
+// in AppContext.tsx (kept as a plain name-set here since this file doesn't
+// have Supabase table names, just needs to know which objects qualify for
+// the "Line Items" field-picker group and the {{line_items}}/{{li:field}}
+// tokens the notification interpolator now understands).
+const LINE_ITEM_OBJECTS = new Set(['leads','opportunities','orders','invoices','quotations','retailOrders','retailInvoices']);
+
+function ActionBuilder({ action, idx, users, fields, objectType, getLineItemFields, appPreferences, onChange, onRemove }) {
   const cfg = action.action_config || {};
   const setcfg = (k,v) => onChange({ ...action, action_config: { ...cfg, [k]: v } });
   // Standard fields get their options/type from getFieldOptions/NUMERIC_FIELDS
@@ -1269,6 +1279,53 @@ function ActionBuilder({ action, idx, users, fields, objectType, onChange, onRem
   const updateFieldOpts = cfg.field ? (getFieldOptions(objectType, cfg.field) || (selectedActionFieldMeta as any)?.opts || null) : null;
   const updateFieldIsNumeric = cfg.field ? (NUMERIC_FIELDS.includes(cfg.field) || (selectedActionFieldMeta as any)?.type === 'number') : false;
   const updateFieldIsDate = cfg.field ? (selectedActionFieldMeta as any)?.type === 'date' : false;
+
+  // Fields offered by the notification "+ Field" picker: the object's own
+  // header fields, PLUS a synthetic "Record Display Number" entry (every
+  // object tracks display_number in the DB and AppContext.tsx already maps
+  // it onto every fetched record as .displayNumber — it just wasn't
+  // reachable from here before), PLUS — for objects that carry line items —
+  // an "All Line Items" summary token and each line-item field prefixed
+  // "li:" (resolves against the record's FIRST line item; a single {{}}
+  // token can't repeat per-row, so this covers the common "what did they
+  // order" case without needing a template loop).
+  const hasLineItems = LINE_ITEM_OBJECTS.has(objectType);
+  const lineItemFields = hasLineItems && getLineItemFields ? getLineItemFields(objectType, appPreferences) : [];
+  const notificationFieldGroups = [
+    { label: 'Record Fields', options: [{ v: 'display_number', l: 'Record Display Number' }, ...fields] },
+    ...(hasLineItems ? [{
+      label: 'Line Items',
+      options: [
+        { v: 'line_items', l: 'All Line Items (list)' },
+        ...lineItemFields.map(f => ({ v: `li:${f.v}`, l: `First Item — ${f.l}` })),
+      ],
+    }] : []),
+  ];
+
+  // Notification subject/message field-picker — inserts a {{field}} token at
+  // the cursor position instead of requiring the user to type the raw API
+  // name in braces by hand. Refs track the actual input/textarea DOM nodes
+  // so the token lands where the cursor is, not just appended at the end.
+  const subjectRef = useRef<HTMLInputElement>(null);
+  const messageRef = useRef<HTMLTextAreaElement>(null);
+  const insertFieldToken = (ref: any, cfgKey: string, fieldKey: string) => {
+    if (!fieldKey) return;
+    const token = `{{${fieldKey}}}`;
+    const el = ref.current;
+    const current = cfg[cfgKey] || '';
+    if (el && typeof el.selectionStart === 'number') {
+      const start = el.selectionStart, end = el.selectionEnd;
+      const next = current.slice(0, start) + token + current.slice(end);
+      setcfg(cfgKey, next);
+      requestAnimationFrame(() => {
+        el.focus();
+        const pos = start + token.length;
+        el.setSelectionRange(pos, pos);
+      });
+    } else {
+      setcfg(cfgKey, current + token);
+    }
+  };
 
   return (
     <div className="bg-gray-50 rounded-[16px] p-4 space-y-3 border border-gray-200">
@@ -1283,11 +1340,36 @@ function ActionBuilder({ action, idx, users, fields, objectType, onChange, onRem
 
       {action.action_type === 'send_notification' && (
         <div className="space-y-2 ml-9">
-          <input value={cfg.subject||''} onChange={e=>setcfg('subject',e.target.value)}
-            placeholder="Notification subject *" className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-900 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400"/>
-          <textarea value={cfg.message||''} onChange={e=>setcfg('message',e.target.value)}
-            placeholder="Notification message... Use {{name}}, {{status}}, {{amount}} for record fields" rows={2}
-            className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-900 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400 resize-none"/>
+          <div className="flex items-center gap-2">
+            <input ref={subjectRef} value={cfg.subject||''} onChange={e=>setcfg('subject',e.target.value)}
+              placeholder="Notification subject *" className="flex-1 border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-900 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400"/>
+            <select value="" onChange={e=>{ insertFieldToken(subjectRef, 'subject', e.target.value); e.target.value=''; }}
+              title="Insert a record field"
+              className="border border-gray-200 rounded-xl pl-2 pr-1 py-2 text-xs font-semibold text-blue-600 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400 max-w-[110px]">
+              <option value="">+ Field</option>
+              {notificationFieldGroups.map(g=>(
+                <optgroup key={g.label} label={g.label}>
+                  {g.options.map(f=><option key={f.v} value={f.v}>{f.l}</option>)}
+                </optgroup>
+              ))}
+            </select>
+          </div>
+          <div className="flex items-start gap-2">
+            <textarea ref={messageRef} value={cfg.message||''} onChange={e=>setcfg('message',e.target.value)}
+              placeholder="Notification message..." rows={2}
+              className="flex-1 border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-900 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400 resize-none"/>
+            <select value="" onChange={e=>{ insertFieldToken(messageRef, 'message', e.target.value); e.target.value=''; }}
+              title="Insert a record field"
+              className="border border-gray-200 rounded-xl pl-2 pr-1 py-2 text-xs font-semibold text-blue-600 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400 max-w-[110px]">
+              <option value="">+ Field</option>
+              {notificationFieldGroups.map(g=>(
+                <optgroup key={g.label} label={g.label}>
+                  {g.options.map(f=><option key={f.v} value={f.v}>{f.l}</option>)}
+                </optgroup>
+              ))}
+            </select>
+          </div>
+          <p className="text-[10px] text-gray-400">Pick "+ Field" to insert a record field — including the record's display number and, for objects with line items, per-line fields — at your cursor. No need to type the field name yourself.</p>
           <div className="flex items-center gap-4 pt-1">
             <label className="flex items-center gap-1.5 cursor-pointer">
               <input type="checkbox" checked={cfg.notify_owner!==false} onChange={e=>setcfg('notify_owner',e.target.checked)} className="w-3.5 h-3.5 accent-blue-600 rounded"/>
@@ -1691,6 +1773,7 @@ function WorkflowBuilderPanel({ objectList = ALL_OBJECTS, conditionFields = COND
             <div className="space-y-3">
               {actions.map((a,i)=>(
                 <ActionBuilder key={i} action={a} idx={i} users={enterpriseUsers} fields={fields} objectType={form.object_type}
+                  getLineItemFields={getLineItemFields} appPreferences={appPreferences}
                   onChange={na=>setActions(p=>p.map((x,j)=>j===i?na:x))}
                   onRemove={()=>setActions(p=>p.filter((_,j)=>j!==i))}/>
               ))}
@@ -2373,6 +2456,7 @@ export default function AdminToolsPage() {
     { key:'b2b_composer',   label:'App Composer',     icon:'🧩', desc:'Add custom fields to CRM objects' },
     { key:'layoutDesigner', label:'Page Layout Designer', icon:'🧱', desc:'Relabel, hide, lock, and reorder standard fields' },
     { key:'fieldMapping',   label:'Field Mapping (Copy Maps)', icon:'🔗', desc:'Auto-copy a field onto a line item or a converted record' },
+    { key:'customObjects',  label:'Custom Objects',   icon:'🗂️', desc:'Create entirely new record types, with their own fields, RBAC and line items' },
   ];
 
   const B2C_SECTIONS = [
@@ -2391,9 +2475,11 @@ export default function AdminToolsPage() {
     { key:'r_composer',      label:'App Composer',    icon:'🧩', desc:'Custom fields for retail objects' },
     { key:'layoutDesigner',  label:'Page Layout Designer', icon:'🧱', desc:'Relabel, hide, lock, and reorder standard fields' },
     { key:'fieldMapping',    label:'Field Mapping (Copy Maps)', icon:'🔗', desc:'Auto-copy a field onto a line item or a converted record' },
+    { key:'customObjects',   label:'Custom Objects',   icon:'🗂️', desc:'Create entirely new record types, with their own fields, RBAC and line items' },
     { key:'r_whatsapp',      label:'WhatsApp Integration', icon:'💬', desc:'Automatic reminders and one-tap customer messaging' },
     ...(appPreferences?.business_type === 'rental' ? [
       { key:'r_rentalSettings', label:'Rental Settings', icon:'🔑', desc:'Booking rules and blocking statuses' },
+      { key:'r_bookingReceipts', label:'Booking Receipt Designer', icon:'🎫', desc:'Free-form canvas designer for rental booking receipts' },
     ] : []),
   ];
 
@@ -2422,6 +2508,7 @@ export default function AdminToolsPage() {
       case 'r_groups':           return <RetailAdminWrapper title="User Groups" icon="👥" desc="Retail user group access and assignment"><UserGroupsPanel/></RetailAdminWrapper>;
       case 'r_security':         return <RetailAdminWrapper title="Security Console" icon="🔐" desc="Retail roles, permissions and data access — shared with B2B Enterprise"><SecurityConsole/></RetailAdminWrapper>;
       case 'r_invoiceTemplates': return <RetailInvoiceDesigner/>;
+      case 'r_bookingReceipts':  return <BookingReceiptDesigner/>;
       case 'r_approvals':        return <RetailAdminWrapper title="Approval Processes" icon="✅" desc="Multi-step approvals for Retail Orders and Invoices"><ApprovalProcessPanel objectList={RETAIL_OBJECTS_LIST} conditionFields={retailConditionFieldsWithCustom} objectLabels={dynamicObjectLabels} lineItemCustomFieldsByObject={lineItemCustomFieldsByObject}/></RetailAdminWrapper>;
       case 'r_workflow':         return <RetailAdminWrapper title="Workflow Builder" icon="⚙️" desc="Auto-trigger actions on Retail data object events"><WorkflowBuilderPanel objectList={RETAIL_OBJECTS_LIST} conditionFields={retailConditionFieldsWithCustom} objectLabels={dynamicObjectLabels} lineItemCustomFieldsByObject={lineItemCustomFieldsByObject}/></RetailAdminWrapper>;
       case 'r_assignment':       return <RetailAdminWrapper title="Assignment Rules" icon="📋" desc="Auto-assign Retail records to users"><AssignmentRulesPanel objectList={RETAIL_OBJECTS_LIST} conditionFields={retailConditionFieldsWithCustom} objectLabels={dynamicObjectLabels}/></RetailAdminWrapper>;
@@ -2431,6 +2518,7 @@ export default function AdminToolsPage() {
       case 'r_composer':         return <AppComposer/>;
       case 'layoutDesigner':     return <FieldLayoutDesigner/>;
       case 'fieldMapping':       return <FieldMappingPanel/>;
+      case 'customObjects':      return <CustomObjectManager/>;
       case 'r_rentalSettings':   return <RentalSettingsPanel/>;
       case 'r_whatsapp':        return <WhatsAppSettingsPanel/>;
       case 'b2b_composer':       return <B2BAppComposer/>;

@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { authorizeWhatsAppRequest } from '@/lib/whatsappServer';
 
 const META_API_VERSION = 'v20.0';
 
@@ -9,7 +10,10 @@ const META_API_VERSION = 'v20.0';
 // silently later.
 export async function POST(request: Request) {
   try {
-    const { phone_number_id, access_token } = await request.json();
+    const { phone_number_id, access_token, db_url, tenantId } = await request.json();
+    // Not an open relay to Meta's API: only a signed-in workspace admin may test credentials.
+    const auth = await authorizeWhatsAppRequest(request, { db_url, tenantId, requireAdmin: true });
+    if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
     if (!phone_number_id || !access_token) {
       return NextResponse.json({ error: 'Phone Number ID and Access Token are both required to test the connection.' }, { status: 400 });
     }

@@ -41,6 +41,27 @@ export const BOTTOM_ITEMS = [
 // sidebar's own Home button) — same key either way, so it routes correctly.
 export const DASHBOARD_ITEM = { key:'dashboard', label:'salesDashboard', icon:'📊', permission:null };
 
+// Builds nav items for published Custom Objects, gated by the SAME
+// canSee()/permission mechanism every standard object already uses —
+// each item's `permission` is the auto-registered custom_<api_name>_view
+// code from lib/customObjects.ts's publishCustomObject(), so a custom
+// object never needs its own bespoke visibility rule. `module` on the
+// object record ('b2b' | 'b2c' | 'both') maps to requiresCRM/requiresB2C
+// the same way every other nav item is gated against the tenant's current
+// B2B/B2C mode.
+export function buildCustomObjectNavItems(customObjects) {
+  return (customObjects || []).filter(o => o.status === 'published' && o.is_active !== false).map(o => ({
+    key: `custom_${o.api_name}`,
+    label: o.plural_label,
+    icon: o.icon || 'Package',
+    permission: `custom_${o.api_name}_view`,
+    requiresCRM: o.module === 'b2b',
+    requiresB2C: o.module === 'b2c',
+    isCustomObject: true,
+    customObject: o,
+  }));
+}
+
 // Builds the exact same canSee(item) function Sidebar.tsx has always used,
 // parameterized by the current user's context — pass in what useApp() gives
 // you and get back a function that answers "can this user see this item."

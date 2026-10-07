@@ -77,6 +77,8 @@ export const formatFileSize = (bytes: number): string => {
 
 // ─── ID generation ─────────────────────────────────────────────────────────────
 
+import { resolveStatusOptions, overrideStatusColor } from './statusOptions';
+
 export const generateId = (prefix: string): string => `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
 // ─── Sequential Display Number ───────────────────────────────────────────────
@@ -118,6 +120,10 @@ export const getPageLabel = (page: string): string => {
 // ─── Status options ────────────────────────────────────────────────────────────
 
 export const getStatusOptions = (page: string, hasApproval = false): string[] => {
+  return resolveStatusOptions(page, getDefaultStatusOptions(page, hasApproval));
+};
+
+export const getDefaultStatusOptions = (page: string, hasApproval = false): string[] => {
   switch (page) {
     case 'customers':
       return ['New','Prospect','Active','On Hold','Inactive','Churned','Blacklisted'];
@@ -161,6 +167,8 @@ export const getStatusOptions = (page: string, hasApproval = false): string[] =>
 // ─── Status colour ─────────────────────────────────────────────────────────────
 
 export const getStatusColor = (status: string): string => {
+  const tenantColor = overrideStatusColor(status);
+  if (tenantColor) return tenantColor;
   const map: Record<string, string> = {
     Active:             'bg-green-100 text-green-700',
     Inactive:           'bg-gray-100 text-gray-600',
@@ -221,6 +229,8 @@ export const getObjectFields = (page: string): string[] => {
     case 'opportunities':
       return ['name','customer','contact','stage','amount',
               'closeDate','probability','campaign','billingAddress','shippingAddress','owner','status','description'];
+    case 'quotations':
+      return ['name','customer','contact','validity_date','payment_terms','shipping_terms','currency','template_id','owner','billingAddress','shippingAddress','overall_discount','shipping_cost','notes','internal_notes'];
     case 'orders':
       return ['name','customer','contact','currency','paymentTerms',
               'deliveryDate','amount','owner','status','notes'];
