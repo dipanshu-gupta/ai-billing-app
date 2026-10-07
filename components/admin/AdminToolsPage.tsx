@@ -24,6 +24,8 @@ import { formatDate, getStatusOptions, getObjectFields } from '@/lib/utils';
 import Modal from '@/components/shared/Modal';
 import { useAlert } from '@/components/shared/AlertProvider';
 import { waFetch } from '@/lib/waFetch';
+import RedwoodSkin from '@/components/shared/RedwoodSkin';
+import { adminSectionKey, adminSectionCode } from '@/lib/rbacCatalog';
 import { getRetailFieldMeta, RETAIL_CONFIG } from '@/components/retail/RetailListPage';
 
 // ─── Shared styles ────────────────────────────────────────────────────────────
@@ -2433,10 +2435,14 @@ export default function AdminToolsPage() {
   const isMasterWorkspace = !tenant || tenant.slug === 'demo';
   // Admin tools page — data loaded via individual panel components
   // Gate: only admins (or users with admin_tools_view) can access this page
+  const perms = currentUserPermissions || [];
+  const isAdminUser = perms.includes('__admin__') || (currentUser as any)?.is_admin === true;
+  // RBAC: __admin__ sees everything; admin_view / admin_tools_view opens ALL sections; otherwise each section needs its own
+  // admintool_<section>_access permission (assigned in Security Console → Admin Tools).
+  const hasAllSections = perms.includes('admin_view') || perms.includes('admin_tools_view');
+  const canSection = (key: string) => !permissionsLoaded || isAdminUser || hasAllSections || perms.includes(adminSectionCode(key));
   const canAccessAdmin = !permissionsLoaded || // optimistic while loading
-    (currentUserPermissions || []).includes('__admin__') ||
-    (currentUserPermissions || []).includes('admin_tools_view') ||
-    (currentUser as any)?.is_admin === true;
+    isAdminUser || hasAllSections || perms.some(c => c.startsWith('admintool_') && c.endsWith('_access'));
 
   const B2B_SECTIONS = [
     { key:'organizations',  label:'Organizations',    icon:'🏢', desc:'Manage companies and org structure' },
@@ -2557,84 +2563,144 @@ export default function AdminToolsPage() {
     );
   }
 
+  const SECTION_GROUPS = [
+    ['People & Access', ['organizations', 'businessUnits', 'users', 'groups', 'security']],
+    ['Automation', ['workflow', 'assignment', 'sla', 'approvals']],
+    ['Data Model & Layout', ['composer', 'layoutDesigner', 'fieldMapping', 'customObjects']],
+    ['Documents & Templates', ['templates', 'invoiceTemplates', 'bookingReceipts']],
+    ['Settings & Operations', ['appPrefs', 'appearance', 'warehouses', 'whatsapp', 'rentalSettings']],
+  ];
+  const renderTiles = (sections: any[], tone: 'b2b' | 'b2c') => {
+    const visible = sections.filter(sec => canSection(sec.key));
+    if (!visible.length) return <div className="ad-empty">You don’t have access to any Admin Tools sections in this area. Ask an administrator to grant them in Security Console.</div>;
+    const placed = new Set<string>();
+    const blocks = SECTION_GROUPS.map(([title, keys]) => {
+      const items = visible.filter(sec => (keys as string[]).includes(adminSectionKey(sec.key)));
+      items.forEach(i => placed.add(i.key));
+      return [title, items] as any;
+    });
+    const rest = visible.filter(sec => !placed.has(sec.key));
+    if (rest.length) blocks.push(['Other', rest]);
+    return (
+      <div className="space-y-7">
+        {blocks.filter(([, items]) => items.length).map(([title, items]) => (
+          <div key={title}>
+            <div className="ad-group">{title}</div>
+            <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-4">
+              {items.map(section => {
+                const isAlwaysOn = section.key==='appPrefs'||section.key==='appearance'||section.key==='r_appPrefs'||section.key==='r_appearance';
+                const disabled = tone==='b2c' && !isB2CMode && !isAlwaysOn;
+                return (
+                  <button key={section.key} onClick={()=>{ if(!disabled) setActive(section.key); }} disabled={disabled}
+                    className={`ad-tile rounded-[24px] p-5 text-left border bg-white relative ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}>
+                    {disabled && <div className="absolute top-2 right-2 bg-gray-200 text-gray-500 text-[10px] font-bold px-2 py-0.5 rounded-full">OFF</div>}
+                    <div className="ad-ico">{section.icon}</div>
+                    <div className="ad-tt">{section.label}</div>
+                    <div className="ad-td">{section.desc}</div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+  };
+
+  // A section opened via state/URL must still pass the same RBAC check as its tile.
+  const sectionAllowed = !active || canSection(active);
+
   const currentSections = adminMode==='b2c' ? B2C_SECTIONS : adminMode==='tenant' ? [] : adminMode==='import' ? [] : B2B_SECTIONS;
   const isB2CAdminTool = adminMode==='b2c';
 
+  const ADMIN_CSS = String.raw`
+.ad-root { padding: 4px; }
+.ad-root .ad-group { font-family: var(--rw-serif); font-size: 18px; color: var(--rw-ink); margin: 0 0 12px; display: flex; align-items: center; gap: 10px; }
+.ad-root .ad-group::after { content: ""; flex: 1; height: 1px; background: var(--rw-border); }
+.ad-root .ad-tile { border-color: var(--rw-border); box-shadow: 0 1px 2px rgba(27,26,24,.04); transition: border-color .15s, box-shadow .15s, transform .15s; }
+.ad-root .ad-tile:not(:disabled):hover { border-color: var(--rw-accent); box-shadow: 0 6px 18px rgba(122,78,155,.12); transform: translateY(-1px); }
+.ad-root .ad-ico { width: 40px; height: 40px; border-radius: 10px; background: var(--rw-accent-soft); display: flex; align-items: center; justify-content: center; font-size: 20px; margin-bottom: 12px; }
+.ad-root .ad-tt { font-weight: 600; font-size: 14px; color: var(--rw-ink); }
+.ad-root .ad-tile:not(:disabled):hover .ad-tt { color: var(--rw-accent); }
+.ad-root .ad-td { font-size: 12px; color: var(--rw-muted); margin-top: 3px; line-height: 1.4; }
+.ad-root .ad-empty { background: #fff; border: 1px dashed var(--rw-border); border-radius: 12px; padding: 28px; color: var(--rw-muted); font-size: 13px; text-align: center; }
+.ad-root .ad-modes { display: inline-flex; gap: 4px; background: #F1EEEA; border-radius: 10px; padding: 4px; flex-wrap: wrap; }
+.ad-root .ad-modes button { border: 0; border-radius: 7px; padding: 7px 14px; font-size: 13px; font-weight: 600; color: var(--rw-muted); background: transparent; cursor: pointer; }
+.ad-root .ad-modes button:hover:not(:disabled) { color: var(--rw-ink); }
+.ad-root .ad-modes button.on { background: #fff; color: var(--rw-ink); box-shadow: 0 1px 3px rgba(27,26,24,.14), inset 0 -2px 0 var(--rw-accent); }
+.ad-root .ad-modes button:disabled { opacity: .4; cursor: not-allowed; }
+.ad-root .ad-back { background: none; border: 0; color: var(--rw-muted); font-size: 13px; font-weight: 600; cursor: pointer; padding: 2px 0; }
+.ad-root .ad-back:hover { color: var(--rw-accent); }
+.ad-root .ad-crumb { font-size: 12px; color: var(--rw-faint); margin-left: 8px; }
+/* Panels render their own dark gradient banners — present them as Redwood banners */
+.ad-root div[class*="bg-gradient-to-r"][class*="from-[#0F172A]"][class*="rounded-["], .ad-root div[class*="bg-gradient-to-r"][class*="from-purple-"][class*="rounded-["] {
+  background: #fff !important; background-image: none !important; color: var(--rw-ink) !important; border: 1px solid var(--rw-border); position: relative; overflow: hidden; border-radius: 14px !important;
+}
+.ad-root div[class*="bg-gradient-to-r"][class*="from-[#0F172A]"][class*="rounded-["]::after, .ad-root div[class*="bg-gradient-to-r"][class*="from-purple-"][class*="rounded-["]::after {
+  content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 5px; background: linear-gradient(90deg, var(--rw-accent) 0 38%, var(--rw-teal) 38% 62%, var(--rw-gold) 62% 78%, #C9BFD6 78% 100%);
+}
+.ad-root div[class*="bg-gradient-to-r"][class*="from-[#0F172A]"][class*="rounded-["] :is(h1,h2,h3), .ad-root div[class*="bg-gradient-to-r"][class*="from-purple-"][class*="rounded-["] :is(h1,h2,h3) { color: var(--rw-ink) !important; font-family: var(--rw-serif); font-weight: 400 !important; }
+.ad-root div[class*="bg-gradient-to-r"][class*="from-[#0F172A]"][class*="rounded-["] :is([class*="text-white"], [class*="text-blue-"], [class*="text-purple-"], [class*="text-slate-"]):not(button):not(h1):not(h2):not(h3),
+.ad-root div[class*="bg-gradient-to-r"][class*="from-purple-"][class*="rounded-["] :is([class*="text-white"], [class*="text-blue-"], [class*="text-purple-"]):not(button):not(h1):not(h2):not(h3) { color: var(--rw-muted) !important; }
+.ad-root div[class*="bg-gradient-to-r"][class*="from-[#0F172A]"][class*="rounded-["] [class*="bg-white/"], .ad-root div[class*="bg-gradient-to-r"][class*="from-purple-"][class*="rounded-["] [class*="bg-white/"] { background: #F6F4F1 !important; border: 1px solid var(--rw-line); color: var(--rw-ink) !important; }
+.ad-root div[class*="bg-gradient-to-r"][class*="from-[#0F172A]"][class*="rounded-["] [class*="bg-white/"] *, .ad-root div[class*="bg-gradient-to-r"][class*="from-purple-"][class*="rounded-["] [class*="bg-white/"] * { color: var(--rw-ink) !important; }
+.ad-root h2[class*="text-2xl"], .ad-root h3[class*="text-xl"] { font-family: var(--rw-serif); font-weight: 400 !important; letter-spacing: -0.01em; }
+.ad-root [class*="bg-[#0F172A]"][class*="text-white"]:is(button) { background: var(--rw-ink) !important; }
+`;
+
   return (
-    <div className="space-y-6">
+    <div className="ad-root rw-panel rw-list space-y-6 p-5">
+      <RedwoodSkin />
+      <style>{ADMIN_CSS}</style>
       {/* Header */}
       {!active && (
-        <div className={`rounded-[28px] p-6 text-white ${isB2CAdminTool?'bg-gradient-to-r from-purple-900 to-purple-700':'bg-gradient-to-r from-[#0F172A] to-blue-900'}`}>
+        <div className="rw-banner rounded-[28px] p-6">
           <div className="flex items-center justify-between flex-wrap gap-4">
             <div>
-              <h1 className="text-3xl font-bold">⚙️ Admin Tools</h1>
-              <p className="text-blue-200 mt-1">{isB2CAdminTool?'Configure your Retail (B2C) platform — retail users, composer, templates, and more.':'Configure your enterprise platform — users, automation, SLA, approvals, and more.'}</p>
+              <h1 className="text-3xl">Admin Tools</h1>
+              <p className="mt-1 text-sm">{isB2CAdminTool?'Configure your Retail (B2C) platform — users, security, layouts, templates and more.':'Configure your enterprise platform — users, automation, SLA, approvals, data model and more.'}</p>
             </div>
-            {/* B2B / B2C Mode Switcher */}
-            <div className="flex bg-white/10 rounded-2xl p-1 gap-1">
-              <button onClick={()=>{setAdminMode('b2b');setActive(null);}}
-                disabled={!isB2BMode}
-                title={!isB2BMode?'Enable CRM module in App Preferences first':''}
-                className={`px-4 py-2 rounded-xl text-sm font-bold transition-all disabled:opacity-40 disabled:cursor-not-allowed ${adminMode==='b2b'?'bg-white text-[#0F172A] shadow':'text-white/70 hover:text-white'}`}>
-                🏢 B2B Enterprise {!isB2BMode&&<span className="text-xs opacity-60">(disabled)</span>}
-              </button>
-              <button onClick={()=>{setAdminMode('b2c');setActive(null);}}
-                disabled={!isB2CMode}
-                title={!isB2CMode?'Enable B2C mode in App Preferences first':''}
-                className={`px-4 py-2 rounded-xl text-sm font-bold transition-all disabled:opacity-40 disabled:cursor-not-allowed ${adminMode==='b2c'?'bg-purple-500 text-white shadow':'text-white/70 hover:text-white'}`}>
-                🛍️ B2C Retail {!isB2CMode&&<span className="text-xs opacity-60">(disabled)</span>}
-              </button>
-              {isMasterWorkspace && (
-                <button onClick={()=>{setAdminMode('tenant');setActive(null);}}
-                  className={`px-4 py-2 rounded-xl text-sm font-bold transition-all ${adminMode==='tenant'?'bg-amber-500 text-white shadow':'text-white/70 hover:text-white'}`}>
-                  🌐 Tenant Admin
-                </button>
+            {/* Area switcher */}
+            <div className="ad-modes">
+              <button className={adminMode==='b2b'?'on':''} onClick={()=>{setAdminMode('b2b');setActive(null);}} disabled={!isB2BMode}
+                title={!isB2BMode?'Enable CRM module in App Preferences first':''}>🏢 B2B Enterprise{!isB2BMode?' (off)':''}</button>
+              <button className={adminMode==='b2c'?'on':''} onClick={()=>{setAdminMode('b2c');setActive(null);}} disabled={!isB2CMode}
+                title={!isB2CMode?'Enable B2C mode in App Preferences first':''}>🛍️ B2C Retail{!isB2CMode?' (off)':''}</button>
+              {isMasterWorkspace && isAdminUser && (
+                <button className={adminMode==='tenant'?'on':''} onClick={()=>{setAdminMode('tenant');setActive(null);}}>🌐 Tenant Admin</button>
               )}
-              <button onClick={()=>{setAdminMode('import');setActive(null);}}
-                className={`px-4 py-2 rounded-xl text-sm font-bold transition-all ${adminMode==='import'?'bg-emerald-600 text-white shadow':'text-white/70 hover:text-white'}`}>
-                📂 Import & Export
-              </button>
+              {canSection('importExport') && (
+                <button className={adminMode==='import'?'on':''} onClick={()=>{setAdminMode('import');setActive(null);}}>📂 Import &amp; Export</button>
+              )}
             </div>
           </div>
           {!isB2CMode && adminMode==='b2b' && (
-            <p className="text-xs text-blue-300 mt-3">💡 Enable B2C mode in App Preferences to unlock Retail Admin Tools.</p>
+            <p className="text-xs mt-3">💡 Enable B2C mode in App Preferences to unlock Retail Admin Tools.</p>
           )}
         </div>
       )}
 
       {/* Back button */}
       {active && (
-        <button onClick={()=>setActive(null)}
-          className="flex items-center gap-2 text-sm text-gray-500 hover:text-[#0F172A] font-semibold transition-all px-1">
-          ← Back to Admin Tools
-        </button>
-      )}
-
-      {/* B2B sections grid */}
-      {!active && adminMode==='b2b' && (
-        <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-4">
-          {B2B_SECTIONS.map(section=>(
-            <button key={section.key} onClick={()=>setActive(section.key)}
-              className="rounded-[24px] p-5 text-left border border-blue-100 bg-white hover:border-blue-400 hover:shadow-xl transition-all shadow-lg hover:scale-[1.02] group">
-              <div className="text-3xl mb-3">{section.icon}</div>
-              <div className="font-bold text-sm text-[#0F172A] group-hover:text-blue-700">{section.label}</div>
-              <div className="text-xs mt-1 text-gray-400">{section.desc}</div>
-            </button>
-          ))}
+        <div>
+          <button onClick={()=>setActive(null)} className="ad-back">← Admin Tools</button>
+          <span className="ad-crumb">{(adminMode==='b2c' ? B2C_SECTIONS : B2B_SECTIONS).find(x=>x.key===active)?.label || ''}</span>
         </div>
       )}
 
+      {!active && adminMode==='b2b' && renderTiles(B2B_SECTIONS, 'b2b')}
+
       {/* Tenant Admin — renders directly, no sub-tiles (master workspace only) */}
-      {!active && adminMode==='tenant' && isMasterWorkspace && (
+      {!active && adminMode==='tenant' && isMasterWorkspace && isAdminUser && (
         <TenantAdminPanel/>
       )}
 
       {/* Import & Export — renders directly, visible to all tenants */}
-      {!active && adminMode==='import' && (
+      {!active && adminMode==='import' && canSection('importExport') && (
         <ImportExportPanel/>
       )}
 
-      {/* B2C sections grid */}
+      {/* B2C sections */}
       {!active && adminMode==='b2c' && (
         <div className="space-y-4">
           {!isB2CMode && (
@@ -2646,34 +2712,15 @@ export default function AdminToolsPage() {
               </div>
             </div>
           )}
-          <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-4">
-            {B2C_SECTIONS.map(section=>{
-              const isAlwaysOn = section.key==='appPrefs'||section.key==='appearance';
-              const disabled = !isB2CMode && !isAlwaysOn;
-              return (
-                <button key={section.key}
-                  onClick={()=>{ if(!disabled) setActive(section.key); }}
-                  disabled={disabled}
-                  className={`rounded-[24px] p-5 text-left border transition-all shadow-lg group relative ${
-                    disabled
-                      ? 'border-gray-100 bg-gray-50 opacity-50 cursor-not-allowed'
-                      : 'border-purple-100 bg-white hover:border-purple-400 hover:shadow-xl hover:scale-[1.02]'
-                  }`}>
-                  {disabled && (
-                    <div className="absolute top-2 right-2 bg-gray-200 text-gray-500 text-[10px] font-bold px-2 py-0.5 rounded-full">OFF</div>
-                  )}
-                  <div className="text-3xl mb-3">{section.icon}</div>
-                  <div className={`font-bold text-sm ${disabled?'text-gray-400':'text-[#0F172A] group-hover:text-purple-700'}`}>{section.label}</div>
-                  <div className="text-xs mt-1 text-gray-400">{section.desc}</div>
-                </button>
-              );
-            })}
-          </div>
+          {renderTiles(B2C_SECTIONS, 'b2c')}
         </div>
       )}
 
       {/* Active panel */}
-      {active && (
+      {active && !sectionAllowed && (
+        <div className="ad-empty">🔒 You don’t have permission to open this section. Ask an administrator to grant “{adminSectionKey(active)}” access in Security Console.</div>
+      )}
+      {active && sectionAllowed && (
         <div className="space-y-5">
           {renderSection()}
         </div>

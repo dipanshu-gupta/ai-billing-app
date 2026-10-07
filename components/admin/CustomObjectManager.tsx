@@ -21,7 +21,8 @@ import { useState, useEffect, useMemo } from 'react';
 import { useTenant } from '@/context/TenantContext';
 import { useApp } from '@/context/AppContext';
 import { useAlert } from '@/components/shared/AlertProvider';
-import { CUSTOM_SYSTEM_KEYS } from '@/lib/customObjects';
+import { invalidateFieldLayoutCache } from '@/lib/useFieldLayout';
+import { CUSTOM_SYSTEM_KEYS, deleteCustomField, migrateFieldData, slotPrefixOf, allocateStorageSlot as allocSlot } from '@/lib/customObjects';
 import { AVAILABLE_LINE_ICONS, ObjectIcon } from '@/lib/lineIcons';
 import {
   fetchAllCustomObjects, fetchCustomObjectFields, allocateStorageSlot,
@@ -90,11 +91,11 @@ export default function CustomObjectManager() {
     if (!obj) return;
     setDraft({ ...obj });
     const [hf, lf] = await Promise.all([
-      fetchCustomObjectFields(id, 'header', true),
-      obj.supports_line_items ? fetchCustomObjectFields(id, 'line_item', true) : Promise.resolve([]),
+      fetchCustomObjectFields(id, 'header', true, true),
+      obj.supports_line_items ? fetchCustomObjectFields(id, 'line_item', true, true) : Promise.resolve([]),
     ]);
-    setHeaderFields(hf.map(f => ({ ...f, _key: f.id, options: f.options || [] })));
-    setLineFields(lf.map(f => ({ ...f, _key: f.id, options: f.options || [] })));
+    setHeaderFields(hf.map(f => ({ ...f, _key: f.id, _origType: f.field_type, _origCol: f.storage_column, options: f.options || [] })));
+    setLineFields(lf.map(f => ({ ...f, _key: f.id, _origType: f.field_type, _origCol: f.storage_column, options: f.options || [] })));
     setFieldScope('header');
   }
 
@@ -151,8 +152,25 @@ export default function CustomObjectManager() {
   function updField(idx, k, v) {
     setActiveFields(p => p.map((f, i) => i === idx ? { ...f, [k]: v } : f));
   }
-  function removeField(idx) {
-    setActiveFields(p => p.filter((_, i) => i !== idx));
+  async function removeField(idx) {
+    const f = activeFields[idx];
+    if (!f) return;
+    if (!f.id) { setActiveFields(p => p.filter((_, i) => i !== idx)); return; }   // never saved: just drop it
+    if (f.is_standard) { showAlert('System fields (Name, Status, Owner) cannot be deleted. Hide them in the Page Layout Designer instead.', { variant:'warning' }); return; }
+    const ok = await showConfirm(
+      `Delete "${f.label}"? The field and ALL values stored in it on every ${draft.singular_label || 'record'} are permanently removed, along with its Page Layout settings. To keep the data and just hide the field, untick Active instead.`,
+      { title: 'Delete field', variant: 'danger', confirmLabel: 'Delete field' });
+    if (!ok) return;
+    setSaving(true);
+    try {
+      await deleteCustomField(supabase, { ...f, custom_object_id: draft.id, scope: f.scope || fieldScope }, `custom_${draft.api_name}`);
+      invalidateCustomObjectCache(draft.id);
+      invalidateFieldLayoutCache && invalidateFieldLayoutCache();
+      setActiveFields(p => p.filter((_, i) => i !== idx));
+      showToast(`Deleted "${f.label}".`);
+    } catch (e) {
+      showAlert(`Could not delete "${f.label}": ${e?.message || e}`, { variant: 'danger', title: 'Delete failed' });
+    } finally { setSaving(false); }
   }
   function addOpt(idx) {
     const v = (optInput[idx] || '').trim();
@@ -172,61 +190,91 @@ export default function CustomObjectManager() {
         showAlert(`"${f.label}" is a Lookup field but has no target object selected.`, { variant:'warning' }); return;
       }
     }
+    // Type changes that move data between storage slots need an explicit OK.
+    const retyped = activeFields.filter(f => f.id && f._origType && f._origType !== f.field_type);
+    const moving = retyped.filter(f => slotPrefixOf(f._origType) !== slotPrefixOf(f.field_type));
+    if (moving.length) {
+      const ok = await showConfirm(
+        `Changing the type of ${moving.map(f => `"${f.label}" (${f._origType} → ${f.field_type})`).join(', ')} converts the values already stored on your records. Values that can't be represented in the new type are cleared. Continue?`,
+        { title: 'Change field type', variant: 'warning', confirmLabel: 'Convert & save' });
+      if (!ok) return;
+    }
     setSaving(true);
+    const errors: string[] = [];
     try {
-      // Allocate storage slots for any field that doesn't have one yet,
-      // against the full existing field set for this object+scope (not just
-      // the fields currently on screen) so re-saving never collides.
-      const existingSaved = activeFields.filter(f => f.id);
-      const withSlots = [];
-      for (const f of activeFields) {
-        let apiName = f.api_name || slugify(f.label);
-        // These names belong to the standard system fields every custom
-        // object already has (name, status, owner, created_at, ...). A new
-        // field keeps its label but gets a distinct api_name so it can never
-        // shadow or collide with a system field.
-        if (!f.id && CUSTOM_SYSTEM_KEYS.has(apiName)) apiName = `${apiName}_custom`;
-        let storageColumn = f.storage_column;
-        if (!storageColumn) {
-          storageColumn = allocateStorageSlot([...existingSaved, ...withSlots], f.field_type, fieldScope);
-          if (!storageColumn) {
-            showAlert(`No free storage slots left for "${f.field_type}" fields on this object — remove an unused field of that type first.`, { variant:'danger' });
-            setSaving(false);
-            return;
-          }
+      // 1) api_names: unique within the scope, never colliding with system fields.
+      const taken = new Set(activeFields.filter(f => f.id).map(f => f.api_name));
+      const named = activeFields.map(f => {
+        if (f.id) return f;
+        let base = f.api_name || slugify(f.label) || 'field';
+        if (CUSTOM_SYSTEM_KEYS.has(base)) base = `${base}_custom`;
+        let name = base, n = 2;
+        while (taken.has(name)) name = `${base}_${n++}`;
+        taken.add(name);
+        return { ...f, api_name: name };
+      });
+      // 2) storage slots: fields that keep their column reserve it first; new / retyped ones get the next free slot.
+      const keeps = named.filter(f => f.id && !(f._origType && slotPrefixOf(f._origType) !== slotPrefixOf(f.field_type)));
+      // Retyped fields keep their OLD slot reserved for this save so a failed migration can never collide.
+      const reserved = [...keeps.map(f => ({ storage_column: f.storage_column })), ...named.filter(f => f.id && !keeps.includes(f)).map(f => ({ storage_column: f._origCol }))];
+      const finalFields = [];
+      for (const f of named) {
+        const needsSlot = !f.id || (f._origType && slotPrefixOf(f._origType) !== slotPrefixOf(f.field_type));
+        let col = f.storage_column;
+        if (needsSlot) {
+          col = allocSlot(reserved, f.field_type, fieldScope);
+          if (!col) { errors.push(`No free storage slots left for "${f.label}" (${f.field_type}) — delete an unused field of that type first.`); finalFields.push(null); continue; }
+          reserved.push({ storage_column: col });
         }
-        withSlots.push({ ...f, api_name: apiName, storage_column: storageColumn });
+        finalFields.push({ ...f, storage_column: col });
       }
-      // Upsert one at a time — small field counts per object make this fine,
-      // and it keeps per-row errors (e.g. a duplicate api_name) attributable.
-      for (const f of withSlots) {
-        const row = {
-          tenant_id: tenant?.id || null,
-          custom_object_id: draft.id,
-          scope: fieldScope,
-          api_name: f.api_name,
-          label: f.label.trim(),
-          field_type: f.field_type,
-          options: f.options || [],
-          lookup_target_type: f.field_type === 'lookup' ? f.lookup_target_type : null,
-          lookup_target_object: f.field_type === 'lookup' ? f.lookup_target_object : null,
-          storage_column: f.storage_column,
-          is_standard: !!f.is_standard,
-          required: !!f.required,
-          is_active: f.is_active !== false,
-          default_value: f.default_value || null,
-          show_on: f.show_on || 'both',
-          sort_order: withSlots.indexOf(f),
-        };
-        if (f.id) {
-          await supabase.from('custom_object_fields').update(row).eq('id', f.id);
-        } else {
-          await supabase.from('custom_object_fields').insert([row]);
+      // 3) write — every statement's error is captured; nothing is reported as saved unless it was.
+      for (let i = 0; i < finalFields.length; i++) {
+        const f = finalFields[i];
+        if (!f) continue;
+        const moved = f.id && f._origCol && f._origCol !== f.storage_column;
+        try {
+          if (moved) {
+            await migrateFieldData(supabase, { objectId: draft.id, scope: fieldScope, apiName: f.api_name, fromCol: f._origCol, toCol: f.storage_column, fromType: f._origType, toType: f.field_type });
+          }
+          const row = {
+            tenant_id: tenant?.id || null,
+            custom_object_id: draft.id,
+            scope: fieldScope,
+            api_name: f.api_name,
+            label: f.label.trim(),
+            field_type: f.field_type,
+            options: f.options || [],
+            lookup_target_type: f.field_type === 'lookup' ? f.lookup_target_type : null,
+            lookup_target_object: f.field_type === 'lookup' ? f.lookup_target_object : null,
+            storage_column: f.storage_column,
+            is_standard: !!f.is_standard,
+            required: !!f.required,
+            is_active: f.is_active !== false,
+            default_value: f.default_value || null,
+            show_on: f.show_on || 'both',
+            sort_order: i,
+            updated_at: new Date().toISOString(),
+          };
+          const res = f.id
+            ? await supabase.from('custom_object_fields').update(row).eq('id', f.id)
+            : await supabase.from('custom_object_fields').insert([row]);
+          if (res.error) throw new Error(res.error.message);
+        } catch (e) {
+          errors.push(`"${f.label}": ${e?.message || e}`);
         }
       }
       invalidateCustomObjectCache(draft.id);
-      await loadObjectDetail(draft.id);
-      showToast('Fields saved.');
+      invalidateFieldLayoutCache && invalidateFieldLayoutCache();
+      if (errors.length) {
+        showAlert(`Some changes could not be saved:\n• ${errors.join('\n• ')}`, { variant: 'danger', title: 'Save incomplete' });
+        await loadObjectDetail(draft.id);   // show what is really in the database
+      } else {
+        await loadObjectDetail(draft.id);
+        showToast('Fields saved.');
+      }
+    } catch (e) {
+      showAlert(`Save failed: ${e?.message || e}`, { variant: 'danger' });
     } finally { setSaving(false); }
   }
 
@@ -381,7 +429,7 @@ export default function CustomObjectManager() {
                 <div key={f._key} className="border border-blue-100 rounded-xl p-3 space-y-2">
                   <div className="grid grid-cols-12 gap-2 items-start">
                     <input className={`${sCls} col-span-4`} placeholder="Label" value={f.label} onChange={e => updField(idx, 'label', e.target.value)}/>
-                    <select className={`${sCls} col-span-3`} value={f.field_type} onChange={e => updField(idx, 'field_type', e.target.value)} disabled={!!f.id}>
+                    <select className={`${sCls} col-span-3`} value={f.field_type} onChange={e => updField(idx, 'field_type', e.target.value)} disabled={!!f.is_standard} title={f.id ? 'Changing the type converts existing values when you save' : ''}>
                       {CUSTOM_FIELD_TYPES.map(t => <option key={t.v} value={t.v}>{t.l}</option>)}
                     </select>
                     <label className="col-span-2 flex items-center gap-1.5 text-xs text-gray-600 pt-2.5">

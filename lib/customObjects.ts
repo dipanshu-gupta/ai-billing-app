@@ -105,18 +105,19 @@ export async function fetchAllCustomObjects() {
   return data || [];
 }
 
-export async function fetchCustomObjectFields(customObjectId: string, scope: 'header' | 'line_item' = 'header', forceRefresh = false) {
-  const cacheKey = `${customObjectId}:${scope}`;
+export async function fetchCustomObjectFields(customObjectId: string, scope: 'header' | 'line_item' = 'header', forceRefresh = false, includeInactive = false) {
+  const cacheKey = `${customObjectId}:${scope}${includeInactive ? ':all' : ''}`;
   if (_fieldsCache[cacheKey] && !forceRefresh) return _fieldsCache[cacheKey];
   const client = getClient();
   if (!client) return [];
-  const { data, error } = await client
+  let q = client
     .from('custom_object_fields')
     .select('*')
     .eq('custom_object_id', customObjectId)
-    .eq('scope', scope)
-    .eq('is_active', true)
-    .order('sort_order');
+    .eq('scope', scope);
+  // The admin manager needs inactive fields too: they still own a storage slot and their data.
+  if (!includeInactive) q = q.eq('is_active', true);
+  const { data, error } = await q.order('sort_order');
   if (error) { console.error('[fetchCustomObjectFields]', error.message); return []; }
   _fieldsCache[cacheKey] = data || [];
   return _fieldsCache[cacheKey];
@@ -505,4 +506,84 @@ export async function fetchCustomRecordsPage(customObjectId: string, base: any) 
   const { fetchServerPage } = await import('./serverList');
   const client = getClient();
   return fetchServerPage(client, { ...base, table: 'custom_object_records', extraEq: { custom_object_id: customObjectId } });
+}
+
+
+// ─── Field lifecycle: type change + delete (admin) ─────────────────────────
+export const slotPrefixOf = (fieldType: string) => ({
+  text: 'text', long_text: 'long_text', url: 'text', email: 'text', lookup: 'text',
+  number: 'number', currency: 'number', date: 'date', datetime: 'datetime',
+  checkbox: 'boolean', single_select: 'select', multi_select: 'custom_data',
+} as Record<string, string>)[fieldType] || 'text';
+
+const tableForScope = (scope: string) => scope === 'line_item' ? 'custom_object_line_items' : 'custom_object_records';
+
+/** Best-effort value conversion between field types; returns null when the value can't be represented. */
+export function convertSlotValue(v: any, from: string, to: string) {
+  if (v === null || v === undefined || v === '') return null;
+  const asText = Array.isArray(v) ? v.join(', ') : (typeof v === 'boolean' ? (v ? 'Yes' : 'No') : String(v));
+  switch (slotPrefixOf(to)) {
+    case 'text': case 'long_text': case 'select':
+      if (from === 'date' || from === 'datetime') return String(v).slice(0, 10);
+      return asText;
+    case 'number': { const n = Number(String(Array.isArray(v) ? v[0] : v).replace(/,/g, '')); return Number.isFinite(n) ? n : null; }
+    case 'date': { const m = String(v).match(/^\d{4}-\d{2}-\d{2}/); return m ? m[0] : null; }
+    case 'datetime': { const d = new Date(String(v).length === 10 ? v + 'T00:00:00' : v); return isNaN(d.getTime()) ? null : d.toISOString(); }
+    case 'boolean': return v === true || /^(true|yes|y|1)$/i.test(String(v));
+    case 'custom_data': return Array.isArray(v) ? v : [asText];
+  }
+  return null;
+}
+
+async function forEachRow(supabase: any, table: string, objectId: string, cols: string, fn: (row: any) => Promise<void>) {
+  const PAGE = 500; let from = 0;
+  for (;;) {
+    const { data, error } = await supabase.from(table).select('id,custom_data' + (cols ? ',' + cols : '')).eq('custom_object_id', objectId).order('id').range(from, from + PAGE - 1);
+    if (error) throw new Error(error.message);
+    if (!data?.length) return;
+    for (let i = 0; i < data.length; i += 25) await Promise.all(data.slice(i, i + 25).map(fn));
+    if (data.length < PAGE) return;
+    from += PAGE;
+  }
+}
+
+/** Moves one field's stored values to a new slot (converting them) and clears the old slot. */
+export async function migrateFieldData(supabase: any, o: { objectId: string; scope: string; apiName: string; fromCol: string; toCol: string; fromType: string; toType: string }) {
+  const table = tableForScope(o.scope);
+  const physical = [o.fromCol, o.toCol].filter(c => c !== 'custom_data');
+  await forEachRow(supabase, table, o.objectId, physical.join(','), async (row) => {
+    const raw = o.fromCol === 'custom_data' ? (row.custom_data || {})[o.apiName] : row[o.fromCol];
+    const patch: any = {};
+    const cd = { ...(row.custom_data || {}) };
+    let touched = false;
+    if (o.fromCol === 'custom_data') { delete cd[o.apiName]; touched = true; } else { patch[o.fromCol] = null; }
+    const conv = convertSlotValue(raw, o.fromType, o.toType);
+    if (o.toCol === 'custom_data') { if (conv !== null) { cd[o.apiName] = conv; touched = true; } }
+    else patch[o.toCol] = conv;
+    if (touched) patch.custom_data = cd;
+    if (raw === null || raw === undefined || raw === '') { if (!touched) return; }
+    const { error } = await supabase.from(table).update(patch).eq('id', row.id);
+    if (error) throw new Error(error.message);
+  });
+}
+
+/** Permanently removes a field's definition, its stored values on every record, and its Page Layout rows. */
+export async function deleteCustomField(supabase: any, f: { id: string; custom_object_id: string; scope: string; api_name: string; storage_column: string }, objectType: string) {
+  const table = tableForScope(f.scope);
+  if (f.storage_column === 'custom_data') {
+    await forEachRow(supabase, table, f.custom_object_id, '', async (row) => {
+      const cd = { ...(row.custom_data || {}) };
+      if (!(f.api_name in cd)) return;
+      delete cd[f.api_name];
+      const { error } = await supabase.from(table).update({ custom_data: cd }).eq('id', row.id);
+      if (error) throw new Error(error.message);
+    });
+  } else if (f.storage_column) {
+    const { error } = await supabase.from(table).update({ [f.storage_column]: null }).eq('custom_object_id', f.custom_object_id);
+    if (error) throw new Error(error.message);
+  }
+  const { error: de } = await supabase.from('custom_object_fields').delete().eq('id', f.id);
+  if (de) throw new Error(de.message);
+  // Layout rows keyed by api_name (custom objects use object type custom_<api_name>); tenant isolated by RLS.
+  await supabase.from('field_layout_config').delete().eq('object_type', objectType).eq('field_key', f.api_name);
 }

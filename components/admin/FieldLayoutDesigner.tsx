@@ -20,6 +20,7 @@ import { getObjectFields, withTimeout, tenantScope } from '@/lib/utils';
 import { invalidateFieldLayoutCache } from '@/lib/useFieldLayout';
 import { invalidateObjectLabelCache } from '@/lib/useObjectLabels';
 import { useCustomFields, invalidateCustomFieldCache } from '@/lib/useCustomFields';
+import { previewTemplate } from '@/lib/defaultTemplates';
 import { useApp } from '@/context/AppContext';
 import StatusValuesCard from '@/components/admin/StatusValuesCard';
 import { fetchCustomObjects, fetchCustomObjectFields } from '@/lib/customObjects';
@@ -211,6 +212,7 @@ const RELATIVE_DEFAULT_RE = /^([a-zA-Z_][a-zA-Z0-9_]*)\s*([+-]\d+)?$/;
 const DURATION_DEFAULT_RE = /^([a-zA-Z_][a-zA-Z0-9_]*)\+duration:([a-zA-Z_][a-zA-Z0-9_]*)$/;
 function parseDefaultValue(raw: string) {
   if (!raw) return { mode: 'fixed', fixedValue: '', refField: '', offset: 0, durationField: '' };
+  if (raw === 'now') return { mode: 'now', fixedValue: '', refField: '', offset: 0, durationField: '' };
   if (raw === 'today') return { mode: 'today', fixedValue: '', refField: '', offset: 0, durationField: '' };
   const dm = raw.match(DURATION_DEFAULT_RE);
   if (dm) return { mode: 'duration', fixedValue: '', refField: dm[1], offset: 0, durationField: dm[2] };
@@ -220,6 +222,7 @@ function parseDefaultValue(raw: string) {
 }
 function serializeDefaultValue(parts: { mode: string; fixedValue: string; refField: string; offset: number; durationField?: string }) {
   if (parts.mode === 'today') return 'today';
+  if (parts.mode === 'now') return 'now';
   if (parts.mode === 'duration') {
     if (!parts.refField || !parts.durationField) return '';
     return `${parts.refField}+duration:${parts.durationField}`;
@@ -674,7 +677,7 @@ export default function FieldLayoutDesigner() {
                 const parts = { ...parsed, ...(row._defaultParts || {}) };
                 const setMode = (m: string) => {
                   upd(idx, '_defaultMode', m);
-                  if (m === 'today') upd(idx, 'default_value', 'today');
+                  if (m === 'today' || m === 'now') upd(idx, 'default_value', m);
                   else if (m === 'fixed' && parsed.mode !== 'fixed') upd(idx, 'default_value', '');
                   else if (m === 'relative' || m === 'duration') upd(idx, 'default_value', serializeDefaultValue({ ...parts, mode: m }));
                 };
@@ -683,7 +686,7 @@ export default function FieldLayoutDesigner() {
                   upd(idx, '_defaultParts', { refField: merged.refField, durationField: merged.durationField, offset: merged.offset, fixedValue: merged.fixedValue });
                   upd(idx, 'default_value', serializeDefaultValue(merged));
                 };
-                const otherDateFields = standardFields.filter(f => f.type === 'date' && f.key !== row.field_key);
+                const otherDateFields = standardFields.filter(f => (f.type === 'date' || f.type === 'datetime') && f.key !== row.field_key);
                 // "From Duration Field" only makes sense on a line-item
                 // object, and only once at least one custom select field
                 // exists there to drive it from (e.g. a "Rental Duration"
@@ -701,10 +704,10 @@ export default function FieldLayoutDesigner() {
                         </button>
                       )}
                     </label>
-                    {row.field_type === 'date' ? (
+                    {(row.field_type === 'date' || row.field_type === 'datetime') ? (
                       <div className="space-y-2">
                         <div className="flex gap-2">
-                          {[{v:'fixed',l:'Fixed Date'},{v:'today',l:'Today'},{v:'relative',l:'Relative to Another Field'},...(showDurationMode?[{v:'duration',l:'From Duration Field'}]:[])].map(m => (
+                          {[{v:'fixed',l:row.field_type === 'datetime' ? 'Fixed Date & Time' : 'Fixed Date'},...(row.field_type === 'datetime' ? [{v:'now',l:'Now (date & time)'},{v:'today',l:'Today (00:00)'}] : [{v:'today',l:'Today'}]),{v:'relative',l:'Relative to Another Field'},...(showDurationMode?[{v:'duration',l:'From Duration Field'}]:[])].map(m => (
                             <button key={m.v} onClick={() => setMode(m.v)}
                               className={`flex-1 py-2 rounded-xl text-xs font-semibold border transition-all ${mode === m.v ? 'bg-[#0F172A] text-white border-transparent' : 'bg-gray-50 text-gray-600 border-gray-200'}`}>
                               {m.l}
@@ -712,7 +715,7 @@ export default function FieldLayoutDesigner() {
                           ))}
                         </div>
                         {mode === 'fixed' && (
-                          <input type="date" value={parts.fixedValue} onChange={e => setParts({ fixedValue: e.target.value })} className={iCls} />
+                          <input type={row.field_type === 'datetime' ? 'datetime-local' : 'date'} value={parts.fixedValue} onChange={e => setParts({ fixedValue: e.target.value })} className={iCls} />
                         )}
                         {mode === 'relative' && (
                           <div className="flex items-center gap-2 flex-wrap bg-purple-50 rounded-xl p-2.5">
@@ -751,9 +754,57 @@ export default function FieldLayoutDesigner() {
                         )}
                       </div>
                     ) : (
-                      <input value={row.default_value} onChange={e => upd(idx, 'default_value', e.target.value)}
-                        placeholder="Leave blank for no default"
-                        className={iCls} />
+                      (() => {
+                        const noTpl = ['checkbox', 'boolean', 'single_select', 'multi_select', 'select', 'lookup'].includes(String(row.field_type || 'text'));
+                        const isNum = ['number', 'currency'].includes(String(row.field_type || 'text'));
+                        const seen = new Set<string>();
+                        const tokenFields = [...standardFields, ...(objCustomFields || []).map(f => ({ key: f.api_name, label: f.label, type: f.field_type }))]
+                          .filter(f => f.key !== row.field_key && !String(f.key).startsWith('__') && !seen.has(f.key) && seen.add(f.key));
+                        const prev = !noTpl && /\{\{|^\s*=/.test(row.default_value || '') ? previewTemplate(String(row.default_value).replace(/^\s*=/, ''), tokenFields) : null;
+                        const insert = (tok: string) => {
+                          const el = document.getElementById(`dv-${row.field_key}`) as HTMLInputElement | null;
+                          const cur = String(row.default_value || '');
+                          const a = el?.selectionStart ?? cur.length, b = el?.selectionEnd ?? cur.length;
+                          upd(idx, 'default_value', cur.slice(0, a) + tok + cur.slice(b));
+                          setTimeout(() => { el?.focus(); const pos = a + tok.length; el?.setSelectionRange?.(pos, pos); }, 0);
+                        };
+                        return (
+                          <div className="space-y-2">
+                            <input id={`dv-${row.field_key}`} value={row.default_value} onChange={e => upd(idx, 'default_value', e.target.value)}
+                              placeholder={noTpl ? 'Leave blank for no default' : isNum ? 'Fixed number, or = {{Base}} * {{Days}} / 30' : 'Fixed text, or e.g. Salary of {{Coach Name}} for {{Month}}'}
+                              className={iCls} />
+                            {!noTpl && (
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <select value="" onChange={e => { if (e.target.value) insert(`{{${e.target.value}}}`); }} className="text-xs border border-purple-200 rounded-lg px-2 py-1.5 bg-purple-50 text-purple-700 font-semibold">
+                                  <option value="">＋ Insert field value…</option>
+                                  {tokenFields.map(f => <option key={f.key} value={f.label}>{f.label}</option>)}
+                                </select>
+                                <select value="" onChange={e => { if (e.target.value) insert(`{{${e.target.value}}}`); }} className="text-xs border border-gray-200 rounded-lg px-2 py-1.5 bg-white text-gray-600">
+                                  <option value="">＋ Insert dynamic value…</option>
+                                  <option value="today">Today's date</option>
+                                  <option value="today+7">Today + 7 days</option>
+                                  <option value="user.name">Current user's name</option>
+                                  <option value="user.email">Current user's email</option>
+                                  <option value="year">Current year</option>
+                                </select>
+                              </div>
+                            )}
+                            {prev && (
+                              <div className="text-[11px] rounded-lg bg-purple-50 border border-purple-100 px-2.5 py-1.5 text-purple-900">
+                                <span className="font-semibold">Preview:</span> {prev.text}
+                                {prev.unknown.length > 0 && <div className="text-red-600 mt-0.5">No field named {prev.unknown.map(u => `"${u}"`).join(', ')} on this object — check the spelling or pick it from the list.</div>}
+                              </div>
+                            )}
+                            {!noTpl && (
+                              <p className="text-[11px] text-gray-400">
+                                Wrap any field of this object in <code>{'{{ }}'}</code> — by label or API name — and the value fills in live on the Create page as those fields change, until the user types over it.
+                                Filters: <code>{'{{Month|upper}}'}</code> <code>{'{{Start|date:MMMM YYYY}}'}</code> <code>{'{{Amount|number:0}}'}</code> <code>{'{{Notes|default:N/A}}'}</code>.
+                                {isNum && ' Number fields also accept formulas starting with = (+ − × ÷ and brackets).'}
+                              </p>
+                            )}
+                          </div>
+                        );
+                      })()
                     )}
                   </div>
                 );

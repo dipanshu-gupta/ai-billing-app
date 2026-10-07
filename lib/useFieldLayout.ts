@@ -10,6 +10,7 @@
  * these are a separate concept (overriding EXISTING fields) from custom
  * fields (defining brand-new ones), so they get their own hook and cache.
  */
+import { isTemplateDefault } from '@/lib/defaultTemplates';
 import { useState, useEffect, useCallback } from 'react';
 import { createClient } from '@supabase/supabase-js';
 import { inMemoryLock } from './tenant';
@@ -196,6 +197,26 @@ export function resolveLayoutDefault(fieldType: string, rawValue: any, sourceRow
   if (rawValue === undefined || rawValue === null || rawValue === '') return undefined;
   const raw = String(rawValue);
   const t = String(fieldType || 'text');
+  // {{token}} templates / = formulas are rendered live by useTemplateDefaults, never copied literally.
+  if (isTemplateDefault(raw, t)) return undefined;
+  if (t === 'datetime') {
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const fmt = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    const low = raw.toLowerCase();
+    if (low === 'now') return fmt(new Date());
+    if (low === 'today') { const d = new Date(); d.setHours(0, 0, 0, 0); return fmt(d); }
+    const m = raw.match(REL_DEFAULT_RE);
+    if (m) {
+      const refVal = sourceRow?.[m[1]];
+      if (!refVal) return undefined;
+      const d = new Date(String(refVal).length <= 10 ? refVal + 'T00:00' : refVal);
+      if (isNaN(d.getTime())) return undefined;
+      if (m[2]) d.setDate(d.getDate() + parseInt(m[2], 10));
+      return fmt(d);
+    }
+    const d = new Date(raw);
+    return isNaN(d.getTime()) ? raw : (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(raw) ? raw : fmt(d));
+  }
   if (t === 'date') {
     if (raw.toLowerCase() === 'today') return new Date().toLocaleDateString('en-CA');
     const m = raw.match(REL_DEFAULT_RE);

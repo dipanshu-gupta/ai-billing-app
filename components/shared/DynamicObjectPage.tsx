@@ -23,8 +23,11 @@ import LoadingSpinner from '@/components/shared/LoadingSpinner';
 import KanbanBoard from '@/components/shared/KanbanBoard';
 import CustomObjectDetailPanel from '@/components/shared/CustomObjectDetailPanel';
 import CustomObjectCreateModal from '@/components/shared/CustomObjectCreateModal';
-import { SavedSearchPanel, OPERATORS, TIME_PERIODS } from '@/components/crm/CRMListPage';
-import { timePeriodToRange } from '@/lib/serverList';
+import { OPERATORS, TIME_PERIODS } from '@/components/crm/CRMListPage';
+import RedwoodSavedSearchBar from '@/components/shared/RedwoodSavedSearchBar';
+import { timePeriodToRange, splitAdvFilters } from '@/lib/serverList';
+import { distinctValues } from '@/lib/searchCatalog';
+import { useCustomLookups } from '@/components/shared/CustomObjectForm';
 import { useFieldLayout } from '@/lib/useFieldLayout';
 import { formatDate, formatDateTime, formatCurrency, getStatusColor } from '@/lib/utils';
 import { t } from '@/lib/i18n';
@@ -180,16 +183,18 @@ export default function DynamicObjectPage({ customObject }) {
     if (f.advFilters !== undefined) setAdvFilters(f.advFilters || []);
     if (f.owner !== undefined) setOwnerFilter(f.owner || '');
     if (f.sortField !== undefined) { setSortField(f.sortField || ''); setSortDir(f.sortDir || 'asc'); }
+    if (f.columns?.length) persistColumns(f.columns, f.sortField ?? sortField, f.sortDir || sortDir);
   };
-  const currentFilters = { search, status: statusFilter, timePeriod, advFilters, owner: ownerFilter, sortField, sortDir };
+  const currentFilters = { search, status: statusFilter, timePeriod, advFilters, owner: ownerFilter, sortField, sortDir, columns: visibleColumns };
 
   // Server query shared by the table page and the board.
   const buildQuery = (overrides = {}) => {
     const { from: dateFrom, to: dateTo } = timePeriodToRange(timePeriod);
     const textCols = headerFields.filter(f => ['text', 'email', 'url'].includes(f.field_type) && /^text_\d+$/.test(f.storage_column)).map(f => f.storage_column);
     const mapped = [];
+    const lineSplit = splitAdvFilters(advFilters.filter(c => c.scope === 'line'), (f) => f);
     advFilters
-      .filter(c => c.field && (['is_empty', 'is_not_empty', 'is_true', 'is_false'].includes(c.op) || (c.value !== undefined && c.value !== '')))
+      .filter(c => c.scope !== 'line' && c.field && (['is_empty', 'is_not_empty', 'is_true', 'is_false'].includes(c.op) || (c.value !== undefined && c.value !== '')))
       .forEach(c => {
         const m = metaOf(c.field);
         if (!m?.col) return;
@@ -209,7 +214,7 @@ export default function DynamicObjectPage({ customObject }) {
       statusColumn: 'status', statusFilter,
       ownerColumn: 'owner', ownerIdColumn: 'owner_id', ownerFilter,
       dateColumn: 'created_at', dateFrom, dateTo,
-      advFilters: mapped,
+      advFilters: mapped, lineFilters: lineSplit.lineFilters,
       sortColumn: sortMeta?.col || 'display_number',
       sortAscending: sortMeta?.col ? sortDir === 'asc' : false,
       page: currentPage, pageSize,
@@ -275,6 +280,23 @@ export default function DynamicObjectPage({ customObject }) {
   const activeCount = (search ? 1 : 0) + (statusFilter !== 'All' ? 1 : 0) + (timePeriod ? 1 : 0) + advFilters.filter(c => c.field).length + (ownerFilter ? 1 : 0);
   const clearFilters = () => { setSearch(''); setStatusFilter('All'); setTimePeriod(''); setAdvFilters([]); setOwnerFilter(''); };
   const filterableMeta = fieldMeta.filter(m => m.col && !NON_FILTERABLE.has(m.key) && m.key !== 'display_number');
+  const lookupOpts = useCustomLookups(headerFields);
+  const [lineDefs, setLineDefs] = useState([]);
+  useEffect(() => {
+    if (!customObject.supports_line_items) { setLineDefs([]); return; }
+    fetchCustomObjectFields(customObject.id, 'line_item').then(setLineDefs);
+  }, [customObject.id, customObject.supports_line_items]);
+  const searchOwners = useMemo(() => (enterpriseUsers || []).map(u => ({ value: u.email, label: `${u.first_name || ''} ${u.last_name || ''}`.trim() || u.email })), [enterpriseUsers]);
+  const searchCatalog = useMemo(() => {
+    const head = filterableMeta.map(m => ({ key: m.key, label: m.label, type: m.type, opts: m.options || [], lookup: m.field?.field_type === 'lookup', group: m.system ? 'Fields' : 'Custom fields' }));
+    const lineRef = { table: 'custom_object_line_items', fk: 'parent_record_id', parentColumn: 'id', extraEq: { custom_object_id: customObject.id } };
+    const lines = (lineDefs || []).filter(f => f.is_active !== false).map(f => ({
+      key: `line.${f.api_name}`, label: f.label, group: 'Line items', scope: 'line', line: lineRef,
+      type: ({ number: 'number', currency: 'number', date: 'date', datetime: 'date', checkbox: 'boolean' })[f.field_type] || 'text',
+      column: f.storage_column === 'custom_data' ? `custom_data->>${f.api_name}` : f.storage_column,
+    }));
+    return [...head, ...lines];
+  }, [filterableMeta, lineDefs, customObject.id]);
   const addFilterRow = () => { const f = filterableMeta.find(x => x.key !== 'name') || filterableMeta[0]; if (!f) return; setAdvFilters(p => [...p, { field: f.key, type: f.type, op: OPERATORS[f.type][0].v, value: '' }]); };
   const updateFilterRow = (idx, p) => setAdvFilters(a => a.map((c, i) => i === idx ? { ...c, ...p } : c));
   const removeFilterRow = (idx) => setAdvFilters(a => a.filter((_, i) => i !== idx));
@@ -356,59 +378,17 @@ export default function DynamicObjectPage({ customObject }) {
         </div>
       </div>
 
+      <RedwoodSavedSearchBar page={page} filters={currentFilters} onApply={applyFilters} onClear={clearFilters} labelOf={labelOf}
+        fields={searchCatalog} statusOptions={statusOptions} owners={searchOwners}
+        valuesOf={(f,q)=>{
+          if (f.lookup) { const ql=String(q||'').toLowerCase(); return Promise.resolve(((lookupOpts[f.key]||[]).filter(o=>!ql||String(o.label).toLowerCase().includes(ql))).slice(0,50).map(o=>({value:o.id,label:o.label}))); }
+          if (f.scope==='line') return distinctValues(supabase,{ table:'custom_object_line_items', column:f.column, q, extraEq:{ custom_object_id: customObject.id } });
+          const m = metaOf(f.key); const col = m?.col; if (!col) return Promise.resolve([]);
+          return distinctValues(supabase,{ table:'custom_object_records', column: col==='custom_data' ? `custom_data->>${m.apiName||f.key}` : col, q, extraEq:{ custom_object_id: customObject.id } });
+        }} />
+
       {/* Filters */}
       <div className="bg-white rounded-2xl border border-blue-100 p-4 shadow-sm">
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-          <input value={search} onChange={e => setSearch(e.target.value)} placeholder={`${t(lang, 'search')} ${pageLabel.toLowerCase()}…`}
-            className="border border-blue-200 rounded-xl px-4 py-2.5 text-sm text-[#0F172A] focus:outline-none focus:ring-2 focus:ring-blue-300 placeholder:text-gray-400" />
-          <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)} className="border border-blue-200 rounded-xl px-4 py-2.5 text-sm text-[#0F172A] bg-white focus:outline-none focus:ring-2 focus:ring-blue-300">
-            <option value="All">{t(lang, 'allStatuses')}</option>
-            {statusOptions.map(s => <option key={s}>{s}</option>)}
-          </select>
-          <select value={timePeriod} onChange={e => setTimePeriod(e.target.value)} className="border border-blue-200 rounded-xl px-4 py-2.5 text-sm text-[#0F172A] bg-white focus:outline-none focus:ring-2 focus:ring-blue-300">
-            {TIME_PERIODS.map(tp => <option key={tp.v} value={tp.v}>{tp.l}</option>)}
-          </select>
-          <select value={ownerFilter} onChange={e => setOwnerFilter(e.target.value)} className="border border-blue-200 rounded-xl px-4 py-2.5 text-sm text-[#0F172A] bg-white focus:outline-none focus:ring-2 focus:ring-blue-300">
-            <option value="">{t(lang, 'allOwners')}</option>
-            {(enterpriseUsers || []).map(u => <option key={u.id} value={u.email}>{u.first_name} {u.last_name}</option>)}
-          </select>
-        </div>
-
-        {advFilters.length > 0 && (
-          <div className="mt-3 pt-3 border-t border-blue-50 space-y-2">
-            {advFilters.map((cond, idx) => {
-              const meta = metaOf(cond.field) || filterableMeta[0];
-              if (!meta) return null;
-              const needsValue = !['is_empty', 'is_not_empty', 'is_true', 'is_false'].includes(cond.op);
-              const selectOpts = meta.key === 'status' ? statusOptions : (meta.options || []);
-              return (
-                <div key={idx} className="flex flex-wrap gap-2 items-center bg-blue-50/50 rounded-xl p-2">
-                  <select value={cond.field} onChange={e => { const m = metaOf(e.target.value); updateFilterRow(idx, { field: e.target.value, type: m.type, op: OPERATORS[m.type][0].v, value: '' }); }}
-                    className="border border-blue-200 rounded-lg px-2 py-1.5 text-xs text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-blue-400">
-                    {filterableMeta.map(f => <option key={f.key} value={f.key}>{f.label}</option>)}
-                  </select>
-                  <select value={cond.op} onChange={e => updateFilterRow(idx, { op: e.target.value })}
-                    className="border border-blue-200 rounded-lg px-2 py-1.5 text-xs text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-blue-400">
-                    {OPERATORS[meta.type].map(o => <option key={o.v} value={o.v}>{o.l}</option>)}
-                  </select>
-                  {needsValue && (
-                    meta.type === 'select' && selectOpts.length
-                      ? <select value={cond.value} onChange={e => updateFilterRow(idx, { value: e.target.value })} className="flex-1 min-w-[100px] border border-blue-200 rounded-lg px-2 py-1.5 text-xs text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-blue-400">
-                          <option value="">Select…</option>
-                          {selectOpts.map(s => <option key={s} value={s}>{s}</option>)}
-                        </select>
-                      : <input type={meta.type === 'date' ? 'date' : meta.type === 'number' ? 'number' : 'text'} value={cond.value} onChange={e => updateFilterRow(idx, { value: e.target.value })} placeholder={t(lang, 'selectValue')}
-                          className="flex-1 min-w-[100px] border border-blue-200 rounded-lg px-2 py-1.5 text-xs text-[#0F172A] focus:outline-none focus:ring-1 focus:ring-blue-400 placeholder:text-gray-400" />
-                  )}
-                  <button onClick={() => removeFilterRow(idx)} className="w-6 h-6 rounded-full bg-red-100 hover:bg-red-200 text-red-500 text-xs font-bold flex items-center justify-center flex-shrink-0">✕</button>
-                </div>
-              );
-            })}
-          </div>
-        )}
-        <div className="flex items-center justify-between mt-3 pt-3 border-t border-blue-50">
-          <button onClick={addFilterRow} className="text-xs font-semibold text-blue-600 hover:underline flex items-center gap-1">{t(lang, 'addFilter')}</button>
-        </div>
         <div className="flex items-center justify-between mt-3 pt-3 border-t border-blue-50">
           <div className="text-xs text-blue-600 font-medium">{activeCount > 0 ? `${activeCount} filter${activeCount > 1 ? 's' : ''} active` : ''}</div>
           <div className="flex items-center gap-2">
@@ -448,15 +428,6 @@ export default function DynamicObjectPage({ customObject }) {
                   </div>
                 </div>
               )}
-            </div>
-            <div className="relative">
-              <button onClick={() => setSearchPanelOpen(!searchPanelOpen)} className={`flex items-center gap-2 text-sm font-semibold px-4 py-2 rounded-xl transition-all ${searchPanelOpen ? 'bg-[#0F172A] text-white' : 'bg-blue-100 text-blue-700 hover:bg-blue-200'}`}>
-                🔖 {t(lang, 'savedSearches')}
-                {(savedSearches || []).filter(s => s.object_type === page).length > 0 && (
-                  <span className={`text-xs font-bold px-1.5 py-0.5 rounded-full ${searchPanelOpen ? 'bg-white/20 text-white' : 'bg-blue-200 text-blue-700'}`}>{savedSearches.filter(s => s.object_type === page).length}</span>
-                )}
-              </button>
-              {searchPanelOpen && <SavedSearchPanel page={page} currentFilters={currentFilters} onApply={applyFilters} onClose={() => setSearchPanelOpen(false)} labelOf={labelOf} />}
             </div>
             <div className="flex items-center bg-gray-100 rounded-xl p-1">
               <button onClick={() => setViewMode('table')} title="Table view" className={`px-3 py-1.5 rounded-lg text-sm font-semibold transition-all ${viewMode === 'table' ? 'bg-white shadow-sm text-[#0F172A]' : 'text-gray-500 hover:text-gray-700'}`}>☰ Table</button>

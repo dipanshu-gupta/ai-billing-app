@@ -6,6 +6,7 @@ import { THEMES } from '@/lib/i18n';
 import RentalBookingCalendar from '@/components/retail/RentalBookingCalendar';
 import BookingsDashboard from '@/components/retail/BookingsDashboard';
 import SearchableSelect from '@/components/shared/SearchableSelect';
+import RedwoodSkin from '@/components/shared/RedwoodSkin';
 
 export default function ManageBookingsPage() {
   const { retailProducts, appearance, setPendingRecord } = useApp();
@@ -27,10 +28,11 @@ export default function ManageBookingsPage() {
   };
 
   return (
-    <div className="space-y-5">
-      <div className="rounded-[24px] p-6 text-white" style={{background:`linear-gradient(to right,${themeObj.colors[0]},${themeObj.colors[1]})`}}>
+    <div className="rw-list space-y-5">
+      <RedwoodSkin />
+      <div className="rw-banner rounded-[24px] p-6 text-white" style={{background:`linear-gradient(to right,${themeObj.colors[0]},${themeObj.colors[1]})`}}>
         <h2 className="text-2xl font-bold flex items-center gap-2">📆 Manage Bookings</h2>
-        <p className="text-purple-200 text-sm mt-1">View and create rental bookings for any rentable product, without opening its record first.</p>
+        <p className="text-gray-500 text-sm mt-1">View and create rental bookings for any rentable product, without opening its record first.</p>
       </div>
 
       <div className="bg-white rounded-[20px] border border-gray-200 shadow-sm p-5">

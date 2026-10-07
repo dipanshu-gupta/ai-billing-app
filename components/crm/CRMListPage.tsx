@@ -6,7 +6,8 @@ import { useState, useMemo, useEffect, useRef } from 'react';
 import { useApp } from '@/context/AppContext';
 import { useRelabel } from '@/lib/useRelabel';
 import { useTenant } from '@/context/TenantContext';
-import { fetchServerPage, timePeriodToRange } from '@/lib/serverList';
+import { fetchServerPage, timePeriodToRange, splitAdvFilters } from '@/lib/serverList';
+import { useSearchCatalog, distinctValues } from '@/lib/searchCatalog';
 import { getPageLabel, getStatusOptions, getStatusColor, formatCurrency, formatDate, formatDisplayNumber, PAGE_DISPLAY_PREFIX, getObjectFields } from '@/lib/utils';
 import RecordDetailPanel from '@/components/crm/RecordDetailPanel';
 import CreateRecordModal from '@/components/crm/CreateRecordModal';
@@ -17,6 +18,7 @@ import LoadingSpinner from '@/components/shared/LoadingSpinner';
 import { useObjectLabels } from '@/lib/useObjectLabels';
 import { useFieldLayout } from '@/lib/useFieldLayout';
 import { t } from '@/lib/i18n';
+import RedwoodSavedSearchBar from '@/components/shared/RedwoodSavedSearchBar';
 
 export const FIELD_LABELS = {
   name:'Name', customer:'Customer', contact:'Contact', owner:'Owner', status:'Status',
@@ -533,9 +535,7 @@ export default function CRMListPage({ page }) {
     const { from: dateFrom, to: dateTo } = timePeriodToRange(timePeriod);
     const objectFields = getObjectFields(page);
     const searchColumns = CRM_SEARCH_CANDIDATES.filter(f => objectFields.includes(f) || f === 'name');
-    const mappedAdvFilters = advFilters
-      .filter(c => c.field && (['is_empty','is_not_empty','is_true','is_false'].includes(c.op) || (c.value !== undefined && c.value !== '')))
-      .map(c => ({ column: camelToSnakeCol(c.field), op: c.op, value: c.value }));
+    const { adv: mappedAdvFilters, lineFilters } = splitAdvFilters(advFilters, camelToSnakeCol);
     fetchServerPage(supabase, {
       table: page, // CRM table names match their page keys exactly (confirmed against LIST_PAGE_TABLE)
       searchTerm: debouncedSearch,
@@ -547,7 +547,7 @@ export default function CRMListPage({ page }) {
       ownerFilter,
       dateColumn: 'created_at', // CRM's own time-period filter always used created_at, no per-object variation
       dateFrom, dateTo,
-      advFilters: mappedAdvFilters,
+      advFilters: mappedAdvFilters, lineFilters,
       sortColumn: sortField ? camelToSnakeCol(sortField) : 'created_at',
       sortAscending: sortDir === 'asc',
       page: currentPage,
@@ -593,9 +593,10 @@ export default function CRMListPage({ page }) {
     if (f.advFilters  !== undefined) setAdvFilters(f.advFilters || []);
     if (f.owner       !== undefined) setOwnerFilter(f.owner || '');
     if (f.sortField   !== undefined) { setSortField(f.sortField||''); setSortDir(f.sortDir||'asc'); }
+    if (f.columns?.length) persistColumns(f.columns, f.sortField ?? sortField, f.sortDir || sortDir);
   };
 
-  const currentFilters = { search, status: statusFilter, timePeriod, advFilters, owner: ownerFilter, sortField, sortDir };
+  const currentFilters = { search, status: statusFilter, timePeriod, advFilters, owner: ownerFilter, sortField, sortDir, columns: visibleColumns };
 
   const getData = () => {
     switch (page) {
@@ -635,9 +636,7 @@ export default function CRMListPage({ page }) {
     const { from: dateFrom, to: dateTo } = timePeriodToRange(timePeriod);
     const objectFields = getObjectFields(page);
     const searchColumns = CRM_SEARCH_CANDIDATES.filter(f => objectFields.includes(f) || f === 'name');
-    const mappedAdvFilters = advFilters
-      .filter(c => c.field && (['is_empty','is_not_empty','is_true','is_false'].includes(c.op) || (c.value !== undefined && c.value !== '')))
-      .map(c => ({ column: camelToSnakeCol(c.field), op: c.op, value: c.value }));
+    const { adv: mappedAdvFilters, lineFilters } = splitAdvFilters(advFilters, camelToSnakeCol);
     fetchServerPage(supabase, {
       table: page,
       searchTerm: debouncedSearch,
@@ -646,7 +645,7 @@ export default function CRMListPage({ page }) {
       ownerFilter,
       dateColumn: 'created_at',
       dateFrom, dateTo,
-      advFilters: mappedAdvFilters,
+      advFilters: mappedAdvFilters, lineFilters,
       sortColumn: 'created_at',
       sortAscending: false,
       page: 1,
@@ -672,6 +671,8 @@ export default function CRMListPage({ page }) {
     return () => { cancelled = true; };
   }, [viewMode, supabase, page, debouncedSearch, timePeriod, advFilters, ownerFilter, tenant?.id, currentUser, permissionsLoaded, dataSecurityScope]);
 
+  const searchCatalog = useSearchCatalog({ baseMeta: fieldMeta, headerObjType: page, page });
+  const searchOwners  = useMemo(() => (enterpriseUsers||[]).map(u => ({ value: u.email, label: `${u.first_name||''} ${u.last_name||''}`.trim() || u.email })), [enterpriseUsers]);
   const pageLabel    = getPageLabel(page);
   const activeCount  = (search?1:0) + (statusFilter!=='All'?1:0) + (timePeriod?1:0) + advFilters.filter(c=>c.field).length + (ownerFilter?1:0);
   const clearFilters = () => { setSearch(''); setStatusFilter('All'); setTimePeriod(''); setAdvFilters([]); setOwnerFilter(''); };
@@ -715,58 +716,12 @@ export default function CRMListPage({ page }) {
         </div>
       </div>
 
+      <RedwoodSavedSearchBar page={page} filters={currentFilters} onApply={applyFilters} onClear={clearFilters}
+        fields={searchCatalog} statusOptions={getStatusOptions(page)} owners={searchOwners}
+        valuesOf={(f,q)=>distinctValues(supabase,{ table: f.scope==='line' ? f.line.table : page, column: f.column || camelToSnakeCol(f.key), q })} />
+
       {/* Filters */}
       <div className="bg-white rounded-2xl border border-blue-100 p-4 shadow-sm">
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-          <input value={search} onChange={e=>setSearch(e.target.value)} placeholder={`${t(lang,'search')} ${page}…`}
-            className="border border-blue-200 rounded-xl px-4 py-2.5 text-sm text-[#0F172A] focus:outline-none focus:ring-2 focus:ring-blue-300 placeholder:text-gray-400"/>
-          <select value={statusFilter} onChange={e=>{setStatusFilter(e.target.value);setCurrentPage(1);}} className="border border-blue-200 rounded-xl px-4 py-2.5 text-sm text-[#0F172A] bg-white focus:outline-none focus:ring-2 focus:ring-blue-300">
-            <option value="All">{t(lang,'allStatuses')}</option>
-            {getStatusOptions(page).map(s=><option key={s}>{s}</option>)}
-          </select>
-          <select value={timePeriod} onChange={e=>setTimePeriod(e.target.value)} className="border border-blue-200 rounded-xl px-4 py-2.5 text-sm text-[#0F172A] bg-white focus:outline-none focus:ring-2 focus:ring-blue-300">
-            {TIME_PERIODS.map(tp=><option key={tp.v} value={tp.v}>{tp.l}</option>)}
-          </select>
-          <select value={ownerFilter} onChange={e=>setOwnerFilter(e.target.value)} className="border border-blue-200 rounded-xl px-4 py-2.5 text-sm text-[#0F172A] bg-white focus:outline-none focus:ring-2 focus:ring-blue-300">
-            <option value="">{t(lang,'allOwners')}</option>
-            {enterpriseUsers.map(u=><option key={u.id} value={u.email}>{u.first_name} {u.last_name}</option>)}
-          </select>
-        </div>
-
-        {/* Advanced filters — any field on the object, AND-combined */}
-        {advFilters.length > 0 && (
-          <div className="mt-3 pt-3 border-t border-blue-50 space-y-2">
-            {advFilters.map((cond, idx) => {
-              const meta = fieldMeta.find(f=>f.key===cond.field) || fieldMeta[0];
-              const needsValue = !['is_empty','is_not_empty','is_true','is_false'].includes(cond.op);
-              return (
-                <div key={idx} className="flex flex-wrap gap-2 items-center bg-blue-50/50 rounded-xl p-2">
-                  <select value={cond.field} onChange={e=>{const m=fieldMeta.find(f=>f.key===e.target.value);updateFilterRow(idx,{field:e.target.value,type:m.type,op:OPERATORS[m.type][0].v,value:''});}}
-                    className="border border-blue-200 rounded-lg px-2 py-1.5 text-xs text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-blue-400">
-                    {fieldMeta.filter(f=>f.key!=='id').map(f=><option key={f.key} value={f.key}>{f.label}</option>)}
-                  </select>
-                  <select value={cond.op} onChange={e=>updateFilterRow(idx,{op:e.target.value})}
-                    className="border border-blue-200 rounded-lg px-2 py-1.5 text-xs text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-blue-400">
-                    {OPERATORS[meta.type].map(o=><option key={o.v} value={o.v}>{o.l}</option>)}
-                  </select>
-                  {needsValue && (
-                    meta.type==='select'
-                      ? <select value={cond.value} onChange={e=>updateFilterRow(idx,{value:e.target.value})} className="flex-1 min-w-[100px] border border-blue-200 rounded-lg px-2 py-1.5 text-xs text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-blue-400">
-                          <option value="">Select…</option>
-                          {getStatusOptions(page).map(s=><option key={s} value={s}>{s}</option>)}
-                        </select>
-                      : <input type={meta.type==='date'?'date':meta.type==='number'?'number':'text'} value={cond.value} onChange={e=>updateFilterRow(idx,{value:e.target.value})} placeholder={t(lang,'selectValue')}
-                          className="flex-1 min-w-[100px] border border-blue-200 rounded-lg px-2 py-1.5 text-xs text-[#0F172A] focus:outline-none focus:ring-1 focus:ring-blue-400 placeholder:text-gray-400"/>
-                  )}
-                  <button onClick={()=>removeFilterRow(idx)} className="w-6 h-6 rounded-full bg-red-100 hover:bg-red-200 text-red-500 text-xs font-bold flex items-center justify-center flex-shrink-0">✕</button>
-                </div>
-              );
-            })}
-          </div>
-        )}
-        <div className="flex items-center justify-between mt-3 pt-3 border-t border-blue-50">
-          <button onClick={addFilterRow} className="text-xs font-semibold text-blue-600 hover:underline flex items-center gap-1">{t(lang,'addFilter')}</button>
-        </div>
         <div className="flex items-center justify-between mt-3 pt-3 border-t border-blue-50">
           <div className="text-xs text-blue-600 font-medium">{activeCount > 0 ? `${activeCount} filter${activeCount>1?'s':''} active` : ''}</div>
           <div className="flex items-center gap-2">
@@ -806,15 +761,6 @@ export default function CRMListPage({ page }) {
                   </div>
                 </div>
               )}
-            </div>
-            <div className="relative">
-              <button onClick={()=>setSearchPanelOpen(!searchPanelOpen)} className={`flex items-center gap-2 text-sm font-semibold px-4 py-2 rounded-xl transition-all ${searchPanelOpen?'bg-[#0F172A] text-white':'bg-blue-100 text-blue-700 hover:bg-blue-200'}`}>
-                🔖 {t(lang,'savedSearches')}
-                {savedSearches.filter(s=>s.object_type===page).length > 0 && (
-                  <span className={`text-xs font-bold px-1.5 py-0.5 rounded-full ${searchPanelOpen?'bg-white/20 text-white':'bg-blue-200 text-blue-700'}`}>{savedSearches.filter(s=>s.object_type===page).length}</span>
-                )}
-              </button>
-              {searchPanelOpen && <SavedSearchPanel page={page} currentFilters={currentFilters} onApply={applyFilters} onClose={()=>setSearchPanelOpen(false)}/>}
             </div>
             <div className="flex items-center bg-gray-100 rounded-xl p-1">
               <button onClick={()=>setViewMode('table')} title="Table view"

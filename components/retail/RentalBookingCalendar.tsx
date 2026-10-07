@@ -345,7 +345,7 @@ export default function RentalBookingCalendar({ productId, productName, productP
   return (
     <>
     <Wrapper>
-        <div className="px-6 py-4 flex items-center justify-between flex-shrink-0" style={{background:`linear-gradient(to right,${themeObj.colors[0]},${themeObj.colors[1]})`}}>
+        <div className="rw-banner px-6 py-4 flex items-center justify-between flex-shrink-0" style={{background:`linear-gradient(to right,${themeObj.colors[0]},${themeObj.colors[1]})`}}>
           <div>
             <h3 className="text-white font-bold text-lg">📅 Booking Calendar</h3>
             <p className="text-white/70 text-sm">{productName}</p>

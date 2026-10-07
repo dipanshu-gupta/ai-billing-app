@@ -40,6 +40,7 @@ export const BOTTOM_ITEMS = [
 // since its meaning changes slightly here (a springboard tile, not the
 // sidebar's own Home button) — same key either way, so it routes correctly.
 export const DASHBOARD_ITEM = { key:'dashboard', label:'salesDashboard', icon:'📊', permission:null };
+export const EXPRESS_DASHBOARD_ITEM = { key:'expressDashboard', label:'Express Dashboard', icon:'⚡', permission:null };
 
 // Builds nav items for published Custom Objects, gated by the SAME
 // canSee()/permission mechanism every standard object already uses —

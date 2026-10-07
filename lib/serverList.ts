@@ -71,6 +71,48 @@ function applySecurityScope(q, security) {
   return q.or(ors);
 }
 
+// One advanced-filter condition -> PostgREST filter. `column` may be a jsonb path such as
+// "custom_data->>api_name" (custom fields live in custom_data on every object).
+function applyCond(q, f) {
+  if (!f || !f.column) return q;
+  switch (f.op) {
+    case 'contains':       return q.ilike(f.column, `%${String(f.value ?? '').replace(/[%,]/g,'')}%`);
+    case 'equals':         return q.eq(f.column, f.value);
+    case 'not_equals':     return q.neq(f.column, f.value);
+    case 'gt': case 'after':   return q.gt(f.column, f.value);
+    case 'gte':            return q.gte(f.column, f.value);
+    case 'lt': case 'before':  return q.lt(f.column, f.value);
+    case 'lte':            return q.lte(f.column, f.value);
+    case 'eq': case 'on':  return q.eq(f.column, f.value);
+    case 'neq':            return q.neq(f.column, f.value);
+    case 'in':             return q.in(f.column, Array.isArray(f.value) ? f.value : [f.value]);
+    case 'not_in': {       const vs = (Array.isArray(f.value) ? f.value : [f.value]).map(v => '"' + String(v).replace(/"/g, '') + '"'); return vs.length ? q.not(f.column, 'in', `(${vs.join(',')})`) : q; }
+    case 'is_empty':       return q.or(`${f.column}.is.null,${f.column}.eq.`);
+    case 'is_not_empty':   return q.not(f.column, 'is', null);
+    case 'is_true':        return q.eq(f.column, true);
+    case 'is_false':       return q.eq(f.column, false);
+    default:               return q;
+  }
+}
+
+/**
+ * Splits the UI's advFilters into header conditions and line-item filter groups.
+ * cond = { field, op, value, column?, scope?: 'line', line?: { table, fk, parentColumn, extraEq? } }
+ */
+export function splitAdvFilters(advFilters, mapColumn) {
+  const ok = (c) => c && c.field && (['is_empty','is_not_empty','is_true','is_false'].includes(c.op) || (c.value !== undefined && c.value !== ''));
+  const adv = []; const groups = {};
+  (advFilters || []).filter(ok).forEach(c => {
+    const column = c.column || mapColumn(c.field);
+    if (c.scope === 'line' && c.line?.table) {
+      const k = c.line.table + '|' + c.line.fk;
+      (groups[k] = groups[k] || { ...c.line, conds: [] }).conds.push({ column, op: c.op, value: c.value });
+    } else adv.push({ column, op: c.op, value: c.value });
+  });
+  return { adv, lineFilters: Object.values(groups) };
+}
+
+
 // ─── Server-side list query ─────────────────────────────────────────────────
 // Replaces the old pattern of loading up to LIST_FETCH_LIMIT rows into
 // browser memory once, then filtering/sorting/paginating that fixed
@@ -96,10 +138,12 @@ export async function fetchServerPage(supabase, opts) {
     ownerColumn = 'owner',
     ownerIdColumn = 'owner_id',
     ownerFilter = '',
+    ownerAny = null,       // [id, email, …] — match owner OR owner_id against any of these (used by dashboards' "My …")
     dateColumn = 'created_at',
     dateFrom = null,
     dateTo = null,
     advFilters = [],       // [{ column, op, value }] — column already mapped to the real DB column
+    lineFilters = [],      // [{ table, fk, parentColumn, extraEq?, conds:[{column,op,value}] }]
     sortColumn = 'created_at',
     sortAscending = false,
     page = 1,
@@ -129,28 +173,26 @@ export async function fetchServerPage(supabase, opts) {
     q = q.or(`${ownerColumn}.eq.${ownerFilter},${ownerIdColumn}.eq.${ownerFilter}`);
   }
 
+  if (ownerAny && ownerAny.length) {
+    q = q.or(ownerAny.filter(Boolean).map(v => (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(v)) ? `${ownerIdColumn}.eq.${v}` : `${ownerColumn}.eq.${v}`)).join(','));
+  }
+
   if (dateFrom) q = q.gte(dateColumn, dateFrom);
   if (dateTo) q = q.lte(dateColumn, dateTo);
 
-  for (const f of advFilters) {
-    if (!f.column) continue;
-    switch (f.op) {
-      case 'contains':       q = q.ilike(f.column, `%${String(f.value ?? '').replace(/[%,]/g,'')}%`); break;
-      case 'equals':         q = q.eq(f.column, f.value); break;
-      case 'not_equals':     q = q.neq(f.column, f.value); break;
-      case 'gt':              q = q.gt(f.column, f.value); break;
-      case 'gte':             q = q.gte(f.column, f.value); break;
-      case 'lt':              q = q.lt(f.column, f.value); break;
-      case 'lte':             q = q.lte(f.column, f.value); break;
-      case 'on':              q = q.eq(f.column, f.value); break;
-      case 'before':          q = q.lt(f.column, f.value); break;
-      case 'after':           q = q.gt(f.column, f.value); break;
-      case 'is_empty':       q = q.or(`${f.column}.is.null,${f.column}.eq.`); break;
-      case 'is_not_empty':   q = q.not(f.column, 'is', null); break;
-      case 'is_true':        q = q.eq(f.column, true); break;
-      case 'is_false':       q = q.eq(f.column, false); break;
-      default: break;
-    }
+  for (const f of advFilters) q = applyCond(q, f);
+
+  // Line-item conditions: "has at least one line where …". Resolved to the parent keys first,
+  // then applied as an IN filter on the header table (tenant-scoped like everything else).
+  for (const lf of lineFilters) {
+    if (!lf?.table || !lf.fk || !lf.conds?.length) continue;
+    let lq = tenantScope(supabase.from(lf.table).select(lf.fk));
+    if (lf.extraEq) for (const [k, v] of Object.entries(lf.extraEq)) lq = lq.eq(k, v);
+    for (const c of lf.conds) lq = applyCond(lq, c);
+    const { data: lrows, error: lerr } = await lq.limit(5000);
+    if (lerr) return { data: [], error: lerr, totalCount: 0 };
+    const keys = Array.from(new Set((lrows || []).map(r => r[lf.fk]).filter(v => v !== null && v !== undefined)));
+    q = q.in(lf.parentColumn || lf.fk, keys.length ? keys : ['__no_match__']);
   }
 
   q = q.order(sortColumn, { ascending: sortAscending, nullsFirst: false }).order('created_at', { ascending: false });

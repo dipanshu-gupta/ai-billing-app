@@ -1,6 +1,8 @@
 // @ts-nocheck
 'use client';
 
+import { isTemplateDefault, gatherTemplates, useTemplateDefaults } from '@/lib/defaultTemplates';
+import RedwoodSavedSearchBar from '@/components/shared/RedwoodSavedSearchBar';
 import RedwoodSkin from '@/components/shared/RedwoodSkin';
 import { useState, useMemo, useEffect, useRef, Fragment } from 'react';
 import { waFetch } from '@/lib/waFetch';
@@ -19,13 +21,15 @@ import RentalBookingCalendar from '@/components/retail/RentalBookingCalendar';
 import KanbanBoard from '@/components/shared/KanbanBoard';
 import { RetailQuickCreateCustomer } from '@/components/retail/RetailQuickCreateCustomer';
 import LoadingSpinner from '@/components/shared/LoadingSpinner';
-import { useFieldLayout, resolveFieldRow, effectiveRows, resolveFieldDisplay, cfKey } from '@/lib/useFieldLayout';
+import { useRbac } from '@/lib/useRbac';
+import { useFieldLayout, resolveFieldRow, effectiveRows, resolveFieldDisplay, cfKey, resolveLayoutDefault } from '@/lib/useFieldLayout';
 import { useObjectLabels, labelNow } from '@/lib/useObjectLabels';
 import { useRelatedCols, withKeys, viewPermFor } from '@/components/shared/Related360';
 import CustomRelatedLists from '@/components/shared/CustomRelatedLists';
 import { NavIcon } from '@/lib/icons';
 import { Search } from 'lucide-react';
-import { fetchServerPage, timePeriodToRange } from '@/lib/serverList';
+import { fetchServerPage, timePeriodToRange, splitAdvFilters } from '@/lib/serverList';
+import { useSearchCatalog, distinctValues } from '@/lib/searchCatalog';
 import { useAlert } from '@/components/shared/AlertProvider';
 import { useCustomFields } from '@/lib/useCustomFields';
 import { canInvoiceOrder } from '@/lib/invoiceFlow';
@@ -632,6 +636,8 @@ function RetailLineItems({ items, setItems, products, taxRegime, page, headerDis
   };
   const resolveLineDefault = (fieldType, rawValue, sourceRow: any = null) => {
     if (rawValue === undefined || rawValue === null || rawValue === '') return undefined;
+    if (fieldType === 'datetime') return resolveLayoutDefault('datetime', rawValue, sourceRow);
+    if (isTemplateDefault(rawValue, fieldType)) return undefined; // {{token}} templates are rendered live by useTemplateDefaults
     if (fieldType === 'date') {
       if (rawValue.toLowerCase() === 'today') return todayLocalISO();
       const dm = rawValue.match(DURATION_DEFAULT_RE);
@@ -1673,6 +1679,7 @@ function RetailCustomer360({ customer, onNavigate, onOpenCreate }) {
 // ─── Detail Panel ───────────────────────────────────────────────────────────
 const _bookingPromptShown = new Set<string>();
 function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo, onC360Navigate, onC360Create, initialTab = null }) {
+  const rbac = useRbac();
   const { updateRetailRecord, deleteRetailRecord, retailCustomers, retailProducts, retailOrders, enterpriseUsers, currentUser,
           fetchRetailLineItems, fetchRetailCustomers, createRetailRecord, appPreferences, appearance, setPendingReturnTo, createRetailInvoiceFromOrder, createBookingFromInvoice,
           checkMatchingApprovalProcess, submitForApproval, currentUserPermissions, permissionsLoaded, setPendingRecord } = useApp();
@@ -2817,12 +2824,12 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo, on
         </div>{/* end body flex-1 */}
 
         {/* Delete — always visible, outside the scrollable body */}
-        <div className="flex justify-end px-6 py-3 border-t border-gray-100 flex-shrink-0">
+        {rbac.can(page, 'delete') && <div className="flex justify-end px-6 py-3 border-t border-gray-100 flex-shrink-0">
           <button onClick={async()=>{ await deleteRetailRecord(page, edited.id); onSaved?.(); handleClose(); }}
             className="text-red-500 hover:text-red-700 text-sm font-semibold px-4 py-2 rounded-xl hover:bg-red-50">
             🗑️ Delete {cfg.singular}
           </button>
-        </div>
+        </div>}
       </div>
     </div>
 
@@ -2904,6 +2911,7 @@ export function RetailCreateModal({ page, open, onClose, onCreated, prefill = nu
   const HEADER_RELATIVE_DEFAULT_RE = /^([a-zA-Z_][a-zA-Z0-9_]*)\s*([+-]\d+)?$/;
   const resolveDefaultValue = (fieldType, rawValue, sourceRow: any = null) => {
     if (rawValue === undefined || rawValue === null || rawValue === '') return undefined;
+    if (fieldType === 'datetime') return resolveLayoutDefault('datetime', rawValue, sourceRow);
     if (fieldType === 'date') {
       if (rawValue.toLowerCase() === 'today') return todayLocalISO();
       const m = rawValue.match(HEADER_RELATIVE_DEFAULT_RE);
@@ -3004,6 +3012,24 @@ export function RetailCreateModal({ page, open, onClose, onCreated, prefill = nu
       return n;
     });
   }, [open, fieldLayout.loading, layoutDefaultsSig]);
+  // ── {{token}} templates & = formulas from the Page Layout Designer / App Composer ──
+  const _fieldTypeByKey = {};
+  (cfg.sections||[]).forEach(sec => (sec.fields||[]).forEach(f => { _fieldTypeByKey[f.key] = f.type; }));
+  const _tpl = gatherTemplates(effectiveRows(fieldLayout.fields || [], 'create'), headerCustomFields || [], k => _fieldTypeByKey[k] || 'text',
+    api => resolveFieldRow(cfKey(api), fieldLayout.fields || [], 'create'));
+  const _tplFields = [
+    ...(cfg.sections||[]).flatMap(sec => (sec.fields||[]).map(f => ({ key: f.key, label: f.label, type: f.type, alt: [fieldLayout.fields?.find(r => r.field_key === f.key)?.custom_label].filter(Boolean) }))),
+    ...(headerCustomFields || []).map(f => ({ key: f.api_name, label: f.label, type: f.field_type, alt: [fieldLayout.fields?.find(r => r.field_key === cfKey(f.api_name))?.custom_label].filter(Boolean) })),
+  ];
+  useTemplateDefaults({
+    open, templates: _tpl.templates, fields: _tplFields, user: currentUser,
+    values: { ...form, ...(form.custom_data || {}) },
+    onPatch: (patch) => setForm(f => {
+      const n = { ...f }; const cd = { ...(f.custom_data || {}) };
+      Object.keys(patch).forEach(k => { if (_tpl.customKeys.has(k)) cd[k] = patch[k]; else n[k] = patch[k]; });
+      n.custom_data = cd; return n;
+    }),
+  });
   const [saving, setSaving] = useState(false);
   const [errors, setErrors] = useState({});
   // Line items on the Create page — opt-in from the Page Layout Designer (line-item object → "Show this Line Items grid on the Create page").
@@ -3743,9 +3769,7 @@ export default function RetailListPage({ page }) {
     let cancelled = false;
     setServerLoading(true);
     const { from: dateFrom, to: dateTo } = timePeriodToRange(timePeriod);
-    const mappedAdvFilters = advFilters
-      .filter(c => c.field && (['is_empty','is_not_empty','is_true','is_false'].includes(c.op) || (c.value !== undefined && c.value !== '')))
-      .map(c => ({ column: c.field, op: c.op, value: c.value }));
+    const { adv: mappedAdvFilters, lineFilters } = splitAdvFilters(advFilters, (f) => f);
     fetchServerPage(supabase, {
       table: RETAIL_TABLE_NAME[page],
       searchTerm: debouncedSearch,
@@ -3757,7 +3781,7 @@ export default function RetailListPage({ page }) {
       ownerFilter,
       dateColumn: dateFieldForPage,
       dateFrom, dateTo,
-      advFilters: mappedAdvFilters,
+      advFilters: mappedAdvFilters, lineFilters,
       sortColumn: sortField || 'created_at',
       sortAscending: sortDir === 'asc',
       page: currentPage,
@@ -3870,9 +3894,7 @@ export default function RetailListPage({ page }) {
     let cancelled = false;
     setBoardLoading(true);
     const { from: dateFrom, to: dateTo } = timePeriodToRange(timePeriod);
-    const mappedAdvFilters = advFilters
-      .filter(c => c.field && (['is_empty','is_not_empty','is_true','is_false'].includes(c.op) || (c.value !== undefined && c.value !== '')))
-      .map(c => ({ column: c.field, op: c.op, value: c.value }));
+    const { adv: mappedAdvFilters, lineFilters } = splitAdvFilters(advFilters, (f) => f);
     fetchServerPage(supabase, {
       table: RETAIL_TABLE_NAME[page],
       searchTerm: debouncedSearch,
@@ -3881,7 +3903,7 @@ export default function RetailListPage({ page }) {
       ownerFilter,
       dateColumn: dateFieldForPage,
       dateFrom, dateTo,
-      advFilters: mappedAdvFilters,
+      advFilters: mappedAdvFilters, lineFilters,
       sortColumn: 'created_at',
       sortAscending: false,
       page: 1,
@@ -3913,6 +3935,8 @@ export default function RetailListPage({ page }) {
     return () => { cancelled = true; };
   }, [viewMode, supabase, page, cfg, debouncedSearch, timePeriod, advFilters, ownerFilter, tenant?.id, currentUser, permissionsLoaded, dataSecurityScope]);
   const clearFilters = () => { setSearch(''); setStatusFilter('All'); setTimePeriod(''); setAdvFilters([]); setOwnerFilter(''); setCurrentPage(1); };
+  const searchCatalog = useSearchCatalog({ baseMeta: fieldMeta, headerObjType: page, page });
+  const searchOwners  = useMemo(() => (enterpriseUsers||[]).map(u => ({ value: u.email, label: `${u.first_name||''} ${u.last_name||''}`.trim() || u.email })), [enterpriseUsers]);
   const addFilterRow = () => { const f = fieldMeta.find(f=>f.key!=='id')||fieldMeta[0]; setAdvFilters(p=>[...p,{field:f.key,type:f.type,op:RETAIL_OPERATORS[f.type][0].v,value:''}]); };
   const updateFilterRow = (idx, patch) => setAdvFilters(p => p.map((c,i) => i===idx ? {...c,...patch} : c));
   const removeFilterRow = (idx) => setAdvFilters(p => p.filter((_,i) => i!==idx));
@@ -3963,63 +3987,12 @@ export default function RetailListPage({ page }) {
         </div>
       </div>
 
+      <RedwoodSavedSearchBar page={page} filters={currentFilters} onApply={applyFilters} onClear={clearFilters}
+        fields={searchCatalog} statusOptions={cfg.statusOptions} owners={searchOwners}
+        valuesOf={(f,q)=>distinctValues(supabase,{ table: f.scope==='line' ? f.line.table : RETAIL_TABLE_NAME[page], column: f.column || f.key, q })} />
+
       {/* Filters */}
       <div className="bg-white rounded-2xl border border-blue-100 p-4 shadow-sm space-y-3">
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-          <input value={search} onChange={e=>{setSearch(e.target.value);setCurrentPage(1);}}
-            placeholder={t(lang,'search')+'…'}
-            className="border border-blue-200 rounded-xl px-4 py-2.5 text-sm text-[#0F172A] focus:outline-none focus:ring-2 focus:ring-blue-300 placeholder:text-gray-400"/>
-          <select value={statusFilter} onChange={e=>{setStatusFilter(e.target.value);setCurrentPage(1);}}
-            className="border border-blue-200 rounded-xl px-4 py-2.5 text-sm text-[#0F172A] bg-white focus:outline-none focus:ring-2 focus:ring-blue-300">
-            <option value="All">{t(lang,'allStatuses')}</option>
-            {cfg.statusOptions.map(s=><option key={s}>{s}</option>)}
-          </select>
-          <select value={timePeriod} onChange={e=>{setTimePeriod(e.target.value);setCurrentPage(1);}}
-            className="border border-blue-200 rounded-xl px-4 py-2.5 text-sm text-[#0F172A] bg-white focus:outline-none focus:ring-2 focus:ring-blue-300">
-            {TIME_PERIODS_R.map(tp=><option key={tp.v} value={tp.v}>{tp.l}</option>)}
-          </select>
-          <select value={ownerFilter} onChange={e=>{setOwnerFilter(e.target.value);setCurrentPage(1);}}
-            className="border border-blue-200 rounded-xl px-4 py-2 text-sm text-[#0F172A] bg-white focus:outline-none focus:ring-2 focus:ring-blue-300">
-            <option value="">{t(lang,'allOwners')}</option>
-            {enterpriseUsers.map(u=><option key={u.id} value={u.email}>{u.first_name} {u.last_name}</option>)}
-          </select>
-        </div>
-
-        {/* Advanced filters — any field on the object, AND-combined */}
-        {advFilters.length > 0 && (
-          <div className="space-y-2 pt-2 border-t border-blue-50">
-            {advFilters.map((cond, idx) => {
-              const meta = fieldMeta.find(f=>f.key===cond.field) || fieldMeta[0];
-              const needsValue = !['is_empty','is_not_empty','is_true','is_false'].includes(cond.op);
-              return (
-                <div key={idx} className="flex flex-wrap gap-2 items-center bg-blue-50/50 rounded-xl p-2">
-                  <select value={cond.field} onChange={e=>{const m=fieldMeta.find(f=>f.key===e.target.value);updateFilterRow(idx,{field:e.target.value,type:m.type,op:RETAIL_OPERATORS[m.type][0].v,value:''});}}
-                    className="border border-blue-200 rounded-lg px-2 py-1.5 text-xs text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-blue-400">
-                    {fieldMeta.filter(f=>f.key!=='id').map(f=><option key={f.key} value={f.key}>{f.label}</option>)}
-                  </select>
-                  <select value={cond.op} onChange={e=>{setCurrentPage(1);updateFilterRow(idx,{op:e.target.value});}}
-                    className="border border-blue-200 rounded-lg px-2 py-1.5 text-xs text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-blue-400">
-                    {RETAIL_OPERATORS[meta.type].map(o=><option key={o.v} value={o.v}>{o.l}</option>)}
-                  </select>
-                  {needsValue && (
-                    meta.type==='select' && meta.opts?.length
-                      ? <select value={cond.value} onChange={e=>{setCurrentPage(1);updateFilterRow(idx,{value:e.target.value});}} className="flex-1 min-w-[100px] border border-blue-200 rounded-lg px-2 py-1.5 text-xs text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-blue-400">
-                          <option value="">Select…</option>
-                          {meta.opts.map(o=><option key={o} value={o}>{o}</option>)}
-                        </select>
-                      : <input type={meta.type==='date'?'date':meta.type==='number'?'number':'text'} value={cond.value} onChange={e=>{setCurrentPage(1);updateFilterRow(idx,{value:e.target.value});}} placeholder="Value"
-                          className="flex-1 min-w-[100px] border border-blue-200 rounded-lg px-2 py-1.5 text-xs text-[#0F172A] focus:outline-none focus:ring-1 focus:ring-blue-400 placeholder:text-gray-400"/>
-                  )}
-                  <button onClick={()=>removeFilterRow(idx)} className="w-6 h-6 rounded-full bg-red-100 hover:bg-red-200 text-red-500 text-xs font-bold flex items-center justify-center flex-shrink-0">✕</button>
-                </div>
-              );
-            })}
-          </div>
-        )}
-        <div className="pt-2 border-t border-blue-50">
-          <button onClick={addFilterRow} className="text-xs font-semibold text-blue-600 hover:underline">{t(lang,'addFilter')}</button>
-        </div>
-
         <div className="flex items-center justify-between gap-3 pt-2 border-t border-blue-50 flex-wrap">
           <div className="text-xs text-blue-600 font-medium">{activeCount > 0 ? `${activeCount} filter${activeCount>1?'s':''} active` : ''}</div>
           <div className="flex items-center gap-2">
@@ -4058,20 +4031,6 @@ export default function RetailListPage({ page }) {
                     </div>
                   </div>
                 </div>
-              )}
-            </div>
-            <div className="relative">
-              <button onClick={()=>setSearchPanel(!searchPanel)}
-                className={`flex items-center gap-2 text-sm font-semibold px-4 py-2 rounded-xl transition-all ${searchPanel?'bg-[#0F172A] text-white':'bg-blue-100 text-blue-700 hover:bg-blue-200'}`}>
-                🔖 {t(lang,'savedSearches')}
-                {(savedSearches||[]).filter(s=>s.object_type===page).length > 0 && (
-                  <span className={`text-xs font-bold px-1.5 py-0.5 rounded-full ${searchPanel?'bg-white/20 text-white':'bg-blue-200 text-blue-700'}`}>
-                    {(savedSearches||[]).filter(s=>s.object_type===page).length}
-                  </span>
-                )}
-              </button>
-              {searchPanel && (
-                <RetailSavedSearchPanel page={page} currentFilters={currentFilters} onApply={applyFilters} onClose={()=>setSearchPanel(false)}/>
               )}
             </div>
             {/* Table / Board view toggle */}

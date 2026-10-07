@@ -12,6 +12,7 @@ import { useApp } from '@/context/AppContext';
 import { useTenant } from '@/context/TenantContext';
 import { useAlert } from '@/components/shared/AlertProvider';
 import { useFieldLayout, resolveFieldRow, resolveLayoutDefault } from '@/lib/useFieldLayout';
+import { isTemplateDefault, useTemplateDefaults } from '@/lib/defaultTemplates';
 import { t } from '@/lib/i18n';
 import { ObjectIcon } from '@/lib/lineIcons';
 
@@ -42,11 +43,11 @@ export default function CustomObjectCreateModal({ customObject, headerFields, li
     headerFields.forEach(f => {
       const row = resolveFieldRow(f.api_name, layout || [], 'create');
       const raw = row?.default_value || f.default_value;
-      const val = resolveLayoutDefault(f.field_type === 'date' ? 'date' : f.field_type === 'checkbox' ? 'checkbox' : f.field_type === 'number' ? 'number' : 'text', raw, v);
+      const val = resolveLayoutDefault(f.field_type === 'date' ? 'date' : f.field_type === 'datetime' ? 'datetime' : f.field_type === 'checkbox' ? 'checkbox' : f.field_type === 'number' ? 'number' : 'text', raw, v);
       if (val !== undefined) v[f.api_name] = val;
     });
     const nameRow = resolveFieldRow('name', layout || [], 'create');
-    if (nameRow?.default_value) v.__name = nameRow.default_value;
+    if (nameRow?.default_value && !isTemplateDefault(nameRow.default_value, 'text')) v.__name = nameRow.default_value;
     const statusRow = resolveFieldRow('status', layout || [], 'create');
     if (statusRow?.default_value) v.__status = statusRow.default_value;
     return v;
@@ -79,6 +80,28 @@ export default function CustomObjectCreateModal({ customObject, headerFields, li
     () => buildCustomSections({ headerFields, layout, layoutSections, pageScope: 'create', values: merged }),
     [headerFields, layout, layoutSections, values],
   );
+
+  // ── {{token}} templates & = formulas (e.g. Name = "Salary of {{CoachName}} for {{Month}}") ──
+  const _skipTypes = ['checkbox', 'single_select', 'multi_select', 'lookup'];
+  const _tplTargets: Record<string, { raw: string; type: string }> = {};
+  const _nameRaw = resolveFieldRow('name', layout || [], 'create')?.default_value;
+  if (_nameRaw && isTemplateDefault(_nameRaw, 'text')) _tplTargets['__name'] = { raw: _nameRaw, type: 'text' };
+  headerFields.forEach(f => {
+    const raw = resolveFieldRow(f.api_name, layout || [], 'create')?.default_value || f.default_value;
+    const ty = f.field_type === 'date' ? 'date' : f.field_type === 'datetime' ? 'datetime' : f.field_type === 'number' || f.field_type === 'currency' ? 'number' : 'text';
+    if (!_skipTypes.includes(f.field_type) && isTemplateDefault(raw, ty)) _tplTargets[f.api_name] = { raw, type: ty };
+  });
+  const _tplFields = [
+    { key: '__name', label: 'Name', type: 'text', alt: ['name', layout?.find(r => r.field_key === 'name')?.custom_label].filter(Boolean) },
+    { key: '__status', label: 'Status', type: 'text', alt: ['status'] },
+    ...headerFields.map(f => ({ key: f.api_name, label: f.label, type: f.field_type === 'currency' ? 'number' : f.field_type, alt: [layout?.find(r => r.field_key === f.api_name)?.custom_label].filter(Boolean) })),
+  ];
+  useTemplateDefaults({
+    open, templates: _tplTargets, fields: _tplFields, user: currentUser,
+    display: (key, val) => (lookups?.[key] || []).find(o => o.id === val)?.label,
+    values,
+    onPatch: patch,
+  });
 
   if (!open) return null;
 

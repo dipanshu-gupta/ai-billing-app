@@ -120,9 +120,11 @@ export default function B2BAppComposer() {
           sort_order:i, show_on:f.show_on||'both',
         };
         if(f.id){
-          await supabase.from('app_custom_fields').update(payload).eq('id',f.id);
+          const { error: ue } = await supabase.from('app_custom_fields').update(payload).eq('id',f.id);
+          if (ue) throw new Error(`"${f.label}": ${ue.message}`);
         } else {
-          const {data:nd} = await supabase.from('app_custom_fields').insert(payload).select().single();
+          const {data:nd, error: ie} = await supabase.from('app_custom_fields').insert(payload).select().single();
+          if (ie) throw new Error(`"${f.label}": ${ie.message}`);
           if(nd) setFields(p=>p.map(x=>x._key===f._key?{...x,id:nd.id,_key:nd.id,...nd}:x));
         }
       }
@@ -134,7 +136,9 @@ export default function B2BAppComposer() {
 
   async function deleteField(field) {
     if(!supabase||!field.id)return;
-    await supabase.from('app_custom_fields').delete().eq('id',field.id);
+    const { error: de } = await supabase.from('app_custom_fields').delete().eq('id',field.id);
+    if (de) { showToast('Delete failed: '+de.message,'err'); return; }
+    await supabase.from('field_layout_config').delete().eq('object_type',selectedObj).eq('field_key','cf_'+field.api_name);
     setFields(p=>p.filter(f=>f._key!==field._key));
     invalidateCustomFieldCache(selectedObj);
     showToast('Field deleted');

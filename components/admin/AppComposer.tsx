@@ -152,18 +152,21 @@ export default function AppComposer() {
     try {
       // Delete rows that were removed (only rows with IDs not in current list)
       const existingIds = fields.filter(f => f.id).map(f => f.id);
-      if (existingIds.length) {
-        // Delete DB rows that are no longer in the editor
-        const { data: allRows, error: fetchErr } = await supabase.from('app_custom_fields')
-          .select('id').eq('object_type', selectedObj);
+      {
+        // Always reconcile — including when the LAST remaining field was deleted (existingIds empty).
+        let dq = supabase.from('app_custom_fields').select('id,api_name').eq('object_type', selectedObj);
+        if (tenant?.id) dq = dq.eq('tenant_id', tenant.id);
+        const { data: allRows, error: fetchErr } = await dq;
         if (fetchErr) throw new Error(`Could not check existing fields: ${fetchErr.message}`);
-        const toDelete = (allRows||[]).map(r=>r.id).filter(id => !existingIds.includes(id));
-        if (toDelete.length) {
-          const { error: delErr } = await supabase.from('app_custom_fields').delete().in('id', toDelete);
+        const gone = (allRows || []).filter(r => !existingIds.includes(r.id));
+        if (gone.length) {
+          const { error: delErr } = await supabase.from('app_custom_fields').delete().in('id', gone.map(r => r.id));
           if (delErr) throw new Error(`Could not remove deleted field(s): ${delErr.message}`);
+          // Their Page Layout Designer rows (cf_<api_name>) are orphans now.
+          await supabase.from('field_layout_config').delete().eq('object_type', selectedObj).in('field_key', gone.map(r => `cf_${r.api_name}`));
+          invalidateCustomFieldCache(selectedObj);
         }
       }
-      // If no existing IDs at all, don't delete anything (user is creating first field)
 
       // Upsert each field — NEVER reset is_published (preserve published state)
       for (let i = 0; i < fields.length; i++) {

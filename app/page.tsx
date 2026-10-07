@@ -10,6 +10,8 @@ import { AlertProvider, useAlert } from '@/components/shared/AlertProvider';
 import Sidebar from '@/components/layout/Sidebar';
 import Header from '@/components/layout/Header';
 import DashboardPage from '@/components/dashboard/DashboardPage';
+import ExpressDashboard from '@/components/dashboard/ExpressDashboard';
+import { useRbac } from '@/lib/useRbac';
 import CRMListPage from '@/components/crm/CRMListPage';
 import RetailListPage from '@/components/retail/RetailListPage';
 import ManageBookingsPage from '@/components/retail/ManageBookingsPage';
@@ -379,12 +381,13 @@ function ProfileModal({ open, onClose }) {
 // ─── App Shell ────────────────────────────────────────────────────────────────
 
 const CRM_PAGES = ['customers', 'products', 'leads', 'opportunities', 'activities', 'contacts', 'orders', 'invoices'];
-const NON_CRM_PAGES = ['home', 'dashboard', 'approvals', 'adminTools', 'quotations', 'reports'];
+const NON_CRM_PAGES = ['home', 'dashboard', 'expressDashboard', 'approvals', 'adminTools', 'quotations', 'reports'];
 const RETAIL_PAGES = ['retailCustomers', 'retailProducts', 'retailActivities', 'retailOrders', 'retailInvoices'];
 
 function AppShell() {
   const { session, authLoading, appPreferences, setPendingReturnTo, setPendingRecord, customObjects } = useApp();
   const { tenant } = useTenant();
+  const rbac = useRbac();
   // Persist active page in sessionStorage so refresh doesn't reset to home
   const [activePage, setActivePage] = useState(() => {
     if (typeof window !== 'undefined') {
@@ -471,6 +474,8 @@ function AppShell() {
   // below is the only thing that scrolls — previously this was min-h-screen
   // (unbounded), which meant the whole document scrolled and took the
   // "sticky" sidebar along with it instead of pinning it.
+  const viewBlocked = (CRM_PAGES.includes(activePage) || RETAIL_PAGES.includes(activePage) || activePage === 'quotations') && !rbac.can(activePage, 'view');
+
   return (
     <div className="flex h-screen overflow-hidden bg-gradient-to-br from-slate-50 to-blue-50">
       <Sidebar
@@ -483,12 +488,20 @@ function AppShell() {
         <Header activePage={activePage} onNavigate={(page) => setActivePage(page)} />
         <main className="flex-1 p-6 overflow-y-auto">
           {activePage === 'home' && <SpringboardPage onNavigate={(page) => setActivePage(page)} />}
+          {activePage === 'expressDashboard' && <ExpressDashboard onNavigate={(page) => setActivePage(page)} />}
           {activePage === 'dashboard' && (appPreferences?.b2c_mode === true ? <RetailDashboard /> : <DashboardPage />)}
-          {CRM_PAGES.includes(activePage) && !NON_CRM_PAGES.includes(activePage) && <CRMListPage page={activePage} />}
-          {RETAIL_PAGES.includes(activePage) && <RetailListPage page={activePage} />}
+          {viewBlocked && (
+            <div className="flex flex-col items-center justify-center min-h-[50vh] bg-white rounded-[20px] border border-gray-100 p-12 text-center">
+              <div className="text-5xl mb-3">🔒</div>
+              <h2 className="text-xl font-bold text-[#0F172A] mb-1">You don’t have access to this area</h2>
+              <p className="text-gray-500 text-sm max-w-md">Your role doesn’t include permission to view this object. Ask an administrator to grant it in Security Console.</p>
+            </div>
+          )}
+          {!viewBlocked && CRM_PAGES.includes(activePage) && !NON_CRM_PAGES.includes(activePage) && <CRMListPage page={activePage} />}
+          {!viewBlocked && RETAIL_PAGES.includes(activePage) && <RetailListPage page={activePage} />}
           {activePage === 'manageBookings' && appPreferences?.b2c_mode === true && appPreferences?.business_type === 'rental' && <ManageBookingsPage />}
           {activePage === 'whatsappInbox' && appPreferences?.b2c_mode === true && <WhatsAppInboxPage />}
-          {activePage === 'quotations' && appPreferences?.cpq_enabled !== false && <QuotationsPage />}
+          {!viewBlocked && activePage === 'quotations' && appPreferences?.cpq_enabled !== false && <QuotationsPage />}
           {activePage === 'reports' && <FastReportsPage />}
           {activePage === 'approvals' && <ApprovalsInboxPage />}
           {activePage === 'adminTools' && <AdminToolsPage />}

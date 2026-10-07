@@ -118,6 +118,10 @@ const CSS = String.raw`
 .rw-list .rw-stat { background: #fff !important; background-image: none !important; color: var(--rw-ink) !important; border: 1px solid var(--rw-border); border-left: 3px solid var(--rw-accent); box-shadow: 0 1px 2px rgba(27,26,24,.04); }
 .rw-list .rw-stat * { color: var(--rw-ink) !important; }
 .rw-list .rw-stat [class*="opacity"], .rw-list .rw-stat [class*="text-xs"] { color: var(--rw-muted) !important; }
+.rw-list button[style*="linear-gradient"] { background: var(--rw-ink) !important; color: #fff !important; }
+.rw-list [class*="from-slate-50"] { background: #fff !important; background-image: none !important; border-color: var(--rw-border) !important; }
+.rw-list [class*="from-slate-50"]:hover { border-color: var(--rw-accent) !important; }
+.rw-list .rw-banner [class*="text-purple-"] { color: var(--rw-muted) !important; }
 .rw-list input:not([type="checkbox"]):not([type="radio"]), .rw-list select { border-radius: 8px; border-color: #D6D1CA; }
 .rw-list input:not([type="checkbox"]):not([type="radio"]):focus, .rw-list select:focus { outline: none; border-color: var(--rw-accent); box-shadow: 0 0 0 3px rgba(122,78,155,.14); }
 `;

@@ -4,6 +4,7 @@
 import { useState, useEffect } from 'react';
 import { useApp } from '@/context/AppContext';
 import { useCustomFields, invalidateCustomFieldCache } from '@/lib/useCustomFields';
+import { gatherTemplates, useTemplateDefaults } from '@/lib/defaultTemplates';
 import { useFieldLayout, resolveFieldRow, effectiveRows, cfKey, resolveFieldDisplay, resolveLayoutDefault } from '@/lib/useFieldLayout';
 import { getStatusOptions } from '@/lib/utils';
 import { createGridEnabled } from '@/lib/lineLayout';
@@ -238,6 +239,26 @@ export default function CreateRecordModal({ page, open, prefillCustomer, onClose
       return n;
     });
   }, [open, fieldLayout.loading, layoutDefaultsSig]);
+
+  // ── {{token}} templates & = formulas from the Page Layout Designer / App Composer ──
+  const _typeByKey = {};
+  (OBJECT_FIELDS[page] || []).forEach(f => { _typeByKey[f.key] = f.type === 'date' ? 'date' : (f.type === 'number' ? 'number' : 'text'); });
+  const _tpl = gatherTemplates(effectiveRows(fieldLayout.fields || [], 'create'), customFields || [], k => _typeByKey[k] || 'text',
+    api => resolveFieldRow(cfKey(api), fieldLayout.fields || [], 'create'));
+  const _tplFields = [
+    ...(OBJECT_FIELDS[page] || []).map(f => ({ key: f.key, label: f.label, type: f.type === 'date' ? 'date' : f.type === 'number' ? 'number' : 'text', alt: [fieldLayout.fields?.find(r => r.field_key === f.key)?.custom_label].filter(Boolean) })),
+    ...(customFields || []).map(f => ({ key: f.api_name, label: f.label, type: f.field_type, alt: [fieldLayout.fields?.find(r => r.field_key === cfKey(f.api_name))?.custom_label].filter(Boolean) })),
+  ];
+  useTemplateDefaults({
+    open, templates: _tpl.templates, fields: _tplFields, user: currentUser,
+    values: { ...form, ...customData },
+    onPatch: (patch) => {
+      const std = {}, cus = {};
+      Object.keys(patch).forEach(k => { (_tpl.customKeys.has(k) ? cus : std)[k] = patch[k]; });
+      if (Object.keys(std).length) setForm(f => ({ ...f, ...std }));
+      if (Object.keys(cus).length) setCustomData(d => ({ ...d, ...cus }));
+    },
+  });
 
   if (!open) return null;
 

@@ -128,7 +128,7 @@ export default function BookingsDashboard({ onSelectProduct, onOpenRecord }) {
           { label: 'Completed (recent)', value: categorized.completed.length, icon: '✅' },
           { label: 'Revenue This Month', value: formatCurrency(revenueThisMonth), icon: '💰' },
         ].map((kpi, i) => (
-          <div key={kpi.label} className="rounded-[20px] p-4 text-white shadow-lg" style={{ background: `linear-gradient(135deg, ${kpiPalette[i].from}, ${kpiPalette[i].to})` }}>
+          <div key={kpi.label} className="rw-stat rounded-[20px] p-4 text-white shadow-lg" style={{ background: `linear-gradient(135deg, ${kpiPalette[i].from}, ${kpiPalette[i].to})` }}>
             <div className="text-2xl mb-1">{kpi.icon}</div>
             <div className="text-2xl font-bold">{kpi.value}</div>
             <div className="text-xs text-white/80 font-semibold uppercase tracking-wide">{kpi.label}</div>

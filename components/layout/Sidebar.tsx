@@ -12,6 +12,7 @@ import { ObjectIcon } from '@/lib/lineIcons';
 const TOP_ITEMS = [
   { key:'home',      label:'home',          icon:'🏠', permission:null },
   { key:'dashboard', label:'salesDashboard', icon:'📊', permission:null },
+  { key:'expressDashboard', label:'Express Dashboard', icon:'⚡', permission:null },
 ];
 
 export default function Sidebar({ activePage, setActivePage, collapsed, setCollapsed }) {

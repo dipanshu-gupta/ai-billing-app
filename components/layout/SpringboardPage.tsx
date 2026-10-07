@@ -4,7 +4,7 @@ import { useState, useMemo } from 'react';
 import { useApp } from '@/context/AppContext';
 import { t, THEMES } from '@/lib/i18n';
 import { useObjectLabels } from '@/lib/useObjectLabels';
-import { SALES_GROUP, RETAIL_GROUP, BOTTOM_ITEMS, DASHBOARD_ITEM, makeCanSee, buildCustomObjectNavItems } from '@/lib/navPermissions';
+import { SALES_GROUP, RETAIL_GROUP, BOTTOM_ITEMS, DASHBOARD_ITEM, EXPRESS_DASHBOARD_ITEM, makeCanSee, buildCustomObjectNavItems } from '@/lib/navPermissions';
 import { NavIcon } from '@/lib/icons';
 import { ObjectIcon } from '@/lib/lineIcons';
 import { Plus } from 'lucide-react';
@@ -84,7 +84,7 @@ export default function SpringboardPage({ onNavigate }) {
       { id:'operations',     label:'Operations',      icon:'⚙️', items: opsItems },
       { id:'customObjects',  label:'Custom Objects',  icon:'🧩', items: buildCustomObjectNavItems(customObjects) },
       { id:'reports',        label:'Reports',         icon:'⚡', items: reportsTile },
-      { id:'salesDashboard', label:'Sales Dashboard', icon:'📊', items: [DASHBOARD_ITEM] },
+      { id:'salesDashboard', label:'Sales Dashboard', icon:'📊', items: [DASHBOARD_ITEM, EXPRESS_DASHBOARD_ITEM] },
       { id:'adminTool',      label:'Admin Tool',      icon:'🔧', items: adminItems },
     ];
   }, [b2cMode, customObjects]);

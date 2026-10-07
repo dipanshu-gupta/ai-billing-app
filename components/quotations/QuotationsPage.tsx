@@ -1,6 +1,7 @@
 // @ts-nocheck
 'use client';
 
+import { useRbac } from '@/lib/useRbac';
 import RedwoodSkin from '@/components/shared/RedwoodSkin';
 import { buildDocumentHTML } from '@/lib/documentCanvas';
 import { useState, useEffect, useMemo } from 'react';
@@ -21,10 +22,13 @@ import { useFieldLayout, resolveFieldDisplay, resolveFieldRow, effectiveRows, re
 import OrderedRow from '@/components/shared/OrderedRow';
 import { useLineLayout, createGridEnabled } from '@/lib/lineLayout';
 import RecordHighlights from '@/components/shared/RecordHighlights';
-import { fetchServerPage, timePeriodToRange } from '@/lib/serverList';
+import { fetchServerPage, timePeriodToRange, splitAdvFilters } from '@/lib/serverList';
+import { useSearchCatalog, distinctValues } from '@/lib/searchCatalog';
 import LineItemCustomFieldInput from '@/components/shared/LineItemCustomFieldInput';
 import { resolveStatusOptions, overrideStatusColor } from '@/lib/statusOptions';
 import LoadingSpinner from '@/components/shared/LoadingSpinner';
+import { gatherTemplates, useTemplateDefaults } from '@/lib/defaultTemplates';
+import RedwoodSavedSearchBar from '@/components/shared/RedwoodSavedSearchBar';
 
 import { relabelText } from '@/lib/useRelabel';
 const RL = relabelText;
@@ -844,7 +848,8 @@ function QuotationDetail({ quote, onClose, onSaved }) {
 
 // ─── Quotations List Page ──────────────────────────────────────────────────────
 export default function QuotationsPage() {
-  const { quotations, fetchQuotations, customers, products, createQuotation, deleteQuotation, appPreferences, fetchListCount, currentUser, permissionsLoaded, applyDataSecurity, dataSecurityScope, pendingRecord, setPendingRecord, pendingReturnTo, setPendingReturnTo } = useApp();
+  const { enterpriseUsers, quotations, fetchQuotations, customers, products, createQuotation, deleteQuotation, appPreferences, fetchListCount, currentUser, permissionsLoaded, applyDataSecurity, dataSecurityScope, pendingRecord, setPendingRecord, pendingReturnTo, setPendingReturnTo } = useApp();
+  const rbac = useRbac();
   const L = useRelabel();
   const { supabase, tenant } = useTenant();
   const fieldLayout = useFieldLayout('quotations');
@@ -883,6 +888,26 @@ export default function QuotationsPage() {
   const [search,        setSearch]        = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [statusFilter,  setStatusFilter]  = useState('All');
+  const [timePeriod,    setTimePeriod]    = useState('');
+  const [advFilters,    setAdvFilters]    = useState([]);
+  const [ownerFilter,   setOwnerFilter]   = useState('');
+  const QUOTE_FIELDS = [
+    { key:'name', label:'Quotation Name', type:'text' }, { key:'customer', label:'Customer', type:'text' },
+    { key:'status', label:'Status', type:'select' }, { key:'currency', label:'Currency', type:'text' },
+    { key:'validity_date', label:'Valid Until', type:'date' }, { key:'version', label:'Version', type:'number' },
+    { key:'created_at', label:'Created On', type:'date' },
+  ];
+  const applyQuoteFilters = (f) => {
+    if (f.search !== undefined) setSearch(f.search || '');
+    if (f.status !== undefined) setStatusFilter(f.status || 'All');
+    if (f.timePeriod !== undefined) setTimePeriod(f.timePeriod || '');
+    if (f.advFilters !== undefined) setAdvFilters(f.advFilters || []);
+    if (f.owner !== undefined) setOwnerFilter(f.owner || '');
+  };
+  const clearQuoteFilters = () => { setSearch(''); setStatusFilter('All'); setTimePeriod(''); setAdvFilters([]); setOwnerFilter(''); };
+  const quoteFilters = { search, status: statusFilter, timePeriod, advFilters, owner: ownerFilter };
+  const quoteCatalog = useSearchCatalog({ baseMeta: QUOTE_FIELDS, headerObjType: 'quotations', page: 'quotations' });
+  const quoteOwners = (enterpriseUsers || []).map(u => ({ value: u.email, label: `${u.first_name||''} ${u.last_name||''}`.trim() || u.email }));
   const [saving,        setSaving]        = useState(false);
   const [pageSize,      setPageSize]      = useState(25);
   const [currentPage,   setCurrentPage]   = useState(1);
@@ -909,6 +934,8 @@ export default function QuotationsPage() {
   useEffect(() => {
     if (!supabase) return;
     setServerLoading(true);
+    const qRange = timePeriodToRange(timePeriod);
+    const qSplit = splitAdvFilters(advFilters, (f) => f);
     fetchServerPage(supabase, {
       table: 'quotations',
       searchTerm: debouncedSearch,
@@ -916,6 +943,9 @@ export default function QuotationsPage() {
       statusColumn: 'status',
       statusFilter,
       dateColumn: 'created_at',
+      dateFrom: qRange.from, dateTo: qRange.to,
+      advFilters: qSplit.adv, lineFilters: qSplit.lineFilters,
+      ownerFilter,
       sortColumn: 'created_at',
       sortAscending: false,
       page: currentPage,
@@ -930,7 +960,7 @@ export default function QuotationsPage() {
       }
       setServerLoading(false);
     });
-  }, [supabase, debouncedSearch, statusFilter, currentPage, pageSize, tenant?.id, currentUser, permissionsLoaded, dataSecurityScope]);
+  }, [supabase, debouncedSearch, statusFilter, timePeriod, advFilters, ownerFilter, currentPage, pageSize, tenant?.id, currentUser, permissionsLoaded, dataSecurityScope]);
 
   const sf = (k,v) => setForm(p => ({...p,[k]:v}));
   const iCls = 'w-full border border-blue-200 rounded-xl px-3 py-2.5 text-[#0F172A] bg-white focus:outline-none focus:ring-2 focus:ring-blue-400 text-sm placeholder:text-gray-400';
@@ -959,6 +989,15 @@ export default function QuotationsPage() {
     });
     if (Object.keys(seeded).length) setForm(f => ({ ...seeded, ...f }));
   }, [createOpen]);
+  const _qTpl = gatherTemplates(effectiveRows(fieldLayout.fields || [], 'create').filter(r => ['name','customer','validity_date','currency'].includes(r.field_key)), [], k => k === 'validity_date' ? 'date' : 'text', null);
+  useTemplateDefaults({
+    open: !!createOpen, templates: _qTpl.templates, user: currentUser, values: form,
+    fields: [
+      { key: 'name', label: 'Quotation Name', type: 'text', alt: ['name'] }, { key: 'customer', label: 'Customer', type: 'text' },
+      { key: 'validity_date', label: 'Validity Date', type: 'date' }, { key: 'currency', label: 'Currency', type: 'text' },
+    ].map(f => ({ ...f, alt: [...(f.alt || []), fieldLayout.fields?.find(r => r.field_key === f.key)?.custom_label].filter(Boolean) })),
+    onPatch: (p) => setForm(f => ({ ...f, ...p })),
+  });
   const handleQCreate = async () => {
     const nameVisible = qCreateFields.some(f => f.key === 'name');
     if (nameVisible && !form.name?.trim()) { showAlert('Name required.', { variant:'warning' }); return; }
@@ -981,7 +1020,7 @@ export default function QuotationsPage() {
   const safePage      = Math.min(currentPage, totalPages);
   const pagedQuotes   = serverRows;
 
-  useEffect(() => { setCurrentPage(1); }, [debouncedSearch, statusFilter]);
+  useEffect(() => { setCurrentPage(1); }, [debouncedSearch, statusFilter, timePeriod, advFilters, ownerFilter]);
 
   const fmtCur = n => new Intl.NumberFormat('en-IN',{style:'currency',currency:appPreferences.default_currency||'INR',maximumFractionDigits:0}).format(n||0);
 
@@ -998,7 +1037,7 @@ export default function QuotationsPage() {
       <RedwoodSkin />
       <div className="rw-banner bg-gradient-to-r from-[#0F172A] to-blue-900 rounded-[28px] p-6 text-white flex items-center justify-between">
         <div><h1 className="text-3xl font-bold">Quotations</h1><p className="text-blue-200 mt-1">CPQ — Configure, Price, Quote</p></div>
-        <button onClick={()=>{setForm({status:'Draft',currency:appPreferences.default_currency||'INR',version:1,overall_discount:0,shipping_cost:0});setCreateOpen(true);}} className="bg-white text-[#0F172A] px-5 py-2.5 rounded-2xl font-bold text-sm shadow-lg hover:bg-blue-50">+ {L('Create Quotation')}</button>
+        {rbac.can('quotations','create') && <button onClick={()=>{setForm({status:'Draft',currency:appPreferences.default_currency||'INR',version:1,overall_discount:0,shipping_cost:0});setCreateOpen(true);}} className="bg-white text-[#0F172A] px-5 py-2.5 rounded-2xl font-bold text-sm shadow-lg hover:bg-blue-50">+ {L('Create Quotation')}</button>}
       </div>
 
       {/* Stats */}
@@ -1008,13 +1047,9 @@ export default function QuotationsPage() {
         ))}
       </div>
 
-      {/* Filters */}
-      <div className="bg-white rounded-2xl border border-blue-100 p-4 shadow-sm flex flex-col sm:flex-row gap-3">
-        <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search quotations..." className="flex-1 border border-blue-200 rounded-xl px-4 py-2.5 text-sm text-[#0F172A] focus:outline-none focus:ring-2 focus:ring-blue-300 placeholder:text-gray-400"/>
-        <select value={statusFilter} onChange={e=>setStatusFilter(e.target.value)} className="border border-blue-200 rounded-xl px-4 py-2.5 text-sm text-[#0F172A] bg-white focus:outline-none focus:ring-2 focus:ring-blue-300">
-          <option>All</option>{quoteStatuses().map(s=><option key={s}>{s}</option>)}
-        </select>
-      </div>
+      <RedwoodSavedSearchBar page="quotations" filters={quoteFilters} onApply={applyQuoteFilters} onClear={clearQuoteFilters}
+        fields={quoteCatalog} statusOptions={quoteStatuses()} owners={quoteOwners}
+        valuesOf={(f,q)=>distinctValues(supabase,{ table: f.scope==='line' ? f.line.table : 'quotations', column: f.column || f.key, q })} />
 
       {/* Table */}
       <div className="bg-white rounded-[24px] border border-blue-100 shadow-lg overflow-hidden">
@@ -1049,7 +1084,7 @@ export default function QuotationsPage() {
                         <td className="px-5 py-3.5">
                           <div className="flex gap-2">
                             <button onClick={()=>setSelectedQuote(q)} className="bg-blue-100 hover:bg-blue-200 text-blue-700 px-3 py-1.5 rounded-xl text-xs font-semibold">Open</button>
-                            <button onClick={async()=>{ if(await showConfirm('Delete this quotation? This cannot be undone.', { variant:'danger', confirmLabel:'Delete', title:'Delete Quotation' })) deleteQuotation(q.id); }} className="bg-red-100 hover:bg-red-200 text-red-500 px-3 py-1.5 rounded-xl text-xs font-semibold">Delete</button>
+                            {rbac.can('quotations','delete') && <button onClick={async()=>{ if(await showConfirm('Delete this quotation? This cannot be undone.', { variant:'danger', confirmLabel:'Delete', title:'Delete Quotation' })) deleteQuotation(q.id); }} className="bg-red-100 hover:bg-red-200 text-red-500 px-3 py-1.5 rounded-xl text-xs font-semibold">Delete</button>}
                           </div>
                         </td>
                       </tr>

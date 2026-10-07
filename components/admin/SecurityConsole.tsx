@@ -9,97 +9,24 @@ import { useState, useEffect, useMemo } from 'react';
 import { useApp } from '@/context/AppContext';
 import { useTenant } from '@/context/TenantContext';
 import { useAlert } from '@/components/shared/AlertProvider';
+import { buildRbacCatalog, STD_ACTIONS } from '@/lib/rbacCatalog';
 
 // ─── Permission definitions ───────────────────────────────────────────────────
-const MODULE_GROUPS = [
-  {
-    group: 'CRM — B2B',
-    icon: '🏢',
-    modules: ['leads', 'opportunities', 'customers', 'contacts', 'activities'],
-  },
-  {
-    group: 'CPQ — Sales',
-    icon: '💼',
-    modules: ['quotations', 'orders', 'invoices', 'products'],
-  },
-  {
-    group: 'Retail — B2C',
-    icon: '🛍️',
-    modules: ['retail_customers', 'retail_orders', 'retail_invoices', 'retail_products', 'retail_activities'],
-  },
-  {
-    group: 'Admin Tools',
-    icon: '⚙️',
-    modules: ['admin', 'users', 'security', 'reports', 'workflow', 'appearance'],
-  },
-];
-
-const ACTIONS = ['view', 'create', 'edit', 'delete', 'export'];
-
-// Generate all permission codes
-const ALL_PERMISSIONS = MODULE_GROUPS.flatMap(g =>
-  g.modules.flatMap(m =>
-    ACTIONS.map(a => ({
-      code: `${m}_${a}`,
-      name: `${a.charAt(0).toUpperCase() + a.slice(1)} ${m.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}`,
-      module: m,
-      action: a,
-      group: g.group,
-      groupIcon: g.icon,
-    }))
-  )
-);
-
-// Special permissions
-const SPECIAL_PERMS = [
-  { code: '__admin__',          name: 'Super Admin (All Access)',   module: 'system', action: 'admin', group: 'System', groupIcon: '🔑' },
-  { code: 'view_team_records',  name: 'View Team Records',          module: 'system', action: 'view',  group: 'System', groupIcon: '🔑' },
-  { code: 'view_all_records',   name: 'View All Records (Any Org)', module: 'system', action: 'view',  group: 'System', groupIcon: '🔑' },
-  { code: 'approve_records',    name: 'Approve Records',            module: 'system', action: 'edit',  group: 'System', groupIcon: '🔑' },
-  { code: 'manage_ai',          name: 'Use AI Advisor',             module: 'system', action: 'view',  group: 'System', groupIcon: '🔑' },
-];
-
-const FULL_PERMISSIONS = [...ALL_PERMISSIONS, ...SPECIAL_PERMS];
-
-// ─── Seeded roles ─────────────────────────────────────────────────────────────
-const SEEDED_ROLES = [
-  {
-    role_name: 'System Administrator',
-    role_code: 'SYSADMIN',
-    description: 'Full access to all modules, admin tools, and system settings.',
-    status: 'Active',
-    data_scope: 'all',
-    permissions: FULL_PERMISSIONS.map(p => p.code),
-  },
-  {
-    role_name: 'Sales Administrator',
-    role_code: 'SALES_ADMIN',
-    description: 'Full access to all CRM and sales modules including admin tools.',
-    status: 'Active',
-    data_scope: 'all',
-    permissions: FULL_PERMISSIONS.map(p => p.code),
-  },
-  {
-    role_name: 'Sales Manager',
-    role_code: 'SALES_MGR',
-    description: 'Full access to CRM and sales. No admin tools access.',
-    status: 'Active',
-    data_scope: 'org',
-    permissions: FULL_PERMISSIONS
-      .filter(p => p.group !== 'Admin Tools' && p.code !== '__admin__')
-      .map(p => p.code),
-  },
-  {
-    role_name: 'Sales Representative',
-    role_code: 'SALES_REP',
-    description: 'View, create and edit records. No delete or admin access.',
-    status: 'Active',
-    data_scope: 'own',
-    permissions: FULL_PERMISSIONS
-      .filter(p => p.group !== 'Admin Tools' && p.code !== '__admin__' && p.action !== 'delete')
-      .map(p => p.code),
-  },
-];
+// Dynamic: lib/rbacCatalog builds the catalog from standard objects + every published custom object +
+// every Admin Tools section, so new custom objects appear in roles automatically.
+const ACTIONS = STD_ACTIONS;
+const SYSTEM_GROUP = 'System';
+// Seeded role definitions (permissions are computed from the live catalog at seed time).
+const seededRoles = (cat) => {
+  const ALL = cat.all.map(p => p.code);
+  const nonAdmin = cat.all.filter(p => p.group !== 'Admin Tools' && p.code !== '__admin__');
+  return [
+    { role_name: 'System Administrator', role_code: 'SYSADMIN', description: 'Full access to all modules, admin tools, and system settings.', status: 'Active', data_scope: 'all', permissions: ALL },
+    { role_name: 'Sales Administrator', role_code: 'SALES_ADMIN', description: 'Full access to all CRM and sales modules including admin tools.', status: 'Active', data_scope: 'all', permissions: ALL },
+    { role_name: 'Sales Manager', role_code: 'SALES_MGR', description: 'Full access to CRM and sales. No admin tools access.', status: 'Active', data_scope: 'org', permissions: nonAdmin.map(p => p.code) },
+    { role_name: 'Sales Representative', role_code: 'SALES_REP', description: 'View, create and edit records. No delete or admin access.', status: 'Active', data_scope: 'own', permissions: nonAdmin.filter(p => p.action !== 'delete').map(p => p.code) },
+  ];
+};
 
 const DATA_SCOPES = [
   { v: 'all',  l: 'All Organizations & Business Units', desc: 'VP level — sees everything across the company' },
@@ -113,7 +40,13 @@ const iCls = 'w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm text-
 // ─── Main Component ────────────────────────────────────────────────────────────
 export default function SecurityConsole() {
   const { roles, permissions: dbPermissions, saveRole, deleteAdminRecord,
-          fetchRolePermissions, fetchRoles, fetchPermissions, enterpriseUsers } = useApp();
+          fetchRolePermissions, fetchRoles, fetchPermissions, enterpriseUsers, customObjects, fetchCustomObjects } = useApp();
+  const CAT = useMemo(() => buildRbacCatalog(customObjects), [customObjects]);
+  const MODULE_GROUPS = CAT.groups;
+  const FULL_PERMISSIONS = CAT.all;
+  const SPECIAL_PERMS = CAT.special;
+  const SEEDED_ROLES = useMemo(() => seededRoles(CAT), [CAT]);
+  const moduleLabel = (m) => CAT.labels[m] || m.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
   const { supabase } = useTenant();
   const { showConfirm } = useAlert();
 
@@ -130,7 +63,7 @@ export default function SecurityConsole() {
 
   const showToast = (m, err=false) => { setToast({m,err}); setTimeout(()=>setToast(''),3000); };
 
-  useEffect(() => { fetchRoles(); fetchPermissions(); }, []);
+  useEffect(() => { fetchRoles(); fetchPermissions(); if (fetchCustomObjects) fetchCustomObjects(); }, []);
 
   const loadAllPerms = async () => {
     if (!roles.length || !supabase) return;
@@ -402,7 +335,7 @@ export default function SecurityConsole() {
   const filteredGroups = useMemo(() => {
     const groups = [...MODULE_GROUPS.map(g => ({ ...g })), { group: 'System', icon: '🔑', modules: ['system'] }];
     return groups.filter(g => groupFilter === 'all' || g.group === groupFilter);
-  }, [groupFilter]);
+  }, [groupFilter, MODULE_GROUPS]);
 
   const allGroups = [...MODULE_GROUPS.map(g => g.group), 'System'];
 
@@ -753,15 +686,14 @@ export default function SecurityConsole() {
                                 checked={allModSelected}
                                 onChange={()=>selectAllInModule(module)}
                                 className="w-3.5 h-3.5 accent-blue-600 rounded"/>
-                              <span className="text-xs font-semibold text-gray-600 capitalize">
-                                {module.replace(/_/g,' ')}
+                              <span className="text-xs font-semibold text-gray-600">
+                                {moduleLabel(module)}
                               </span>
                             </label>
                           </div>
                           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-1.5 pl-4">
-                            {ACTIONS.map(action => {
-                              const p = modPerms.find(p => p.action === action);
-                              if (!p) return null;
+                            {modPerms.map(p => {
+                              const action = p.action;
                               const selected = selectedPerms.includes(p.code);
                               return (
                                 <label key={p.code}
@@ -773,7 +705,7 @@ export default function SecurityConsole() {
                                   }`}>
                                   <input type="checkbox" checked={selected} onChange={()=>togglePerm(p.code)}
                                     className="w-3 h-3 accent-blue-600 rounded flex-shrink-0"/>
-                                  <span className="font-medium capitalize">{action}</span>
+                                  <span className="font-medium capitalize">{action === 'access' ? 'Allow access' : action}</span>
                                 </label>
                               );
                             })}
