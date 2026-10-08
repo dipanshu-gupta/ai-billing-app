@@ -18,13 +18,13 @@ import { ObjectIcon } from '@/lib/lineIcons';
 
 import { resolveStatusOptions } from '@/lib/statusOptions';
 import { CUSTOM_STATUS_OPTIONS } from '@/lib/customObjects';
-import { createCustomObjectRecord } from '@/lib/customObjects';
+import { createCustomObjectRecord, resolveLookupLabel } from '@/lib/customObjects';
 import {
   useCustomLookups, CustomSectionsView, CustomLineItemsCard, buildCustomSections, ownerPatch,
 } from '@/components/shared/CustomObjectForm';
 
 export default function CustomObjectCreateModal({ customObject, headerFields, lineFields, open, onClose, onCreated, prefill = null, lockedKeys = [] }) {
-  const { currentUser, enterpriseUsers, appearance } = useApp();
+  const { currentUser, enterpriseUsers, appearance, customObjects } = useApp();
   const { supabase, tenant } = useTenant();
   const { showAlert } = useAlert();
   const lang = appearance?.language || 'en';
@@ -81,6 +81,27 @@ export default function CustomObjectCreateModal({ customObject, headerFields, li
     [headerFields, layout, layoutSections, values],
   );
 
+  // Names for lookup values that aren't in the (first-300) option list - e.g. a configured default pointing at an
+  // older record. Resolved once per id so {{LookupField}} in a template always reads as a name, never an id.
+  const [extraLabels, setExtraLabels] = useState<Record<string, string>>({});
+  const lookupValSig = JSON.stringify(headerFields.filter(x => x.field_type === 'lookup').map(f => values[f.api_name] || ''));
+  useEffect(() => {
+    if (!open) return;
+    let dead = false;
+    (async () => {
+      for (const f of headerFields.filter(x => x.field_type === 'lookup')) {
+        const id = values[f.api_name];
+        if (!id || (lookups[f.api_name] || []).some(o => o.id === id)) continue;
+        const k = f.api_name + ':' + id;
+        if (extraLabels[k] !== undefined) continue;
+        let lbl = '';
+        try { lbl = await resolveLookupLabel(f, String(id), customObjects || []); } catch { lbl = ''; }
+        if (!dead) setExtraLabels(p => ({ ...p, [k]: lbl && lbl !== String(id) ? lbl : '' }));
+      }
+    })();
+    return () => { dead = true; };
+  }, [open, lookupValSig, Object.keys(lookups).length]);
+
   // ── {{token}} templates & = formulas (e.g. Name = "Salary of {{CoachName}} for {{Month}}") ──
   const _skipTypes = ['checkbox', 'single_select', 'multi_select', 'lookup'];
   const _tplTargets: Record<string, { raw: string; type: string }> = {};
@@ -98,7 +119,7 @@ export default function CustomObjectCreateModal({ customObject, headerFields, li
   ];
   useTemplateDefaults({
     open, templates: _tplTargets, fields: _tplFields, user: currentUser,
-    display: (key, val) => (lookups?.[key] || []).find(o => o.id === val)?.label,
+    display: (key, val) => (lookups?.[key] || []).find(o => o.id === val)?.label ?? (extraLabels[key + ':' + val] || undefined),
     values,
     onPatch: patch,
   });

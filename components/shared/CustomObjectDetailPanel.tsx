@@ -168,9 +168,9 @@ export default function CustomObjectDetailPanel({ customObject, headerFields, li
           return hl.length ? <RecordHighlights items={hl} /> : null;
         })()}
         {hasRelated && (
-          <div className="rw-tabs flex bg-slate-800 border-b border-slate-700 px-6 flex-shrink-0">
+          <div className="rw-tabs flex bg-slate-800 border-b border-slate-700 px-6 flex-shrink-0" role="tablist">
             {[{ k: 'details', l: '📋 Details' }, { k: '360', l: `🔄 ${customObject.singular_label} 360` }].map(tb => (
-              <button key={tb.k} type="button" onClick={() => setTab(tb.k)}
+              <button key={tb.k} type="button" role="tab" aria-selected={activeTab === tb.k} onClick={() => setTab(tb.k)}
                 className={`px-5 py-3 text-sm font-semibold border-b-2 transition-all ${activeTab === tb.k ? 'border-blue-400 text-white' : 'border-transparent text-white/50 hover:text-white/80'}`}>
                 {tb.l}
               </button>

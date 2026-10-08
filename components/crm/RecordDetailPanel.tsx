@@ -10,9 +10,10 @@ import LineItemCustomFieldInput from '@/components/shared/LineItemCustomFieldInp
 import { Lead360, Contact360, Opportunity360, Quotation360, Order360, Invoice360, Activity360 } from '@/components/crm/Record360';
 import { useApp } from '@/context/AppContext';
 import { useRelabel } from '@/lib/useRelabel';
+import { useRbac } from '@/lib/useRbac';
 import {
   getObjectFields, getStatusOptions, getPageLabel,
-  formatCurrency, formatDateTime, getStatusColor,
+  formatCurrency, formatDate, formatDateTime, getStatusColor,
   formatDisplayNumber, PAGE_DISPLAY_PREFIX, tenantScope } from '@/lib/utils';
 import { useTenant } from '@/context/TenantContext';
 import ApprovalBanner from '@/components/crm/ApprovalBanner';
@@ -235,6 +236,7 @@ function Customer360Cols({ page, cols, children }) {
 function Customer360({ customer, onSubRecordOpen, onCreateFor }) {
   const { contacts, leads, opportunities, orders, invoices, activities, quotations, hasPermission, applyDataSecurity } = useApp();
   const { getObjectLabel } = useObjectLabels();
+  const rbac360 = useRbac();
   const [tab, setTab] = useState('contacts');
 
   // Match by UUID (customerId), display number (customer.id = customer_number), or name
@@ -251,15 +253,15 @@ function Customer360({ customer, onSubRecordOpen, onCreateFor }) {
     leads:         { icon:'🎯', label:'Leads',          createLabel:'Lead',        data:leads.filter(m),
       cols:[{h:'Name',v:r=>r.name},{h:'Source',v:r=>r.source||'-'},{h:'Amount',v:r=>fmt(r.amount)},{h:'Owner',v:r=>r.owner||'-'},{h:'Status',v:r=><Pill status={r.status}/>}] },
     opportunities: { icon:'💼', label:'Opportunities',  createLabel:'Opportunity', data:opportunities.filter(m),
-      cols:[{h:'Name',v:r=>r.name},{h:'Stage',v:r=>r.stage},{h:'Amount',v:r=>fmt(r.amount)},{h:'Close Date',v:r=>r.closeDate||'-'},{h:'Status',v:r=><Pill status={r.status}/>}] },
+      cols:[{h:'Name',v:r=>r.name},{h:'Stage',v:r=>r.stage},{h:'Amount',v:r=>fmt(r.amount)},{h:'Close Date',v:r=>r.closeDate?formatDate(r.closeDate):'-'},{h:'Status',v:r=><Pill status={r.status}/>}] },
     orders:        { icon:'🛒', label:'Orders',         createLabel:'Order',       data:orders.filter(m),
-      cols:[{h:'Name',v:r=>r.name},{h:'Amount',v:r=>fmt(r.amount)},{h:'Delivery',v:r=>r.deliveryDate||'-'},{h:'Status',v:r=><Pill status={r.status}/>}] },
+      cols:[{h:'Name',v:r=>r.name},{h:'Amount',v:r=>fmt(r.amount)},{h:'Delivery',v:r=>r.deliveryDate?formatDate(r.deliveryDate):'-'},{h:'Status',v:r=><Pill status={r.status}/>}] },
     invoices:      { icon:'🧾', label:'Invoices',       createLabel:'Invoice',     data:invoices.filter(m),
-      cols:[{h:'Name',v:r=>r.name},{h:'Amount',v:r=>fmt(r.amount)},{h:'Due Date',v:r=>r.dueDate||'-'},{h:'Status',v:r=><Pill status={r.status}/>}] },
+      cols:[{h:'Name',v:r=>r.name},{h:'Amount',v:r=>fmt(r.amount)},{h:'Due Date',v:r=>r.dueDate?formatDate(r.dueDate):'-'},{h:'Status',v:r=><Pill status={r.status}/>}] },
     activities:    { icon:'📅', label:'Activities',     createLabel:'Activity',    data:activities.filter(m),
-      cols:[{h:'Name',v:r=>r.name},{h:'Type',v:r=>r.activityType||'-'},{h:'Date',v:r=>r.activityDate||'-'},{h:'Status',v:r=><Pill status={r.status}/>}] },
+      cols:[{h:'Name',v:r=>r.name},{h:'Type',v:r=>r.activityType||'-'},{h:'Date',v:r=>r.activityDate?formatDate(r.activityDate):'-'},{h:'Status',v:r=><Pill status={r.status}/>}] },
     quotations:    { icon:'📄', label:'Quotations',     createLabel:null,          data:quotations.filter(m),
-      cols:[{h:'Quote #',v:r=>r.display_number?formatDisplayNumber('QUO',r.display_number):'-'},{h:'Name',v:r=>r.name},{h:'Grand Total',v:r=>fmt(r.grand_total)},{h:'Validity',v:r=>r.validity_date||'-'},{h:'Status',v:r=><Pill status={r.status}/>}] },
+      cols:[{h:'Quote #',v:r=>r.display_number?formatDisplayNumber('QUO',r.display_number):'-'},{h:'Name',v:r=>r.name},{h:'Grand Total',v:r=>fmt(r.grand_total)},{h:'Validity',v:r=>r.validity_date?formatDate(r.validity_date):'-'},{h:'Status',v:r=><Pill status={r.status}/>}] },
   };
   // Overlay any published rename onto both the tab label (plural) and the
   // create-button label (singular) - without this, Customer 360 tabs and
@@ -278,16 +280,37 @@ function Customer360({ customer, onSubRecordOpen, onCreateFor }) {
   const activeKey = secs[tab] ? tab : Object.keys(secs)[0];
   const active = secs[activeKey];
   if (!active) return null;
+  const live = (r) => !/^(cancel|void|reject|expire)/i.test(String(r.status || '')) && String(r.status || '') !== 'Draft';
+  const sumOf = (rows, f) => rows.reduce((t, r) => t + (Number(r[f]) || 0), 0);
+  const openOpps = (secs.opportunities?.data || []).filter(o => !/^(closed|won|lost)/i.test(String(o.status || o.stage || '')));
+  const liveInv = (secs.invoices?.data || []).filter(live);
+  const dueInv = liveInv.filter(r => !/^paid/i.test(String(r.status || '')));
+  const kpiRows = [
+    secs.opportunities && { l: 'Open pipeline', v: fmt(sumOf(openOpps, 'amount')), sub: `${openOpps.length} open opportunit${openOpps.length === 1 ? 'y' : 'ies'}`, k: 'var(--rw-accent)' },
+    secs.orders && { l: 'Orders', v: fmt(sumOf(secs.orders.data.filter(live), 'amount')), sub: `${secs.orders.data.filter(live).length} order${secs.orders.data.filter(live).length === 1 ? '' : 's'}`, k: 'var(--rw-teal)' },
+    secs.invoices && { l: 'Invoiced', v: fmt(sumOf(liveInv, 'amount')), sub: dueInv.length ? `${fmt(sumOf(dueInv, 'amount'))} outstanding` : (liveInv.length ? 'All settled' : ''), k: 'var(--rw-gold)' },
+    secs.activities && { l: 'Activities', v: secs.activities.data.length, sub: '', k: '#C9BFD6' },
+  ].filter(Boolean);
 
   return (
     <div className="space-y-4">
+      {/* Summary - figures exclude cancelled / draft documents */}
+      <div className="rw360-kpis">
+        {kpiRows.map(k => (
+          <div key={k.l} className="rw360-kpi" style={{ '--k': k.k } as any}>
+            <div className="l">{k.l}</div>
+            <div className="v">{k.v}</div>
+            {k.sub ? <div className="s">{k.sub}</div> : null}
+          </div>
+        ))}
+      </div>
+
       {/* Tab bar */}
-      <div className="flex flex-wrap gap-2">
+      <div className="rw360-tabs" role="tablist">
         {Object.entries(secs).map(([k,s])=>(
-          <button key={k} onClick={()=>setTab(k)}
-            className={`flex items-center gap-2 px-4 py-2 rounded-2xl text-sm font-semibold transition-all ${tab===k?'bg-gradient-to-r from-[#0F172A] to-blue-800 text-white shadow-lg':'bg-white border border-blue-100 text-[#0F172A] hover:border-blue-300'}`}>
+          <button key={k} role="tab" aria-selected={activeKey===k} onClick={()=>setTab(k)}>
             <span>{s.icon}</span><span>{s.label}</span>
-            <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${tab===k?'bg-white/20 text-white':'bg-blue-100 text-blue-700'}`}>{s.data.length}</span>
+            <span className="rw360-count">{s.data.length}</span>
           </button>
         ))}
       </div>
@@ -298,7 +321,7 @@ function Customer360({ customer, onSubRecordOpen, onCreateFor }) {
           <h3 className="text-white font-bold">{active.icon} {active.label}
             <span className="ml-2 bg-white/20 text-white text-xs font-bold px-3 py-1 rounded-full">{active.data.length}</span>
           </h3>
-          {active.createLabel && (
+          {active.createLabel && rbac360.can(activeKey, 'create') && (
             <button onClick={()=>onCreateFor(tab)}
               className="bg-white text-[#0F172A] px-4 py-2 rounded-xl text-sm font-bold hover:bg-blue-50 transition-all flex items-center gap-1.5">
               + New {active.createLabel}
@@ -307,7 +330,7 @@ function Customer360({ customer, onSubRecordOpen, onCreateFor }) {
         </div>
         {active.data.length===0
           ? <div className="py-14 text-center"><div className="text-5xl mb-3">{active.icon}</div><p className="text-gray-400">No {active.label.toLowerCase()} linked to this customer.</p>
-              {active.createLabel&&<button onClick={()=>onCreateFor(tab)} className="mt-3 text-blue-600 text-sm font-semibold hover:underline">+ Create {active.createLabel}</button>}
+              {active.createLabel&&rbac360.can(activeKey,'create')&&<button onClick={()=>onCreateFor(tab)} className="mt-3 text-blue-600 text-sm font-semibold hover:underline">+ Create {active.createLabel}</button>}
             </div>
           : <div className="overflow-x-auto">
               <Customer360Cols page={activeKey} cols={active.cols}>{(cols)=>(
@@ -633,8 +656,8 @@ export default function RecordDetailPanel({ page, record, onClose, prefillCustom
               </div>
               <p className="text-blue-300 text-sm mt-1 flex items-center gap-2 flex-wrap">
                 <span className="bg-blue-600 text-white font-mono font-bold px-3 py-0.5 rounded-full text-xs tracking-wider shadow-sm">
-                  {record.displayNumber
-                    ? formatDisplayNumber(PAGE_DISPLAY_PREFIX[page]||'REC', record.displayNumber)
+                  {(record.displayNumber ?? record.display_number)
+                    ? formatDisplayNumber(PAGE_DISPLAY_PREFIX[page]||'REC', (record.displayNumber ?? record.display_number))
                     : `${PAGE_DISPLAY_PREFIX[page]||'REC'}-${String(record.id||'').slice(-5).padStart(5,'0')}`}
                 </span>
                 <span className="text-blue-300">{getPageLabel(page)}</span>
@@ -706,7 +729,7 @@ export default function RecordDetailPanel({ page, record, onClose, prefillCustom
 
           {/* Tabs — shown for all pages that have a 360 or secondary tab */}
           {(page==='customers'||page==='products'||page==='leads'||page==='contacts'||page==='opportunities'||page==='quotations'||page==='orders'||page==='invoices'||page==='activities')&&(
-            <div className="rw-tabs flex gap-1 px-8 pt-4 bg-gray-50 border-b border-blue-100">
+            <div className="rw-tabs flex gap-1 px-8 pt-4 bg-gray-50 border-b border-blue-100" role="tablist">
               {(page==='products'
               ? [{key:'details',label:'📋 Details'},{key:'configuration',label:'⚙️ Configuration'}]
               : page==='customers'
@@ -727,7 +750,7 @@ export default function RecordDetailPanel({ page, record, onClose, prefillCustom
               ? [{key:'details',label:'📋 Details'},{key:'360',label:t360('Activity')}]
               : [{key:'details',label:'📋 Details'}]
             ).map(tb=>(
-                <button key={tb.key} onClick={()=>setTab(tb.key)} className={`px-5 py-2.5 rounded-t-xl text-sm font-semibold whitespace-nowrap transition-all ${tab===tb.key?'bg-white text-[#0F172A] border border-b-white border-blue-200 -mb-px shadow-sm':'text-gray-500 hover:text-[#0F172A]'}`}>{tb.label}</button>
+                <button key={tb.key} role="tab" aria-selected={tab===tb.key} onClick={()=>setTab(tb.key)} className={`px-5 py-2.5 rounded-t-xl text-sm font-semibold whitespace-nowrap transition-all ${tab===tb.key?'bg-white text-[#0F172A] border border-b-white border-blue-200 -mb-px shadow-sm':'text-gray-500 hover:text-[#0F172A]'}`}>{tb.label}</button>
               ))}
             </div>
           )}
@@ -851,8 +874,8 @@ export default function RecordDetailPanel({ page, record, onClose, prefillCustom
                 <div className="flex items-center gap-3 px-1">
                   <span className="text-xs font-bold uppercase tracking-wider text-gray-400">{getPageLabel(page)} Number</span>
                   <span className="font-mono font-bold text-blue-700 bg-blue-50 px-3 py-1 rounded-full text-sm border border-blue-200">
-                    {record.displayNumber
-                      ? formatDisplayNumber(PAGE_DISPLAY_PREFIX[page]||'REC', record.displayNumber)
+                    {(record.displayNumber ?? record.display_number)
+                      ? formatDisplayNumber(PAGE_DISPLAY_PREFIX[page]||'REC', (record.displayNumber ?? record.display_number))
                       : `${PAGE_DISPLAY_PREFIX[page]||'REC'}-${String(record.id||'').replace(/[^0-9]/g,'').slice(-5).padStart(5,'0')||'00001'}`}
                   </span>
                 </div>

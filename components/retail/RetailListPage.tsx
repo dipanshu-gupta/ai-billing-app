@@ -12,7 +12,7 @@ import RecordHighlights from '@/components/shared/RecordHighlights';
 import { getStatusColor, formatCurrency, formatDate, formatDisplayNumber, PAGE_DISPLAY_PREFIX, tenantScope, todayLocalISO } from '@/lib/utils';
 // useCustomFields hook used inline below
 import { useTenant } from '@/context/TenantContext';
-import { resolveStatusOptions } from '@/lib/statusOptions';
+import { resolveStatusOptions, overrideStatusColor } from '@/lib/statusOptions';
 import { getTaxRegime, computeLineNet, computeLineGross } from '@/lib/taxConfig';
 import { useFieldMappingRules, applyFieldMapping } from '@/lib/useFieldMappingRules';
 import SearchableSelect from '@/components/shared/SearchableSelect';
@@ -491,7 +491,7 @@ function buildCustomerPrefill(customer) {
 }
 
 // ─── Line items table (Orders / Invoices) ──────────────────────────────────
-function RetailLineItems({ items, setItems, products, taxRegime, page, headerDiscountPct = 0, onHeaderDiscountChange, scope = 'detail' }) {
+function RetailLineItems({ items, setItems, products, taxRegime, page, headerDiscountPct = 0, onHeaderDiscountChange, scope = 'detail', linkedOrderRef = '' }) {
   const [stockWarning, setStockWarning] = useState(null);
   const [rentalWarnings, setRentalWarnings] = useState<Record<number,string>>({});
   const { appPreferences, checkRentalConflict } = useApp();
@@ -713,7 +713,7 @@ function RetailLineItems({ items, setItems, products, taxRegime, page, headerDis
   // conflict check for dates the user has already changed away from) to
   // arrive after a newer one and overwrite its correct result - not just
   // unlikely, but ruled out by how React effects are specified to behave.
-  const rentalCheckKey = items.map(r => `${r.product_id||''}|${r.rental_start_date||''}|${r.rental_end_date||''}|${r.order_number||''}`).join(';;');
+  const rentalCheckKey = items.map(r => `${r.product_id||''}|${r.rental_start_date||''}|${r.rental_end_date||''}|${r.order_number||''}`).join(';;') + '#' + (linkedOrderRef||'');
   useEffect(() => {
     if (!rentalModeOn) return;
     console.log('[RentalAvailability] Effect firing with key:', rentalCheckKey);
@@ -740,7 +740,7 @@ function RetailLineItems({ items, setItems, products, taxRegime, page, headerDis
       }
       console.log('[RentalAvailability] Scheduling check for row', idx, ':', { product_id: row.product_id, start: row.rental_start_date, end: row.rental_end_date, excludeOrderNumber: row.order_number });
       timers.push(setTimeout(async () => {
-        const { conflict, withOrder, unresolved } = await checkRentalConflict(row.product_id, row.rental_start_date, row.rental_end_date, row.order_number || undefined);
+        const { conflict, withOrder, unresolved } = await checkRentalConflict(row.product_id, row.rental_start_date, row.rental_end_date, [row.order_number, page === 'retailInvoices' ? linkedOrderRef : ''].filter(Boolean) as string[]);
         // A cleanup from a newer run of this same effect has already fired
         // by the time we get here if this check has been superseded -
         // discard the result rather than apply it.
@@ -1208,8 +1208,8 @@ function buildRetailPrintHTML(t, record, items, products, customFieldsMeta = [])
   // record.id = invoice_number (set by fetchRetailInvoices mapping)
   // record.displayNumber = raw integer from display_number column
   // Prefer formatted displayNumber, fall back to record.id (which is already the invoice_number string)
-  const invNum = record.displayNumber
-    ? 'RINV-' + String(record.displayNumber).padStart(5, '0')
+  const invNum = (record.displayNumber ?? record.display_number)
+    ? 'RINV-' + String((record.displayNumber ?? record.display_number)).padStart(5, '0')
     : (record.id || record.invoice_number || '');
 
   return `<!DOCTYPE html><html><head><meta charset="UTF-8"/>
@@ -1506,9 +1506,19 @@ function RetailCustomer360({ customer, onNavigate, onOpenCreate }) {
   }, [customer?.id]);
 
   const fmt          = n => formatCurrency(n || 0);
-  const totalSpent   = data.invoices.reduce((s, i) => s + (i.amount || 0), 0);
-  const paidInvoices = data.invoices.filter(i => i.payment_status === 'Paid' || i.status === 'Paid').length;
-  const openActs     = data.activities.filter(a => a.status === 'Open' || a.status === 'In Progress').length;
+  // Figures follow what the record states actually mean: a cancelled / void / draft document is not revenue,
+  // and an activity is "open" until it reaches a closing status (tenant-defined status names are matched by meaning).
+  const DEAD   = /^(cancel|void|reject|expire|refund)/i;
+  const DONE   = /^(complete|closed|done|resolved|cancel|skipped|lost)/i;
+  const live   = (r) => !DEAD.test(String(r.status || '')) && String(r.status || '') !== 'Draft';
+  const billed = data.invoices.filter(live);
+  const totalSpent   = billed.reduce((s, i) => s + (Number(i.amount) || 0), 0);
+  const paidInvoices = billed.filter(i => i.payment_status === 'Paid' || i.status === 'Paid').length;
+  const dueAmount    = billed.filter(i => !(i.payment_status === 'Paid' || i.status === 'Paid')).reduce((s, i) => s + (Number(i.amount) || 0), 0);
+  const openActs     = data.activities.filter(a => !DONE.test(String(a.status || ''))).length;
+  const liveOrders   = data.orders.filter(o => !DEAD.test(String(o.status || '')));
+  const rbac360      = useRbac();
+  const dShow        = (v) => (v ? formatDate(v) : '-');
 
   // Tab names follow tenant renames; tabs the role cannot view are dropped
   const TABS = [
@@ -1517,8 +1527,9 @@ function RetailCustomer360({ customer, onNavigate, onOpenCreate }) {
     { k: 'activities', pg: 'retailActivities', icon: '📅', label: getObjectLabel('retailActivities', 'Activities', 'plural'), count: data.activities.length },
   ].filter(t => can360(t.pg));
 
-  const SP = ({ status }) => (
-    <span className={`px-2.5 py-0.5 rounded-full text-xs font-semibold ${getStatusColor(status)}`}>{status || '-'}</span>
+  // Status pill: the tenant's own status colour (Page Layout Designer -> Status Values) first, then the built-in look.
+  const SP = ({ status, pg }) => (
+    <span className={`px-2.5 py-0.5 rounded-full text-xs font-semibold ${overrideStatusColor(status, pg) || getStatusColor(status)}`}>{status || '-'}</span>
   );
 
   const orderCols = [
@@ -1526,11 +1537,11 @@ function RetailCustomer360({ customer, onNavigate, onOpenCreate }) {
       const num = r.display_number ? formatDisplayNumber(PAGE_DISPLAY_PREFIX.retailOrders || 'RORD', r.display_number) : r.order_number || '-';
       return <span className="font-mono text-xs text-blue-600 font-bold">{num}</span>;
     }},
-    { h: 'Date',      v: r => (<span className="text-gray-600">{r.order_date || r.created_at?.slice(0, 10) || '-'}</span>) },
+    { h: 'Date',      v: r => (<span className="text-gray-600">{dShow(r.order_date || r.created_at)}</span>) },
     { h: 'Channel',   v: r => (<span className="text-gray-600">{r.channel || '-'}</span>) },
     { h: 'Payment',   v: r => (<span className="text-gray-600">{r.payment_method || '-'}</span>) },
     { h: 'Pay Status',v: r => (<SP status={r.payment_status}/>) },
-    { h: 'Status',    v: r => (<SP status={r.status}/>) },
+    { h: 'Status',    v: r => (<SP status={r.status} pg="retailOrders"/>) },
     { h: 'Amount',    v: r => (<span className="font-bold text-[#0F172A]">{fmt(r.amount)}</span>) },
   ];
 
@@ -1539,11 +1550,11 @@ function RetailCustomer360({ customer, onNavigate, onOpenCreate }) {
       const num = r.display_number ? formatDisplayNumber(PAGE_DISPLAY_PREFIX.retailInvoices || 'RINV', r.display_number) : r.invoice_number || '-';
       return <span className="font-mono text-xs text-purple-600 font-bold">{num}</span>;
     }},
-    { h: 'Date',       v: r => (<span className="text-gray-600">{r.invoice_date || r.created_at?.slice(0, 10) || '-'}</span>) },
-    { h: 'Due Date',   v: r => (<span className="text-gray-600">{r.due_date || '-'}</span>) },
+    { h: 'Date',       v: r => (<span className="text-gray-600">{dShow(r.invoice_date || r.created_at)}</span>) },
+    { h: 'Due Date',   v: r => (<span className="text-gray-600">{dShow(r.due_date)}</span>) },
     { h: 'Payment',    v: r => (<span className="text-gray-600">{r.payment_method || '-'}</span>) },
     { h: 'Pay Status', v: r => (<SP status={r.payment_status}/>) },
-    { h: 'Status',     v: r => (<SP status={r.status}/>) },
+    { h: 'Status',     v: r => (<SP status={r.status} pg="retailInvoices"/>) },
     { h: 'Tax',        v: r => (<span className="text-gray-600">{fmt(r.total_tax)}</span>) },
     { h: 'Amount',     v: r => (<span className="font-bold text-[#0F172A]">{fmt(r.amount)}</span>) },
   ];
@@ -1553,18 +1564,18 @@ function RetailCustomer360({ customer, onNavigate, onOpenCreate }) {
   const activityCols = [
     { h: 'Subject',  v: r => (<span className="font-semibold text-[#0F172A]">{r.subject}</span>) },
     { h: 'Type',     v: r => (<span className="text-gray-600">{typeIcon(r.activity_type)} {r.activity_type || '-'}</span>) },
-    { h: 'Date',     v: r => (<span className="text-gray-600">{r.activity_date || r.created_at?.slice(0, 10) || '-'}</span>) },
-    { h: 'Due Date', v: r => (<span className="text-gray-600">{r.due_date || '-'}</span>) },
+    { h: 'Date',     v: r => (<span className="text-gray-600">{dShow(r.activity_date || r.created_at)}</span>) },
+    { h: 'Due Date', v: r => (<span className="text-gray-600">{dShow(r.due_date)}</span>) },
     { h: 'Priority', v: r => (<span className={`text-xs font-semibold ${r.priority === 'High' || r.priority === 'Critical' ? 'text-red-600' : r.priority === 'Medium' ? 'text-amber-600' : 'text-gray-400'}`}>{r.priority || '-'}</span>) },
     { h: 'Owner',    v: r => (<span className="text-gray-600">{r.owner || '-'}</span>) },
-    { h: 'Status',   v: r => (<SP status={r.status}/>) },
+    { h: 'Status',   v: r => (<SP status={r.status} pg="retailActivities"/>) },
   ];
 
   const kpis = [
-    { l: 'Total Orders',    v: data.orders.length,               icon: '🛍️', bg: 'bg-blue-50',   border: 'border-blue-200',   text: 'text-blue-700' },
-    { l: 'Total Spent',     v: fmt(totalSpent),                  icon: '💰', bg: 'bg-green-50',  border: 'border-green-200',  text: 'text-green-700' },
-    { l: 'Paid Invoices',   v: paidInvoices + '/' + data.invoices.length, icon: '🧾', bg: 'bg-purple-50', border: 'border-purple-200', text: 'text-purple-700' },
-    { l: 'Open Activities', v: openActs,                         icon: '📅', bg: 'bg-amber-50',  border: 'border-amber-200',  text: 'text-amber-700' },
+    { l: getObjectLabel('retailOrders', 'Orders', 'plural'),   v: liveOrders.length,  sub: data.orders.length !== liveOrders.length ? `${data.orders.length - liveOrders.length} cancelled` : '', k: 'var(--rw-accent)' },
+    { l: 'Total Billed',    v: fmt(totalSpent),                       sub: `${billed.length} invoice${billed.length === 1 ? '' : 's'}`, k: 'var(--rw-teal)' },
+    { l: 'Paid Invoices',   v: paidInvoices + '/' + billed.length,    sub: dueAmount > 0 ? `${fmt(dueAmount)} outstanding` : (billed.length ? 'All settled' : ''), k: 'var(--rw-gold)' },
+    { l: 'Open Activities', v: openActs,                              sub: data.activities.length ? `of ${data.activities.length}` : '', k: '#C9BFD6' },
   ];
 
   const effTab = TABS.find(t => t.k === tab) ? tab : (TABS[0]?.k || 'orders');
@@ -1592,52 +1603,42 @@ function RetailCustomer360({ customer, onNavigate, onOpenCreate }) {
 
   return (
     <div className="space-y-5">
-      {/* Quick Actions */}
-      <div className="flex gap-2 flex-wrap">
-        <button onClick={()=>handleCreateFor('order')} className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-white px-3 py-2 rounded-xl text-xs font-bold shadow-sm">🛒 {RL('New Order')}</button>
-        <button onClick={()=>handleCreateFor('invoice')} className="flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-2 rounded-xl text-xs font-bold shadow-sm">🧾 {RL('New Invoice')}</button>
-        <button onClick={()=>handleCreateFor('activity')} className="flex items-center gap-1.5 bg-green-600 hover:bg-green-700 text-white px-3 py-2 rounded-xl text-xs font-bold shadow-sm">📅 {RL('New Activity')}</button>
+      {/* Quick Actions - only what this role may create */}
+      <div className="rw360-actions">
+        {rbac360.can('retailOrders', 'create')     && <button onClick={()=>handleCreateFor('order')} className="rw360-btn primary">🛒 {RL('New Order')}</button>}
+        {rbac360.can('retailInvoices', 'create')   && <button onClick={()=>handleCreateFor('invoice')} className="rw360-btn">🧾 {RL('New Invoice')}</button>}
+        {rbac360.can('retailActivities', 'create') && <button onClick={()=>handleCreateFor('activity')} className="rw360-btn">📅 {RL('New Activity')}</button>}
       </div>
       {/* KPI row */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+      <div className="rw360-kpis">
         {kpis.map(k => (
-          <div key={k.l} className={`rounded-[20px] border ${k.bg} ${k.border} p-4`}>
-            <div className="text-2xl mb-2">{k.icon}</div>
-            <div className={`text-xl font-bold ${k.text}`}>{k.v}</div>
-            <div className="text-xs text-gray-500 font-semibold uppercase tracking-wider mt-0.5">{k.l}</div>
+          <div key={k.l} className="rw360-kpi" style={{ '--k': k.k } as any}>
+            <div className="l">{k.l}</div>
+            <div className="v">{k.v}</div>
+            {k.sub ? <div className="s">{k.sub}</div> : null}
           </div>
         ))}
       </div>
 
       {/* Loyalty card */}
       {(customer.loyalty_points > 0 || customer.loyalty_tier) && (
-        <div className="bg-gradient-to-r from-[#0F172A] to-blue-900 rounded-[20px] p-5 text-white flex items-center gap-5">
-          <div className="text-4xl">🎁</div>
-          <div className="flex-1">
-            <div className="font-bold text-lg">{customer.loyalty_tier || 'Standard'} Member</div>
-            <div className="text-blue-200 text-sm mt-0.5">{customer.name}</div>
+        <div className="rw360-loyal">
+          <div style={{ fontSize: 30 }}>🎁</div>
+          <div>
+            <div className="t">{customer.loyalty_tier || 'Standard'} Member</div>
+            <div className="m">{customer.name}</div>
           </div>
-          <div className="text-right">
-            <div className="text-3xl font-black">{customer.loyalty_points || 0}</div>
-            <div className="text-blue-300 text-xs uppercase tracking-wider">Loyalty Points</div>
-          </div>
+          <div className="pts"><b>{customer.loyalty_points || 0}</b><span>Loyalty Points</span></div>
         </div>
       )}
 
       {/* Sub-tabs */}
-      <div className="flex flex-wrap gap-2">
+      <div className="rw360-tabs" role="tablist">
         {TABS.map(tb => (
-          <button key={tb.k} onClick={() => setTab(tb.k)}
-            className={`flex items-center gap-2 px-4 py-2.5 rounded-2xl text-sm font-semibold transition-all ${
-              tab === tb.k
-                ? 'bg-gradient-to-r from-[#0F172A] to-blue-800 text-white shadow-lg'
-                : 'bg-white text-gray-600 border border-gray-200 hover:border-blue-400 hover:text-blue-700'
-            }`}>
+          <button key={tb.k} role="tab" aria-selected={effTab === tb.k} onClick={() => setTab(tb.k)}>
             <span>{tb.icon}</span>
             <span>{tb.label}</span>
-            <span className={`text-xs px-2 py-0.5 rounded-full font-bold ${tab === tb.k ? 'bg-white/20 text-white' : 'bg-gray-100 text-gray-500'}`}>
-              {tb.count}
-            </span>
+            <span className="rw360-count">{tb.count}</span>
           </button>
         ))}
       </div>
@@ -2275,16 +2276,16 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo, on
           <div>
             <div className="flex items-center gap-2">
               <NavIcon iconKey={page} className="w-5 h-5 text-white"/>
-              <h2 className="text-white text-xl font-bold">{edited.name || edited.subject || (record.displayNumber ? `${cfg.singular || ""} ${formatDisplayNumber(PAGE_DISPLAY_PREFIX[page]||"REC", record.displayNumber)}`.trim() : edited[cfg.idField])}</h2>
+              <h2 className="text-white text-xl font-bold">{edited.name || edited.subject || ((record.displayNumber ?? record.display_number ?? edited.display_number) ? `${cfg.singular || ""} ${formatDisplayNumber(PAGE_DISPLAY_PREFIX[page]||"REC", (record.displayNumber ?? record.display_number ?? edited.display_number))}`.trim() : edited[cfg.idField])}</h2>
               <span className={`px-2.5 py-0.5 rounded-full text-xs font-semibold ${getStatusColor(edited.status)}`}>{edited.status}</span>
             </div>
             <p className="text-blue-300 text-xs mt-1 flex items-center gap-2">
-              {record.displayNumber && (
+              {(record.displayNumber ?? record.display_number ?? edited.display_number) && (
                 <span className="bg-blue-600 text-white font-mono font-bold px-2.5 py-0.5 rounded-full text-xs tracking-wider">
-                  {formatDisplayNumber(PAGE_DISPLAY_PREFIX[page]||'REC', record.displayNumber)}
+                  {formatDisplayNumber(PAGE_DISPLAY_PREFIX[page]||'REC', (record.displayNumber ?? record.display_number ?? edited.display_number))}
                 </span>
               )}
-              {!record.displayNumber && <span className="font-mono opacity-60">{edited[cfg.idField]}</span>}
+              {!(record.displayNumber ?? record.display_number ?? edited.display_number) && <span className="font-mono opacity-60">{edited[cfg.idField]}</span>}
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -2599,12 +2600,12 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo, on
 
         {/* Tab bar — only for retailCustomers */}
         {page === 'retailCustomers' && (
-          <div className="rw-tabs flex bg-slate-800 border-b border-slate-700 px-6 flex-shrink-0">
+          <div className="rw-tabs flex bg-slate-800 border-b border-slate-700 px-6 flex-shrink-0" role="tablist">
             {[
               {k:'details', l:'📋 Details'},
               {k:'360',     l:`🔄 ${getObjectLabel('retailCustomers', 'Customer', 'singular')} 360`},
             ].map(tb => (
-              <button key={tb.k} onClick={()=>setActiveTab(tb.k)}
+              <button key={tb.k} role="tab" aria-selected={activeTab===tb.k} onClick={()=>setActiveTab(tb.k)}
                 className={`px-5 py-3 text-sm font-semibold border-b-2 transition-all ${
                   activeTab===tb.k
                     ? 'border-blue-400 text-white'
@@ -2794,7 +2795,7 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo, on
           {cfg.hasLineItems && (
             loadingLI
               ? <div className="bg-white rounded-[20px] border border-blue-100 shadow p-8 text-center text-gray-400">Loading line items...</div>
-              : <RetailLineItems items={items} setItems={setItems} products={retailProducts} taxRegime={taxRegime} page={page} headerDiscountPct={edited.header_discount_pct} onHeaderDiscountChange={v=>set('header_discount_pct',v)}/>
+              : <RetailLineItems items={items} setItems={setItems} products={retailProducts} taxRegime={taxRegime} page={page} headerDiscountPct={edited.header_discount_pct} onHeaderDiscountChange={v=>set('header_discount_pct',v)} linkedOrderRef={edited.order_number || ''}/>
           )}
 
           {/* System Information */}
@@ -3023,6 +3024,14 @@ export function RetailCreateModal({ page, open, onClose, onCreated, prefill = nu
   ];
   useTemplateDefaults({
     open, templates: _tpl.templates, fields: _tplFields, user: currentUser,
+    // {{Customer}} reads as the customer's name even when the field holds the customer record id
+    display: (key, val, f) => {
+      if (f?.type === 'retailCustomer' || key === 'customer_id') {
+        const c = (retailCustomers || []).find(x => x._uuid === val || x.id === val);
+        return c?.name || (key === 'customer_id' ? form.customer : undefined) || undefined;
+      }
+      return undefined;
+    },
     values: { ...form, ...(form.custom_data || {}) },
     onPatch: (patch) => setForm(f => {
       const n = { ...f }; const cd = { ...(f.custom_data || {}) };
@@ -3297,7 +3306,7 @@ export function RetailCreateModal({ page, open, onClose, onCreated, prefill = nu
           {showLines && (
             <div className="mt-5">
               <RetailLineItems items={items} setItems={setItems} products={retailProducts} taxRegime={taxRegime} page={page} scope="create"
-                headerDiscountPct={form.header_discount_pct} onHeaderDiscountChange={v => s('header_discount_pct', v)} />
+                headerDiscountPct={form.header_discount_pct} onHeaderDiscountChange={v => s('header_discount_pct', v)} linkedOrderRef={form.order_number || ''} />
             </div>
           )}
         </div>
@@ -3571,6 +3580,25 @@ function RetailBoardView({ page, cfg, records, onCardClick, updateRetailRecord }
 // lives in a separate map inside AppContext.tsx (RETAIL_TABLE_MAP) that
 // isn't exported. This is the same table names, just accessible from here
 // for the server-side query.
+// Real database columns per retail table. A list-field key that is NOT a column (synthetic keys such as
+// customer_name_resolved, or a field kept in custom_data) must be mapped before it is used in a query -
+// otherwise the filter/sort asks PostgREST for a column that doesn't exist and the list never narrows.
+const RETAIL_DB_COLS = {
+  retailCustomers: 'id,customer_number,name,phone,email,date_of_birth,gender,address_line1,address_line2,city,state,postal_code,country,loyalty_points,loyalty_tier,preferred_contact,marketing_opt_in,notes,comments,status,owner,owner_id,owner_name,organization_id,business_unit_id,created_by,created_at,updated_by,updated_at,display_number',
+  retailProducts: 'id,product_number,name,category,brand,sku,barcode,unit,price,cost,mrp,stock_quantity,reorder_level,description,hsn_code,gst_rate,taxable,tax_category,vat_rate,tax_rate,status,owner,owner_id,owner_name,comments,organization_id,business_unit_id,created_by,created_at,updated_by,updated_at,display_number,is_rentable,rent_per_day,rental_pricing_basis',
+  retailActivities: 'id,activity_number,subject,activity_type,customer,customer_id,activity_date,due_date,priority,status,description,notes,comments,owner,owner_id,owner_name,organization_id,business_unit_id,created_by,created_at,updated_by,updated_at,display_number,customer_phone,related_order_number',
+  retailOrders: 'id,order_number,customer,customer_id,customer_phone,order_date,channel,payment_method,payment_status,delivery_method,delivery_address,delivery_date,currency,subtotal,total_discount,total_tax,shipping_cost,amount,place_of_supply,gstin,tax_state,resale_certificate,vat_registration_number,tax_registration_number,status,notes,comments,owner,owner_id,owner_name,organization_id,business_unit_id,created_by,created_at,updated_by,updated_at,display_number,header_discount_pct,header_discount_amount',
+  retailInvoices: 'id,invoice_number,order_number,customer,customer_id,customer_phone,invoice_date,due_date,currency,subtotal,total_discount,total_tax,shipping_cost,amount,payment_method,payment_status,place_of_supply,gstin,tax_state,resale_certificate,vat_registration_number,tax_registration_number,status,notes,comments,owner,owner_id,owner_name,organization_id,business_unit_id,created_by,created_at,updated_by,updated_at,display_number,invoice_template_id,header_discount_pct,header_discount_amount,billing_address',
+};
+const RETAIL_DB_COLSETS = Object.fromEntries(Object.entries(RETAIL_DB_COLS).map(([k, v]) => [k, new Set(String(v).split(','))]));
+const RETAIL_COL_ALIAS = { customer_name_resolved: 'customer', customer_gstin: 'gstin' };
+const retailCol = (page, key) => {
+  if (!key) return key;
+  if (String(key).includes('->')) return key;                       // already a jsonb path (custom fields)
+  const k = RETAIL_COL_ALIAS[key] || key;
+  return RETAIL_DB_COLSETS[page]?.has(k) ? k : `custom_data->>${k}`;
+};
+
 const RETAIL_TABLE_NAME = {
   retailCustomers: 'retail_customers', retailProducts: 'retail_products',
   retailActivities: 'retail_activities', retailOrders: 'retail_orders',
@@ -3769,7 +3797,7 @@ export default function RetailListPage({ page }) {
     let cancelled = false;
     setServerLoading(true);
     const { from: dateFrom, to: dateTo } = timePeriodToRange(timePeriod);
-    const { adv: mappedAdvFilters, lineFilters } = splitAdvFilters(advFilters, (f) => f);
+    const { adv: mappedAdvFilters, lineFilters } = splitAdvFilters(advFilters, (f) => retailCol(page, f));
     fetchServerPage(supabase, {
       table: RETAIL_TABLE_NAME[page],
       searchTerm: debouncedSearch,
@@ -3782,7 +3810,7 @@ export default function RetailListPage({ page }) {
       dateColumn: dateFieldForPage,
       dateFrom, dateTo,
       advFilters: mappedAdvFilters, lineFilters,
-      sortColumn: sortField || 'created_at',
+      sortColumn: sortField ? retailCol(page, sortField) : 'created_at',
       sortAscending: sortDir === 'asc',
       page: currentPage,
       pageSize,
@@ -3894,7 +3922,7 @@ export default function RetailListPage({ page }) {
     let cancelled = false;
     setBoardLoading(true);
     const { from: dateFrom, to: dateTo } = timePeriodToRange(timePeriod);
-    const { adv: mappedAdvFilters, lineFilters } = splitAdvFilters(advFilters, (f) => f);
+    const { adv: mappedAdvFilters, lineFilters } = splitAdvFilters(advFilters, (f) => retailCol(page, f));
     fetchServerPage(supabase, {
       table: RETAIL_TABLE_NAME[page],
       searchTerm: debouncedSearch,

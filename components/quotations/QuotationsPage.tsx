@@ -544,7 +544,7 @@ function QuotationDetail({ quote, onClose, onSaved }) {
           <div className="rw-header bg-gradient-to-r from-[#0F172A] to-blue-900 px-8 py-5 text-white flex items-center justify-between flex-shrink-0">
             <div>
               <div className="flex items-center gap-3 flex-wrap">
-                <h2 className="text-2xl font-bold">{form.name || (form.display_number ? formatDisplayNumber('QUO', form.display_number) : 'Untitled Quotation')}</h2>
+                <h2 className="text-2xl font-bold">{form.name || ((form.display_number||form.displayNumber) ? formatDisplayNumber('QUO', form.display_number||form.displayNumber) : 'Untitled Quotation')}</h2>
                 {/* Coloured status badge — NOT a button */}
                 <span className={`flex items-center gap-1.5 px-4 py-1.5 rounded-full text-sm font-bold border-2 ${statusMeta.color}`}>
                   <span>{statusMeta.icon}</span>{statusMeta.label}
@@ -563,7 +563,7 @@ function QuotationDetail({ quote, onClose, onSaved }) {
               </div>
               <p className="text-blue-300 text-sm mt-1 flex items-center gap-2 flex-wrap">
                 <span className="bg-blue-600 text-white font-mono font-bold px-3 py-0.5 rounded-full text-xs tracking-wider shadow-sm">
-                  {form.displayNumber ? formatDisplayNumber('QUO', form.displayNumber) : form.quote_number}
+                  {(form.displayNumber||form.display_number) ? formatDisplayNumber('QUO', form.displayNumber||form.display_number) : form.quote_number}
                 </span>
                 <span className="text-blue-300">{form.customer || 'Quotation'}</span>
               </p>

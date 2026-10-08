@@ -249,22 +249,16 @@ function Base360({ record, recordType, sections, onSubRecordOpen, onCreateFor })
   return (
     <div className="space-y-4">
       {/* Tab bar */}
-      <div className="flex flex-wrap gap-2">
+      <div className="rw360-tabs" role="tablist">
         {Object.entries(sections).map(([k, s]: [string, any]) => (
-          <button key={k} onClick={() => setTab(k)}
-            className={`flex items-center gap-2 px-4 py-2 rounded-2xl text-sm font-semibold transition-all ${tab===k ? 'bg-gradient-to-r from-[#0F172A] to-blue-800 text-white shadow-lg' : 'bg-white border border-blue-100 text-[#0F172A] hover:border-blue-300'}`}>
+          <button key={k} role="tab" aria-selected={tab===k} onClick={() => setTab(k)}>
             <span>{s.icon}</span>
             <span>{s.label}</span>
-            {s.data !== undefined && (
-              <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${tab===k ? 'bg-white/20 text-white' : 'bg-blue-100 text-blue-700'}`}>
-                {s.data.length}
-              </span>
-            )}
+            {s.data !== undefined && <span className="rw360-count">{s.data.length}</span>}
           </button>
         ))}
         {/* Team tab always last */}
-        <button onClick={() => setTab('team')}
-          className={`flex items-center gap-2 px-4 py-2 rounded-2xl text-sm font-semibold transition-all ${tab==='team' ? 'bg-gradient-to-r from-[#0F172A] to-blue-800 text-white shadow-lg' : 'bg-white border border-blue-100 text-[#0F172A] hover:border-blue-300'}`}>
+        <button role="tab" aria-selected={tab==='team'} onClick={() => setTab('team')}>
           <span>👥</span> <span>Team</span>
         </button>
       </div>

@@ -73,8 +73,18 @@ function applySecurityScope(q, security) {
 
 // One advanced-filter condition -> PostgREST filter. `column` may be a jsonb path such as
 // "custom_data->>api_name" (custom fields live in custom_data on every object).
+const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
+const dayAfterISO = (d) => { const t = new Date(d + 'T00:00:00'); t.setDate(t.getDate() + 1); return t.getFullYear() + '-' + String(t.getMonth() + 1).padStart(2, '0') + '-' + String(t.getDate()).padStart(2, '0'); };
+// A picked calendar day against a timestamp column ("created_at on 8 Oct") must cover the whole day in the
+// USER's timezone; against a plain date / jsonb text value it is a simple string range.
+const dayBound = (column, d) => (/_at$|^datetime_/.test(String(column)) ? new Date(d + 'T00:00:00').toISOString() : d);
 function applyCond(q, f) {
   if (!f || !f.column) return q;
+  if (ISO_DAY.test(String(f.value ?? ''))) {
+    if (f.op === 'on')    return q.gte(f.column, dayBound(f.column, f.value)).lt(f.column, dayBound(f.column, dayAfterISO(f.value)));
+    if (f.op === 'after') return q.gte(f.column, dayBound(f.column, dayAfterISO(f.value)));
+    if (f.op === 'before') return q.lt(f.column, dayBound(f.column, f.value));
+  }
   switch (f.op) {
     case 'contains':       return q.ilike(f.column, `%${String(f.value ?? '').replace(/[%,]/g,'')}%`);
     case 'equals':         return q.eq(f.column, f.value);

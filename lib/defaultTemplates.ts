@@ -91,7 +91,13 @@ function resolveToken(body: string, ctx: TemplateCtx, idx: Map<string, TemplateF
     let t: string;
     if (Array.isArray(v)) t = v.join(', ');
     else if (f.type === 'checkbox' || f.type === 'boolean' || typeof v === 'boolean') t = (v === true || v === 'true') ? 'Yes' : 'No';
-    else if (f.type === 'lookup' || f.type === 'reference') t = ctx.display?.(f.key, v, f) ?? String(v);
+    else if (f.type === 'lookup' || f.type === 'reference' || f.type === 'retailCustomer') {
+      // A lookup stores the related record's ID. Never print that: use the resolved name, and if the
+      // name isn't known yet (option list still loading) leave it blank - the template re-renders the
+      // moment the name resolves (see the display signature in useTemplateDefaults).
+      const d = ctx.display?.(f.key, v, f);
+      t = d !== undefined && d !== null ? String(d) : '';
+    }
     else if (f.type === 'date') t = formatDateTpl(v);
     else if (isNumType(f.type || '')) { const n = Number(v); t = Number.isNaN(n) ? String(v) : n.toLocaleString(undefined, { maximumFractionDigits: 2 }); }
     else t = ctx.display?.(f.key, v, f) ?? String(v);
@@ -267,7 +273,16 @@ export function useTemplateDefaults({ open, templates, fields, values, onPatch, 
   const targets = Object.keys(templates || {});
   const watch = new Set<string>(targets);
   targets.forEach(k => templateRefs(templates[k].raw, fields).forEach(r => watch.add(r)));
-  const sig = JSON.stringify([...watch].map(k => values?.[k] ?? null)) + '|' + targets.map(k => templates[k].raw).join('¦');
+  // Include the RESOLVED name of every referenced lookup so the text is rebuilt when the option list finishes
+  // loading (the stored value - an id - doesn't change at that moment).
+  const dispSig = display ? [...watch].map(k => {
+    const f = (fields || []).find(x => x.key === k);
+    if (!f || !['lookup', 'reference', 'retailCustomer'].includes(String(f.type))) return '';
+    const v = values?.[k];
+    if (v === undefined || v === null || v === '') return '';
+    try { return String(display(k, v, f) ?? ''); } catch { return ''; }
+  }).join('¦') : '';
+  const sig = JSON.stringify([...watch].map(k => values?.[k] ?? null)) + '|' + targets.map(k => templates[k].raw).join('¦') + '|' + dispSig;
 
   useEffect(() => {
     if (!open || !armed || !targets.length) return;

@@ -812,6 +812,15 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     return count || 0;
   };
 
+  // Standard line-item columns that must always travel with a line when a record is converted
+  // (Quotation -> Order -> Invoice etc.). Only keys the source row actually has are copied, so it is
+  // safe for every source table. Admin-defined Copy Maps are applied AFTER this and can override it.
+  const carryLineStd = (i: any) => {
+    const o: any = {};
+    for (const k of ['product_id','hsn_code','gst_rate','taxable','sales_tax_rate','vat_rate','configuration','custom_data']) if (i?.[k] !== undefined) o[k] = i[k];
+    return o;
+  };
+
   const fetchLineItems = async (table: string, field: string, id: string): Promise<LineItem[]> => {
     if (!supabase) return [];
     const { data } = await tScope(supabase.from(table).select('*')).eq(field, id);
@@ -968,7 +977,8 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
   // default (Pending/Confirmed/Completed) if never explicitly configured.
   const isRentalBlockingStatus = (status: string): boolean => {
     const configured = appPreferences?.rental_blocking_statuses;
-    const list = Array.isArray(configured) && configured.length ? configured : ['Draft','Pending','Completed'];
+    // An explicitly EMPTY list means "no status holds a booking" - only a missing setting falls back.
+    const list = Array.isArray(configured) ? configured : ['Draft','Pending','Completed'];
     return list.includes(status);
   };
 
@@ -997,7 +1007,7 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
   // the common case (no race, just an honest scheduling conflict) fail with
   // a helpful message instead of a raw constraint-violation error string.
   const checkRentalConflict = async (
-    productId: string, startDate: string, endDate: string, excludeOrderNumber?: string
+    productId: string, startDate: string, endDate: string, excludeOrderNumberIn?: string | string[]
   ): Promise<{ conflict: boolean; withOrder?: string; unresolved?: boolean }> => {
     if (!supabase || !productId || !startDate || !endDate) return { conflict: false };
     // Never run this query unscoped across tenants — on the shared DB that
@@ -1016,6 +1026,18 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
       console.error('[checkRentalConflict] Tenant context never resolved — refusing to check availability unscoped');
       return { conflict: true, unresolved: true };
     }
+    // Orders to ignore (the booking this very record belongs to). Accepts the raw order_number OR the
+    // display number (RORD-00123) - an invoice only stores the display form of the order it came from.
+    const excl = new Set<string>((Array.isArray(excludeOrderNumberIn) ? excludeOrderNumberIn : [excludeOrderNumberIn]).filter(Boolean) as string[]);
+    for (const ref of Array.from(excl)) {
+      const m = /^RORD-(\d{1,8})$/.exec(ref);
+      if (!m) continue;
+      try {
+        const { data: o } = await supabase.from('retail_orders').select('order_number').eq('tenant_id', tid).eq('display_number', Number(m[1])).maybeSingle();
+        if (o?.order_number) excl.add(o.order_number);
+      } catch (e) { /* ignore - falls back to the ref as given */ }
+    }
+    const excludeOrderNumber = excl.size ? Array.from(excl) : undefined;
     console.log('[checkRentalConflict] Querying:', { productId, startDate, endDate, excludeOrderNumber, tenantId: tid });
     let q = supabase.from('retail_order_line_items')
       .select('order_number, rental_start_date, rental_end_date')
@@ -1025,13 +1047,13 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
       .lte('rental_start_date', endDate)
       .gte('rental_end_date', startDate)
       .limit(5);
-    if (excludeOrderNumber) q = (q as any).neq('order_number', excludeOrderNumber);
+    if (excludeOrderNumber) q = (q as any).not('order_number', 'in', `(${excludeOrderNumber.map(x => '"' + String(x).replace(/"/g, '') + '"').join(',')})`);
     const { data, error } = await q;
     console.log('[checkRentalConflict] Result:', { data, error: error?.message, excludeOrderNumberWasApplied: !!excludeOrderNumber });
     if (error) { console.error('[checkRentalConflict]', error.message); return { conflict: true, unresolved: true }; }
     if (data && data.length) {
       const rawOrderNumber = data[0].order_number;
-      console.log('[checkRentalConflict] Matched row:', data[0], '- excludeOrderNumber was:', excludeOrderNumber, '- matched row order_number === excludeOrderNumber?', rawOrderNumber === excludeOrderNumber);
+      console.log('[checkRentalConflict] Matched row:', data[0], '- excluded:', excludeOrderNumber);
       // Show the clean display number (e.g. RORD-00042), not the raw
       // timestamp-based order_number — matching how every other part of
       // this app identifies a record to the user.
@@ -1157,6 +1179,15 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     // see the matching comment in createRetailRecord/updateRetailRecord for
     // why status must never gate whether to check against existing bookings.
     if (rentalFieldsOn && items && items.length) {
+      // The order's own booking is never a "conflict" for the invoice raised from it (that is
+      // what silently dropped every invoice line when an Order was converted in rental mode).
+      const excludeRefs: string[] = [id];
+      if (table === 'retail_invoice_line_items') {
+        try {
+          const { data: invRow } = await supabase.from('retail_invoices').select('order_number').eq('invoice_number', id).maybeSingle();
+          if (invRow?.order_number) excludeRefs.push(invRow.order_number);
+        } catch (e) { /* no linked order - nothing extra to exclude */ }
+      }
       for (const i of items) {
         if (!i.product_id || !i.rental_start_date || !i.rental_end_date) continue;
         // An invoice is normally written up after the rental already
@@ -1165,7 +1196,7 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
         // enforces "today or later".
         const dateError = validateRentalDateRange(i.rental_start_date, i.rental_end_date, true);
         if (dateError) return { error: { message: `"${i.product_name || 'This item'}": ${dateError}` } };
-        const { conflict, withOrder, unresolved } = await checkRentalConflict(i.product_id, i.rental_start_date, i.rental_end_date, id);
+        const { conflict, withOrder, unresolved } = await checkRentalConflict(i.product_id, i.rental_start_date, i.rental_end_date, excludeRefs);
         if (conflict) {
           return { error: { message: rentalConflictMessage(i.product_name, withOrder, unresolved) } };
         }
@@ -1322,7 +1353,7 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
         if (!i.product_id || !i.rental_start_date || !i.rental_end_date) continue;
         const dateError = validateRentalDateRange(i.rental_start_date, i.rental_end_date, page === 'retailInvoices');
         if (dateError) { showAlert(`"${i.product_name || 'This item'}": ${dateError}`, { variant:'warning', title:'Invalid Dates' }); return null; }
-        const { conflict, withOrder, unresolved } = await checkRentalConflict(i.product_id, i.rental_start_date, i.rental_end_date);
+        const { conflict, withOrder, unresolved } = await checkRentalConflict(i.product_id, i.rental_start_date, i.rental_end_date, page === 'retailInvoices' ? data.order_number : undefined);
         if (conflict) {
           showAlert(rentalConflictMessage(i.product_name, withOrder, unresolved), { variant:'danger', title:'Booking Conflict' });
           return null;
@@ -1354,7 +1385,7 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     }
     await runAutomations(page, newId, { ...data, id: newId }, 'on_create');
     await cfg.fetch();
-    return { ...inserted, id: inserted[cfg.idField], _uuid: inserted.id };
+    return { ...inserted, id: inserted[cfg.idField], _uuid: inserted.id, displayNumber: inserted.display_number };
     } catch (e: any) {
       console.error('[createRetailRecord]', e);
       showAlert('Save failed: ' + (e?.message || 'An unexpected error occurred.'));
@@ -1520,7 +1551,7 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     await supabase.from('retail_invoices').update({ order_number: orderLabel }).eq('invoice_number', invoice.id);
     await fetchRetailOrders();
     await fetchRetailInvoices();
-    return { ...inserted, id: inserted.order_number, _uuid: inserted.id, label: orderLabel };
+    return { ...inserted, id: inserted.order_number, _uuid: inserted.id, displayNumber: inserted.display_number, label: orderLabel };
   };
 
   const createRetailInvoiceFromOrder = async (order: any, silent = false) => {
@@ -1606,10 +1637,18 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     const mappedItems = cm.lines.length ? items.map((it: any) => applyFieldMapping(cm.lines, it, { ...it }, undefined, { db: true })) : items;
     const { data: inserted, error } = await insertWithCopyMaps(supabase, 'retail_invoices', payload, cmApplied);
     if (error) { showAlert('Failed to create invoice: ' + error.message); return null; }
-    if (mappedItems.length) await upsertRetailLineItems('retail_invoice_line_items', 'invoice_number', invId, mappedItems);
+    if (mappedItems.length) {
+      const { error: liErr } = await upsertRetailLineItems('retail_invoice_line_items', 'invoice_number', invId, mappedItems);
+      if (liErr) {
+        // Never leave a header-only invoice behind with its line items silently missing.
+        await supabase.from('retail_invoices').delete().eq('invoice_number', invId);
+        showAlert('Invoice not created - its line items could not be copied: ' + liErr.message, { variant:'danger', title:'Conversion failed' });
+        return null;
+      }
+    }
     await autoSetRetailCustomerStatus(order.customer_id, 'Active');
     await fetchRetailInvoices();
-    return { ...inserted, id: inserted.invoice_number, _uuid: inserted.id };
+    return { ...inserted, id: inserted.invoice_number, _uuid: inserted.id, displayNumber: inserted.display_number };
   };
 
 
@@ -2525,6 +2564,7 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
       tax_pct:      Number(i.tax_pct    || 0),
       extended_price: Number(i.quantity||1) * Number(i.price||0) * (1 - Number(i.discount||0)/100),
       sort_order:   idx,
+      ...carryLineStd(i),
     })));
     await logAudit({ recordType: 'opportunity', recordId: opportunity.id, recordName: opportunity.name, action: 'converted_to_order' });
     await autoSetCustomerStatus(opportunity.customerId, 'Active'); await fetchOrders();
@@ -2629,9 +2669,15 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
       tax_pct:        Number(i.tax_pct    || 0),
       extended_price: i.qtyNow * Number(i.price||0) * (1 - Number(i.discount||0)/100) * (1 + Number(i.tax_pct||0)/100),
       sort_order:     idx,
+      ...carryLineStd(i),
       custom_data:    i.custom_data || {},
     }));
-    await supabase.from('invoice_line_items').insert(cmI.lines.length ? invLineRows.map((row: any, k: number) => applyFieldMapping(cmI.lines, toInvoice[k], row, undefined, { db: true })) : invLineRows);
+    const { error: invLiErr } = await supabase.from('invoice_line_items').insert(cmI.lines.length ? invLineRows.map((row: any, k: number) => applyFieldMapping(cmI.lines, toInvoice[k], row, undefined, { db: true })) : invLineRows);
+    if (invLiErr) {
+      await supabase.from('invoices').delete().eq('invoice_number', id);
+      showAlert('Invoice not created - its line items could not be copied: ' + invLiErr.message, { variant:'danger', title:'Conversion failed' });
+      return null;
+    }
 
     // Update each order line item's running invoiced_qty.
     await Promise.all(toInvoice.map((i: any) =>
@@ -4489,7 +4535,7 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     if (error) console.error('fetchQuotations:', error);
     if (data) setQuotations(applyDataSecurity(data).map(q => ({ ...q, customerId: q.customer_id, displayNumber: q.display_number })));
   };
-  const createQuotation = async (data,items=[]) => { if(!supabase||!currentUser)return null; const qNum=generateId('QUO'); const{_uuid,id,customerId,displayNumber,contactId,activityType,activityDate,dueDate,closeDate,isPrimary,linkedIn,ownerName,...cleanData}=data; const{data:inserted,error}=await supabase.from('quotations').insert([{...buildSystemFields(),quote_number:qNum,...cleanData,status:cleanData.status||'Draft',version:1,owner:cleanData.owner||currentUser.email,owner_id:cleanData.owner_id||currentUser.id}]).select().single(); if(error){showAlert('Failed: '+error.message);return null;} if(items.length)await upsertLineItemsGeneric('quotation_line_items','quote_number',qNum,items); await autoSetCustomerStatus(data.customer_id, 'Prospect'); await runAutomations('quotations', qNum, inserted, 'on_create'); await fetchQuotations(); return {...inserted, customerId: inserted.customer_id}; };
+  const createQuotation = async (data,items=[]) => { if(!supabase||!currentUser)return null; const qNum=generateId('QUO'); const{_uuid,id,customerId,displayNumber,contactId,activityType,activityDate,dueDate,closeDate,isPrimary,linkedIn,ownerName,...cleanData}=data; const{data:inserted,error}=await supabase.from('quotations').insert([{...buildSystemFields(),quote_number:qNum,...cleanData,status:cleanData.status||'Draft',version:1,owner:cleanData.owner||currentUser.email,owner_id:cleanData.owner_id||currentUser.id}]).select().single(); if(error){showAlert('Failed: '+error.message);return null;} if(items.length)await upsertLineItemsGeneric('quotation_line_items','quote_number',qNum,items); await autoSetCustomerStatus(data.customer_id, 'Prospect'); await runAutomations('quotations', qNum, inserted, 'on_create'); await fetchQuotations(); return {...inserted, customerId: inserted.customer_id, displayNumber: inserted.display_number}; };
   const updateQuotation = async (data,items=[]) => {
     if(!supabase)return;
     const {
@@ -4526,9 +4572,9 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     // Copy Maps: Opportunity → Quotation
     const cmQ = await fetchConversionRules(supabase, 'opportunity_to_quotation'); const cmQApplied:string[]=[];
     applyFieldMapping(cmQ.header, opp, quoPayload, undefined, { db: true, applied: cmQApplied });
-    const{data:inserted,error}=await insertWithCopyMaps(supabase,'quotations',quoPayload,cmQApplied); if(error){showAlert('Failed: '+error.message);return null;} if(items.length)await supabase.from('quotation_line_items').insert(items.map((i,idx)=>({quote_number:qNum,product_name:i.product||i.product_name||'',product_id:i.product_id||null,quantity:Number(i.quantity||1),unit_price:Number(i.price||0),list_price:Number(i.list_price||i.price||0),discount_pct:Number(i.discount||i.discount_pct||0),tax_pct:Number(i.tax_pct||0),extended_price:Number(i.quantity||1)*Number(i.price||0)*(1-Number(i.discount||i.discount_pct||0)/100),sort_order:idx,configuration:i.configuration||{}}))); await autoSetCustomerStatus(opp.customerId, 'Prospect'); await supabase.from('opportunities').update({ status:'Negotiation', stage:'Negotiation', updated_at:new Date().toISOString() }).eq('opportunity_number', opp.id);
+    const{data:inserted,error}=await insertWithCopyMaps(supabase,'quotations',quoPayload,cmQApplied); if(error){showAlert('Failed: '+error.message);return null;} if(items.length)await supabase.from('quotation_line_items').insert(items.map((i,idx)=>({quote_number:qNum,product_name:i.product||i.product_name||'',product_id:i.product_id||null,quantity:Number(i.quantity||1),unit_price:Number(i.price||0),list_price:Number(i.list_price||i.price||0),discount_pct:Number(i.discount||i.discount_pct||0),tax_pct:Number(i.tax_pct||0),extended_price:Number(i.quantity||1)*Number(i.price||0)*(1-Number(i.discount||i.discount_pct||0)/100),sort_order:idx,...carryLineStd(i),configuration:i.configuration||{}}))); await autoSetCustomerStatus(opp.customerId, 'Prospect'); await supabase.from('opportunities').update({ status:'Negotiation', stage:'Negotiation', updated_at:new Date().toISOString() }).eq('opportunity_number', opp.id);
     await fetchOpportunities();
-    await fetchQuotations(); return{...inserted, customerId: inserted.customer_id}; };
+    await fetchQuotations(); return{...inserted, customerId: inserted.customer_id, displayNumber: inserted.display_number}; };
 
   // ─── CPQ Flow: Quote→Order→Invoice, Opp→Order ─────────────────────────────
   // Creates an order from a B2B quotation. By default (no `selections`) orders
@@ -4607,9 +4653,14 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
       quantity: i.qtyNow, price: Number(i.unit_price || i.price || 0), list_price: Number(i.unit_price || i.price || 0),
       discount: Number(i.discount_pct || i.discount || 0), tax_pct: Number(i.tax_pct || 0),
       extended_price: i.qtyNow * Number(i.unit_price || i.price || 0) * (1 - Number(i.discount_pct || 0) / 100),
-      sort_order: idx, invoiced_qty: 0, custom_data: i.custom_data || {},
+      sort_order: idx, invoiced_qty: 0, ...carryLineStd(i), custom_data: i.custom_data || {},
     }));
-    await supabase.from('order_line_items').insert(cmR.lines.length ? ordLineRows.map((row: any, k: number) => applyFieldMapping(cmR.lines, toOrder[k], row, undefined, { db: true })) : ordLineRows);
+    const { error: ordLiErr } = await supabase.from('order_line_items').insert(cmR.lines.length ? ordLineRows.map((row: any, k: number) => applyFieldMapping(cmR.lines, toOrder[k], row, undefined, { db: true })) : ordLineRows);
+    if (ordLiErr) {
+      await supabase.from('orders').delete().eq('order_number', ordId);
+      showAlert('Order not created - its line items could not be copied: ' + ordLiErr.message, { variant:'danger', title:'Conversion failed' });
+      return null;
+    }
 
     // Update each quotation line item's running ordered_qty.
     await Promise.all(toOrder.map((i: any) =>

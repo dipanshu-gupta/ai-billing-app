@@ -40,7 +40,35 @@ const CSS = String.raw`
 .rw-panel .rw-tabs { background: var(--rw-card) !important; border-bottom: 1px solid var(--rw-border); padding: 0 32px; gap: 4px; }
 .rw-panel .rw-tabs button { background: transparent !important; border: 0; border-bottom: 2px solid transparent; border-radius: 0; box-shadow: none; margin-bottom: -1px; padding: 13px 16px; color: var(--rw-muted) !important; font-weight: 600; font-size: 14px; }
 .rw-panel .rw-tabs button:hover { color: var(--rw-ink) !important; }
-.rw-panel .rw-tabs button[class*="bg-white"], .rw-panel .rw-tabs button[class*="border-blue-400"], .rw-panel .rw-tabs button[class*="text-[#0F172A]"] { color: var(--rw-ink) !important; border-bottom-color: var(--rw-accent); }
+/* Active tab is driven ONLY by aria-selected: the old class-substring match also hit inactive tabs
+   (their hover:text-[#0F172A] contains the same text), so every tab looked selected. */
+.rw-panel .rw-tabs button[aria-selected="true"] { color: var(--rw-ink) !important; border-bottom-color: var(--rw-accent); border-bottom-width: 3px; font-weight: 700; }
+.rw-panel .rw-tabs button[aria-selected="false"]:hover { border-bottom-color: var(--rw-border); }
+
+/* ── 360 views (related-list sub-tabs, KPI tiles, loyalty card) ── */
+.rw-panel .rw360-tabs { display: flex; flex-wrap: wrap; gap: 8px; }
+.rw-panel .rw360-tabs button { display: inline-flex; align-items: center; gap: 8px; padding: 8px 14px; border-radius: 99px; font-size: 13px; font-weight: 600; background: var(--rw-card) !important; border: 1px solid var(--rw-border) !important; color: var(--rw-muted) !important; box-shadow: none !important; cursor: pointer; transition: border-color .12s, background .12s; }
+.rw-panel .rw360-tabs button:hover { border-color: var(--rw-accent) !important; color: var(--rw-ink) !important; }
+.rw-panel .rw360-tabs button[aria-selected="true"] { background: var(--rw-accent-soft) !important; border-color: var(--rw-accent) !important; color: var(--rw-ink) !important; font-weight: 700; box-shadow: inset 0 -2px 0 var(--rw-accent) !important; }
+.rw-panel .rw360-tabs .rw360-count { font-size: 11px; font-weight: 700; padding: 1px 8px; border-radius: 99px; background: #F1EEE9; color: var(--rw-muted); }
+.rw-panel .rw360-tabs button[aria-selected="true"] .rw360-count { background: #fff; color: var(--rw-accent); }
+.rw-panel .rw360-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.rw-panel .rw360-btn { display: inline-flex; align-items: center; gap: 6px; padding: 7px 14px; border-radius: 99px; font-size: 12.5px; font-weight: 700; border: 1px solid var(--rw-border); background: var(--rw-card); color: var(--rw-ink); cursor: pointer; }
+.rw-panel .rw360-btn:hover { border-color: var(--rw-accent); background: var(--rw-accent-soft); }
+.rw-panel .rw360-btn.primary { background: var(--rw-ink); color: #fff; border-color: var(--rw-ink); }
+.rw-panel .rw360-btn.primary:hover { background: var(--rw-accent); border-color: var(--rw-accent); }
+.rw-panel .rw360-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; }
+.rw-panel .rw360-kpi { position: relative; background: var(--rw-card); border: 1px solid var(--rw-border); border-radius: 12px; padding: 14px 16px 12px; overflow: hidden; }
+.rw-panel .rw360-kpi::before { content: ""; position: absolute; left: 0; top: 0; right: 0; height: 3px; background: var(--k, var(--rw-accent)); }
+.rw-panel .rw360-kpi .v { font-family: var(--rw-serif); font-size: 26px; line-height: 1.15; color: var(--rw-ink); margin-top: 2px; }
+.rw-panel .rw360-kpi .l { font-size: 11px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--rw-muted); }
+.rw-panel .rw360-kpi .s { font-size: 12px; color: var(--rw-muted); margin-top: 2px; }
+.rw-panel .rw360-loyal { display: flex; align-items: center; gap: 18px; background: var(--rw-accent-soft); border: 1px solid #DCCBE8; border-radius: 12px; padding: 14px 18px; color: var(--rw-ink); }
+.rw-panel .rw360-loyal .t { font-family: var(--rw-serif); font-size: 20px; }
+.rw-panel .rw360-loyal .m { font-size: 13px; color: var(--rw-muted); }
+.rw-panel .rw360-loyal .pts { margin-left: auto; text-align: right; }
+.rw-panel .rw360-loyal .pts b { display: block; font-family: var(--rw-serif); font-size: 30px; font-weight: 400; color: var(--rw-accent); line-height: 1; }
+.rw-panel .rw360-loyal .pts span { font-size: 11px; letter-spacing: .05em; text-transform: uppercase; color: var(--rw-muted); font-weight: 700; }
 
 /* ── Cards ── */
 .rw-panel [class*="rounded-[20px]"], .rw-panel [class*="rounded-[24px]"], .rw-panel [class*="rounded-[18px]"] {
