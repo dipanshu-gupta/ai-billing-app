@@ -215,7 +215,7 @@ export const DEMO_TENANT: Tenant = {
   custom_domain: null,
   b2c_enabled:  true,
   max_users:    999,
-  modules:      ['crm','invoicing','retail','reports','ai','admin'],
+  modules:      ['crm','invoicing','retail','reports','ai','admin','marketing'],
   trial_ends_at: null,
   created_at:   new Date().toISOString(),
 };

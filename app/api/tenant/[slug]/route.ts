@@ -15,7 +15,7 @@ export async function GET(req: NextRequest, context: { params: Promise<{ slug: s
       db_anon_key: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || null,
       logo_url:null, brand_color:'#0F172A', app_name:'Umbrella Suite',
       custom_domain:null, b2c_enabled:true, max_users:999,
-      modules:['crm','invoicing','retail','reports','ai','admin'], trial_ends_at:null,
+      modules:['crm','invoicing','retail','reports','ai','admin','marketing'], trial_ends_at:null,
     });
   }
 

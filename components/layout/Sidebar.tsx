@@ -8,6 +8,7 @@ import { SALES_GROUP, RETAIL_GROUP, BOTTOM_ITEMS, makeCanSee, buildCustomObjectN
 import { useObjectLabels } from '@/lib/useObjectLabels';
 import { NavIcon } from '@/lib/icons';
 import { ObjectIcon } from '@/lib/lineIcons';
+import MarketingCloudLauncher from '@/components/layout/MarketingCloudLauncher';
 
 const TOP_ITEMS = [
   { key:'home',      label:'home',          icon:'🏠', permission:null },
@@ -169,6 +170,9 @@ export default function Sidebar({ activePage, setActivePage, collapsed, setColla
           <div className="px-3 py-1 text-xs font-bold text-blue-400 uppercase tracking-widest">Operations</div>
         )}
         {BOTTOM_ITEMS.map(item => <NavItem key={item.key} item={item}/>)}
+
+        {/* Marketing Cloud (Orbit) - separate app, opened with single sign-on */}
+        <MarketingCloudLauncher collapsed={collapsed}/>
       </nav>
 
       {/* User info at bottom */}
