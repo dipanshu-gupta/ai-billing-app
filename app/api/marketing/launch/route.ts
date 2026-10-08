@@ -1,7 +1,7 @@
 // @ts-nocheck
 import { NextResponse } from 'next/server';
 import { authorizeWhatsAppRequest } from '@/lib/whatsappServer';
-import { signSsoToken, orbitUrl, resolveTenantTarget, businessMode, orbitConfigured } from '@/lib/marketingServer';
+import { signSsoToken, orbitUrl, resolveTenantTarget, businessMode, orbitConfigured, DEMO_TENANT_ID } from '@/lib/marketingServer';
 
 /**
  * POST /api/marketing/launch
@@ -12,8 +12,8 @@ import { signSsoToken, orbitUrl, resolveTenantTarget, businessMode, orbitConfigu
  * derived from the verified membership, never trusted from the body. Returns
  * a 90-second single-use token that the browser POSTs to Orbit's /sso.
  *
- * Orbit decides access: it only signs in people who already have an Orbit account in a workspace
- * linked to this tenant; otherwise it shows its own message page.
+ * Role claim: tenant administrators -> "owner", everyone else -> "editor". The master/demo tenant
+ * may launch without the "marketing" module flag.
  */
 export async function POST(request: Request) {
   if (!orbitConfigured()) return NextResponse.json({ error: 'Marketing Cloud is not configured.' }, { status: 503 });
@@ -22,7 +22,7 @@ export async function POST(request: Request) {
     const auth = await authorizeWhatsAppRequest(request, { db_url: body?.db_url, tenantId: body?.tenantId });
     if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
 
-    const target = await resolveTenantTarget(auth.tenantId, { requireModule: true });
+    const target = await resolveTenantTarget(auth.tenantId, { requireModule: auth.tenantId !== DEMO_TENANT_ID });
     if ('error' in target) return NextResponse.json({ error: target.error }, { status: target.status });
 
     let person: any = null;
@@ -42,7 +42,7 @@ export async function POST(request: Request) {
       tname: target.tenant.name || target.tenant.slug,
       email: auth.email.toLowerCase(),
       name,
-      role: 'editor', // Orbit ignores this and uses the person's role inside Orbit
+      role: auth.isAdmin ? 'owner' : 'editor', // tenant admins -> owner
       mode: await businessMode(target),
     });
     return NextResponse.json({ action: `${orbitUrl()}/sso`, token }, { headers: { 'Cache-Control': 'no-store' } });

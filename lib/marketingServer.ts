@@ -18,6 +18,9 @@ import { masterClient, masterUrl } from '@/lib/whatsappServer';
 const NO_PERSIST = { auth: { autoRefreshToken: false, persistSession: false } };
 export const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+/** The master/demo tenant is allowed to use Marketing Cloud without the "marketing" module flag. */
+export const DEMO_TENANT_ID = '00000000-0000-0000-0000-000000000001';
+
 export function orbitUrl(): string {
   return (process.env.ORBIT_URL || 'https://orbit.umbrellasuite.com').replace(/\/$/, '');
 }
