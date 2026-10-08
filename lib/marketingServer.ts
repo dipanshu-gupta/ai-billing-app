@@ -66,6 +66,34 @@ export function verifyOrbitRequest(rawBody: string, headers: Headers, purpose: s
   return { ...body, tenantId };
 }
 
+/**
+ * Verifies an Orbit -> ERP single sign-on token (compact HS256 JWT signed with derive('sso-erp-v1')).
+ * Returns the claims, or null on ANY problem (callers must not reveal which check failed).
+ * Throws only when the shared secret is not configured.
+ */
+export function verifyOrbitSsoToken(token: string): any | null {
+  const key = derive('sso-erp-v1'); // throws if not configured
+  const parts = String(token || '').split('.');
+  if (parts.length !== 3 || String(token).length > 4000) return null;
+  const [h, p, sig] = parts;
+  let header: any, claims: any;
+  try { header = JSON.parse(Buffer.from(h, 'base64url').toString('utf8')); claims = JSON.parse(Buffer.from(p, 'base64url').toString('utf8')); } catch { return null; }
+  if (header?.alg !== 'HS256' || header?.typ !== 'JWT') return null;
+  const expected = createHmac('sha256', key).update(`${h}.${p}`).digest();
+  let given: Buffer;
+  try { given = Buffer.from(sig, 'base64url'); } catch { return null; }
+  if (given.length !== expected.length || !timingSafeEqual(given, expected)) return null;
+  const now = Math.floor(Date.now() / 1000);
+  if (claims?.iss !== 'orbit' || claims?.aud !== 'umbrella-erp') return null;
+  if (!Number.isFinite(claims.exp) || claims.exp < now || claims.exp - now > 300) return null;
+  if (!Number.isFinite(claims.iat) || claims.iat > now + 60) return null;
+  const tid = String(claims.tid || '').toLowerCase();
+  const email = String(claims.email || '').trim().toLowerCase();
+  if (!UUID_RE.test(tid) || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254) return null;
+  if (!/^[A-Za-z0-9_-]{8,100}$/.test(String(claims.jti || ''))) return null;
+  return { ...claims, tid, email };
+}
+
 export type TenantTarget = {
   tenant: any;               // master tenants row
   supabase: any;             // service-role client for the tenant's data

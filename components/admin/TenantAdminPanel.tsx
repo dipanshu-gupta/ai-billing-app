@@ -13,7 +13,8 @@ import { useTenant } from '@/context/TenantContext';
 
 const PLANS  = ['trial','shared','dedicated','enterprise'];
 const STATUS = ['trial','active','suspended','expired'];
-const ALL_MODULES = ['crm','invoicing','retail','reports','ai','admin'];
+const ALL_MODULES = ['crm','invoicing','retail','reports','ai','admin','marketing'];
+const MODULE_LABEL = { marketing: 'Marketing Cloud' };
 const DEFAULT_MODULES = ['crm','invoicing'];
 
 const emptyTenant = () => ({
@@ -442,10 +443,11 @@ export default function TenantAdminPanel() {
                   {ALL_MODULES.map(m=>(
                     <button key={m} onClick={()=>toggleModule(m)}
                       className={`py-2.5 rounded-xl text-xs font-bold border transition-all ${form.modules?.includes(m)?'bg-[#0F172A] text-white border-transparent':'bg-gray-50 text-gray-600 border-gray-200 hover:border-blue-300'}`}>
-                      {m.charAt(0).toUpperCase()+m.slice(1)}
+                      {MODULE_LABEL[m] || (m.charAt(0).toUpperCase()+m.slice(1))}
                     </button>
                   ))}
                 </div>
+                {form.modules?.includes('marketing') && <p className="text-[11px] text-gray-500">Marketing Cloud (Orbit) picks this up within about 10 minutes. Turning it off suspends the Orbit workspace.</p>}
                 <label className="flex items-center gap-2 cursor-pointer mt-2">
                   <input type="checkbox" checked={!!form.b2c_enabled} onChange={e=>upd('b2c_enabled',e.target.checked)} className="w-4 h-4 accent-purple-600 rounded"/>
                   <span className="text-sm font-medium text-[#0F172A]">Enable B2C / Retail Mode</span>
