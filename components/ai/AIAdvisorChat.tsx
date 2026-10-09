@@ -1,6 +1,7 @@
 // @ts-nocheck
 'use client';
 
+import { aiErrorText } from '@/lib/ai/client';
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { useApp } from '@/context/AppContext';
 import { useObjectLabels } from '@/lib/useObjectLabels';
@@ -588,7 +589,7 @@ export default function AIAdvisorChat() {
           body: JSON.stringify({
             system:systemPrompt, messages:apiMessages, max_tokens:1200,
             tenantDbUrl: (window as any).__bp_tenant?.db_url || undefined,
-            tenantDbAnonKey: (window as any).__bp_tenant?.db_anon_key || undefined,
+            tenantId: (window as any).__bp_tenant?.id || undefined,
           }),
           signal: controller.signal,
         });
@@ -597,7 +598,7 @@ export default function AIAdvisorChat() {
       }
 
       const data = await res.json();
-      if (data.error) throw new Error(data.error);
+      if (data.error) throw new Error(aiErrorText(data));
       const reply = data.content?.[0]?.text || 'Sorry, I could not generate a response. Please try again.';
 
       const assistantMsg: Message = { role:'assistant', content:reply, timestamp:new Date() };
@@ -611,7 +612,7 @@ export default function AIAdvisorChat() {
       const msg = e?.name === 'AbortError' ? 'the request took too long and timed out' : e.message;
       setMessages(prev => [...prev, {
         role:'assistant',
-        content:`⚠️ I ran into a connection issue: ${msg}. Please try again.`,
+        content: String(msg).includes('AI is not set up') ? `⚠️ ${msg}` : `⚠️ I ran into a connection issue: ${msg}. Please try again.`,
         timestamp: new Date(),
       }]);
     } finally {

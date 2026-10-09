@@ -474,7 +474,7 @@ function AppShell() {
   // below is the only thing that scrolls — previously this was min-h-screen
   // (unbounded), which meant the whole document scrolled and took the
   // "sticky" sidebar along with it instead of pinning it.
-  const viewBlocked = (CRM_PAGES.includes(activePage) || RETAIL_PAGES.includes(activePage) || activePage === 'quotations') && !rbac.can(activePage, 'view');
+  const viewBlocked = (CRM_PAGES.includes(activePage) || RETAIL_PAGES.includes(activePage) || activePage === 'quotations' || activePage === 'manageBookings') && !rbac.can(activePage, 'view');
 
   return (
     <div className="flex h-screen overflow-hidden bg-gradient-to-br from-slate-50 to-blue-50">
@@ -499,7 +499,7 @@ function AppShell() {
           )}
           {!viewBlocked && CRM_PAGES.includes(activePage) && !NON_CRM_PAGES.includes(activePage) && <CRMListPage page={activePage} />}
           {!viewBlocked && RETAIL_PAGES.includes(activePage) && <RetailListPage page={activePage} />}
-          {activePage === 'manageBookings' && appPreferences?.b2c_mode === true && appPreferences?.business_type === 'rental' && <ManageBookingsPage />}
+          {activePage === 'manageBookings' && appPreferences?.b2c_mode === true && appPreferences?.business_type === 'rental' && !viewBlocked && <ManageBookingsPage />}
           {activePage === 'whatsappInbox' && appPreferences?.b2c_mode === true && <WhatsAppInboxPage />}
           {!viewBlocked && activePage === 'quotations' && appPreferences?.cpq_enabled !== false && <QuotationsPage />}
           {activePage === 'reports' && <FastReportsPage />}

@@ -6,6 +6,8 @@ import { t, THEMES } from '@/lib/i18n';
 import { useObjectLabels } from '@/lib/useObjectLabels';
 import { SALES_GROUP, RETAIL_GROUP, BOTTOM_ITEMS, DASHBOARD_ITEM, EXPRESS_DASHBOARD_ITEM, makeCanSee, buildCustomObjectNavItems } from '@/lib/navPermissions';
 import { NavIcon } from '@/lib/icons';
+import { useRbac } from '@/lib/useRbac';
+import { quickActionCatalog, resolveQuickActionKeys } from '@/lib/quickActions';
 import { ObjectIcon } from '@/lib/lineIcons';
 import { Plus } from 'lucide-react';
 
@@ -44,22 +46,26 @@ export default function SpringboardPage({ onNavigate }) {
   // app already relies on for cross-page create flows (e.g. "Create
   // Booking" from an Activity), rather than a new, separate mechanism.
   const startCreate = (page) => { setPendingRecord({ page, openCreate: true }); onNavigate?.(page); };
+  // The tenant's admin chooses which quick actions appear (Admin Tools > Springboard Quick Actions);
+  // with no choice saved, the original defaults apply. Each action is still filtered by the same
+  // navigator visibility AND the user's Create permission, so it can never offer more than the role allows.
+  const rbac = useRbac();
   const QUICK_ACTIONS = useMemo(() => {
-    const list = b2cMode
-      ? [
-          { label: `Create ${getObjectLabel('retailCustomers', 'Customer', 'singular')}`,  icon: '👤', page: 'retailCustomers' },
-          { label: `Create ${getObjectLabel('retailOrders', 'Order', 'singular')}`,     icon: '🛍️', page: 'retailOrders' },
-          { label: `Create ${getObjectLabel('retailInvoices', 'Invoice', 'singular')}`,   icon: '🧾', page: 'retailInvoices' },
-          { label: `Create ${getObjectLabel('retailActivities', 'Activity', 'singular')}`,  icon: '📋', page: 'retailActivities' },
-        ]
-      : [
-          { label: `Create ${getObjectLabel('contacts', 'Contact', 'singular')}`,      icon: '👤', page: 'contacts' },
-          { label: `Create ${getObjectLabel('leads', 'Lead', 'singular')}`,         icon: '🎯', page: 'leads' },
-          { label: `Create ${getObjectLabel('opportunities', 'Opportunity', 'singular')}`,  icon: '💼', page: 'opportunities' },
-          { label: `Create ${getObjectLabel('activities', 'Activity', 'singular')}`,     icon: '📋', page: 'activities' },
-        ];
-    return list.filter(a => canSee({ key: a.page, permission: null }));
-  }, [b2cMode, canSee, getObjectLabel]);
+    const catalog = quickActionCatalog(b2cMode, customObjects);
+    const byKey = Object.fromEntries(catalog.map(o => [o.key, o]));
+    const keys = resolveQuickActionKeys(appPreferences, b2cMode, customObjects);
+    return keys.map(k => byKey[k]).filter(Boolean)
+      .map(o => ({
+        label: `Create ${o.custom ? o.fallback : getObjectLabel(o.page, o.fallback, 'singular')}`,
+        icon: o.icon, page: o.page, custom: o.custom, customObject: o.custom ? (customObjects || []).find(c => `custom_${c.api_name}` === o.page) : null,
+      }))
+      .filter(a => {
+        const navItem = a.custom
+          ? buildCustomObjectNavItems([a.customObject].filter(Boolean))[0]
+          : ([...SALES_GROUP, ...RETAIL_GROUP, ...BOTTOM_ITEMS].find(i => i.key === a.page) || { key: a.page, permission: null });
+        return !!navItem && canSee(navItem) && rbac.can(a.page, 'create');
+      });
+  }, [b2cMode, canSee, getObjectLabel, appPreferences, customObjects, rbac.can]);
 
   // Tab -> items mapping. Swaps in the B2C (retail) or B2B (CRM) item set
   // per tab, pulled from the exact same shared arrays the sidebar uses —

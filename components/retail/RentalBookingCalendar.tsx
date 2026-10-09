@@ -107,7 +107,9 @@ export default function RentalBookingCalendar({ productId, productName, productP
       let q = supabase.from('retail_order_line_items')
         .select('order_number, rental_start_date, rental_end_date, product_name, is_blocking')
         .eq('product_id', productId)
-        .eq('is_blocking', true)
+        // NOTE: deliberately NOT filtered on is_blocking. is_blocking only says whether a booking
+        // PREVENTS others from taking the same dates; it is false for every booking when the tenant has
+        // no blocking statuses (overlaps allowed). The calendar must still SHOW those bookings.
         .lte('rental_start_date', toISO(bufferEnd))
         .gte('rental_end_date', toISO(bufferStart))
         .order('rental_start_date', { ascending: true })
@@ -126,7 +128,12 @@ export default function RentalBookingCalendar({ productId, productName, productP
         const { data: orders } = await oq;
         (orders || []).forEach(o => { ordersByNumber[o.order_number] = o; });
       }
-      const enriched = (data || []).map(b => {
+      // Cancelled/void/rejected orders no longer hold the item, so they are not drawn.
+      const DEAD_STATUS = /^(cancel|void|reject|expire|refund)/i;
+      const enriched = (data || []).filter(b => {
+        const st = ordersByNumber[b.order_number]?.status;
+        return !(st && DEAD_STATUS.test(String(st).trim()));
+      }).map(b => {
         const order = ordersByNumber[b.order_number];
         const customer = order ? retailCustomers.find(c => c._uuid === order.customer_id || c.id === order.customer_id) : null;
         // Fall back to the order's own stored customer name if the ID-based
@@ -161,10 +168,8 @@ export default function RentalBookingCalendar({ productId, productName, productP
     return rows;
   }, [monthStart.getTime()]);
 
-  // Confirmed-booking bars for a week — since this calendar is scoped to ONE
-  // product, and the database's exclusion constraint makes overlapping
-  // bookings for the same product structurally impossible, there's never
-  // more than one confirmed bar per day — no stacking/lane logic needed.
+  // Booking bars for a week. Each bar gets its own row, so when the tenant allows
+  // overlapping bookings (no blocking statuses) overlapping bars simply stack.
   const barsForWeek = (weekCells) => {
     const validDays = weekCells.filter(Boolean);
     if (!validDays.length) return [];

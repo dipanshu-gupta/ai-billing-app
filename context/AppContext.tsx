@@ -4097,6 +4097,7 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
   const _DEF_PREFS = { crm_enabled:true, cpq_enabled:true, b2c_mode:false, default_currency:'INR', date_format:'DD/MM/YYYY', fiscal_year_start:'April', global_search_enabled:false, business_mode:'B2B', business_type:'general', rental_blocking_statuses:['Draft','Pending','Completed'],
     invoice_flow_mode:'status', invoice_trigger_statuses:['Completed'], rental_booking_prompt:true,
     region:'India', eway_bill_enabled:true, company_gstin:'', company_legal_name:'', company_address:'', company_city:'', company_pincode:'', company_state_code:'', eway_bill_gsp: _DEF_EWAY_GSP };
+  const _cleanQuickActions = (qa) => { const f=(a)=>Array.isArray(a)?Array.from(new Set(a.filter(k=>typeof k==='string'&&/^[A-Za-z0-9_]{1,80}$/.test(k)))).slice(0,8):undefined; const o:any={}; const b=f(qa?.b2b), c=f(qa?.b2c); if(b)o.b2b=b; if(c)o.b2c=c; return Object.keys(o).length?o:undefined; };
   const _cp = (p) => ({ crm_enabled:p?.crm_enabled??true, cpq_enabled:p?.cpq_enabled??true, b2c_mode:p?.b2c_mode??false, default_currency:p?.default_currency||'INR', date_format:p?.date_format||'DD/MM/YYYY', fiscal_year_start:p?.fiscal_year_start||'April', global_search_enabled:p?.global_search_enabled??false, business_mode:(p?.b2c_mode??false)?'B2C':'B2B', business_type:p?.business_type||'general', rental_blocking_statuses:p?.rental_blocking_statuses||['Draft','Pending','Completed'],
     // Order -> Invoice flow (per tenant): 'status' = button once the order reaches a trigger status (the original behaviour), 'always' = button on any open order, 'auto' = invoice is created automatically when the order reaches a trigger status, 'off' = no conversion, invoices are created on their own.
     invoice_flow_mode:p?.invoice_flow_mode||'status', invoice_trigger_statuses:(Array.isArray(p?.invoice_trigger_statuses)&&p.invoice_trigger_statuses.length)?p.invoice_trigger_statuses:['Completed'], rental_booking_prompt:p?.rental_booking_prompt??true,
@@ -4105,6 +4106,8 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     // behavior. region defaults to 'India' (matching this app's INR/GST-
     // oriented defaults elsewhere) but is fully togglable to 'Other', which
     // is what hides the e-Way Bill feature per the tenant's own setting.
+    // Springboard quick actions chosen by the tenant admin ({b2b:[...], b2c:[...]}); undefined = defaults.
+    quick_actions:_cleanQuickActions(p?.quick_actions),
     region:p?.region||'India', eway_bill_enabled:p?.eway_bill_enabled??true,
     company_gstin:p?.company_gstin||'', company_legal_name:p?.company_legal_name||'', company_address:p?.company_address||'',
     company_city:p?.company_city||'', company_pincode:p?.company_pincode||'', company_state_code:p?.company_state_code||'',

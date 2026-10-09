@@ -5,12 +5,12 @@ import { useApp } from '@/context/AppContext';
 // page key → permission module. Everything else is its own module (customers → customers_view, custom_x → custom_x_view).
 const PAGE_MODULE = {
   retailCustomers: 'retail_customers', retailProducts: 'retail_products', retailActivities: 'retail_activities',
-  retailOrders: 'retail_orders', retailInvoices: 'retail_invoices', quotations: 'quotations',
+  retailOrders: 'retail_orders', retailInvoices: 'retail_invoices', quotations: 'quotations', manageBookings: 'manage_bookings',
 };
 export const moduleOfPage = (page: string) => PAGE_MODULE[page] || page;
 // Modules introduced to the Security Console later: "governed if configured" so existing roles keep working until
 // an admin has actually configured the module (see lib/rbacCatalog.makeGoverned).
-const GOVERNED = new Set(['quotations', 'retail_customers', 'retail_products', 'retail_activities', 'retail_orders', 'retail_invoices']);
+const GOVERNED = new Set(['quotations', 'retail_customers', 'retail_products', 'retail_activities', 'retail_orders', 'retail_invoices', 'manage_bookings']);
 
 export function useRbac() {
   const { currentUserPermissions, permissionsLoaded, currentUser } = useApp();

@@ -17,6 +17,8 @@ import BookingReceiptDesigner from '@/components/admin/BookingReceiptDesigner';
 import DocumentTemplateDesigner from '@/components/admin/DocumentTemplateDesigner';
 import WarehousesPanel from '@/components/admin/WarehousesPanel';
 import AppPreferencesPanel from '@/components/admin/AppPreferencesPanel';
+import AiSettingsPanel from '@/components/admin/AiSettingsPanel';
+import QuickActionsPanel from '@/components/admin/QuickActionsPanel';
 import ImportExportPanel from '@/components/admin/ImportExportPanel';
 import { useApp } from '@/context/AppContext';
 import { useTenant } from '@/context/TenantContext';
@@ -2459,6 +2461,8 @@ export default function AdminToolsPage() {
     { key:'warehouses',     label:'Warehouses',       icon:'🏭', desc:'Manage warehouse locations' },
     { key:'appPrefs',       label:'App Preferences',  icon:'⚙️', desc:'Currency, date format, modules' },
     { key:'appearance',     label:'Appearance',       icon:'🎨', desc:'Theme, logo and branding' },
+    { key:'quickActions',   label:'Springboard Quick Actions', icon:'⚡', desc:'Choose the Create shortcuts on your Springboard' },
+    { key:'aiSettings',     label:'AI Settings', icon:'🤖', desc:'Your own AI provider, model and API key' },
     { key:'b2b_composer',   label:'App Composer',     icon:'🧩', desc:'Add custom fields to CRM objects' },
     { key:'layoutDesigner', label:'Page Layout Designer', icon:'🧱', desc:'Relabel, hide, lock, and reorder standard fields' },
     { key:'fieldMapping',   label:'Field Mapping (Copy Maps)', icon:'🔗', desc:'Auto-copy a field onto a line item or a converted record' },
@@ -2478,6 +2482,8 @@ export default function AdminToolsPage() {
     { key:'r_invoiceTemplates',label:'Invoice Designer',icon:'🖨️', desc:'Design retail invoice templates' },
     { key:'r_appPrefs',      label:'App Preferences', icon:'⚙️', desc:'Retail app settings' },
     { key:'r_appearance',    label:'Appearance',      icon:'🎨', desc:'Retail branding' },
+    { key:'r_quickActions',  label:'Springboard Quick Actions', icon:'⚡', desc:'Choose the Create shortcuts on your Springboard' },
+    { key:'r_aiSettings',    label:'AI Settings', icon:'🤖', desc:'Your own AI provider, model and API key' },
     { key:'r_composer',      label:'App Composer',    icon:'🧩', desc:'Custom fields for retail objects' },
     { key:'layoutDesigner',  label:'Page Layout Designer', icon:'🧱', desc:'Relabel, hide, lock, and reorder standard fields' },
     { key:'fieldMapping',    label:'Field Mapping (Copy Maps)', icon:'🔗', desc:'Auto-copy a field onto a line item or a converted record' },
@@ -2505,6 +2511,10 @@ export default function AdminToolsPage() {
       case 'warehouses':       return <WarehousesPanel/>;
       case 'appPrefs':         return <AppPreferencesPanel/>;
       case 'appearance':       return <AppearancePanel/>;
+      case 'quickActions':     return <QuickActionsPanel/>;
+      case 'aiSettings':       return <AiSettingsPanel/>;
+      case 'r_aiSettings':     return <RetailAdminWrapper title="AI Settings" icon="🤖" desc="Your own AI provider, model and API key"><AiSettingsPanel/></RetailAdminWrapper>;
+      case 'r_quickActions':   return <RetailAdminWrapper title="Springboard Quick Actions" icon="⚡" desc="Choose the Create shortcuts on your Springboard"><QuickActionsPanel/></RetailAdminWrapper>;
 
       // ── B2C Retail Admin ──────────────────────────────────────────────────
       // Panels render inside a retail context wrapper that scopes to B2C objects
@@ -2568,7 +2578,7 @@ export default function AdminToolsPage() {
     ['Automation', ['workflow', 'assignment', 'sla', 'approvals']],
     ['Data Model & Layout', ['composer', 'layoutDesigner', 'fieldMapping', 'customObjects']],
     ['Documents & Templates', ['templates', 'invoiceTemplates', 'bookingReceipts']],
-    ['Settings & Operations', ['appPrefs', 'appearance', 'warehouses', 'whatsapp', 'rentalSettings']],
+    ['Settings & Operations', ['appPrefs', 'appearance', 'quickActions', 'aiSettings', 'warehouses', 'whatsapp', 'rentalSettings']],
   ];
   const renderTiles = (sections: any[], tone: 'b2b' | 'b2c') => {
     const visible = sections.filter(sec => canSection(sec.key));
@@ -2588,7 +2598,7 @@ export default function AdminToolsPage() {
             <div className="ad-group">{title}</div>
             <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-4">
               {items.map(section => {
-                const isAlwaysOn = section.key==='appPrefs'||section.key==='appearance'||section.key==='r_appPrefs'||section.key==='r_appearance';
+                const isAlwaysOn = ['appPrefs','appearance','r_appPrefs','r_appearance','quickActions','r_quickActions','aiSettings','r_aiSettings'].includes(section.key);
                 const disabled = tone==='b2c' && !isB2CMode && !isAlwaysOn;
                 return (
                   <button key={section.key} onClick={()=>{ if(!disabled) setActive(section.key); }} disabled={disabled}

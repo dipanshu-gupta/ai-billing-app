@@ -1,6 +1,7 @@
 // @ts-nocheck
 'use client';
 
+import { aiErrorText } from '@/lib/ai/client';
 import { relabelText, relabelHeadings, terminologyBlock } from '@/lib/useRelabel';
 import { useState, useEffect, useCallback } from 'react';
 import { useApp } from '@/context/AppContext';
@@ -182,7 +183,7 @@ export default function AISummary({ page, record }) {
             messages: [{ role: 'user', content: relabelHeadings(context) }],
             max_tokens: 250,
             tenantDbUrl: (window as any).__bp_tenant?.db_url || undefined,
-            tenantDbAnonKey: (window as any).__bp_tenant?.db_anon_key || undefined,
+            tenantId: (window as any).__bp_tenant?.id || undefined,
           }),
           signal: controller.signal,
         });
@@ -190,7 +191,7 @@ export default function AISummary({ page, record }) {
         clearTimeout(timeoutId);
       }
       const data = await res.json();
-      if (data.error) throw new Error(data.error);
+      if (data.error) throw new Error(aiErrorText(data));
       const text = data.content?.[0]?.text || 'Unable to generate summary.';
       setSummary(text);
       setGenerated(true);
@@ -199,9 +200,7 @@ export default function AISummary({ page, record }) {
     } catch (e: any) {
       const msg = e?.name === 'AbortError'
         ? 'Request timed out — please try again.'
-        : (e.message?.includes('GROQ_API_KEY') || e.message?.includes('ANTHROPIC') || e.message?.includes('GEMINI')
-          ? 'AI not configured — add API key to .env.local'
-          : 'Summary unavailable');
+        : (e.message?.includes('AI is not set up') ? e.message : 'Summary unavailable');
       setError(msg);
       if (cacheKey) summaryCache[cacheKey] = { summary: '', error: msg };
     } finally {

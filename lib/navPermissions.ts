@@ -22,7 +22,7 @@ export const RETAIL_GROUP = [
   { key:'retailCustomers',  label:'retailCustomers',  icon:'🧑‍🤝‍🧑', permission:null, requiresB2C:true },
   { key:'retailActivities', label:'retailActivities', icon:'📅',       permission:null, requiresB2C:true },
   { key:'retailProducts',   label:'retailProducts',   icon:'🏷️',       permission:null, requiresB2C:true },
-  { key:'manageBookings',   label:'manageBookings',   icon:'🛎️',       permission:null, requiresB2C:true, requiresRental:true },
+  { key:'manageBookings',   label:'manageBookings',   icon:'🛎️',       permission:'manage_bookings_view', governedModule:'manage_bookings', requiresB2C:true, requiresRental:true },
   { key:'whatsappInbox',    label:'whatsappInbox',    icon:'💬',       permission:null, requiresB2C:true },
   { key:'retailOrders',     label:'retailOrders',     icon:'🛍️',       permission:null, requiresB2C:true },
   { key:'retailInvoices',   label:'retailInvoices',   icon:'🧾',       permission:null, requiresB2C:true },
@@ -85,6 +85,10 @@ export function makeCanSee({ isAdmin, b2cMode, appPreferences, currentUserPermis
     if (!item.permission) return true;
     // Wait for permissions to load
     if (!permissionsLoaded) return false;
-    return currentUserPermissions.includes(item.permission);
+    if (currentUserPermissions.includes(item.permission)) return true;
+    // "Governed if configured": a module introduced after roles were created stays visible to a role until an
+    // admin has actually configured that module for it (same rule as lib/useRbac.ts).
+    if (item.governedModule) return !currentUserPermissions.some(c => c.startsWith(item.governedModule + '_'));
+    return false;
   };
 }

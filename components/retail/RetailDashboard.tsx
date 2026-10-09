@@ -1,6 +1,7 @@
 // @ts-nocheck
 'use client';
 
+import { aiErrorText } from '@/lib/ai/client';
 import { useState, useMemo, useEffect } from 'react';
 import { useApp } from '@/context/AppContext';
 import { useTenant } from '@/context/TenantContext';
@@ -978,7 +979,7 @@ function AIInsightsCard({ kpis, prevPeriodKpis, rangeLabel, fmt, pctChange, them
             messages: [{ role: 'user', content: context }],
             max_tokens: 220,
             tenantDbUrl: (window as any).__bp_tenant?.db_url || undefined,
-            tenantDbAnonKey: (window as any).__bp_tenant?.db_anon_key || undefined,
+            tenantId: (window as any).__bp_tenant?.id || undefined,
           }),
           signal: controller.signal,
         });
@@ -986,7 +987,7 @@ function AIInsightsCard({ kpis, prevPeriodKpis, rangeLabel, fmt, pctChange, them
         clearTimeout(timeoutId);
       }
       const data = await res.json();
-      if (data.error) throw new Error(data.error);
+      if (data.error) throw new Error(aiErrorText(data));
       setInsight(data.content?.[0]?.text || 'Unable to generate insight.');
       setGenerated(true);
     } catch (e: any) {

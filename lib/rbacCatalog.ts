@@ -16,7 +16,7 @@ export const ADMIN_SECTIONS = [
   ['warehouses', 'Warehouses'], ['appPrefs', 'App Preferences'], ['appearance', 'Appearance'], ['composer', 'App Composer (custom fields)'],
   ['layoutDesigner', 'Page Layout Designer'], ['fieldMapping', 'Field Mapping (Copy Maps)'], ['customObjects', 'Custom Objects'],
   ['whatsapp', 'WhatsApp Integration'], ['rentalSettings', 'Rental Settings'], ['bookingReceipts', 'Booking Receipt Designer'],
-  ['importExport', 'Import & Export'],
+  ['importExport', 'Import & Export'], ['quickActions', 'Springboard Quick Actions'], ['aiSettings', 'AI Settings (Provider & Key)'],
 ];
 
 /** Admin tile key (b2b_composer, r_security, …) → logical section key. */
@@ -34,7 +34,7 @@ export function buildRbacCatalog(customObjects: any[] = []) {
   const groups: { group: string; icon: string; modules: string[]; note?: string }[] = [
     { group: 'CRM — B2B', icon: '🏢', modules: ['leads', 'opportunities', 'customers', 'contacts', 'activities'] },
     { group: 'CPQ — Sales', icon: '💼', modules: ['quotations', 'orders', 'invoices', 'products'] },
-    { group: 'Retail — B2C', icon: '🛍️', modules: ['retail_customers', 'retail_orders', 'retail_invoices', 'retail_products', 'retail_activities'] },
+    { group: 'Retail — B2C', icon: '🛍️', modules: ['retail_customers', 'retail_orders', 'retail_invoices', 'retail_products', 'retail_activities', 'manage_bookings'] },
     { group: 'Insights', icon: '📊', modules: ['reports'] },
   ];
   const published = (customObjects || []).filter(o => o && o.api_name && o.status !== 'draft' && o.is_active !== false);
@@ -49,6 +49,9 @@ export function buildRbacCatalog(customObjects: any[] = []) {
   actionsOf.admin = ['view'];
   labels.admin = 'Open Admin Tools — all sections';
   actionsOf.reports = ['view', 'export'];
+  // Manage Bookings (rental calendar) is a simple visibility switch: navigator + springboard only.
+  actionsOf.manage_bookings = ['view'];
+  labels.manage_bookings = 'Manage Bookings (Rental)';
   ADMIN_SECTIONS.forEach(([k, l]) => { actionsOf[`admintool_${k}`] = ['access']; labels[`admintool_${k}`] = l; });
 
   const perms: any[] = [];
