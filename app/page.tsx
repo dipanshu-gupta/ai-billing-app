@@ -1,6 +1,7 @@
 // @ts-nocheck
 'use client';
 
+import RedwoodChromeSkin from '@/components/shared/RedwoodChromeSkin';
 import React, { useEffect, useState, useRef } from 'react';
 import { Target, ShoppingBag, Receipt, CalendarCheck, MessageCircle, CheckCircle2, BarChart3, Settings } from 'lucide-react';
 import { AppProvider, useApp } from '@/context/AppContext';
@@ -299,82 +300,90 @@ function ProfileModal({ open, onClose }) {
     }
   };
 
+  useEffect(() => {
+    if (!open) return;
+    const h = (e) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', h);
+    return () => window.removeEventListener('keydown', h);
+  }, [open]);
+  if (!open) return null;
+
+  const fullName = `${form.first_name || ''} ${form.last_name || ''}`.trim() || currentUser?.email || 'My Profile';
+  const initials = (`${form.first_name?.[0]||''}${form.last_name?.[0]||''}`.toUpperCase() || '?');
+
   return (
-    <Modal
-      open={open}
-      onClose={onClose}
-      title="My Profile"
-      size="md"
-      footer={
-        <>
-          <Button variant="secondary" onClick={onClose}>Close</Button>
-          <Button onClick={async () => { await saveMyProfile(form); onClose(); }}>Save Changes</Button>
-        </>
-      }
-    >
-      <div className="space-y-5">
-        {/* Profile photo */}
-        <div className="flex items-center gap-4">
-          <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-blue-400 to-indigo-500 flex items-center justify-center text-white text-xl font-bold shadow-md overflow-hidden flex-shrink-0">
-            {form.avatar_url
-              ? <img src={form.avatar_url} alt="Profile" className="w-full h-full object-cover"/>
-              : (`${currentUser?.first_name?.[0]||''}${currentUser?.last_name?.[0]||''}`.toUpperCase() || '?')}
+    <div className="rwc-overlay center" onClick={onClose} role="dialog" aria-modal="true" aria-label="My Profile">
+      <RedwoodChromeSkin />
+      <div className="rwc-modal" style={{ maxWidth: 680 }} onClick={e => e.stopPropagation()}>
+        <div className="rwc-head" style={{ padding: '20px 28px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 16, minWidth: 0 }}>
+            <div className="rwc-avatar" style={{ width: 64, height: 64, fontSize: 20 }}>
+              {form.avatar_url ? <img src={form.avatar_url} alt="Profile"/> : initials}
+            </div>
+            <div style={{ minWidth: 0 }}>
+              <h2 className="rwc-title" style={{ fontSize: 26, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{fullName}</h2>
+              <p className="rwc-subtitle">{[currentUser?.designation, currentUser?.email].filter(Boolean).join(' · ')}</p>
+            </div>
           </div>
-          <div>
+          <button onClick={onClose} className="rwc-x" aria-label="Close">×</button>
+        </div>
+        <div className="rwc-stripe"/>
+
+        <div className="rwc-modal-body">
+          <div className="rwc-card">
+            <h4>Photo</h4>
             <input ref={photoInputRef} type="file" accept="image/*" className="hidden" onChange={handlePhotoUpload}/>
-            <button type="button" disabled={uploadingPhoto} onClick={() => photoInputRef.current?.click()}
-              className="text-sm font-semibold text-blue-600 hover:text-blue-700 disabled:opacity-60">
-              {uploadingPhoto ? 'Uploading...' : form.avatar_url ? 'Change Photo' : 'Add Photo'}
-            </button>
-            {form.avatar_url && (
-              <button type="button" onClick={() => setForm(f => ({ ...f, avatar_url: '' }))}
-                className="text-sm text-gray-400 hover:text-gray-600 ml-3">Remove</button>
-            )}
-          </div>
-        </div>
-        <div className="grid grid-cols-2 gap-4">
-          {[['First Name', 'first_name'], ['Last Name', 'last_name'], ['Phone', 'phone']].map(([label, field]) => (
-            <div key={field} className="space-y-1">
-              <label className="text-xs font-bold uppercase tracking-wider text-gray-400">{label}</label>
-              <input value={form[field] || ''} onChange={e => setForm(f => ({ ...f, [field]: e.target.value }))} className={inputClass} />
+            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+              <button type="button" className="rwc-btn" disabled={uploadingPhoto} onClick={() => photoInputRef.current?.click()}>
+                {uploadingPhoto ? 'Uploading...' : form.avatar_url ? 'Change photo' : 'Add photo'}
+              </button>
+              {form.avatar_url && <button type="button" className="rwc-btn" onClick={() => setForm(f => ({ ...f, avatar_url: '' }))}>Remove</button>}
             </div>
-          ))}
-        </div>
-        <div className="bg-gray-50 rounded-2xl p-4 space-y-1 text-sm">
-          <div><span className="text-gray-400">Email: </span><span className="font-semibold">{currentUser?.email}</span></div>
-          <div><span className="text-gray-400">Employee Code: </span><span className="font-semibold">{currentUser?.employee_code}</span></div>
-          <div><span className="text-gray-400">Designation: </span><span className="font-semibold">{currentUser?.designation}</span></div>
-        </div>
-        <div className="border-t border-blue-100 pt-4 space-y-3">
-          <div>
-            <label className="text-xs font-bold uppercase tracking-wider text-gray-400 block mb-1.5">Change My Password</label>
-            <p className="text-xs text-gray-400 mb-3">Enter a new password to update your login credentials. Minimum 6 characters.</p>
           </div>
-          <div className="grid grid-cols-1 gap-3">
-            <div>
-              <label className="text-xs font-semibold text-gray-500 block mb-1">New Password</label>
-              <input
-                type="password"
-                value={newPassword}
-                onChange={e => setNewPassword(e.target.value)}
-                placeholder="Enter new password"
-                className={inputClass}
-              />
+
+          <div className="rwc-card">
+            <h4>Personal details</h4>
+            <div className="rwc-grid">
+              {[['First name', 'first_name'], ['Last name', 'last_name'], ['Phone', 'phone']].map(([label, field]) => (
+                <div key={field}>
+                  <label className="rwc-label">{label}</label>
+                  <input className="rwc-input" value={form[field] || ''} onChange={e => setForm(f => ({ ...f, [field]: e.target.value }))} />
+                </div>
+              ))}
             </div>
-            <Button
-              onClick={async () => {
+          </div>
+
+          <div className="rwc-card">
+            <h4>Account</h4>
+            <dl className="rwc-kv">
+              <dt>Email</dt><dd>{currentUser?.email || '—'}</dd>
+              <dt>Employee code</dt><dd>{currentUser?.employee_code || '—'}</dd>
+              <dt>Designation</dt><dd>{currentUser?.designation || '—'}</dd>
+            </dl>
+          </div>
+
+          <div className="rwc-card">
+            <h4>Change password</h4>
+            <p className="rwc-hint">Enter a new password to update your login credentials. Minimum 6 characters.</p>
+            <label className="rwc-label">New password</label>
+            <input type="password" autoComplete="new-password" className="rwc-input" value={newPassword} onChange={e => setNewPassword(e.target.value)} placeholder="Enter new password" />
+            <div style={{ marginTop: 12 }}>
+              <button className="rwc-btn accent" onClick={async () => {
                 if (!newPassword) { showAlert('Please enter a new password.', { variant:'warning' }); return; }
                 if (newPassword.length < 6) { showAlert('Password must be at least 6 characters.', { variant:'warning' }); return; }
                 await resetMyPassword(newPassword);
                 setNewPassword('');
-              }}
-            >
-              Update Password
-            </Button>
+              }}>Update password</button>
+            </div>
           </div>
         </div>
+
+        <div className="rwc-modal-foot">
+          <button className="rwc-btn" onClick={onClose}>Close</button>
+          <button className="rwc-btn primary" onClick={async () => { await saveMyProfile(form); onClose(); }}>Save changes</button>
+        </div>
       </div>
-    </Modal>
+    </div>
   );
 }
 

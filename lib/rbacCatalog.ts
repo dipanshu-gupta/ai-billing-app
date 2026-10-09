@@ -77,10 +77,15 @@ export function buildRbacCatalog(customObjects: any[] = []) {
  * enforcement ships. A module is enforced for a user only once their role set carries at least one code for that module
  * (i.e. an admin has actually configured it); admins always pass.
  */
+/** Written by the Security Console on every role save: the role has been explicitly configured, so governed modules are
+ *  strict (no code = no access). Roles without it are legacy and keep the "if configured" fallback. */
+export const RBAC_STRICT_MARKER = '__rbac_v2__';
+
 export function makeGoverned(hasPermission: (c: string) => boolean, codes: string[], isAdmin: boolean) {
   return (module: string, action: string) => {
     if (isAdmin) return true;
     if (hasPermission(`${module}_${action}`)) return true;
+    if ((codes || []).includes(RBAC_STRICT_MARKER)) return false;
     const configured = (codes || []).some(c => c.startsWith(`${module}_`));
     return !configured;
   };

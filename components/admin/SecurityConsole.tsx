@@ -90,7 +90,7 @@ export default function SecurityConsole() {
     allIds.forEach(id => { map[id] = []; });
     rpAll.forEach((rp: any) => {
       const code = permCodeMap[rp.permission_id];
-      if (code && map[rp.role_id]) map[rp.role_id].push(code);
+      if (code && code !== '__rbac_v2__' && map[rp.role_id]) map[rp.role_id].push(code);
     });
     setRolePermsMap(map);
   };
@@ -111,7 +111,7 @@ export default function SecurityConsole() {
     const { data: rpData } = await supabase.from('role_permissions').select('permission_id').eq('role_id', role.id);
     const permIds = rpData?.map(x => x.permission_id) || [];
     const { data: permData } = await supabase.from('permissions').select('permission_code').in('id', permIds);
-    const codes = (permData || []).map(p => p.permission_code).filter(Boolean);
+    const codes = (permData || []).map(p => p.permission_code).filter(c => c && c !== '__rbac_v2__');
     // Open edit form with cloned data
     setEditingRole(null);
     setForm({
@@ -148,7 +148,7 @@ export default function SecurityConsole() {
           .from('permissions')
           .select('permission_code')
           .in('id', permIds);
-        const codes = (permData || []).map(p => p.permission_code).filter(Boolean);
+        const codes = (permData || []).map(p => p.permission_code).filter(c => c && c !== '__rbac_v2__');
         setSelectedPerms(codes);
       } else {
         setSelectedPerms([]);
@@ -179,18 +179,20 @@ export default function SecurityConsole() {
       // Map permission codes to IDs, insert any missing ones
       await supabase.from('role_permissions').delete().eq('role_id', roleId);
 
-      if (selectedPerms.length > 0) {
+      // Strict marker: this role is now explicitly configured (unticked = no access for governed modules).
+      const permsToSave = Array.from(new Set([...selectedPerms.filter(c => c !== '__rbac_v2__'), '__rbac_v2__']));
+      if (permsToSave.length > 0) {
         // Ensure all permission codes exist in DB
         const { data: existingPerms } = await supabase.from('permissions').select('id, permission_code');
         const existingMap = Object.fromEntries((existingPerms||[]).map(p => [p.permission_code, p.id]));
 
         const toInsert = [];
-        for (const code of selectedPerms) {
+        for (const code of permsToSave) {
           if (existingMap[code]) {
             toInsert.push({ role_id: roleId, permission_id: existingMap[code] });
           } else {
             // Create permission on the fly
-            const pdef = FULL_PERMISSIONS.find(p => p.code === code);
+            const pdef = code === '__rbac_v2__' ? { name: 'RBAC configured marker', code: '__rbac_v2__', module: 'system' } : FULL_PERMISSIONS.find(p => p.code === code);
             if (pdef) {
               const { data: np } = await supabase.from('permissions')
                 .insert({ permission_name: pdef.name, permission_code: pdef.code, module_name: pdef.module })

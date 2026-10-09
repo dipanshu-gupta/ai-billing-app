@@ -45,6 +45,13 @@ const CSS = String.raw`
 .rw-panel .rw-tabs button[aria-selected="true"] { color: var(--rw-ink) !important; border-bottom-color: var(--rw-accent); border-bottom-width: 3px; font-weight: 700; }
 .rw-panel .rw-tabs button[aria-selected="false"]:hover { border-bottom-color: var(--rw-border); }
 
+/* Segmented "box" tabs (Details + one per related object): clearly visible, active tab filled */
+.rw-panel .rw-segtabs { background: var(--rw-card); border-bottom: 1px solid var(--rw-border); padding: 12px 32px; gap: 8px; }
+.rw-panel .rw-segtab { background: var(--rw-bg) !important; color: var(--rw-ink) !important; border: 1px solid #D6D1CA !important; box-shadow: 0 1px 0 rgba(27,26,24,.04); }
+.rw-panel .rw-segtab:hover { background: var(--rw-accent-soft) !important; border-color: #DCCBE8 !important; }
+.rw-panel .rw-segtab[aria-selected="true"] { background: var(--rw-accent) !important; color: #fff !important; border-color: var(--rw-accent) !important; box-shadow: 0 2px 6px rgba(122,78,155,.35); font-weight: 700; }
+.rw-panel .rw-segtab:focus-visible { outline: 2px solid var(--rw-accent); outline-offset: 2px; }
+
 /* ── 360 views (related-list sub-tabs, KPI tiles, loyalty card) ── */
 .rw-panel .rw360-tabs { display: flex; flex-wrap: wrap; gap: 8px; }
 .rw-panel .rw360-tabs button { display: inline-flex; align-items: center; gap: 8px; padding: 8px 14px; border-radius: 99px; font-size: 13px; font-weight: 600; background: var(--rw-card) !important; border: 1px solid var(--rw-border) !important; color: var(--rw-muted) !important; box-shadow: none !important; cursor: pointer; transition: border-color .12s, background .12s; }

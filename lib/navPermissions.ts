@@ -88,7 +88,7 @@ export function makeCanSee({ isAdmin, b2cMode, appPreferences, currentUserPermis
     if (currentUserPermissions.includes(item.permission)) return true;
     // "Governed if configured": a module introduced after roles were created stays visible to a role until an
     // admin has actually configured that module for it (same rule as lib/useRbac.ts).
-    if (item.governedModule) return !currentUserPermissions.some(c => c.startsWith(item.governedModule + '_'));
+    if (item.governedModule) return !currentUserPermissions.includes('__rbac_v2__') && !currentUserPermissions.some(c => c.startsWith(item.governedModule + '_'));
     return false;
   };
 }

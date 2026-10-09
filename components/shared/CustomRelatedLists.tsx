@@ -48,7 +48,35 @@ export function useHasRelated(parentKind, parentKey) {
   return has;
 }
 
-export default function CustomRelatedLists({ parentKind, parentKey, parentId, parentName, parentPage, parentRecord, returnTab }) {
+/** One entry per related object (child object + the Lookup field that points at this parent), for building one tab each.
+ *  Fully metadata-driven: add a Lookup field in Custom Objects and a new tab appears. */
+export function useRelatedTabs(parentKind, parentKey) {
+  const { customObjects, hasPermission, appPreferences } = useApp();
+  const [tabs, setTabs] = useState([]);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const mode = appPreferences?.b2c_mode === true ? 'b2c' : 'b2b';
+      const children = (customObjects || []).filter(o => o.status === 'published' && (o.module === 'both' || o.module === mode));
+      const out = [];
+      for (const child of children) {
+        if (hasPermission && !hasPermission(`custom_${child.api_name}_view`)) continue;
+        const hf = await fetchCustomObjectFields(child.id, 'header');
+        hf.filter(f => f.field_type === 'lookup' && f.lookup_target_type === parentKind && f.lookup_target_object === parentKey && f.storage_column && f.storage_column !== 'custom_data')
+          .forEach(link => out.push({ key: `${child.id}:${link.api_name}`, label: child.plural_label, icon: child.icon, via: link.label, child }));
+      }
+      // Two lookups from the same object: disambiguate the tab label.
+      const dup = {};
+      out.forEach(t => { dup[t.label] = (dup[t.label] || 0) + 1; });
+      out.forEach(t => { if (dup[t.label] > 1) t.label = `${t.label} (${t.via})`; });
+      if (!cancelled) setTabs(out);
+    })();
+    return () => { cancelled = true; };
+  }, [parentKind, parentKey, (customObjects || []).length]);
+  return tabs;
+}
+
+export default function CustomRelatedLists({ parentKind, parentKey, parentId, parentName, parentPage, parentRecord, returnTab, onlyKey }) {
   const { customObjects, hasPermission, applyDataSecurity, appPreferences } = useApp();
   const { supabase } = useTenant();
   const [sections, setSections] = useState([]);
@@ -92,7 +120,7 @@ export default function CustomRelatedLists({ parentKind, parentKey, parentId, pa
 
   return (
     <>
-      {sections.map(s => {
+      {sections.filter(s => !onlyKey || s.key === onlyKey).map(s => {
         // columns: every field except the one pointing back at the parent
         const cols = s.hf.filter(f => f.api_name !== s.link.api_name && f.storage_column !== 'custom_data' && f.field_type !== 'long_text').slice(0, 4);
         const totals = cols.filter(f => ['number', 'currency'].includes(f.field_type)).map(f => ({

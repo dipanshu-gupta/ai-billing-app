@@ -21,7 +21,7 @@ export function useRbac() {
     if (!permissionsLoaded || isAdmin) return true;
     const m = moduleOfPage(page);
     if (perms.includes(`${m}_${action}`)) return true;
-    if (GOVERNED.has(m) && !perms.some(c => c.startsWith(`${m}_`))) return true;
+    if (GOVERNED.has(m) && !perms.includes('__rbac_v2__') && !perms.some(c => c.startsWith(`${m}_`))) return true;
     return false;
   };
   return { can, isAdmin, perms };

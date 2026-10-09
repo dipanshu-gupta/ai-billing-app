@@ -6,6 +6,7 @@ import { useApp } from '@/context/AppContext';
 import { getPageLabel } from '@/lib/utils';
 import { t } from '@/lib/i18n';
 import GlobalSearch from '@/components/layout/GlobalSearch';
+import RedwoodChromeSkin from '@/components/shared/RedwoodChromeSkin';
 import { Bot, User, Info, LogOut, ClipboardList, Settings, CheckCircle2, Clock, Bell } from 'lucide-react';
 
 // Page mapping from record_type to app page key — module scope since it's
@@ -91,6 +92,26 @@ function resolveNotificationTarget(n, recordArrays) {
   return { page, record: fullRecord || { id: n.record_id } };
 }
 
+
+function NotifItem({ n, isNavigable, IconCmp, onClick, timeAgo }) {
+  return (
+    <div onClick={onClick} className={`rwc-item ${isNavigable ? 'nav' : ''} ${!n.is_read ? 'unread' : ''}`}>
+      <div className="rwc-ico">
+        <IconCmp className="w-[16px] h-[16px]" strokeWidth={1.75}/>
+        {!n.is_read && <span className="rwc-dot"/>}
+      </div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+          <p className="rwc-item-title">{relabelText(n.title)}</p>
+          <span className="rwc-time">{timeAgo(n.created_at)}</span>
+        </div>
+        {(n.body || n.message) && <p className="rwc-item-body">{relabelText(n.body || n.message)}</p>}
+        {isNavigable && <p className="rwc-open">Open record →</p>}
+      </div>
+    </div>
+  );
+}
+
 function NotificationBell() {
   const {
     notifications, markNotificationRead, markAllNotificationsRead,
@@ -161,87 +182,30 @@ function NotificationBell() {
       </button>
 
       {open && (
-        <div className="absolute right-0 top-full mt-2 w-96 bg-white border border-gray-200 rounded-2xl shadow-2xl z-50 overflow-hidden">
-          {/* Header */}
-          <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between bg-gradient-to-r from-[#0F172A] to-blue-900">
-            <div className="flex items-center gap-2">
-              <span className="text-white font-bold text-sm">Notifications</span>
-              {unread > 0 && (
-                <span className="bg-red-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-full">
-                  {unread} unread
-                </span>
-              )}
+        <div className="rwc-pop" style={{ width: 384 }}>
+          <RedwoodChromeSkin />
+          <div className="rwc-head">
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <h3 className="rwc-title" style={{ fontSize: 18 }}>Notifications</h3>
+              {unread > 0 && <span className="rwc-badge">{unread} unread</span>}
             </div>
-            {unread > 0 && (
-              <button onClick={handleMarkAll}
-                className="text-xs text-blue-300 hover:text-white font-medium transition-colors">
-                Mark all read
-              </button>
-            )}
+            {unread > 0 && <button onClick={handleMarkAll} className="rwc-link">Mark all read</button>}
           </div>
-
-          {/* List */}
-          <div className="overflow-y-auto divide-y divide-gray-50" style={{maxHeight:'380px'}}>
+          <div className="rwc-stripe"/>
+          <div className="rwc-list" style={{ maxHeight: 380 }}>
             {!visibleNotifications?.length ? (
-              <div className="px-4 py-12 text-center">
-                <div className="flex justify-center mb-2 text-gray-300"><Bell className="w-9 h-9"/></div>
-                <p className="text-gray-400 text-sm">No notifications yet</p>
-              </div>
+              <div className="rwc-empty"><Bell className="w-8 h-8 mx-auto mb-2"/>No notifications yet</div>
             ) : (
               visibleNotifications.slice(0, 20).map(n => {
                 const page = PAGE_MAP[n.record_type];
                 const isNavigable = page && n.record_id;
-                const IconCmp = TYPE_ICONS[n.type] || Bell;
-                return (
-                  <div
-                    key={n.id}
-                    onClick={() => handleClick(n)}
-                    className={`px-4 py-3.5 transition-all ${
-                      isNavigable ? 'cursor-pointer hover:bg-blue-50' : 'cursor-default hover:bg-gray-50'
-                    } ${!n.is_read ? 'bg-blue-50/60' : 'bg-white'}`}
-                  >
-                    <div className="flex items-start gap-3">
-                      {/* Icon + unread dot */}
-                      <div className="relative flex-shrink-0 mt-0.5">
-                        <IconCmp className="w-[18px] h-[18px] text-gray-500" strokeWidth={1.75}/>
-                        {!n.is_read && (
-                          <span className="absolute -top-0.5 -right-0.5 w-2 h-2 bg-blue-500 rounded-full"/>
-                        )}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-start justify-between gap-2">
-                          <p className={`text-sm leading-tight ${!n.is_read ? 'font-semibold text-[#0F172A]' : 'font-medium text-gray-700'}`}>
-                            {relabelText(n.title)}
-                          </p>
-                          <span className="text-[10px] text-gray-400 flex-shrink-0 mt-0.5">{timeAgo(n.created_at)}</span>
-                        </div>
-                        {(n.body || n.message) && (
-                          <p className="text-xs text-gray-500 mt-0.5 line-clamp-2">{relabelText(n.body || n.message)}</p>
-                        )}
-                        {isNavigable && (
-                          <p className="text-[10px] text-blue-500 mt-1 font-medium">Click to open record →</p>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                );
+                return <NotifItem key={n.id} n={n} isNavigable={isNavigable} IconCmp={TYPE_ICONS[n.type] || Bell} onClick={() => handleClick(n)} timeAgo={timeAgo}/>;
               })
             )}
           </div>
-
-          {/* Footer */}
-          <div className="px-4 py-2.5 border-t border-gray-100 bg-gray-50 flex items-center justify-between">
-            <span className="text-xs text-gray-400">
-              {visibleNotifications.length > 0
-                ? `${visibleNotifications.length} shown here`
-                : 'No notifications yet'}
-            </span>
-            <button
-              onClick={() => { setOpen(false); setNotificationDrawerOpen(true); }}
-              className="text-xs font-semibold text-blue-600 hover:text-blue-800 transition-colors"
-            >
-              View all →
-            </button>
+          <div className="rwc-foot">
+            <span>{visibleNotifications.length > 0 ? `${visibleNotifications.length} shown here` : 'No notifications yet'}</span>
+            <button onClick={() => { setOpen(false); setNotificationDrawerOpen(true); }} className="rwc-link">View all →</button>
           </div>
         </div>
       )}
@@ -293,86 +257,41 @@ function NotificationCenter({ onClose }) {
   };
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-start justify-end z-[300]" onClick={onClose}>
-      <div
-        className="bg-white h-full w-full max-w-md shadow-2xl flex flex-col"
-        onClick={e => e.stopPropagation()}
-      >
-        {/* Header */}
-        <div className="px-5 py-4 bg-gradient-to-r from-[#0F172A] to-blue-900 flex items-center justify-between flex-shrink-0">
+    <div className="rwc-overlay right" onClick={onClose} role="dialog" aria-modal="true" aria-label="Notification Center">
+      <RedwoodChromeSkin />
+      <div className="rwc-drawer" onClick={e => e.stopPropagation()}>
+        <div className="rwc-head">
           <div>
-            <h3 className="text-white font-bold text-base">Notification Center</h3>
-            <p className="text-blue-300 text-xs mt-0.5">{unread} unread of {visibleNotifications.length}</p>
+            <h3 className="rwc-title">Notification Center</h3>
+            <p className="rwc-subtitle">{unread} unread of {visibleNotifications.length}</p>
           </div>
-          <button onClick={onClose} className="text-white/70 hover:text-white text-2xl leading-none px-2">×</button>
+          <button onClick={onClose} className="rwc-x" aria-label="Close">×</button>
         </div>
-
-        {/* Tabs + mark-all */}
-        <div className="px-5 py-3 border-b border-gray-100 flex items-center justify-between flex-shrink-0">
-          <div className="flex gap-1 bg-gray-100 rounded-xl p-1">
+        <div className="rwc-stripe"/>
+        <div className="rwc-bar">
+          <div className="rwc-seg" role="tablist">
             {(['all', 'unread'] as const).map(k => (
-              <button
-                key={k}
-                onClick={() => setTab(k)}
-                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${tab === k ? 'bg-white text-[#0F172A] shadow-sm' : 'text-gray-500'}`}
-              >
+              <button key={k} role="tab" aria-selected={tab === k} onClick={() => setTab(k)}>
                 {k === 'all' ? 'All' : `Unread (${unread})`}
               </button>
             ))}
           </div>
-          {unread > 0 && (
-            <button onClick={() => markAllNotificationsRead()} className="text-xs font-semibold text-blue-600 hover:text-blue-800">
-              Mark all read
-            </button>
-          )}
+          {unread > 0 && <button onClick={() => markAllNotificationsRead()} className="rwc-link">Mark all read</button>}
         </div>
-
-        {/* List */}
-        <div className="flex-1 overflow-y-auto divide-y divide-gray-50">
+        <div className="rwc-list">
           {!shown.length ? (
-            <div className="px-5 py-16 text-center">
-              <div className="flex justify-center mb-2 text-gray-300"><Bell className="w-10 h-10"/></div>
-              <p className="text-gray-400 text-sm">{tab === 'unread' ? 'No unread notifications' : 'No notifications yet'}</p>
-            </div>
+            <div className="rwc-empty"><Bell className="w-10 h-10 mx-auto mb-2"/>{tab === 'unread' ? 'No unread notifications' : 'No notifications yet'}</div>
           ) : (
             shown.map(n => {
               const page = NOTIFICATION_PAGE_MAP[n.record_type];
               const isNavigable = page && n.record_id;
-              const IconCmp = NOTIFICATION_TYPE_ICONS[n.type] || Bell;
-              return (
-                <div
-                  key={n.id}
-                  onClick={() => handleClick(n)}
-                  className={`px-5 py-4 transition-all ${isNavigable ? 'cursor-pointer hover:bg-blue-50' : 'cursor-default'} ${!n.is_read ? 'bg-blue-50/60' : 'bg-white'}`}
-                >
-                  <div className="flex items-start gap-3">
-                    <div className="relative flex-shrink-0 mt-0.5">
-                      <IconCmp className="w-[18px] h-[18px] text-gray-500" strokeWidth={1.75}/>
-                      {!n.is_read && <span className="absolute -top-0.5 -right-0.5 w-2 h-2 bg-blue-500 rounded-full"/>}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-start justify-between gap-2">
-                        <p className={`text-sm leading-tight ${!n.is_read ? 'font-semibold text-[#0F172A]' : 'font-medium text-gray-700'}`}>{relabelText(n.title)}</p>
-                        <span className="text-[10px] text-gray-400 flex-shrink-0 mt-0.5">{notificationTimeAgo(n.created_at)}</span>
-                      </div>
-                      {(n.body || n.message) && <p className="text-xs text-gray-500 mt-0.5">{relabelText(n.body || n.message)}</p>}
-                      {isNavigable && <p className="text-[10px] text-blue-500 mt-1 font-medium">Click to open record →</p>}
-                    </div>
-                  </div>
-                </div>
-              );
+              return <NotifItem key={n.id} n={n} isNavigable={isNavigable} IconCmp={NOTIFICATION_TYPE_ICONS[n.type] || Bell} onClick={() => handleClick(n)} timeAgo={notificationTimeAgo}/>;
             })
           )}
         </div>
-
-        {/* Footer — pagination */}
         {tab === 'all' && notificationsHasMore && (
-          <div className="px-5 py-3 border-t border-gray-100 flex-shrink-0">
-            <button
-              onClick={handleLoadMore}
-              disabled={loadingMore}
-              className="w-full py-2.5 rounded-xl border border-gray-200 text-sm font-semibold text-gray-600 hover:bg-gray-50 disabled:opacity-50"
-            >
+          <div style={{ padding: '12px 18px', borderTop: '1px solid var(--rw-border)', background: '#fff' }}>
+            <button onClick={handleLoadMore} disabled={loadingMore} className="rwc-btn" style={{ width: '100%' }}>
               {loadingMore ? 'Loading…' : 'Load older notifications'}
             </button>
           </div>
@@ -384,43 +303,38 @@ function NotificationCenter({ onClose }) {
 
 // ─── About Dialog ────────────────────────────────────────────────────────────
 function AboutDialog({ onClose }) {
+  const rows = [
+    { label: 'Version',   value: '26.3' },
+    { label: 'Build',     value: 'July 2026' },
+    { label: 'Modules',   value: 'CRM · B2C Retail · AI Advisor · CPQ · Reports' },
+    { label: 'Platform',  value: 'Multi-tenant SaaS' },
+    { label: 'Copyright', value: '© 2026 Umbrella Suite. All rights reserved.' },
+  ];
   return (
-    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[300] p-4" onClick={onClose}>
-      <div className="bg-white rounded-[28px] shadow-2xl w-full max-w-sm overflow-hidden" onClick={e=>e.stopPropagation()}>
-        {/* Header */}
-        <div className="bg-gradient-to-r from-[#0F172A] to-blue-800 px-6 py-8 text-center">
-          <img src="/umbrella-logo.png" alt="Umbrella Suite" className="w-16 h-16 mx-auto rounded-2xl mb-3 shadow-xl"/>
-          <h2 className="text-white text-xl font-bold tracking-tight">Umbrella Suite</h2>
-          <p className="text-blue-300 text-sm mt-1">Enterprise CRM & ERP Platform</p>
-        </div>
-        {/* Body */}
-        <div className="px-6 py-5 space-y-3">
-          {[
-            { label: 'Version',    value: '26.3' },
-            { label: 'Build',      value: 'July 2026' },
-            { label: 'Modules',    value: 'CRM · B2C Retail · AI Advisor · CPQ · Reports' },
-            { label: 'Platform',   value: 'Multi-tenant SaaS' },
-            { label: 'Copyright',  value: '© 2026 Umbrella Suite. All rights reserved.' },
-          ].map(({ label, value }) => (
-            <div key={label} className="flex items-start justify-between gap-3 py-2 border-b border-gray-100 last:border-0">
-              <span className="text-xs font-bold text-gray-400 uppercase tracking-wider flex-shrink-0 w-20">{label}</span>
-              <span className="text-xs text-gray-700 text-right leading-relaxed">{value}</span>
+    <div className="rwc-overlay center" style={{ zIndex: 300 }} onClick={onClose} role="dialog" aria-modal="true" aria-label="About Umbrella Suite">
+      <RedwoodChromeSkin />
+      <div className="rwc-modal" style={{ maxWidth: 420 }} onClick={e => e.stopPropagation()}>
+        <div className="rwc-head" style={{ padding: '20px 24px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+            <img src="/umbrella-logo.png" alt="Umbrella Suite" style={{ width: 48, height: 48, borderRadius: 12 }}/>
+            <div>
+              <h2 className="rwc-title" style={{ fontSize: 22 }}>Umbrella Suite</h2>
+              <p className="rwc-subtitle">Enterprise CRM &amp; ERP Platform</p>
             </div>
-          ))}
-          <div className="flex items-center justify-between py-2">
-            <span className="text-xs font-bold text-gray-400 uppercase tracking-wider w-20">Website</span>
-            <a href="https://www.umbrellasuite.com" target="_blank" rel="noopener noreferrer"
-              className="text-xs text-blue-600 font-semibold hover:underline">
-              www.umbrellasuite.com ↗
-            </a>
+          </div>
+          <button onClick={onClose} className="rwc-x" aria-label="Close">×</button>
+        </div>
+        <div className="rwc-stripe"/>
+        <div className="rwc-modal-body">
+          <div className="rwc-card">
+            <dl className="rwc-kv">
+              {rows.map(r => (<React.Fragment key={r.label}><dt>{r.label}</dt><dd style={{ fontWeight: 500 }}>{r.value}</dd></React.Fragment>))}
+              <dt>Website</dt>
+              <dd><a href="https://www.umbrellasuite.com" target="_blank" rel="noopener noreferrer" className="rwc-link" style={{ fontSize: 14 }}>www.umbrellasuite.com ↗</a></dd>
+            </dl>
           </div>
         </div>
-        <div className="px-6 pb-5">
-          <button onClick={onClose}
-            className="w-full bg-gradient-to-r from-[#0F172A] to-blue-800 text-white py-3 rounded-2xl font-bold text-sm hover:opacity-90">
-            Close
-          </button>
-        </div>
+        <div className="rwc-modal-foot"><button onClick={onClose} className="rwc-btn primary">Close</button></div>
       </div>
     </div>
   );
@@ -522,30 +436,26 @@ export default function Header({ activePage, onNavigate }) {
           </button>
 
           {profileOpen && (
-            <div className="absolute right-0 top-full mt-2 w-60 bg-white border border-gray-200 rounded-2xl shadow-2xl z-50 overflow-hidden">
-              <div className="px-4 py-4 bg-gradient-to-r from-[#0F172A] to-blue-900 flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-400 to-indigo-500 flex items-center justify-center text-white font-bold text-sm border-2 border-white/30 overflow-hidden">
-                  {currentUser?.avatar_url
-                    ? <img src={currentUser.avatar_url} alt="Profile" className="w-full h-full object-cover"/>
-                    : initials}
+            <div className="rwc-pop" style={{ width: 272 }}>
+              <RedwoodChromeSkin />
+              <div className="rwc-head" style={{ justifyContent: 'flex-start', gap: 12 }}>
+                <div className="rwc-avatar">
+                  {currentUser?.avatar_url ? <img src={currentUser.avatar_url} alt="Profile"/> : initials}
                 </div>
-                <div>
-                  <p className="text-sm font-bold text-white">{displayName}</p>
-                  <p className="text-xs text-blue-300 mt-0.5">{currentUser?.email}</p>
+                <div style={{ minWidth: 0 }}>
+                  <p className="rwc-title" style={{ fontSize: 17, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{displayName}</p>
+                  <p className="rwc-subtitle" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{currentUser?.email}</p>
                 </div>
               </div>
-              <div className="py-1">
-                <button onClick={() => { window.dispatchEvent(new CustomEvent('open-profile')); setProfileOpen(false); }}
-                  className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 transition-colors">
+              <div className="rwc-stripe"/>
+              <div>
+                <button onClick={() => { window.dispatchEvent(new CustomEvent('open-profile')); setProfileOpen(false); }} className="rwc-menu-item">
                   <User className="w-4 h-4" strokeWidth={1.75}/> {t(appearance?.language||'en','myProfile')}
                 </button>
-                <button onClick={() => { setAboutOpen(true); setProfileOpen(false); }}
-                  className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 transition-colors">
+                <button onClick={() => { setAboutOpen(true); setProfileOpen(false); }} className="rwc-menu-item">
                   <Info className="w-4 h-4" strokeWidth={1.75}/> About Umbrella Suite
                 </button>
-                <hr className="my-1 border-gray-100"/>
-                <button onClick={() => { handleLogout(); setProfileOpen(false); }}
-                  className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-red-600 hover:bg-red-50 transition-colors">
+                <button onClick={() => { handleLogout(); setProfileOpen(false); }} className="rwc-menu-item danger" style={{ borderBottom: 0 }}>
                   <LogOut className="w-4 h-4" strokeWidth={1.75}/> {t(appearance?.language||'en','signOut')}
                 </button>
               </div>

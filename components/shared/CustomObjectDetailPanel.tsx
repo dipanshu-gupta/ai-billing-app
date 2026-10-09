@@ -24,7 +24,7 @@ import {
   useCustomLookups, CustomSectionsView, CustomLineItemsCard, buildCustomSections,
 } from '@/components/shared/CustomObjectForm';
 import RecordHighlights from '@/components/shared/RecordHighlights';
-import CustomRelatedLists, { useHasRelated } from '@/components/shared/CustomRelatedLists';
+import CustomRelatedLists, { useRelatedTabs } from '@/components/shared/CustomRelatedLists';
 
 export default function CustomObjectDetailPanel({ customObject, headerFields, lineFields, record, onClose, onSaved, initialTab = null }) {
   const { currentUser, hasPermission, enterpriseUsers, organizations, businessUnits, appearance } = useApp();
@@ -36,10 +36,13 @@ export default function CustomObjectDetailPanel({ customObject, headerFields, li
   const { fields: layout, sections: layoutSections } = useFieldLayout(objectType);
   const lookups = useCustomLookups(headerFields);
   // "360" tab: every object that has a Lookup field pointing at this object shows its records here (same idea as Customer 360).
-  const hasRelated = useHasRelated('custom', customObject.api_name);
+  const relatedTabs = useRelatedTabs('custom', customObject.api_name);
+  const hasRelated = relatedTabs.length > 0;
   const [tab, setTab] = useState(initialTab || 'details');
   useEffect(() => { setTab(initialTab || 'details'); }, [record?.id, initialTab]);
-  const activeTab = tab === '360' && hasRelated ? '360' : 'details';
+  // 'rel:<key>' = one tab per related object. Legacy '360' (returnTab) opens the first related tab.
+  const wantedTab = tab === '360' ? (relatedTabs[0] ? `rel:${relatedTabs[0].key}` : 'details') : tab;
+  const activeTab = wantedTab.startsWith('rel:') && relatedTabs.some(t => `rel:${t.key}` === wantedTab) ? wantedTab : 'details';
   const ctx = useMemo(() => ({ supabase, tenantId: tenant?.id, currentUser, showAlert }), [supabase, tenant?.id, currentUser]);
 
   const initial = (rec) => ({
@@ -168,19 +171,19 @@ export default function CustomObjectDetailPanel({ customObject, headerFields, li
           return hl.length ? <RecordHighlights items={hl} /> : null;
         })()}
         {hasRelated && (
-          <div className="rw-tabs flex bg-slate-800 border-b border-slate-700 px-6 flex-shrink-0" role="tablist">
-            {[{ k: 'details', l: '📋 Details' }, { k: '360', l: `🔄 ${customObject.singular_label} 360` }].map(tb => (
+          <div className="rw-segtabs flex flex-wrap gap-2 px-6 py-3 flex-shrink-0" role="tablist" aria-label="Record sections">
+            {[{ k: 'details', l: 'Details', icon: null }, ...relatedTabs.map(t => ({ k: `rel:${t.key}`, l: t.label, icon: t.icon }))].map(tb => (
               <button key={tb.k} type="button" role="tab" aria-selected={activeTab === tb.k} onClick={() => setTab(tb.k)}
-                className={`px-5 py-3 text-sm font-semibold border-b-2 transition-all ${activeTab === tb.k ? 'border-blue-400 text-white' : 'border-transparent text-white/50 hover:text-white/80'}`}>
-                {tb.l}
+                className="rw-segtab inline-flex items-center gap-2 px-4 py-2 text-sm font-semibold rounded-lg border transition-all">
+                {tb.icon ? <ObjectIcon icon={tb.icon} className="w-4 h-4" /> : <span aria-hidden>📋</span>}{tb.l}
               </button>
             ))}
           </div>
         )}
         {/* Body */}
         <div className="flex-1 overflow-y-auto bg-gradient-to-br from-white to-blue-50 p-8 space-y-6">
-          {activeTab === '360' ? (
-            <CustomRelatedLists parentKind="custom" parentKey={customObject.api_name} parentId={record.id} parentName={values.__name} parentPage={objectType} parentRecord={current} returnTab="360" />
+          {activeTab.startsWith('rel:') ? (
+            <CustomRelatedLists key={activeTab} onlyKey={activeTab.slice(4)} parentKind="custom" parentKey={customObject.api_name} parentId={record.id} parentName={values.__name} parentPage={objectType} parentRecord={current} returnTab={activeTab} />
           ) : (<>
           {!canEdit && (
             <div className="bg-amber-50 border border-amber-200 rounded-2xl px-5 py-3 flex items-center gap-3">
