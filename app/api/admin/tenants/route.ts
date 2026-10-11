@@ -73,6 +73,19 @@ export async function GET(request: Request) {
   return NextResponse.json({ tenants: (data || []).map(maskTenant) });
 }
 
+/** Trimmed, lower-cased host or null (never ''), so the UNIQUE custom_domain column only ever sees real values. */
+function cleanDomain(v: any): string | null {
+  const d = String(v ?? '').trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/.*$/, '');
+  return d || null;
+}
+
+function friendlyDbError(e: any): string {
+  const m = String(e?.message || '');
+  if (/tenants_custom_domain_key/.test(m)) return 'That custom domain is already used by another tenant.';
+  if (/tenants_slug_key/.test(m)) return 'That slug is already used by another tenant.';
+  return m;
+}
+
 export async function POST(request: Request) {
   const auth = await authorizePlatformAdmin(request);
   if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
@@ -95,14 +108,14 @@ export async function POST(request: Request) {
     modules: body.modules || ['crm', 'invoicing'],
     db_url: body.db_url || null, db_anon_key: body.db_anon_key || null,
     db_service_key: body.db_service_key || null,
-    custom_domain: body.custom_domain || null, logo_url: body.logo_url || null,
+    custom_domain: cleanDomain(body.custom_domain), logo_url: body.logo_url || null,
     trial_ends_at: body.trial_ends_at ? new Date(body.trial_ends_at).toISOString() : null,
     mrr_usd: Number(body.mrr_usd) || 0,
     created_at: new Date().toISOString(),
   };
 
   const { data, error } = await admin.from('tenants').upsert(payload, { onConflict: 'slug' }).select().single();
-  if (error) return NextResponse.json({ error: error.message }, { status: 400 });
+  if (error) return NextResponse.json({ error: friendlyDbError(error) }, { status: 400 });
   return NextResponse.json({ tenant: maskTenant(data) });
 }
 
@@ -125,7 +138,8 @@ export async function PUT(request: Request) {
     b2c_enabled: body.b2c_enabled, max_users: body.max_users != null ? Number(body.max_users) : undefined,
     modules: body.modules,
     db_url: body.db_url, db_anon_key: body.db_anon_key, db_service_key: body.db_service_key,
-    custom_domain: body.custom_domain, logo_url: body.logo_url,
+    // '' must become NULL: the column is UNIQUE and several tenants without a domain would all collide on ''.
+    custom_domain: body.custom_domain === undefined ? undefined : cleanDomain(body.custom_domain), logo_url: body.logo_url,
     trial_ends_at: body.trial_ends_at ? new Date(body.trial_ends_at).toISOString() : undefined,
     mrr_usd: body.mrr_usd != null ? Number(body.mrr_usd) : undefined,
     updated_at: new Date().toISOString(),
@@ -140,7 +154,7 @@ export async function PUT(request: Request) {
   Object.keys(payload).forEach(k => payload[k] === undefined && delete payload[k]);
 
   const { data, error } = await admin.from('tenants').update(payload).eq('id', body.id).select().single();
-  if (error) return NextResponse.json({ error: error.message }, { status: 400 });
+  if (error) return NextResponse.json({ error: friendlyDbError(error) }, { status: 400 });
   return NextResponse.json({ tenant: maskTenant(data) });
 }
 
