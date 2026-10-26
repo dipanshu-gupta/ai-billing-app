@@ -17,6 +17,7 @@ import { useAlert } from '@/components/shared/AlertProvider';
 import LoadingSpinner from '@/components/shared/LoadingSpinner';
 import { useObjectLabels } from '@/lib/useObjectLabels';
 import { useFieldLayout } from '@/lib/useFieldLayout';
+import { useCustomFields } from '@/lib/useCustomFields';
 import { t } from '@/lib/i18n';
 import RedwoodSavedSearchBar from '@/components/shared/RedwoodSavedSearchBar';
 
@@ -43,6 +44,23 @@ const DATE_FIELDS   = new Set(['created_at','updated_at','closeDate','expectedCl
 const NUMBER_FIELDS = new Set(['amount','price','cost','probability','stock_quantity','reorder_level','taxRate']);
 const BOOL_FIELDS   = new Set(['isPrimary','track_inventory']);
 const fieldType = (page, k) => k==='status' ? 'select' : DATE_FIELDS.has(k) ? 'date' : NUMBER_FIELDS.has(k) ? 'number' : BOOL_FIELDS.has(k) ? 'boolean' : 'text';
+// ── List-column presentation: one rule per KIND of value so header and cells always line up ──
+const MONEY_COLS = new Set(['amount','price','cost','grand_total','overall_discount','shipping_cost','subtotal']);
+const PCT_COLS   = new Set(['probability','taxRate']);
+const LONG_COLS  = new Set(['description','notes','internal_notes','billingAddress','shippingAddress','comments']);
+const colKind = (meta) => {
+  if (!meta) return 'text';
+  if (meta.key === 'status') return 'status';
+  if (MONEY_COLS.has(meta.key) || meta.type === 'currency') return 'money';
+  if (meta.type === 'number') return 'number';
+  if (meta.type === 'date') return 'date';
+  if (meta.type === 'boolean') return 'boolean';
+  if (LONG_COLS.has(meta.key) || meta.type === 'textarea') return 'long';
+  return 'text';
+};
+const colAlign = (kind) => kind === 'money' || kind === 'number' ? 'text-right' : kind === 'boolean' ? 'text-center' : 'text-left';
+const CF_TYPE = { number:'number', currency:'currency', decimal:'number', integer:'number', date:'date', datetime:'date', checkbox:'boolean', boolean:'boolean', textarea:'textarea' };
+
 const getFieldMeta = (page) => {
   const keys = Array.from(new Set([...getObjectFields(page), 'created_at']));
   return keys.map(k => ({ key:k, label: fieldLabel(k), type: fieldType(page,k) }));
@@ -442,6 +460,16 @@ export default function CRMListPage({ page }) {
       return savedRow?.custom_label ? { ...m, label: savedRow.custom_label } : m;
     });
   }, [page, crmFieldLayout.fields]);
+  // Columns the user can show: every standard field, the record number, and this tenant's own custom fields.
+  const { fields: listCustomFields } = useCustomFields(page);
+  const columnMeta = useMemo(() => {
+    const out = [{ key: 'id', label: 'Number', type: 'text' }, ...fieldMeta.filter(f => f.key !== 'id')];
+    (listCustomFields || []).forEach(cf => {
+      if (!cf?.api_name) return;
+      out.push({ key: 'cf_' + cf.api_name, label: cf.label || cf.api_name, type: CF_TYPE[cf.field_type] || 'text', custom: true, apiName: cf.api_name });
+    });
+    return out;
+  }, [fieldMeta, listCustomFields]);
   const DEFAULT_COLUMNS = useMemo(() => {
     const base = ['id','name'];
     if (page !== 'products' && page !== 'customers' && fieldMeta.some(f=>f.key==='customer')) base.push('customer');
@@ -451,6 +479,8 @@ export default function CRMListPage({ page }) {
     return base;
   }, [page, fieldMeta]);
   const [visibleColumns, setVisibleColumns] = useState(DEFAULT_COLUMNS);
+  // Saved columns that no longer exist (a removed custom field, a renamed key) are skipped once, here, so headers and cells come from the SAME list.
+  const shownColumns = useMemo(() => visibleColumns.map(k => columnMeta.find(f => f.key === k)).filter(Boolean), [visibleColumns, columnMeta]);
 
   // Load persisted column/sort prefs whenever the page changes.
   useEffect(() => {
@@ -548,7 +578,7 @@ export default function CRMListPage({ page }) {
       dateColumn: 'created_at', // CRM's own time-period filter always used created_at, no per-object variation
       dateFrom, dateTo,
       advFilters: mappedAdvFilters, lineFilters,
-      sortColumn: sortField ? camelToSnakeCol(sortField) : 'created_at',
+      sortColumn: !sortField || sortField.startsWith('cf_') ? 'created_at' : sortField === 'id' ? 'display_number' : camelToSnakeCol(sortField),
       sortAscending: sortDir === 'asc',
       page: currentPage,
       pageSize,
@@ -684,11 +714,19 @@ export default function CRMListPage({ page }) {
   const toggleColumn = (key) => persistColumns(visibleColumns.includes(key) ? visibleColumns.filter(c=>c!==key) : [...visibleColumns, key]);
   const moveColumn = (idx, dir) => { const cols=[...visibleColumns]; const j=idx+dir; if (j<0||j>=cols.length) return; [cols[idx],cols[j]]=[cols[j],cols[idx]]; persistColumns(cols); };
   const fmtCell = (r, meta) => {
-    const v = r[meta.key];
+    const v = meta.custom ? (r.custom_data || {})[meta.apiName] : r[meta.key];
+    if (meta.custom) {
+      if (v == null || v === '') return '—';
+      if (meta.type === 'date') return formatDate(v);
+      if (meta.type === 'boolean') return v ? 'Yes' : 'No';
+      if (meta.type === 'currency') return formatCurrency(Number(v), appPreferences?.default_currency);
+      return Array.isArray(v) ? v.join(', ') : String(v);
+    }
+    if (PCT_COLS.has(meta.key)) return v!=null && v!=='' ? `${v}%` : '—';
     if (meta.key==='id') return r.displayNumber ? formatDisplayNumber(PAGE_DISPLAY_PREFIX[page]||'REC', r.displayNumber) : (r.id||'');
     if (meta.type==='date')    return v ? formatDate(v) : '—';
     if (meta.type==='boolean') return v ? 'Yes' : 'No';
-    if (['amount','price','cost'].includes(meta.key)) return v!=null ? formatCurrency(Number(v), appPreferences?.default_currency) : '—';
+    if (MONEY_COLS.has(meta.key)) return v!=null && v!=='' ? formatCurrency(Number(v), appPreferences?.default_currency) : '—';
     if (meta.key==='status') return <StatusBadge status={v}/>;
     return v!=null && v!=='' ? String(v) : '—';
   };
@@ -738,7 +776,7 @@ export default function CRMListPage({ page }) {
                   <div className="p-3">
                     <p className="text-xs text-gray-400 px-2 pb-2">Shown, in order — use ↑↓ to reorder.</p>
                     {visibleColumns.map((key, idx) => {
-                      const meta = fieldMeta.find(f=>f.key===key);
+                      const meta = columnMeta.find(f=>f.key===key);
                       if (!meta) return null;
                       return (
                         <div key={key} className="flex items-center gap-2 px-2 py-1.5 hover:bg-blue-50 rounded-xl">
@@ -751,7 +789,7 @@ export default function CRMListPage({ page }) {
                     })}
                     <div className="border-t border-gray-100 mt-2 pt-2">
                       <p className="text-xs text-gray-400 px-2 pb-1">Add a column</p>
-                      {fieldMeta.filter(f=>!visibleColumns.includes(f.key)).map(f => (
+                      {columnMeta.filter(f=>!visibleColumns.includes(f.key)).map(f => (
                         <button key={f.key} onClick={()=>toggleColumn(f.key)} className="w-full text-left px-2 py-1.5 text-sm text-blue-600 hover:bg-blue-50 rounded-xl">+ {f.label}</button>
                       ))}
                     </div>
@@ -795,32 +833,32 @@ export default function CRMListPage({ page }) {
       {/* Table */}
       <div className="bg-white rounded-[24px] border border-blue-100 shadow-lg overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="w-full">
+          <table className="min-w-full w-max">
             <thead className="bg-gradient-to-r from-[#0F172A] to-blue-900 text-white">
               <tr>
-                {visibleColumns.map(key => {
-                  const meta = fieldMeta.find(f=>f.key===key);
-                  if (!meta) return null;
-                  const align = ['amount','price','cost'].includes(key) ? 'text-right' : 'text-left';
+                {shownColumns.map(meta => {
+                  const align = colAlign(colKind(meta));
+                  const sortable = !meta.custom;
                   return (
-                    <th key={key} onClick={()=>toggleSort(key)} className={`px-5 py-3.5 ${align} text-sm font-semibold cursor-pointer select-none hover:bg-white/10 whitespace-nowrap`}>
-                      {meta.label} {sortField===key && (sortDir==='asc' ? '▲' : '▼')}
+                    <th key={meta.key} onClick={sortable ? ()=>toggleSort(meta.key) : undefined}
+                      className={`px-5 py-3.5 ${align} align-middle text-sm font-semibold select-none whitespace-nowrap ${sortable ? 'cursor-pointer hover:bg-white/10' : ''}`}>
+                      <span className={`inline-flex items-center gap-1 ${align === 'text-right' ? 'flex-row-reverse' : ''}`}>{meta.label}{sortField===meta.key && <span className="text-[10px]">{sortDir==='asc' ? '▲' : '▼'}</span>}</span>
                     </th>
                   );
                 })}
-                <th className="px-5 py-3.5 text-center text-sm font-semibold w-28">{t(lang,'actions')}</th>
+                <th className="px-5 py-3.5 text-center align-middle text-sm font-semibold w-24 whitespace-nowrap">{t(lang,'actions')}</th>
               </tr>
             </thead>
             <tbody>
               {serverLoading && pagedRecords.length === 0 ? (
                 <tr>
-                  <td colSpan={visibleColumns.length+1} className="px-5 py-20 text-center">
+                  <td colSpan={shownColumns.length+1} className="px-5 py-20 text-center">
                     <LoadingSpinner size={44} label="Loading records..." />
                   </td>
                 </tr>
               ) : pagedRecords.length === 0 ? (
                 <tr>
-                  <td colSpan={visibleColumns.length+1} className="px-5 py-16 text-center">
+                  <td colSpan={shownColumns.length+1} className="px-5 py-16 text-center">
                     <div className="text-5xl mb-3">🔍</div>
                     <div className="font-bold text-[#0F172A] text-lg">{activeCount > 0 ? t(lang,'noRecordsFound') : `No ${page} yet`}</div>
                     <div className="text-gray-400 text-sm mt-1">{activeCount > 0 ? t(lang,'tryAdjustingFilters') : `Create your first ${pageLabel.toLowerCase()}.`}</div>
@@ -831,18 +869,17 @@ export default function CRMListPage({ page }) {
                 const ownerUser = enterpriseUsers.find(u => u.email === record.owner || u.id === record.owner_id);
                 return (
                   <tr key={record.id} className="border-t border-blue-50 hover:bg-blue-50/40 transition-all">
-                    {visibleColumns.map(key => {
-                      const meta = fieldMeta.find(f=>f.key===key);
-                      if (!meta) return null;
+                    {shownColumns.map(meta => {
+                      const key = meta.key;
                       if (key === 'id') return (
-                        <td key={key} className="px-5 py-3.5">
+                        <td key={key} className="px-5 py-3.5 align-middle whitespace-nowrap">
                           <span className="text-xs font-mono font-bold text-blue-700 bg-blue-50 px-2.5 py-1 rounded-full border border-blue-100">
                             {record.displayNumber ? formatDisplayNumber(PAGE_DISPLAY_PREFIX[page]||'REC', record.displayNumber) : record.id}
                           </span>
                         </td>
                       );
                       if (key === 'name') return (
-                        <td key={key} className="px-5 py-3.5">
+                        <td key={key} className="px-5 py-3.5 align-middle max-w-[280px] truncate" title={record.name||record.subject||''}>
                           {canDo('view')
                             ? <button onClick={()=>setSelectedRecord(record)} className="font-semibold text-[#0F172A] hover:text-blue-700 hover:underline text-sm text-left">{record.name||record.subject||'—'}</button>
                             : <span className="font-semibold text-[#0F172A] text-sm">{record.name||record.subject||'—'}</span>
@@ -850,7 +887,7 @@ export default function CRMListPage({ page }) {
                         </td>
                       );
                       if (key === 'owner') return (
-                        <td key={key} className="px-5 py-3.5">
+                        <td key={key} className="px-5 py-3.5 align-middle whitespace-nowrap">
                           {ownerUser
                             ? <div className="flex items-center gap-2">
                                 <div className="w-7 h-7 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center text-xs font-bold flex-shrink-0">{ownerUser.first_name?.charAt(0)}{ownerUser.last_name?.charAt(0)}</div>
@@ -860,11 +897,16 @@ export default function CRMListPage({ page }) {
                           }
                         </td>
                       );
-                      const align = ['amount','price','cost'].includes(key) ? 'text-right' : 'text-left';
-                      const weight = ['amount','price','cost'].includes(key) ? 'font-semibold text-[#0F172A]' : 'text-gray-600';
-                      return <td key={key} className={`px-5 py-3.5 text-sm ${align} ${weight}`}>{fmtCell(record, meta)}</td>;
+                      const kind = colKind(meta);
+                      const align = colAlign(kind);
+                      const weight = kind === 'money' ? 'font-semibold text-[#0F172A] tabular-nums' : kind === 'number' ? 'text-gray-700 tabular-nums' : 'text-gray-600';
+                      const cell = fmtCell(record, meta);
+                      // Long text (addresses, notes) is kept to one line and truncated, with the full value on hover,
+                      // so adding such a column never stretches every row.
+                      const wrap = kind === 'long' ? 'max-w-[260px] truncate' : 'whitespace-nowrap';
+                      return <td key={key} title={kind === 'long' && typeof cell === 'string' ? cell : undefined} className={`px-5 py-3.5 align-middle text-sm ${align} ${weight} ${wrap}`}>{cell}</td>;
                     })}
-                    <td className="px-5 py-3.5">
+                    <td className="px-5 py-3.5 align-middle w-24">
                       <div className="relative flex justify-center" data-menu-container>
                         <button onClick={()=>setMenuOpenId(menuOpenId===record.id?null:record.id)} className="w-9 h-9 rounded-full bg-[#0F172A] text-white hover:bg-blue-800 flex items-center justify-center text-lg font-bold shadow transition-all">⋮</button>
                         {menuOpenId === record.id && (

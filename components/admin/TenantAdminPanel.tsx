@@ -128,18 +128,21 @@ export default function TenantAdminPanel() {
 
   async function runProvisioning() {
     if (!provisionForm.admin_email) { showToast('Admin email required', true); return; }
-    const isShared = !provisioning?.db_url;
+    // db_url equal to the master project's URL is still the SHARED database (no separate service key).
+    const masterUrl = String(process.env.NEXT_PUBLIC_SUPABASE_URL || '').replace(/\/+$/, '');
+    const isShared = !provisioning?.db_url || String(provisioning.db_url).replace(/\/+$/, '') === masterUrl;
     // Shared tenants use the master Supabase — no service key needed from UI (server uses env vars)
     if (!isShared && !provisionForm.db_service_key) {
       showToast('Service key required for dedicated tenants', true); return;
     }
     setProvisioningLoading(true);
     try {
+      const { data: { session: provSession } } = await supabase.auth.getSession();
       const res = await fetch('/api/tenant/provision', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${provSession?.access_token || ''}` },
         body: JSON.stringify({
-          db_url:         provisioning.db_url || null,
+          db_url:         isShared ? null : (provisioning.db_url || null),
           db_service_key: provisionForm.db_service_key || null,
           admin_email:    provisionForm.admin_email,
           admin_name:     provisionForm.admin_name,

@@ -461,7 +461,7 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     // Cross-tenant guard: password is valid platform-wide, membership is not.
     const ok = await verifyTenantMembership(authData?.user);
     if (!ok) {
-      await supabase.auth.signOut();
+      await supabase.auth.signOut({ scope: 'local' });
       setSession(null);
       showAlert('This account does not have access to this workspace. Please check your workspace URL or contact your administrator.');
     }
@@ -472,7 +472,7 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     setCurrentUser(null);
     setCurrentUserPermissions([]);
     setPermissionsLoaded(false);
-    await supabase.auth.signOut();
+    await supabase.auth.signOut({ scope: 'local' });
   };
 
   const resetMyPassword = async (newPassword: string) => {
@@ -488,13 +488,14 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
       if (!session?.user?.id) { showAlert('Session expired. Please log in again.'); return; }
 
       const tenant = (window as any).__bp_tenant || {};
-      const res = await fetch('/api/admin/reset-password', {
+      const res = await waFetch('/api/admin/reset-password', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           authUserId: session.user.id,
           password:   newPassword,
           db_url:     tenant.db_url || null,
+          tenantId:   tenant.id || null,
         }),
       });
       const json = await res.json();
@@ -541,7 +542,7 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
       if (data.status && data.status !== 'Active') {
         console.warn('[fetchCurrentUser] User is deactivated — signing out');
         showAlert('Your account has been deactivated. Please contact your administrator.', { variant:'danger', title:'Account Deactivated' });
-        await supabase.auth.signOut();
+        await supabase.auth.signOut({ scope: 'local' });
         setCurrentUser(null);
         setSession(null);
         return;
@@ -559,7 +560,7 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
       // Authenticated platform-wide but no membership row in THIS tenant —
       // never allow the session to remain active in a foreign workspace.
       console.warn('[fetchCurrentUser] No enterprise_users row for this tenant — signing out');
-      await supabase.auth.signOut();
+      await supabase.auth.signOut({ scope: 'local' });
       setCurrentUser(null);
       setSession(null);
     }
@@ -1033,15 +1034,16 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
       const m = /^RORD-(\d{1,8})$/.exec(ref);
       if (!m) continue;
       try {
-        const { data: o } = await supabase.from('retail_orders').select('order_number').eq('tenant_id', tid).eq('display_number', Number(m[1])).maybeSingle();
+        const { data: o } = await tScope(supabase.from('retail_orders').select('order_number')).eq('display_number', Number(m[1])).maybeSingle();
         if (o?.order_number) excl.add(o.order_number);
       } catch (e) { /* ignore - falls back to the ref as given */ }
     }
     const excludeOrderNumber = excl.size ? Array.from(excl) : undefined;
     console.log('[checkRentalConflict] Querying:', { productId, startDate, endDate, excludeOrderNumber, tenantId: tid });
-    let q = supabase.from('retail_order_line_items')
-      .select('order_number, rental_start_date, rental_end_date')
-      .eq('tenant_id', tid)
+    // tScope: tenant filter on the shared database; a dedicated database is already this workspace's alone
+    // (its rows may carry no tenant_id, so an explicit tenant_id filter there would hide every booking).
+    let q = tScope(supabase.from('retail_order_line_items')
+      .select('order_number, rental_start_date, rental_end_date'))
       .eq('product_id', productId)
       .eq('is_blocking', true)
       .lte('rental_start_date', endDate)
@@ -1696,8 +1698,17 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     // just the demo tenant. A dedicated-DB tenant has no tid at all
     // (getScopeTenantId returns null for those), so the query runs
     // unfiltered - correct, since their whole database is already isolated.
-    const q = tid ? supabase.from('roles').select('*').or(`tenant_id.eq.${tid},tenant_id.is.null`) : supabase.from('roles').select('*');
-    const { data } = await q.order('created_at', { ascending: false });
+    // Roles are owned by ONE workspace (sql/56): show only this workspace's roles, so a change made here can
+    // never touch another workspace. Before sql/56 has run a workspace has no roles of its own yet, so the old
+    // shared (tenant_id NULL) roles are shown as a fallback instead of an empty list.
+    if (!tid) {
+      const { data } = await supabase.from('roles').select('*').order('created_at', { ascending: false });
+      if (data) setRoles(data);
+      return;
+    }
+    const { data: own } = await supabase.from('roles').select('*').eq('tenant_id', tid).order('created_at', { ascending: false });
+    if (own && own.length) { setRoles(own); return; }
+    const { data } = await supabase.from('roles').select('*').or(`tenant_id.eq.${tid},tenant_id.is.null`).order('created_at', { ascending: false });
     if (data) setRoles(data);
   };
 
@@ -1986,7 +1997,7 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
       const tenant = (window as any).__bp_tenant || {};
       let res: Response | null = null;
       try {
-        res = await fetch('/api/users/create', {
+        res = await waFetch('/api/users/create', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -3939,7 +3950,7 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
       if (session?.user) {
         // Cross-tenant guard for restored sessions (e.g. token persisted before this fix)
         const ok = await verifyTenantMembership(session.user);
-        if (!ok) { await supabase.auth.signOut(); initialResolved = true; setSession(null); setAuthLoading(false); return; }
+        if (!ok) { await supabase.auth.signOut({ scope: 'local' }); initialResolved = true; setSession(null); setAuthLoading(false); return; }
       }
       initialResolved = true;
       setSession(session); setAuthLoading(false);
@@ -3963,7 +3974,7 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
         const ok = await verifyTenantMembership(s.user);
         if (!ok) {
           console.error('[onAuthStateChange] Session rejected — user does not belong to this tenant');
-          await supabase.auth.signOut();
+          await supabase.auth.signOut({ scope: 'local' });
           if (!initialResolved) { initialResolved = true; setAuthLoading(false); }
           setSession(null);
           return;
@@ -4928,9 +4939,9 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     if (!authUserId || !password) return;
     try {
       const tenant = (window as any).__bp_tenant || {};
-      const r = await fetch('/api/admin/reset-password', {
+      const r = await waFetch('/api/admin/reset-password', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ authUserId, password, db_url: tenant.db_url || null }),
+        body: JSON.stringify({ authUserId, password, db_url: tenant.db_url || null, tenantId: tenant.id || null }),
       });
       const j = await r.json();
       if (!r.ok) showAlert('Password reset failed: ' + (j.error || r.status));

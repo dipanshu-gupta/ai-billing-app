@@ -35,6 +35,16 @@ const DATA_SCOPES = [
   { v: 'own',  l: 'Own Records Only',                   desc: 'Rep level — sees only records they own' },
 ];
 
+// Which workspace owns the roles being edited. Shared-database workspaces own their roles through tenant_id
+// (sql/56); a dedicated-database workspace's whole database is its own, so no tenant_id is needed there.
+const roleTenantId = () => {
+  if (typeof window === 'undefined') return null;
+  const t = (window as any).__bp_tenant || {};
+  if (t.plan === 'dedicated' || t.plan === 'enterprise') return null;
+  return t.id || null;
+};
+const must = (res, what) => { if (res?.error) throw new Error(`${what}: ${res.error.message}`); return res; };
+
 const iCls = 'w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm text-[#0F172A] bg-white focus:outline-none focus:ring-2 focus:ring-blue-400';
 
 // ─── Main Component ────────────────────────────────────────────────────────────
@@ -168,16 +178,21 @@ export default function SecurityConsole() {
       const roleData = { ...form, role_code: form.role_code.toUpperCase().replace(/\s+/g,'_') };
       let roleId = editingRole?.id || null;
 
+      const tid = roleTenantId();
       if (roleId) {
-        await supabase.from('roles').update(roleData).eq('id', roleId);
+        // A role still shared by every workspace (tenant_id NULL, before sql/56 ran) must never be edited from
+        // one workspace: that would change it for all of them.
+        if (tid && editingRole && !editingRole.tenant_id) throw new Error('This role is shared with other workspaces and cannot be changed here. Ask the platform owner to run the roles update (sql/56), then try again.');
+        must(await supabase.from('roles').update(roleData).eq('id', roleId), 'Could not update the role');
       } else {
-        const { data: nr } = await supabase.from('roles').insert(roleData).select().single();
+        const { data: nr, error } = await supabase.from('roles').insert({ ...roleData, ...(tid ? { tenant_id: tid } : {}) }).select().single();
+        if (error) throw new Error(/duplicate|unique/i.test(error.message) ? 'A role with this code already exists in your workspace.' : error.message);
         roleId = nr?.id;
       }
       if (!roleId) { showToast('Failed to save role', true); setSaving(false); return; }
 
       // Map permission codes to IDs, insert any missing ones
-      await supabase.from('role_permissions').delete().eq('role_id', roleId);
+      must(await supabase.from('role_permissions').delete().eq('role_id', roleId), 'Could not update permissions');
 
       // Strict marker: this role is now explicitly configured (unticked = no access for governed modules).
       const permsToSave = Array.from(new Set([...selectedPerms.filter(c => c !== '__rbac_v2__'), '__rbac_v2__']));
@@ -201,7 +216,7 @@ export default function SecurityConsole() {
             }
           }
         }
-        if (toInsert.length) await supabase.from('role_permissions').insert(toInsert);
+        if (toInsert.length) must(await supabase.from('role_permissions').insert(toInsert), 'Could not save permissions');
       }
 
       await fetchRoles();
@@ -217,8 +232,12 @@ export default function SecurityConsole() {
   const handleDelete = async (roleId) => {
     if (!supabase) return;
     if (!(await showConfirm('Delete this role? Users with this role will lose access.', { variant:'danger', confirmLabel:'Delete', title:'Delete Role' }))) return;
-    await supabase.from('role_permissions').delete().eq('role_id', roleId);
-    await supabase.from('roles').delete().eq('id', roleId);
+    const role = roles.find(r => r.id === roleId);
+    if (roleTenantId() && role && !role.tenant_id) { showToast('This role is shared with other workspaces and cannot be deleted here.', true); return; }
+    if ((enterpriseUsers || []).some(u => u.role_id === roleId)) { showToast('Users still have this role. Give them another role first.', true); return; }
+    const r1 = await supabase.from('role_permissions').delete().eq('role_id', roleId);
+    const r2 = r1.error ? r1 : await supabase.from('roles').delete().eq('id', roleId);
+    if (r2.error) { showToast('Delete failed: ' + r2.error.message, true); return; }
     await fetchRoles();
     showToast('Role deleted');
   };
@@ -244,19 +263,24 @@ export default function SecurityConsole() {
       (allPerms || []).forEach((p: any) => { permMap[p.permission_code] = p.id; });
 
       // Step 3: Upsert each role and batch-insert its permissions
+      const tid = roleTenantId();
       for (const seed of SEEDED_ROLES) {
-        // Upsert role
-        const { data: roleRow } = await supabase.from('roles')
-          .upsert({
-            role_name: seed.role_name, role_code: seed.role_code,
-            description: seed.description, status: seed.status, data_scope: seed.data_scope,
-          }, { onConflict: 'role_code' })
-          .select('id').single();
-        const roleId = roleRow?.id;
+        // Find THIS workspace's role with that code (never another workspace's), then update or create it.
+        let fq = supabase.from('roles').select('id').eq('role_code', seed.role_code);
+        fq = tid ? fq.eq('tenant_id', tid) : fq;
+        const { data: found } = await fq.limit(1);
+        const fields = { role_name: seed.role_name, role_code: seed.role_code, description: seed.description, status: seed.status, data_scope: seed.data_scope };
+        let roleId = found?.[0]?.id || null;
+        if (roleId) must(await supabase.from('roles').update(fields).eq('id', roleId), `Could not update ${seed.role_name}`);
+        else {
+          const { data: nr, error } = await supabase.from('roles').insert({ ...fields, ...(tid ? { tenant_id: tid } : {}) }).select('id').single();
+          if (error) throw new Error(`Could not create ${seed.role_name}: ${error.message}`);
+          roleId = nr?.id;
+        }
         if (!roleId) continue;
 
         // Delete and batch re-insert permissions
-        await supabase.from('role_permissions').delete().eq('role_id', roleId);
+        must(await supabase.from('role_permissions').delete().eq('role_id', roleId), 'Could not reset permissions');
 
         const rpRows = seed.permissions
           .filter(code => !!permMap[code])
@@ -264,7 +288,7 @@ export default function SecurityConsole() {
 
         // Batch insert in groups of 100
         for (let i = 0; i < rpRows.length; i += 100) {
-          await supabase.from('role_permissions').insert(rpRows.slice(i, i+100));
+          must(await supabase.from('role_permissions').insert(rpRows.slice(i, i+100)), 'Could not save permissions');
         }
       }
 

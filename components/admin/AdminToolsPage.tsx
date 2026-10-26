@@ -648,7 +648,7 @@ function UsersPanel() {
         // No auth — call /api/users/create directly to create auth + link
         const tenant = (window as any).__bp_tenant || {};
         try {
-          const res = await fetch('/api/users/create', {
+          const res = await waFetch('/api/users/create', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -692,7 +692,9 @@ function UsersPanel() {
             // Delete old extra roles and re-insert
             await bp.from('user_roles').delete().eq('enterprise_user_id', eu.id);
             if (extraRoles.length > 0) {
-              await bp.from('user_roles').insert(extraRoles.map((rid: string) => ({ enterprise_user_id: eu.id, role_id: rid })));
+              const bt = (window as any).__bp_tenant || {};
+              const urTid = bt.plan === 'dedicated' || bt.plan === 'enterprise' ? null : (bt.id || null);
+              await bp.from('user_roles').insert(extraRoles.map((rid: string) => ({ enterprise_user_id: eu.id, role_id: rid, ...(urTid ? { tenant_id: urTid } : {}) })));
             }
           }
         } catch(e) { console.warn('user_roles save:', e); }

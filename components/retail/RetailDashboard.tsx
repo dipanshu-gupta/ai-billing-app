@@ -1,6 +1,7 @@
 // @ts-nocheck
 'use client';
 
+import { waFetch } from '@/lib/waFetch';
 import { aiErrorText } from '@/lib/ai/client';
 import { useState, useMemo, useEffect } from 'react';
 import { useApp } from '@/context/AppContext';
@@ -968,7 +969,7 @@ function AIInsightsCard({ kpis, prevPeriodKpis, rangeLabel, fmt, pctChange, them
       const timeoutId = setTimeout(() => controller.abort(), 45000);
       let res;
       try {
-        res = await fetch('/api/ai', {
+        res = await waFetch('/api/ai', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',

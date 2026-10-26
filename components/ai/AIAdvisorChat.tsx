@@ -1,6 +1,7 @@
 // @ts-nocheck
 'use client';
 
+import { waFetch } from '@/lib/waFetch';
 import { aiErrorText } from '@/lib/ai/client';
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { useApp } from '@/context/AppContext';
@@ -580,7 +581,7 @@ export default function AIAdvisorChat() {
       const timeoutId = setTimeout(() => controller.abort(), 45000);
       let res;
       try {
-        res = await fetch('/api/ai', {
+        res = await waFetch('/api/ai', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',

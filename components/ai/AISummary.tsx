@@ -1,6 +1,7 @@
 // @ts-nocheck
 'use client';
 
+import { waFetch } from '@/lib/waFetch';
 import { aiErrorText } from '@/lib/ai/client';
 import { relabelText, relabelHeadings, terminologyBlock } from '@/lib/useRelabel';
 import { useState, useEffect, useCallback } from 'react';
@@ -172,7 +173,7 @@ export default function AISummary({ page, record }) {
       const timeoutId = setTimeout(() => controller.abort(), 45000);
       let res;
       try {
-        res = await fetch('/api/ai', {
+        res = await waFetch('/api/ai', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',

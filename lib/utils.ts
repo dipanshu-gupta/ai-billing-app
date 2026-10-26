@@ -270,7 +270,11 @@ export const DEMO_TENANT_ID = '00000000-0000-0000-0000-000000000001';
 export function tenantScope(q: any) {
   const t = (typeof window !== 'undefined' ? (window as any).__bp_tenant : null) || {};
   const tid = t.id || null;
-  if (!tid || t.db_url) return q; // dedicated DB or unresolved — no filter needed
+  // Dedicated database (own project) or unresolved — no filter needed. NOTE: shared-database workspaces can ALSO
+  // carry a db_url (the master project's URL), so db_url alone must not switch the tenant filter off.
+  const masterUrl = String(process.env.NEXT_PUBLIC_SUPABASE_URL || '').replace(/\/+$/, '');
+  const dedicated = t.plan === 'dedicated' || t.plan === 'enterprise' || (!!t.db_url && String(t.db_url).replace(/\/+$/, '') !== masterUrl);
+  if (!tid || dedicated) return q;
   if (tid === DEMO_TENANT_ID) return q.or(`tenant_id.eq.${tid},tenant_id.is.null`);
   return q.eq('tenant_id', tid);
 }

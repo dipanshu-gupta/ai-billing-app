@@ -30,6 +30,9 @@ const VARIANT_META = {
   warning: { Icon: AlertTriangle, iconColor: 'text-amber-600', iconBg: 'bg-amber-50',  accent: 'bg-amber-500 hover:bg-amber-600' },
   danger:  { Icon: X,             iconColor: 'text-red-600',   iconBg: 'bg-red-50',    accent: 'bg-red-600 hover:bg-red-700' },
 };
+// Any unknown variant (e.g. 'error', 'warn', a typo) falls back safely instead of crashing the whole app.
+const VARIANT_ALIAS = { error: 'danger', fail: 'danger', failure: 'danger', warn: 'warning', ok: 'success' };
+const normVariant = (v, d) => { const k = VARIANT_ALIAS[v] || v; return VARIANT_META[k] ? k : d; };
 
 export function AlertProvider({ children }) {
   const [queue, setQueue] = useState([]); // [{ id, kind:'alert'|'confirm', message, title, variant, confirmLabel, cancelLabel, resolve }]
@@ -43,12 +46,12 @@ export function AlertProvider({ children }) {
   }, []);
 
   const showAlert = useCallback((message, opts = {}) => {
-    return push({ kind: 'alert', message, title: opts.title || null, variant: opts.variant || 'info' });
+    return push({ kind: 'alert', message, title: opts.title || null, variant: normVariant(opts.variant, 'info') });
   }, [push]);
 
   const showConfirm = useCallback((message, opts = {}) => {
     return push({
-      kind: 'confirm', message, title: opts.title || 'Please confirm', variant: opts.variant || 'warning',
+      kind: 'confirm', message, title: opts.title || 'Please confirm', variant: normVariant(opts.variant, 'warning'),
       confirmLabel: opts.confirmLabel || t(currentLang(), 'confirm'),
       cancelLabel: opts.cancelLabel || t(currentLang(), 'cancel'),
     });

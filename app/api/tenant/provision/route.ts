@@ -1,6 +1,7 @@
 // @ts-nocheck
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { authorizePlatformAdmin } from '@/lib/platformAuth';
 
 // Minimal permission set for SYSADMIN
 const ALL_MODULES = [
@@ -69,9 +70,56 @@ async function ensureSysadminRole(client) {
   return role.id;
 }
 
+/**
+ * Shared-database workspace: the admin's role must be THIS workspace's own System Administrator (sql/56), never the
+ * role shared with every other workspace. Copies the standard template roles (tenant_id NULL) for this workspace the
+ * first time, with their permissions; creates a full-access System Administrator if no template exists.
+ */
+async function ensureTenantSysadminRole(client, tenantId: string, log: string[]) {
+  const { data: own } = await client.from('roles').select('id').eq('tenant_id', tenantId).eq('role_code', 'SYSADMIN').maybeSingle();
+  if (own?.id) return own.id;
+  const { data: templates } = await client.from('roles').select('*').is('tenant_id', null).in('role_code', ['SYSADMIN', 'SALES_ADMIN', 'SALES_MGR', 'SALES_REP']);
+  let sysId = null;
+  for (const t of templates || []) {
+    const { data: exists } = await client.from('roles').select('id').eq('tenant_id', tenantId).eq('role_code', t.role_code).maybeSingle();
+    let id = exists?.id;
+    if (!id) {
+      const { data: nr, error } = await client.from('roles').insert({ role_name: t.role_name, role_code: t.role_code, description: t.description, status: t.status || 'Active', data_scope: t.data_scope || 'own', tenant_id: tenantId }).select('id').single();
+      if (error) { log.push(`Role ${t.role_code}: ${error.message}`); continue; }
+      id = nr.id;
+      const { data: rps } = await client.from('role_permissions').select('permission_id').eq('role_id', t.id);
+      const rows = (rps || []).map(x => ({ role_id: id, permission_id: x.permission_id }));
+      for (let i = 0; i < rows.length; i += 100) await client.from('role_permissions').insert(rows.slice(i, i + 100));
+    }
+    if (t.role_code === 'SYSADMIN') sysId = id;
+  }
+  if (!sysId) {
+    const { data: nr, error } = await client.from('roles').insert({ role_name: 'System Administrator', role_code: 'SYSADMIN', description: 'Full access to all modules.', status: 'Active', data_scope: 'all', tenant_id: tenantId }).select('id').single();
+    if (error) { log.push(`SYSADMIN: ${error.message}`); return null; }
+    sysId = nr.id;
+  }
+  // The workspace's System Administrator always has every permission.
+  const { data: allPerms } = await client.from('permissions').select('id');
+  const { data: has } = await client.from('role_permissions').select('permission_id').eq('role_id', sysId);
+  const have = new Set((has || []).map(x => x.permission_id));
+  const missing = (allPerms || []).filter(p => !have.has(p.id)).map(p => ({ role_id: sysId, permission_id: p.id }));
+  for (let i = 0; i < missing.length; i += 100) await client.from('role_permissions').insert(missing.slice(i, i + 100));
+  log.push(`Workspace roles ready (System Administrator ${sysId})`);
+  return sysId;
+}
+
 export async function POST(req: NextRequest) {
+  // Creating a workspace administrator (and setting their password) is a platform-owner action only.
+  const auth = await authorizePlatformAdmin(req);
+  if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
   const body = await req.json();
-  const { db_url, db_service_key, admin_email, admin_name, tenant_name } = body;
+  const { db_service_key, admin_email, admin_name, tenant_name } = body;
+  // A workspace whose db_url is empty OR the master project's own URL lives in the shared database.
+  const masterUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const isShared = !body.db_url || String(body.db_url).replace(/\/+$/, '') === String(masterUrl || '').replace(/\/+$/, '');
+  const db_url = isShared ? null : body.db_url;
+  body.is_shared = isShared;
+  if (isShared && !body.tenant_id) return NextResponse.json({ error: 'tenant_id is required for a shared-database workspace.' }, { status: 400 });
 
   if (!admin_email) {
     return NextResponse.json({ error: 'admin_email is required' }, { status: 400 });
@@ -85,7 +133,7 @@ export async function POST(req: NextRequest) {
   const tempPassword = body.use_custom_password || `Bpro@${rand}!`;
 
   // If no service key provided, use the server-side one
-  const effectiveServiceKey = db_service_key
+  const effectiveServiceKey = (isShared ? null : db_service_key)
     || process.env.SUPABASE_SERVICE_KEY
     || process.env.SUPABASE_SERVICE_ROLE_KEY;
 
@@ -101,11 +149,20 @@ export async function POST(req: NextRequest) {
 
   // ── Step 1: Ensure SYSADMIN role exists (auto-seed if needed) ────
   log.push('Checking SYSADMIN role...');
-  const sysadminRoleId = await ensureSysadminRole(client);
+  const sysadminRoleId = isShared ? await ensureTenantSysadminRole(client, body.tenant_id, log) : await ensureSysadminRole(client);
   log.push(sysadminRoleId ? `SYSADMIN role ready: ${sysadminRoleId}` : 'FAILED to get/create SYSADMIN role');
 
   if (!sysadminRoleId) {
     return NextResponse.json({ error: 'Could not create or find SYSADMIN role. Ensure schema_complete_client.sql has been run.', log }, { status: 500 });
+  }
+
+  // On the shared database one email = one workspace. Never move (or reset the password of) a user who belongs to
+  // ANOTHER workspace.
+  if (isShared) {
+    const { data: other } = await client.from('enterprise_users').select('tenant_id').ilike('email', admin_email).maybeSingle();
+    if (other?.tenant_id && other.tenant_id !== body.tenant_id) {
+      return NextResponse.json({ error: 'This email already belongs to a user in another workspace. Use a different email for this workspace admin.', log }, { status: 409 });
+    }
   }
 
   // ── Step 2: Create or update auth user ───────────────────────────
@@ -188,7 +245,9 @@ export async function POST(req: NextRequest) {
       })())
     : false;
 
-  const existingPrefs = await client.from('app_preferences').select('id').limit(1).maybeSingle();
+  let prefsQ = client.from('app_preferences').select('id');
+  if (body.is_shared && body.tenant_id) prefsQ = prefsQ.eq('tenant_id', body.tenant_id);
+  const existingPrefs = await prefsQ.limit(1).maybeSingle();
   if (!existingPrefs?.data?.id) {
     const prefsPayload: any = {
       b2c_mode:         b2cEnabled,

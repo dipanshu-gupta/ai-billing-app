@@ -2,6 +2,7 @@
 'use client';
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useAlert } from '@/components/shared/AlertProvider';
+import { waFetch, SESSION_ENDED_TEXT } from '@/lib/waFetch';
 
 const PROVIDER_OPTIONS = [
   ['openai', 'OpenAI'], ['anthropic', 'Anthropic (Claude)'], ['gemini', 'Google Gemini'], ['groq', 'Groq'],
@@ -10,21 +11,18 @@ const PROVIDER_OPTIONS = [
 ];
 
 async function api(method: string, path: string, body?: any) {
-  const w: any = window;
-  const t = w.__bp_tenant || {};
-  const sb = w.__bp_supabase;
-  const session = sb ? (await sb.auth.getSession()).data.session : null;
-  const headers: any = { 'Content-Type': 'application/json', ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}) };
+  const t = (window as any).__bp_tenant || {};
   const scope = { tenantId: t.id || undefined, db_url: t.db_url || undefined };
   let url = path;
-  let init: any = { method, headers };
+  const init: any = { method, headers: { 'Content-Type': 'application/json' } };
   if (method === 'GET' || method === 'DELETE') {
     const qs = new URLSearchParams(); if (scope.tenantId) qs.set('tenantId', scope.tenantId); if (scope.db_url) qs.set('db_url', scope.db_url);
     url = `${path}?${qs.toString()}`;
   } else init.body = JSON.stringify({ ...scope, ...body });
-  const res = await fetch(url, init);
+  const res = await waFetch(url, init);
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data?.error || 'Request failed');
+  if (res.status === 401) throw new Error(SESSION_ENDED_TEXT);
+  if (!res.ok) throw new Error(data?.error || `Request failed (${res.status})`);
   return data;
 }
 
@@ -51,7 +49,7 @@ export default function AiSettingsPanel() {
       const d = await api('GET', '/api/ai/settings');
       setCur(d);
       if (d.configured) { setProvider(d.provider); setModel(d.model); setBaseUrl(d.base_url || ''); }
-    } catch (e: any) { showAlert(e.message, { variant: 'error' }); }
+    } catch (e: any) { showAlert(e.message, { variant: 'danger' }); }
     setLoading(false);
   }, []);
   useEffect(() => { load(); }, [load]);
@@ -66,7 +64,7 @@ export default function AiSettingsPanel() {
       const d = await api('POST', '/api/ai/models', { provider, base_url: baseUrl, api_key: apiKey });
       setModels(d.models || []);
       if (!(d.models || []).length) showAlert('No models were returned. You can type a model name instead.', { variant: 'info' });
-    } catch (e: any) { showAlert(e.message, { variant: 'error' }); }
+    } catch (e: any) { showAlert(e.message, { variant: 'danger' }); }
     setBusy('');
   };
   const save = async () => {
@@ -75,7 +73,7 @@ export default function AiSettingsPanel() {
       const d = await api('PUT', '/api/ai/settings', { provider, model, base_url: baseUrl, api_key: apiKey });
       setCur(d); setApiKey('');
       showAlert('AI settings saved.', { variant: 'success' });
-    } catch (e: any) { showAlert(e.message, { variant: 'error' }); }
+    } catch (e: any) { showAlert(e.message, { variant: 'danger' }); }
     setBusy('');
   };
   const test = async () => {
@@ -90,7 +88,7 @@ export default function AiSettingsPanel() {
     if (!window.confirm('Remove the saved AI key? AI features will stop working until you set it up again.')) return;
     setBusy('remove');
     try { await api('DELETE', '/api/ai/settings'); setCur({ configured: false }); setApiKey(''); setModel(''); setModels([]); showAlert('AI settings removed.', { variant: 'success' }); }
-    catch (e: any) { showAlert(e.message, { variant: 'error' }); }
+    catch (e: any) { showAlert(e.message, { variant: 'danger' }); }
     setBusy('');
   };
 

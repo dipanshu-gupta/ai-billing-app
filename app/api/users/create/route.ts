@@ -1,6 +1,6 @@
 // @ts-nocheck
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
+import { authorizeWhatsAppRequest } from '@/lib/whatsappServer';
 
 export async function POST(req: NextRequest) {
   const body = await req.json();
@@ -16,45 +16,29 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Email and password are required' }, { status: 400 });
   }
 
-  // ── Resolve which Supabase to use ────────────────────────────────
-  const masterUrl        = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-  const masterServiceKey = process.env.SUPABASE_SERVICE_KEY
-    || process.env.SUPABASE_SERVICE_ROLE_KEY!;
+  // ── Who is asking, and for which workspace ───────────────────────
+  // Only an administrator of the workspace may add users to it. The workspace and its database come from the
+  // caller's verified session (previously this route was open and trusted tenant_id / db_url / service key from the
+  // request body, so anyone could create an administrator in any workspace).
+  const auth = await authorizeWhatsAppRequest(req, { db_url: db_url || null, tenantId: tenant_id || null, requireAdmin: true });
+  if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
+  const shared = !auth.dbUrl;
+  const adminClient = auth.supabase;
 
-  let targetUrl        = db_url || masterUrl;
-  let targetServiceKey = db_service_key || null;
-
-  // If dedicated tenant and no service key passed, look it up from master tenants table
-  if (db_url && !targetServiceKey && masterServiceKey) {
-    const masterClient = createClient(masterUrl, masterServiceKey, {
-      auth: { autoRefreshToken: false, persistSession: false }
-    });
-    // Find by db_url in tenants table
-    const { data: tenant } = await masterClient
-      .from('tenants')
-      .select('db_service_key, slug')
-      .eq('db_url', db_url)
-      .maybeSingle();
-    if (tenant?.db_service_key) {
-      targetServiceKey = tenant.db_service_key;
+  // The role must belong to THIS workspace.
+  if (role_id) {
+    const { data: r } = await adminClient.from('roles').select('id, tenant_id').eq('id', role_id).maybeSingle();
+    if (!r || (shared && r.tenant_id && r.tenant_id !== auth.tenantId)) {
+      return NextResponse.json({ error: 'That role does not belong to your workspace.' }, { status: 400 });
     }
   }
-
-  // For your own Supabase (no db_url), use master service key
-  if (!targetServiceKey) {
-    targetServiceKey = masterServiceKey;
+  // On the shared database one email = one workspace: never move (or reset the password of) another workspace's user.
+  if (shared) {
+    const { data: other } = await adminClient.from('enterprise_users').select('tenant_id').ilike('email', email).maybeSingle();
+    if (other?.tenant_id && other.tenant_id !== auth.tenantId) {
+      return NextResponse.json({ error: 'This email already belongs to a user in another workspace. Use a different email.' }, { status: 409 });
+    }
   }
-
-  if (!targetServiceKey) {
-    return NextResponse.json({
-      error: 'No service key available. Add SUPABASE_SERVICE_KEY to .env.local'
-    }, { status: 500 });
-  }
-
-  // ── Create admin client ───────────────────────────────────────────
-  const adminClient = createClient(targetUrl, targetServiceKey, {
-    auth: { autoRefreshToken: false, persistSession: false }
-  });
 
   // ── Step 1: Create or update Auth user ───────────────────────────
   let authUserId: string | null = null;
@@ -64,6 +48,13 @@ export async function POST(req: NextRequest) {
   );
 
   if (existingAuth) {
+    // Only re-use (and re-password) an existing login that already belongs to a user of THIS workspace.
+    let mq = adminClient.from('enterprise_users').select('id').ilike('email', email);
+    if (shared) mq = mq.eq('tenant_id', auth.tenantId);
+    const { data: mine } = await mq.limit(1);
+    if (!mine || !mine.length) {
+      return NextResponse.json({ error: 'A login with this email already exists. Use a different email, or ask the platform owner.' }, { status: 409 });
+    }
     await adminClient.auth.admin.updateUserById(existingAuth.id, {
       password, email_confirm: true
     });
@@ -99,7 +90,7 @@ export async function POST(req: NextRequest) {
   };
   if (organization_id)  payload.organization_id  = organization_id;
   if (business_unit_id) payload.business_unit_id = business_unit_id;
-  if (tenant_id)        payload.tenant_id         = tenant_id;
+  if (shared)           payload.tenant_id         = auth.tenantId;
 
   const { error: e1 } = await adminClient.from('enterprise_users')
     .upsert({ ...payload, temporary_password: password }, { onConflict: 'email' });
@@ -108,9 +99,11 @@ export async function POST(req: NextRequest) {
   }
 
   // ── Step 3: Force update role (overrides auth trigger) ───────────
-  await adminClient.from('enterprise_users')
+  let fq = adminClient.from('enterprise_users')
     .update({ role_id: role_id||null, is_admin: !!is_admin, auth_user_id: authUserId })
     .eq('email', email);
+  if (shared) fq = fq.eq('tenant_id', auth.tenantId);
+  await fq;
 
   return NextResponse.json({ success: true, auth_user_id: authUserId });
 }

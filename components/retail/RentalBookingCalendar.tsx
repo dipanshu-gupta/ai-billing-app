@@ -5,7 +5,7 @@ import dynamic from 'next/dynamic';
 import { useApp } from '@/context/AppContext';
 import { useTenant } from '@/context/TenantContext';
 import { useAlert } from '@/components/shared/AlertProvider';
-import { formatDate, formatDisplayNumber } from '@/lib/utils';
+import { formatDate, formatDisplayNumber, tenantScope } from '@/lib/utils';
 import { useFieldLayout } from '@/lib/useFieldLayout';
 import { THEMES } from '@/lib/i18n';
 import SearchableSelect from '@/components/shared/SearchableSelect';
@@ -115,7 +115,7 @@ export default function RentalBookingCalendar({ productId, productName, productP
         .order('rental_start_date', { ascending: true })
         .limit(500);
       const tid = tenant?.id;
-      if (tid) q = q.eq('tenant_id', tid);
+      q = tenantScope(q); // own workspace only (works for shared AND dedicated databases)
       const { data, error } = await q;
       if (cancelled) return;
       if (error) { console.error('[RentalBookingCalendar]', error.message); setBookings([]); setLoading(false); return; }
@@ -124,7 +124,7 @@ export default function RentalBookingCalendar({ productId, productName, productP
       let ordersByNumber = {};
       if (orderNumbers.length) {
         let oq = supabase.from('retail_orders').select('order_number, status, customer_id, customer, display_number').in('order_number', orderNumbers);
-        if (tid) oq = oq.eq('tenant_id', tid);
+        oq = tenantScope(oq);
         const { data: orders } = await oq;
         (orders || []).forEach(o => { ordersByNumber[o.order_number] = o; });
       }
@@ -259,7 +259,7 @@ export default function RentalBookingCalendar({ productId, productName, productP
       .lte('rental_start_date', endISO)
       .gte('rental_end_date', startISO)
       .limit(1);
-    if (tid) q = q.eq('tenant_id', tid);
+    q = tenantScope(q); // own workspace only (works for shared AND dedicated databases)
     const { data, error } = await q;
     setCheckingRange(false);
     if (error) { setRangeConflict({ message: 'Could not verify availability — please try again.' }); return; }
@@ -267,7 +267,7 @@ export default function RentalBookingCalendar({ productId, productName, productP
       const rawOrderNumber = data[0].order_number;
       let displayOrder = rawOrderNumber;
       try {
-        const { data: ord } = await supabase.from('retail_orders').select('display_number').eq('order_number', rawOrderNumber).eq('tenant_id', tid).maybeSingle();
+        const { data: ord } = await tenantScope(supabase.from('retail_orders').select('display_number')).eq('order_number', rawOrderNumber).maybeSingle();
         if (ord?.display_number) displayOrder = formatDisplayNumber('RORD', ord.display_number);
       } catch (e) { /* fall back to raw order_number */ }
       setRangeConflict({ message: `Already booked by order ${displayOrder} for an overlapping date range.` });
@@ -318,7 +318,7 @@ export default function RentalBookingCalendar({ productId, productName, productP
     if (!selectedBooking || !supabase) return;
     const tid = tenant?.id;
     let q = supabase.from('retail_orders').select('*').eq('order_number', selectedBooking.order_number);
-    if (tid) q = q.eq('tenant_id', tid);
+    q = tenantScope(q); // own workspace only (works for shared AND dedicated databases)
     const { data: row, error } = await q.maybeSingle();
     if (error || !row) { showAlert('Could not open this order.', { variant:'danger' }); return; }
     const record = { ...row, id: row.order_number, _uuid: row.id };
