@@ -13,16 +13,19 @@ export async function POST(request: NextRequest) {
     if ('res' in a) return a.res;
     const { ctx } = a;
     isAdminFlag = ctx.isAdmin;
+    // RBAC: "Use AI Advisor" (manage_ai) is a role permission; enforced here, not only by hiding the button.
+    if (!ctx.canUseAi) return NextResponse.json({ error: 'Your role does not include the AI Advisor. Ask your administrator to enable "Use AI Advisor" for your role.', code: 'AI_FORBIDDEN' }, { status: 403 });
 
     if (rateLimited(ctx.tenantId)) {
       return NextResponse.json({ error: 'Too many AI requests - please wait a moment.' }, { status: 429 });
     }
 
     const settings = await getTenantAiSettings(ctx.master, ctx.tenantId);
-    const max_tokens = Math.min(Number(body.max_tokens) || 1024, 1500);
-    const safeMessages = (Array.isArray(body.messages) ? body.messages : []).slice(-12);
+    const max_tokens = Math.min(Number(body.max_tokens) || 1024, 2500);
+    const safeMessages = (Array.isArray(body.messages) ? body.messages : []).slice(-30)
+      .map((m: any) => ({ role: m?.role === 'assistant' ? 'assistant' : 'user', content: String(m?.content ?? '').slice(0, 16000) }));
     const { text } = await chat(settings, {
-      system: String(body.system || '').slice(0, 24000),
+      system: String(body.system || '').slice(0, 60000),
       messages: safeMessages,
       maxTokens: max_tokens,
     });

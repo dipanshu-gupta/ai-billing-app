@@ -1135,7 +1135,7 @@ function RetailLineItems({ items, setItems, products, taxRegime, page, headerDis
 }
 
 // ─── Print HTML Builder ──────────────────────────────────────────────────────
-function buildRetailPrintHTML(t, record, items, products, customFieldsMeta = []) {
+export function buildRetailPrintHTML(t, record, items, products, customFieldsMeta = []) {
   // Canvas (free-form) templates render through the shared document engine
   if (t && t._canvas) return buildDocumentHTML(t, record, items, { docType: 'retail_invoice', products });
   const isTh = t.paper_size?.startsWith('thermal');

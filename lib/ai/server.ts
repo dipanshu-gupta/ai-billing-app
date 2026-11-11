@@ -4,7 +4,7 @@ import { authorizeWhatsAppRequest, masterClient } from '@/lib/whatsappServer';
 import { decryptSecret } from '@/lib/ai/crypto';
 import { AiError } from '@/lib/ai/providers';
 
-export type AiCtx = { tenantId: string; userEmail: string; isAdmin: boolean; master: any };
+export type AiCtx = { tenantId: string; userEmail: string; isAdmin: boolean; canUseAi: boolean; master: any };
 
 /** Verify session + membership of THAT tenant (+ admin when asked) + tenant active. */
 export async function authorizeAi(request: Request, opts: { db_url?: string | null; tenantId?: string | null; requireAdmin?: boolean }): Promise<{ ctx: AiCtx } | { res: NextResponse }> {
@@ -15,7 +15,7 @@ export async function authorizeAi(request: Request, opts: { db_url?: string | nu
   if (!t) return { res: NextResponse.json({ error: 'Unknown workspace.' }, { status: 403 }) };
   if (['suspended', 'expired', 'cancelled'].includes(String(t.status || '').toLowerCase()))
     return { res: NextResponse.json({ error: 'Workspace is not active.' }, { status: 403 }) };
-  return { ctx: { tenantId: a.tenantId, userEmail: a.email, isAdmin: a.isAdmin, master } };
+  return { ctx: { tenantId: a.tenantId, userEmail: a.email, isAdmin: a.isAdmin, canUseAi: a.isAdmin || (a.permissions || []).includes('manage_ai'), master } };
 }
 
 export async function loadTenantAi(master: any, tenantId: string) {
@@ -45,7 +45,9 @@ export function aiErrorResponse(e: any) {
 
 // Per-tenant sliding-window limiter (per server instance; best-effort).
 const hits = new Map<string, number[]>();
-export function rateLimited(tenantId: string, limit = 30, windowMs = 60000): boolean {
+// The advisor is an agent: one question can take several model calls (look up, check, answer), so the budget is per
+// tenant per minute, sized for a few users asking at once.
+export function rateLimited(tenantId: string, limit = 90, windowMs = 60000): boolean {
   const now = Date.now();
   const arr = (hits.get(tenantId) || []).filter(t => now - t < windowMs);
   if (arr.length >= limit) { hits.set(tenantId, arr); return true; }

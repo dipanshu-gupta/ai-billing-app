@@ -341,7 +341,7 @@ function AboutDialog({ onClose }) {
 }
 
 export default function Header({ activePage, onNavigate }) {
-  const { currentUser, handleLogout, appPreferences, appearance } = useApp();
+  const { currentUser, handleLogout, appPreferences, appearance, hasPermission } = useApp();
   const [profileOpen, setProfileOpen] = useState(false);
   const [aboutOpen,   setAboutOpen]   = useState(false);
   const [today, setToday] = useState('');
@@ -405,14 +405,14 @@ export default function Header({ activePage, onNavigate }) {
       {/* Right: AI + Bell + Profile */}
       <div className="flex items-center gap-2">
 
-        {/* AI Advisor */}
-        <button onClick={() => window.dispatchEvent(new CustomEvent('toggle-ai-chat'))}
+        {/* AI Advisor (only for roles with "Use AI Advisor") */}
+        {(!hasPermission || hasPermission('manage_ai')) && <button onClick={() => window.dispatchEvent(new CustomEvent('toggle-ai-chat'))}
           title="Business Advisor Agent"
           className="relative flex items-center gap-2 px-3.5 py-2 rounded-xl bg-white/15 hover:bg-white/25 text-white transition-all border border-white/20 text-sm font-semibold">
           <Bot className="w-4 h-4" strokeWidth={1.75}/>
           <span className="hidden sm:inline">{t(appearance?.language||'en','aiAdvisor')}</span>
           <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-green-400 rounded-full border-2 border-[#0F172A]"/>
-        </button>
+        </button>}
 
         {/* Notification bell */}
         <NotificationBell />

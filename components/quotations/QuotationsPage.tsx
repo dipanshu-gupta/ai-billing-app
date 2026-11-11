@@ -94,7 +94,7 @@ const DEFAULT_SECTIONS = [
   { id:'footer',    type:'footer',    name:'Footer',            enabled:true, order:7, settings:{ bgColor:'#0F172A', textColor:'#FFFFFF', showSignature:true, signatureLabel:'Authorized Signature', footerText:'' } },
 ];
 
-const buildQuoteHTML = (quote, items, template, products) => {
+export const buildQuoteHTML = (quote, items, template, products) => {
   // Canvas (free-form) templates render through the shared document engine
   if (template && template._canvas) return buildDocumentHTML(template, quote, items, { docType: 'quotation', products });
   const sections    = template?.sections?.length ? template.sections : DEFAULT_SECTIONS;

@@ -27,20 +27,20 @@ function withTimeout<T>(p: PromiseLike<T>, ms: number, label: string): Promise<T
   ]);
 }
 
-export type WaAuthOk = { ok: true; supabase: any; tenantId: string; dbUrl: string | null; email: string; isAdmin: boolean };
+export type WaAuthOk = { ok: true; supabase: any; tenantId: string; dbUrl: string | null; email: string; isAdmin: boolean; permissions: string[] };
 export type WaAuthFail = { ok: false; status: number; error: string };
 const fail = (status: number, error: string): WaAuthFail => ({ ok: false, status, error });
 
-async function userIsAdmin(target: any, membership: any): Promise<boolean> {
-  if (membership?.is_admin === true) return true;
-  if (!membership?.role_id) return false;
+async function roleCodes(target: any, membership: any): Promise<string[]> {
+  if (!membership?.role_id) return [];
   const { data: rp } = await target.from('role_permissions').select('permission_id').eq('role_id', membership.role_id);
   const ids = (rp || []).map((x: any) => x.permission_id);
-  if (!ids.length) return false;
+  if (!ids.length) return [];
   const { data: perms } = await target.from('permissions').select('permission_code').in('id', ids);
-  const codes = (perms || []).map((p: any) => p.permission_code);
-  return codes.includes('__admin__') || codes.includes('admin_tools_view');
+  return (perms || []).map((p: any) => p.permission_code);
 }
+const adminFrom = (membership: any, codes: string[]) =>
+  membership?.is_admin === true || codes.includes('__admin__') || codes.includes('admin_tools_view');
 
 export async function authorizeWhatsAppRequest(
   request: Request,
@@ -99,10 +99,11 @@ export async function authorizeWhatsAppRequest(
     if (!tenantId) return fail(403, 'Your account is not assigned to a workspace.');
   }
 
-  const isAdmin = await userIsAdmin(target, membership);
+  const permissions = await roleCodes(target, membership);
+  const isAdmin = adminFrom(membership, permissions);
   if (opts.requireAdmin && !isAdmin) return fail(403, 'Only workspace administrators can do this.');
 
-  return { ok: true, supabase: target, tenantId: tenantId!, dbUrl, email: user.email || '', isAdmin };
+  return { ok: true, supabase: target, tenantId: tenantId!, dbUrl, email: user.email || '', isAdmin, permissions };
 }
 
 // ─── Webhook-side helpers ───────────────────────────────────────────────────

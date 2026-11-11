@@ -4,8 +4,9 @@
 import { waFetch } from '@/lib/waFetch';
 import { aiErrorText } from '@/lib/ai/client';
 import { relabelText, relabelHeadings, terminologyBlock } from '@/lib/useRelabel';
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useApp } from '@/context/AppContext';
+import { useRbac } from '@/lib/useRbac';
 import { formatCurrency, formatDate } from '@/lib/utils';
 
 // ─── Build rich context for each object type ──────────────────────────────────
@@ -150,8 +151,19 @@ const summaryCache: Record<string, { summary: string; error: string }> = {};
 
 // ─── AI Summary Component ─────────────────────────────────────────────────────
 export default function AISummary({ page, record }) {
-  const appData = useApp();
-  const cacheKey = record?.id ? `${page}:${record.id}` : null;
+  const app = useApp();
+  const { can } = useRbac();
+  // RBAC: the summary may only mention related records the user could open themselves - modules their role can
+  // view, inside their data-security scope. (It used to count every related record in the workspace.)
+  const appData = useMemo(() => {
+    const scoped = (key, list) => (can(key, 'view') ? (app.applyDataSecurity ? app.applyDataSecurity(list || []) : (list || [])) : []);
+    return { ...app, customers: scoped('customers', app.customers), leads: scoped('leads', app.leads), opportunities: scoped('opportunities', app.opportunities),
+      orders: scoped('orders', app.orders), invoices: scoped('invoices', app.invoices), contacts: scoped('contacts', app.contacts),
+      activities: scoped('activities', app.activities), quotations: scoped('quotations', app.quotations), enterpriseUsers: app.enterpriseUsers || [] };
+  }, [app.customers, app.leads, app.opportunities, app.orders, app.invoices, app.contacts, app.activities, app.quotations, app.enterpriseUsers, app.currentUserPermissions]);
+  // Cache per workspace AND user: a summary built for one person must never be shown to another.
+  const who = `${(typeof window !== 'undefined' && (window as any).__bp_tenant?.id) || ''}:${app.currentUser?.id || ''}`;
+  const cacheKey = record?.id ? `${who}:${page}:${record.id}` : null;
 
   // Initialise state from cache so navigating back shows the same summary instantly
   const cached = cacheKey ? summaryCache[cacheKey] : null;
