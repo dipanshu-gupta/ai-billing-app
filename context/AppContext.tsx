@@ -2294,7 +2294,8 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
           // point the customer at a contact number that was never written.
           if (error) throw error;
           if (data.isPrimary && data.customerId) {
-            await supabase.from('contacts').update({ is_primary: false }).eq('customer_id', data.customerId).neq('contact_number', id);
+            await tScope(supabase.from('contacts').update({ is_primary: false })).eq('customer_id', data.customerId).neq('contact_number', id);
+            await tScope(supabase.from('customers').update({ primary_contact_id: id, primary_contact: data.name || '' })).eq('customer_number', data.customerId);
             await supabase.from('customers').update({ primary_contact_id: id }).eq('customer_number', data.customerId);
           }
           await runAutomations('contacts', id, data, 'on_create');
@@ -2420,7 +2421,8 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
         const { error: e_contacts } = await supabase.from('contacts').update({ ...sys, custom_data: record.custom_data||{}, customer: record.customer, customer_id: record.customerId||null, name: record.name, email: record.email||'', phone: record.phone||'', mobile: record.mobile||'', designation: record.designation||'', department: record.department||'', is_primary: record.isPrimary||false, linked_in: record.linkedIn||'', description: record.description||'', owner: record.owner||'', owner_id: record.owner_id||null, status: record.status, comments: record.comments||'' }).eq('contact_number', record.id);
         if (e_contacts) { console.error('update contacts:', e_contacts.message); showAlert('Save failed: ' + e_contacts.message); return; }
         if (record.isPrimary && record.customerId) {
-          await supabase.from('contacts').update({ is_primary: false }).eq('customer_id', record.customerId).neq('contact_number', record.id);
+          await tScope(supabase.from('contacts').update({ is_primary: false })).eq('customer_id', record.customerId).neq('contact_number', record.id);
+          await tScope(supabase.from('customers').update({ primary_contact_id: record.id, primary_contact: record.name || '' })).eq('customer_number', record.customerId);
           await supabase.from('customers').update({ primary_contact_id: record.id }).eq('customer_number', record.customerId);
         }
         await runAutomations('contacts', record.id, record, 'on_update', previousData);
@@ -4816,8 +4818,16 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     // being defaulted. That's the actual cause of defaults appearing to
     // break unpredictably: setting a default on one object silently wiped
     // out the default on every other object too.
-    const { data: target, error: lookupErr } = await supabase.from('saved_searches').select('object_type,tenant_id').eq('id', id).single();
+    const { data: target, error: lookupErr } = await supabase.from('saved_searches').select('object_type,tenant_id,is_default,is_global_default').eq('id', id).single();
     if (lookupErr || !target) { showAlert('Failed to set default: could not find that saved search.', { variant:'danger' }); return; }
+    // Clicking Default on the search that already IS the default turns it off (it used to be a one-way switch).
+    if (target.is_default || target.is_global_default) {
+      const { error: offErr } = await supabase.from('saved_searches').update({ is_default:false, is_global_default:false }).eq('id', id);
+      if (offErr) { showAlert('Failed to remove default: '+offErr.message, { variant:'danger' }); return; }
+      await fetchSavedSearches();
+      showAlert('Default removed. The list will open without a saved search.', { variant:'success' });
+      return;
+    }
     let clearQ = supabase.from('saved_searches').update({is_default:false,is_global_default:false})
       .eq('created_by', currentUser.email).eq('object_type', target.object_type);
     if (target.tenant_id) clearQ = (clearQ as any).eq('tenant_id', target.tenant_id);
@@ -4917,22 +4927,62 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
   const printableQuoteRef = React.useRef(null);
 
   // deleteRecord
-  const deleteRecord = async (page, recordId) => {
-    if (!supabase) return;
-    if (!(await showConfirm('Delete this record?', { variant:'danger', confirmLabel:'Delete' }))) return;
-    const tableMap = { customers:'customers', leads:'leads', opportunities:'opportunities', orders:'orders', invoices:'invoices', contacts:'contacts', activities:'activities', products:'products' };
-    const idFieldMap = { customers:'id', leads:'lead_number', opportunities:'opportunity_number', orders:'order_number', invoices:'invoice_number', contacts:'contact_number', activities:'activity_number', products:'id' };
-    // For products, recordId may be PROD-xxx (product_number); resolve to UUID
-    if (page === 'products' && String(recordId).startsWith('PROD')) {
-      const prod = (await supabase.from('products').select('id').eq('product_number', recordId).maybeSingle()).data;
-      if (prod?.id) recordId = prod.id;
+  /**
+   * Delete one B2B record. RBAC: needs `<page>_delete` (re-checked here, not only by hiding the button).
+   * Tenant-scoped; removes the record's line items; never leaves a customer pointing at a deleted primary contact;
+   * refuses to delete a customer that still has quotations, orders or invoices (those are financial records).
+   * Returns true when deleted.
+   */
+  const deleteRecord = async (page, recordId, opts: any = {}) => {
+    if (!supabase || !recordId) return false;
+    const cfg = {
+      customers:     { table:'customers',     key:'customer_number' },
+      contacts:      { table:'contacts',      key:'contact_number' },
+      leads:         { table:'leads',         key:'lead_number',        lines:'lead_line_items' },
+      opportunities: { table:'opportunities', key:'opportunity_number', lines:'opportunity_line_items' },
+      orders:        { table:'orders',        key:'order_number',       lines:'order_line_items' },
+      invoices:      { table:'invoices',      key:'invoice_number',     lines:'invoice_line_items' },
+      activities:    { table:'activities',    key:'activity_number' },
+      products:      { table:'products',      key:'product_number' },
+    }[page];
+    if (!cfg) return false;
+    if (!hasPermission(`${page}_delete`)) { showAlert('Your role does not allow deleting these records.', { variant:'warning' }); return false; }
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(recordId));
+    const col = isUuid ? 'id' : cfg.key;
+    const { data: row } = await tScope(supabase.from(cfg.table).select('*')).eq(col, recordId).maybeSingle();
+    if (!row) { showAlert('This record no longer exists or you cannot access it.', { variant:'warning' }); return false; }
+    const keyVal = row[cfg.key] || recordId;
+    const label = row.name || row.subject || keyVal;
+
+    // A customer with financial documents cannot be deleted (it would orphan them); say exactly why.
+    let extra = '';
+    if (page === 'customers') {
+      const count = async (t) => { const { count } = await tScope(supabase.from(t).select('id', { count:'exact', head:true })).eq('customer_id', keyVal); return count || 0; };
+      const [q, o, inv, c] = await Promise.all([count('quotations'), count('orders'), count('invoices'), count('contacts')]);
+      if (q + o + inv > 0) {
+        showAlert(`"${label}" has ${[q && `${q} quotation(s)`, o && `${o} order(s)`, inv && `${inv} invoice(s)`].filter(Boolean).join(', ')}. Delete or reassign those first, or set the customer to Inactive instead.`, { variant:'warning', title:'Customer cannot be deleted' });
+        return false;
+      }
+      if (c) extra = ` Its ${c} contact(s) will stay, without a linked customer.`;
     }
-    const table=tableMap[page]; const idField=idFieldMap[page]; if(!table)return;
-    const f = (page==='products' && String(recordId).startsWith('PROD')) ? 'product_number' : idField;
-    await supabase.from(table).delete().eq(f, recordId);
-    await logAudit({ recordType:page, recordId, recordName:recordId, action:'deleted' });
+    if (page === 'contacts' && (row.is_primary)) extra = ' It is the primary contact of its customer; the customer will have no primary contact.';
+    if (!opts.skipConfirm && !(await showConfirm(`Delete "${label}"? This cannot be undone.${extra}`, { variant:'danger', confirmLabel:'Delete', title:`Delete ${page === 'opportunities' ? 'opportunity' : page.replace(/s$/, '')}` }))) return false;
+
+    if (cfg.lines) await tScope(supabase.from(cfg.lines).delete()).eq(cfg.key, keyVal);
+    if (page === 'contacts') {
+      await tScope(supabase.from('customers').update({ primary_contact_id: null, primary_contact: null })).eq('primary_contact_id', keyVal);
+    }
+    const { error } = await tScope(supabase.from(cfg.table).delete()).eq(cfg.key, keyVal);
+    if (error) {
+      showAlert(/foreign key|violates/i.test(error.message) ? `"${label}" is still used by other records, so it cannot be deleted.` : `Delete failed: ${error.message}`, { variant:'danger' });
+      return false;
+    }
+    await logAudit({ recordType:page, recordId:keyVal, recordName:label, action:'deleted' });
     const refs = { customers:fetchCustomers, leads:fetchLeads, opportunities:fetchOpportunities, orders:fetchOrders, invoices:fetchInvoices, contacts:fetchContacts, activities:fetchActivities, products:fetchProducts };
     await refs[page]?.();
+    if (page === 'contacts') await fetchCustomers();
+    showAlert(`"${label}" deleted.`, { variant:'success' });
+    return true;
   };
 
   const adminResetPassword = async (authUserId: string, password: string) => {

@@ -11,6 +11,7 @@
  * fields as any standard object (record number, name, status, owner,
  * created/updated date and user, organization, business unit, record ID).
  */
+import FloatMenu from '@/components/shared/FloatMenu';
 import RedwoodSkin from '@/components/shared/RedwoodSkin';
 import { resolveStatusOptions } from '@/lib/statusOptions';
 import { ObjectIcon } from '@/lib/lineIcons';
@@ -529,10 +530,10 @@ export default function DynamicObjectPage({ customObject }) {
                         <div className="relative flex justify-center" data-menu-container>
                           <button onClick={() => setMenuOpenId(menuOpenId === record.id ? null : record.id)} className="w-9 h-9 rounded-full bg-[#0F172A] text-white hover:bg-blue-800 flex items-center justify-center text-lg font-bold shadow transition-all">⋮</button>
                           {menuOpenId === record.id && (
-                            <div className="absolute right-0 top-10 bg-[#0F172A] border border-blue-800 shadow-2xl rounded-2xl p-2 z-[999] min-w-[200px]">
+                            <FloatMenu minWidth={200} className="bg-[#0F172A] border border-blue-800 shadow-2xl rounded-2xl p-2">
                               <button onClick={() => { setSelectedRecord(record); setMenuOpenId(null); }} className="w-full text-left px-4 py-3 rounded-xl text-sm font-medium hover:bg-blue-800 text-white">Open Details</button>
                               {canDelete && <button onClick={() => { setMenuOpenId(null); handleDelete(record); }} className="w-full text-left px-4 py-3 rounded-xl text-sm font-medium hover:bg-red-700 text-red-200">🗑 Delete</button>}
-                            </div>
+                            </FloatMenu>
                           )}
                         </div>
                       </td>

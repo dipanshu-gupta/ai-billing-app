@@ -269,29 +269,72 @@ export default function RedwoodSavedSearchBar({ page, filters, onApply, fields =
     setOpts([]);
   }, [stageF, val, owners, statusOptions]);
 
-  // Lightweight natural-language reading of what was typed ("active customers created last 30 days").
+  // Natural-language reading of what was typed: "active customers created last 30 days", "status = Closed Won",
+  // "industry is technology and city = pune", "amount > 50000", 'name = "Rakhi Rawat"'.
+  // Values can be several words and are matched case-insensitively; for fields with a fixed list of choices the
+  // typed value is snapped to the real choice (so "closed won" filters on "Closed Won").
   const interpret = (raw) => {
-    const t = ' ' + raw.toLowerCase() + ' ';
+    const spaced = String(raw).replace(/\s*(>=|<=|!=|<>|=|>|<)\s*/g, ' $1 ');
+    const t = ' ' + spaced.toLowerCase().replace(/\s+/g, ' ') + ' ';
     const patch: any = {}; const labels: string[] = []; const conds: any[] = [];
     const per: [RegExp, string][] = [[/\btoday\b/, 'today'], [/\byesterday\b/, 'yesterday'], [/\b(last|past) (7|seven) days\b|\bthis week\b/, 'last_7'], [/\b(last|past) 30 days\b/, 'last_30'], [/\b(last|past) 90 days\b/, 'last_90'], [/\bthis month\b/, 'this_month'], [/\blast month\b/, 'last_month'], [/\bthis year\b/, 'this_year']];
     for (const [re, v] of per) if (re.test(t)) { patch.timePeriod = v; labels.push(`Created: ${PERIODS[v]}`); break; }
-    const st = (statusOptions || []).find(o => new RegExp('\\b' + String(o).toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b').test(t));
-    if (st) { patch.status = st; labels.push(`Status: ${st}`); }
+    const OPMAP: any = { '>=': 'gte', '<=': 'lte', '>': 'gt', '<': 'lt', '=': 'equals', '!=': 'not_equals', '<>': 'not_equals', over: 'gt', above: 'gt', under: 'lt', below: 'lt', 'is not': 'not_equals', 'not': 'not_equals', is: 'equals', equals: 'equals', contains: 'contains', 'starts with': 'contains' };
+    const OPRE = /^(?:(>=|<=|!=|<>|=|>|<|is not|not|is|equals|contains|over|above|under|below)(?:\s+|$))?/;
+    const esc = (x) => String(x).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    // Where each field label occurs, so a value stops where the next field starts.
+    const labelled = catalog.filter(f => !f.key.startsWith('__') && f.label && f.label.length >= 3).map(f => ({ f, l: f.label.toLowerCase() }));
+    const starts = labelled.map(x => t.indexOf(' ' + x.l + ' ')).filter(i => i >= 0);
+    const statusAt = t.search(/ status (>=|<=|!=|<>|=|is not|not|is) /);
+    if (statusAt >= 0 && statusOptions?.length) starts.push(statusAt);
+    const valueFrom = (from) => {
+      let rest = t.slice(from).trim();
+      const q = rest.match(/^(?:"([^"]*)"|'([^']*)')/);
+      if (q) return (q[1] ?? q[2]).trim();
+      const nexts = starts.filter(i => i > from).sort((a, b) => a - b);
+      if (nexts.length) rest = t.slice(from, nexts[0]).trim();
+      return rest.replace(/\s+(and|with|where|,)\s*$/, '').replace(/^(and|with|where)\s+/, '').trim();
+    };
+    const snap = (choices, v) => {
+      const lower = String(v).toLowerCase();
+      const hit = (choices || []).filter(c => lower === String(c).toLowerCase() || lower.startsWith(String(c).toLowerCase() + ' ')).sort((a, b) => String(b).length - String(a).length)[0];
+      return hit ?? null;
+    };
+
+    // Status: "status = X" / "status is not X", or just a status word anywhere ("active customers").
+    if (statusAt >= 0 && statusOptions?.length) {
+      const after = t.slice(statusAt + ' status '.length);
+      const m = after.match(OPRE); const o = OPMAP[(m?.[1] || 'is').trim()] || 'equals';
+      const v = valueFrom(statusAt + ' status '.length + (m?.[0]?.length || 0));
+      const choice = snap(statusOptions, v) || v;
+      if (choice) {
+        if (o === 'not_equals') { conds.push({ field: 'status', type: 'select', op: 'not_equals', value: choice, display: choice, label: 'Status', column: 'status' }); labels.push(`Status is not ${choice}`); }
+        else { patch.status = choice; labels.push(`Status: ${choice}`); }
+      }
+    } else {
+      const st = [...(statusOptions || [])].sort((a, b) => String(b).length - String(a).length).find(o => new RegExp('\\b' + esc(String(o).toLowerCase()) + '\\b').test(t));
+      if (st) { patch.status = st; labels.push(`Status: ${st}`); }
+    }
     if (/\b(my|mine)\b/.test(t) && currentUser?.email && owners?.some(o => o.value === currentUser.email)) { patch.owner = currentUser.email; labels.push('Owner: me'); }
     else { const ow = (owners || []).find(o => o.label && o.label.length > 2 && t.includes(' ' + String(o.label).toLowerCase())); if (ow) { patch.owner = ow.value; labels.push(`Owner: ${ow.label}`); } }
-    for (const f of catalog) {
-      if (f.key.startsWith('__') || !f.label || f.label.length < 3) continue;
-      const i = t.indexOf(' ' + f.label.toLowerCase() + ' ');
+
+    for (const { f, l } of labelled) {
+      const i = t.indexOf(' ' + l + ' ');
       if (i < 0) continue;
-      const rest = t.slice(i + f.label.length + 2).trim();
-      const m = rest.match(/^(>=|<=|>|<|=|is not|is|contains|equals|over|under|above|below)?\s*([\w@.\-]+)/);
-      if (!m || !m[2]) continue;
-      const map: any = { '>=': 'gte', '<=': 'lte', '>': 'gt', '<': 'lt', '=': 'eq', over: 'gt', above: 'gt', under: 'lt', below: 'lt', 'is not': 'not_equals', is: 'equals', equals: 'equals', contains: 'contains' };
-      let o = m[1] ? map[m[1]] : defaultOp(f);
-      if (f.type === 'number' && (o === 'equals' || o === 'contains')) o = 'eq';
-      if (f.type === 'number' && Number.isNaN(Number(m[2]))) continue;
-      conds.push({ field: f.key, type: f.type, op: o, value: m[2], display: m[2], label: f.label, column: f.column, scope: f.scope, line: f.line });
-      labels.push(`${f.scope === 'line' ? 'Line › ' : ''}${f.label} ${opLabel(o)} ${m[2]}`);
+      const after = t.slice(i + l.length + 2);
+      const m = after.match(OPRE);
+      if (!m?.[1] && f.type !== 'select' && !f.lookup) continue; // "customer list" is not a filter; "industry = x" is
+      let o = m?.[1] ? OPMAP[m[1].trim()] : defaultOp(f);
+      let v = valueFrom(i + l.length + 2 + (m?.[0]?.length || 0));
+      if (!v) continue;
+      if (f.type === 'number') { if (Number.isNaN(Number(v))) continue; if (o === 'equals' || o === 'contains') o = 'eq'; if (o === 'not_equals') o = 'neq'; }
+      if (f.type === 'date') { if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) continue; if (o === 'equals' || o === 'eq') o = 'on'; if (o === 'gt' || o === 'gte') o = 'after'; if (o === 'lt' || o === 'lte') o = 'before'; }
+      const choices = optionsOf ? optionsOf(f) : (f.opts || f.options);
+      if (choices?.length) { const c = snap(choices, v); if (c) v = c; }
+      // Keep the user's original capitalisation for free text.
+      const orig = String(raw).match(new RegExp(esc(v), 'i')); if (orig && !choices?.length) v = orig[0];
+      conds.push({ field: f.key, type: f.type, op: o, value: v, display: v, label: f.label, column: f.column, scope: f.scope, line: f.line });
+      labels.push(`${f.scope === 'line' ? 'Line › ' : ''}${f.label} ${opLabel(o)} ${v}`);
     }
     return { patch, conds, labels };
   };

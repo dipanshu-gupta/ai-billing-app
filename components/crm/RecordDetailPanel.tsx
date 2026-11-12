@@ -1,6 +1,8 @@
 // @ts-nocheck
 'use client';
 
+import { toCrmRecord } from '@/lib/crmRecordShape';
+import { confirmPrimarySwitch } from '@/lib/primaryContact';
 import RedwoodSkin from '@/components/shared/RedwoodSkin';
 import { useState, useEffect } from 'react';
 import { useCustomFields, invalidateCustomFieldCache } from '@/lib/useCustomFields';
@@ -379,9 +381,56 @@ export default function RecordDetailPanel({ page, record, onClose, prefillCustom
     convertLeadToOpportunity, createInvoiceFromOrder, createOrderFromOpportunity,
     createQuotationFromOpportunity, fetchLineItems, fetchEnterpriseUsers,
     currentUserPermissions, permissionsLoaded, appPreferences, currentUser, appearance,
-    invoiceTemplates,
+    invoiceTemplates, deleteRecord, pendingReturnTo, fetchQuotations, createOrderFromQuotation,
   } = useApp();
   const L = useRelabel();
+  // Where "close / cancel / save & close" of a record opened FROM this one should come back to: this record's 360,
+  // and from there on to wherever this record itself was opened from (kept as a chain, not just one level).
+  const backHere = () => ({ page, record: edited, tab: '360', ...(pendingReturnTo ? { returnTo: pendingReturnTo } : {}) });
+  const openCreated = async (subPage, table, keyCol, keyVal) => {
+    if (!supabase || !keyVal) return;
+    const { data: row } = await tenantScope(supabase.from(table).select('*')).eq(keyCol, keyVal).maybeSingle();
+    if (!row) return;
+    window.dispatchEvent(new CustomEvent('open-crm-record', { detail: { page: subPage, record: toCrmRecord(subPage, row), returnTo: backHere() } }));
+    onClose({ navigatingAway: true });
+  };
+  // "+ New …" from any 360 tab. Conversions that carry line items use the real conversion; everything else opens the
+  // create form pre-filled with this record's customer / contact.
+  const startCreate = async (subPage) => {
+    if (page === 'opportunities' && subPage === 'quotations') {
+      const q = await createQuotationFromOpportunity(edited);
+      if (q) { fetchQuotations && await fetchQuotations(); showAlert('Quotation created from this opportunity.', { variant: 'success' }); await openCreated('quotations', 'quotations', 'quote_number', q.quote_number); }
+      return;
+    }
+    if (page === 'quotations' && subPage === 'orders' && createOrderFromQuotation) {
+      const o = await createOrderFromQuotation(edited);
+      const num = typeof o === 'string' ? o : (o?.order_number || o?.orderNumber || o?.id);
+      if (num) await openCreated('orders', 'orders', 'order_number', num);
+      return;
+    }
+    if (page === 'orders' && subPage === 'invoices') {
+      const r = await createInvoiceFromOrder(edited);
+      if (r?.invoiceNumber) await openCreated('invoices', 'invoices', 'invoice_number', r.invoiceNumber);
+      return;
+    }
+    setCreateForPage(subPage);
+  };
+  // What a record created from this 360 is linked to.
+  const createPrefill = () => {
+    const customer = page === 'customers'
+      ? { id: edited.id, name: edited.name, phone: edited.phone }
+      : (edited.customerId || edited.customer ? { id: edited.customerId || '', name: edited.customer || '' } : null);
+    const extra: any = {};
+    if (page === 'contacts') { extra.contactId = edited.id; extra.contact = edited.name; }
+    else if (edited.contactId || edited.contact) { extra.contactId = edited.contactId || ''; extra.contact = edited.contact || ''; }
+    if (page === 'contacts' && edited.email) extra.email = edited.email;
+    return { customer, extra };
+  };
+  const canDelete = () => {
+    if (!['customers','contacts','leads','opportunities','orders','invoices','activities','products'].includes(page)) return false;
+    if (!permissionsLoaded || currentUserPermissions.length === 0) return false;
+    return currentUserPermissions.includes('__admin__') || currentUserPermissions.includes(`${page}_delete`);
+  };
   const lang = appearance?.language || 'en';
 
   // Local permission helper (mirrors CRMListPage canDo)
@@ -571,7 +620,7 @@ export default function RecordDetailPanel({ page, record, onClose, prefillCustom
     if (field==='source')       return <select value={v||''} onChange={e=>set(field,e.target.value)} className={sCls}><option value=''>Select source</option>{LEAD_SOURCES.map(s=><option key={s}>{s}</option>)}</select>;
     if (field==='activityType') return <select value={v||''} onChange={e=>set(field,e.target.value)} className={sCls}><option value=''>Select type</option>{ACTIVITY_TYPES.map(s=><option key={s}>{s}</option>)}</select>;
     if (field==='paymentTerms') return <select value={v||''} onChange={e=>set(field,e.target.value)} className={sCls}><option value=''>Select terms</option>{PAYMENT_TERMS_OPTS.map(s=><option key={s}>{s}</option>)}</select>;
-    if (field==='isPrimary')    return <label className='flex items-center gap-2 cursor-pointer pt-1'><input type='checkbox' checked={!!v} onChange={e=>set(field,e.target.checked)} className='w-4 h-4 accent-blue-600'/><span className='text-sm text-[#0F172A]'>Yes, mark as primary contact</span></label>;
+    if (field==='isPrimary')    return <label className='flex items-center gap-2 cursor-pointer pt-1'><input type='checkbox' checked={!!v} onChange={async e=>{ const on = e.target.checked; if (on && !(await confirmPrimarySwitch({ supabase, showConfirm, customerId: edited.customerId, customerName: edited.customer, selfNumber: record.id, selfName: edited.name }))) return; set(field,on); }} className='w-4 h-4 accent-blue-600'/><span className='text-sm text-[#0F172A]'>Yes, mark as primary contact</span></label>;
     if (field==='track_inventory') return <label className='flex items-center gap-2 cursor-pointer pt-1'><input type='checkbox' checked={v!==false} onChange={e=>set(field,e.target.checked)} className='w-4 h-4 accent-blue-600'/><span className='text-sm text-[#0F172A]'>Track stock for this product</span></label>;
     if (field==='category')     return <select value={v||''} onChange={e=>set(field,e.target.value)} className={sCls}><option value="">Select</option>{['Software','Hardware','Service','Subscription','Consulting','Other'].map(s=><option key={s}>{s}</option>)}</select>;
     if (field==='productFamily') return <select value={v||''} onChange={e=>set(field,e.target.value)} className={sCls}><option value="">Select Family</option>{['Software Products','Hardware Products','Professional Services','Managed Services','Subscriptions','Other'].map(s=><option key={s}>{s}</option>)}</select>;
@@ -692,6 +741,7 @@ export default function RecordDetailPanel({ page, record, onClose, prefillCustom
               }} disabled={printingInvoice} className="bg-white/20 hover:bg-white/30 text-white px-4 py-2 rounded-xl text-sm font-semibold flex items-center gap-2">
                 {printingInvoice?'⏳':'🖨️'} {printingInvoice?'Generating...':'PDF Preview'}
               </button>}
+              {canDelete() && <button onClick={async()=>{ if (await deleteRecord(page, record.id)) onClose(); }} title="Delete this record" className="bg-red-500/20 hover:bg-red-500/40 text-red-100 px-4 py-2 rounded-xl text-sm font-semibold">🗑 Delete</button>}
               <button onClick={onClose} className="w-9 h-9 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-lg">✕</button>
             </div>
           </div>
@@ -790,80 +840,80 @@ export default function RecordDetailPanel({ page, record, onClose, prefillCustom
               <Customer360
                 customer={edited}
                 onSubRecordOpen={(subPage,subRec)=>{
-                  window.dispatchEvent(new CustomEvent('open-crm-record',{detail:{page:subPage,record:subRec,returnTo:{page:'customers',record:edited,tab:'360'}}}));
-                  onClose();
+                  window.dispatchEvent(new CustomEvent('open-crm-record',{detail:{page:subPage,record:subRec,returnTo:backHere()}}));
+                  onClose({ navigatingAway: true });
                 }}
-                onCreateFor={(subPage)=>setCreateForPage(subPage)}
+                onCreateFor={startCreate}
               />
             )}
 
             {page==='leads' && tab==='360' && (
               <Lead360 record={edited}
                 onSubRecordOpen={(subPage,subRec)=>{
-                  window.dispatchEvent(new CustomEvent('open-crm-record',{detail:{page:subPage,record:subRec,returnTo:{page:'leads',record:edited,tab:'360'}}}));
-                  onClose();
+                  window.dispatchEvent(new CustomEvent('open-crm-record',{detail:{page:subPage,record:subRec,returnTo:backHere()}}));
+                  onClose({ navigatingAway: true });
                 }}
-                onCreateFor={(subPage)=>setCreateForPage(subPage)}
+                onCreateFor={startCreate}
               />
             )}
 
             {page==='contacts' && tab==='360' && (
               <Contact360 record={edited}
                 onSubRecordOpen={(subPage,subRec)=>{
-                  window.dispatchEvent(new CustomEvent('open-crm-record',{detail:{page:subPage,record:subRec,returnTo:{page:'contacts',record:edited,tab:'360'}}}));
-                  onClose();
+                  window.dispatchEvent(new CustomEvent('open-crm-record',{detail:{page:subPage,record:subRec,returnTo:backHere()}}));
+                  onClose({ navigatingAway: true });
                 }}
-                onCreateFor={(subPage)=>setCreateForPage(subPage)}
+                onCreateFor={startCreate}
               />
             )}
 
             {page==='opportunities' && tab==='360' && (
               <Opportunity360 record={edited}
                 onSubRecordOpen={(subPage,subRec)=>{
-                  window.dispatchEvent(new CustomEvent('open-crm-record',{detail:{page:subPage,record:subRec,returnTo:{page:'opportunities',record:edited,tab:'360'}}}));
-                  onClose();
+                  window.dispatchEvent(new CustomEvent('open-crm-record',{detail:{page:subPage,record:subRec,returnTo:backHere()}}));
+                  onClose({ navigatingAway: true });
                 }}
-                onCreateFor={(subPage)=>setCreateForPage(subPage)}
+                onCreateFor={startCreate}
               />
             )}
 
             {page==='quotations' && tab==='360' && (
               <Quotation360 record={edited}
                 onSubRecordOpen={(subPage,subRec)=>{
-                  window.dispatchEvent(new CustomEvent('open-crm-record',{detail:{page:subPage,record:subRec,returnTo:{page:'quotations',record:edited,tab:'360'}}}));
-                  onClose();
+                  window.dispatchEvent(new CustomEvent('open-crm-record',{detail:{page:subPage,record:subRec,returnTo:backHere()}}));
+                  onClose({ navigatingAway: true });
                 }}
-                onCreateFor={(subPage)=>setCreateForPage(subPage)}
+                onCreateFor={startCreate}
               />
             )}
 
             {page==='orders' && tab==='360' && (
               <Order360 record={edited}
                 onSubRecordOpen={(subPage,subRec)=>{
-                  window.dispatchEvent(new CustomEvent('open-crm-record',{detail:{page:subPage,record:subRec,returnTo:{page:'orders',record:edited,tab:'360'}}}));
-                  onClose();
+                  window.dispatchEvent(new CustomEvent('open-crm-record',{detail:{page:subPage,record:subRec,returnTo:backHere()}}));
+                  onClose({ navigatingAway: true });
                 }}
-                onCreateFor={(subPage)=>setCreateForPage(subPage)}
+                onCreateFor={startCreate}
               />
             )}
 
             {page==='invoices' && tab==='360' && (
               <Invoice360 record={edited}
                 onSubRecordOpen={(subPage,subRec)=>{
-                  window.dispatchEvent(new CustomEvent('open-crm-record',{detail:{page:subPage,record:subRec,returnTo:{page:'invoices',record:edited,tab:'360'}}}));
-                  onClose();
+                  window.dispatchEvent(new CustomEvent('open-crm-record',{detail:{page:subPage,record:subRec,returnTo:backHere()}}));
+                  onClose({ navigatingAway: true });
                 }}
-                onCreateFor={(subPage)=>setCreateForPage(subPage)}
+                onCreateFor={startCreate}
               />
             )}
 
             {page==='activities' && tab==='360' && (
               <Activity360 record={edited}
                 onSubRecordOpen={(subPage,subRec)=>{
-                  window.dispatchEvent(new CustomEvent('open-crm-record',{detail:{page:subPage,record:subRec,returnTo:{page:'activities',record:edited,tab:'360'}}}));
-                  onClose();
+                  window.dispatchEvent(new CustomEvent('open-crm-record',{detail:{page:subPage,record:subRec,returnTo:backHere()}}));
+                  onClose({ navigatingAway: true });
                 }}
-                onCreateFor={(subPage)=>setCreateForPage(subPage)}
+                onCreateFor={startCreate}
               />
             )}
 
@@ -1038,15 +1088,16 @@ export default function RecordDetailPanel({ page, record, onClose, prefillCustom
         <CreateRecordModal
           page={createForPage}
           open={true}
-          prefillCustomer={{ id: edited.id, name: edited.name, phone: edited.phone }}
+          prefillCustomer={createPrefill().customer}
+          prefill={createPrefill().extra}
           onClose={() => setCreateForPage(null)}
           onCreated={(rec) => {
             setCreateForPage(null);
-            const typeLabel = createForPage === 'orders' ? 'Order' : createForPage === 'invoices' ? 'Invoice' : createForPage === 'activities' ? 'Activity' : 'Record';
+            const typeLabel = { orders:'Order', invoices:'Invoice', activities:'Activity', contacts:'Contact', leads:'Lead', opportunities:'Opportunity', quotations:'Quotation' }[createForPage] || 'Record';
             showAlert(`${typeLabel} created successfully.`, { variant: 'success' });
             if (rec) {
-              window.dispatchEvent(new CustomEvent('open-crm-record', { detail: { page: createForPage, record: rec, returnTo: { page: 'customers', record: edited, tab: '360' } } }));
-              onClose();
+              window.dispatchEvent(new CustomEvent('open-crm-record', { detail: { page: createForPage, record: rec, returnTo: backHere() } }));
+              onClose({ navigatingAway: true });
             }
           }}
         />

@@ -1,6 +1,8 @@
 // @ts-nocheck
 'use client';
 
+import { confirmPrimarySwitch } from '@/lib/primaryContact';
+import { useTenant } from '@/context/TenantContext';
 import { useState, useEffect } from 'react';
 import { useApp } from '@/context/AppContext';
 import { useCustomFields, invalidateCustomFieldCache } from '@/lib/useCustomFields';
@@ -136,11 +138,12 @@ const OBJECT_FIELDS = {
   ],
 };
 
-export default function CreateRecordModal({ page, open, prefillCustomer, onClose, onCreated }) {
+export default function CreateRecordModal({ page, open, prefillCustomer, prefill = null, onClose, onCreated }) {
   const {
     createRecord, customers, contacts, products, enterpriseUsers, currentUser, appPreferences, appearance,
   } = useApp();
-  const { showAlert } = useAlert();
+  const { showAlert, showConfirm } = useAlert();
+  const { supabase } = useTenant();
   const lang = appearance?.language || 'en';
 
   const fields     = OBJECT_FIELDS[page] || [];
@@ -161,6 +164,9 @@ export default function CreateRecordModal({ page, open, prefillCustomer, onClose
       base.customer   = prefillCustomer.name;
       if (prefillCustomer.phone) base.phone = prefillCustomer.phone;
     }
+    // Links carried over from the record this was created from (e.g. the contact, when creating from Contact 360).
+    const linked = prefill && typeof prefill === 'object' ? Object.fromEntries(Object.entries(prefill).filter(([, v]) => v !== undefined && v !== null && v !== '')) : {};
+    Object.assign(base, linked);
     if (currentUser) {
       base.owner_id = currentUser.id;
       base.owner    = currentUser.email;
@@ -171,7 +177,7 @@ export default function CreateRecordModal({ page, open, prefillCustomer, onClose
     effectiveRows(fieldLayout.fields || [], 'create').forEach(row => {
       if (row.field_key.startsWith('cf_')) return;
       const v = resolveLayoutDefault(typeByKey[row.field_key] || 'text', row.default_value, base);
-      if (v !== undefined && !(prefillCustomer && ['customerId','customer'].includes(row.field_key))) base[row.field_key] = v;
+      if (v !== undefined && !(prefillCustomer && ['customerId','customer'].includes(row.field_key)) && !(row.field_key in linked)) base[row.field_key] = v;
     });
     return base;
   };
@@ -395,7 +401,11 @@ export default function CreateRecordModal({ page, open, prefillCustomer, onClose
 
     if (type === 'checkbox') return wrap(
       <label className="flex items-center gap-2 cursor-pointer pt-1">
-        <input type="checkbox" checked={!!v} onChange={e => s(key, e.target.checked)} className="w-4 h-4 accent-blue-600"/>
+        <input type="checkbox" checked={!!v} onChange={async e => {
+          const on = e.target.checked;
+          if (on && key === 'isPrimary' && page === 'contacts' && !(await confirmPrimarySwitch({ supabase, showConfirm, customerId: form.customerId, customerName: form.customer, selfName: form.name }))) return;
+          s(key, on);
+        }} className="w-4 h-4 accent-blue-600"/>
         <span className="text-sm text-[#0F172A]">{label}</span>
       </label>
     );

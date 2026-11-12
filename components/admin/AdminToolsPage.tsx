@@ -129,7 +129,7 @@ const WHATSAPP_STANDARD_FIELDS: Record<string, {v:string,l:string}[]> = {
   retailActivities: [{v:'customer',l:'Customer Name'},{v:'subject',l:'Subject'},{v:'activity_date',l:'Activity Date'},{v:'status',l:'Status'}],
 };
 
-function WhatsAppSettingsPanel() {
+function WhatsAppSettingsPanel({ b2b = false }: any) {
   const { tenant } = useTenant();
   const { showAlert } = useAlert();
   const [loading, setLoading] = useState(true);
@@ -246,7 +246,7 @@ function WhatsAppSettingsPanel() {
     <RetailAdminWrapper
       title="WhatsApp Integration"
       icon="💬"
-      desc="Send booking reminders and updates automatically, and give staff a one-tap way to message customers directly."
+      desc={b2b ? 'Connect your WhatsApp Business number so staff can message customers in one tap (for example, sharing an invoice or quotation from the AI Advisor).' : 'Send booking reminders and updates automatically, and give staff a one-tap way to message customers directly.'}
     >
       <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 text-sm text-amber-800 space-y-1.5">
         <p className="font-bold">Before you start</p>
@@ -303,6 +303,11 @@ function WhatsAppSettingsPanel() {
         </div>
       </div>
 
+      {b2b ? (
+        <div className="bg-blue-50 border border-blue-200 rounded-2xl p-4 text-sm text-blue-800">
+          Automatic reminder templates (booking confirmations, rental returns) apply to B2C orders and invoices, so they are not shown here. In B2B, messages are sent from a record's WhatsApp action; without a connection here the app falls back to opening WhatsApp on your device.
+        </div>
+      ) : (
       <div className="bg-white rounded-[20px] border border-gray-200 shadow-sm p-5 space-y-4">
         <div>
           <h3 className="font-bold text-[#0F172A]">Message Templates</h3>
@@ -400,6 +405,7 @@ function WhatsAppSettingsPanel() {
           ))}
         </div>
       </div>
+      )}
 
       <div className="flex items-center justify-end gap-3 pt-2 border-t border-gray-100">
         <button onClick={save} disabled={saving}
@@ -2465,6 +2471,7 @@ export default function AdminToolsPage() {
     { key:'appearance',     label:'Appearance',       icon:'🎨', desc:'Theme, logo and branding' },
     { key:'quickActions',   label:'Springboard Quick Actions', icon:'⚡', desc:'Choose the Create shortcuts on your Springboard' },
     { key:'aiSettings',     label:'AI Settings', icon:'🤖', desc:'Your own AI provider, model and API key' },
+    { key:'whatsapp',       label:'WhatsApp Integration', icon:'💬', desc:'Connect WhatsApp Business for one-tap customer messaging' },
     { key:'b2b_composer',   label:'App Composer',     icon:'🧩', desc:'Add custom fields to CRM objects' },
     { key:'layoutDesigner', label:'Page Layout Designer', icon:'🧱', desc:'Relabel, hide, lock, and reorder standard fields' },
     { key:'fieldMapping',   label:'Field Mapping (Copy Maps)', icon:'🔗', desc:'Auto-copy a field onto a line item or a converted record' },
@@ -2539,6 +2546,7 @@ export default function AdminToolsPage() {
       case 'customObjects':      return <CustomObjectManager/>;
       case 'r_rentalSettings':   return <RentalSettingsPanel/>;
       case 'r_whatsapp':        return <WhatsAppSettingsPanel/>;
+      case 'whatsapp':          return <WhatsAppSettingsPanel b2b/>;
       case 'b2b_composer':       return <B2BAppComposer/>;
       default:                   return null;
     }

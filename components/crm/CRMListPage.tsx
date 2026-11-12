@@ -1,6 +1,7 @@
 // @ts-nocheck
 'use client';
 
+import FloatMenu from '@/components/shared/FloatMenu';
 import RedwoodSkin from '@/components/shared/RedwoodSkin';
 import { useState, useMemo, useEffect, useRef } from 'react';
 import { useApp } from '@/context/AppContext';
@@ -242,7 +243,7 @@ export function SavedSearchPanel({ page, currentFilters, onApply, onClose, label
             {applied ? 'Currently Applied' : 'Apply'}
           </button>
           {!applied && <button onClick={()=>updateToCurrentFilters(s)} title="Update this search to match your current filters" className="bg-amber-100 text-amber-700 px-3 py-2 rounded-xl text-xs font-semibold hover:bg-amber-200">🔄</button>}
-          {!s.is_default && <button onClick={()=>setDefaultSavedSearch(s.id,s.is_global_default)} title="Set as default" className="bg-blue-100 text-blue-700 px-3 py-2 rounded-xl text-xs font-semibold hover:bg-blue-200">⭐</button>}
+          <button onClick={()=>setDefaultSavedSearch(s.id,s.is_global_default)} title={s.is_default ? 'Remove as default' : 'Set as default'} className={`px-3 py-2 rounded-xl text-xs font-semibold ${s.is_default ? 'bg-amber-100 text-amber-700 hover:bg-amber-200' : 'bg-blue-100 text-blue-700 hover:bg-blue-200'}`}>{s.is_default ? '★' : '⭐'}</button>
           <button onClick={()=>startRename(s)} title="Rename" className="bg-gray-100 text-gray-600 px-3 py-2 rounded-xl text-xs font-semibold hover:bg-gray-200">✎</button>
           <button onClick={()=>deleteSavedSearch(s.id, s.name)} title="Delete" className="bg-red-100 text-red-500 px-3 py-2 rounded-xl text-xs font-semibold hover:bg-red-200">🗑</button>
         </div>
@@ -381,7 +382,7 @@ const camelToSnakeCol = (s) => s.replace(/([A-Z])/g, '_$1').toLowerCase();
 // A CRM table's real database table name is identical to its page key for
 // every object CRMListPage handles (confirmed against LIST_PAGE_TABLE in
 // AppContext.tsx) — no separate mapping needed here, unlike retail objects.
-const CRM_SEARCH_CANDIDATES = ['name', 'customer', 'email', 'phone', 'subject'];
+const CRM_SEARCH_CANDIDATES = ['name', 'customer', 'email', 'phone', 'mobile', 'subject', 'company', 'city', 'sku', 'source', 'designation'];
 
 export default function CRMListPage({ page }) {
   const { supabase, tenant } = useTenant();
@@ -394,7 +395,7 @@ export default function CRMListPage({ page }) {
     currentUserPermissions, permissionsLoaded, appPreferences, appearance, hasPermission, currentUser,
     fetchOrders, pendingReturnTo, setPendingReturnTo, pendingRecord, setPendingRecord,
     fetchListCount, listViewPrefs, fetchListViewPrefs, saveListViewPrefs,
-    updateRecord, applyDataSecurity, dataSecurityScope,
+    updateRecord, applyDataSecurity, dataSecurityScope, deleteRecord,
   } = useApp();
   const L = useRelabel();
   const { showAlert, showConfirm } = useAlert();
@@ -910,7 +911,7 @@ export default function CRMListPage({ page }) {
                       <div className="relative flex justify-center" data-menu-container>
                         <button onClick={()=>setMenuOpenId(menuOpenId===record.id?null:record.id)} className="w-9 h-9 rounded-full bg-[#0F172A] text-white hover:bg-blue-800 flex items-center justify-center text-lg font-bold shadow transition-all">⋮</button>
                         {menuOpenId === record.id && (
-                          <div className="absolute right-0 top-10 bg-[#0F172A] border border-blue-800 shadow-2xl rounded-2xl p-2 z-[999] min-w-[220px]">
+                          <FloatMenu minWidth={220} className="bg-[#0F172A] border border-blue-800 shadow-2xl rounded-2xl p-2">
                             {canDo('view') && <button onClick={()=>{setSelectedRecord(record);setMenuOpenId(null);}} className="w-full text-left px-4 py-3 rounded-xl text-sm font-medium hover:bg-blue-800 text-white">Open Details</button>}
                             {page==='leads' && record.status==='Qualified' && (
                               <button onClick={()=>{convertLeadToOpportunity(record);setMenuOpenId(null);}} className="w-full text-left px-4 py-3 rounded-xl text-sm font-medium hover:bg-blue-800 text-white">🔀 Convert to Opportunity</button>
@@ -925,7 +926,10 @@ export default function CRMListPage({ page }) {
                             {page==='orders' && (
                               <button onClick={()=>{createInvoiceFromOrder(record);setMenuOpenId(null);}} className="w-full text-left px-4 py-3 rounded-xl text-sm font-medium hover:bg-blue-800 text-white">🧾 {L('Create Invoice')}</button>
                             )}
-                          </div>
+                            {canDo('delete') && ['customers','contacts','leads','opportunities','orders','invoices','activities','products'].includes(page) && (
+                              <button onClick={async()=>{ setMenuOpenId(null); if (await deleteRecord(page, record.id)) setRefreshTick(n=>n+1); }} className="w-full text-left px-4 py-3 rounded-xl text-sm font-medium hover:bg-red-500/20 text-red-300">🗑 Delete</button>
+                            )}
+                          </FloatMenu>
                         )}
                       </div>
                     </td>
@@ -978,8 +982,9 @@ export default function CRMListPage({ page }) {
         const isCPQPage = ['orders','invoices'].includes(page);
         const cpqEnabled = appPreferences?.cpq_enabled !== false;
         if (isCPQPage && cpqEnabled) {
-          return <CPQRecordDetail page={page} record={selectedRecord} onClose={()=>{
+          return <CPQRecordDetail page={page} record={selectedRecord} onClose={(opts)=>{
             setSelectedRecord(null);
+            if (opts?.navigatingAway) return; // opening another record from this one: don't bounce back
             if (pendingReturnTo) {
               const rt = pendingReturnTo;
               setPendingReturnTo(null);
@@ -987,8 +992,10 @@ export default function CRMListPage({ page }) {
             }
           }}/>;
         }
-        return <RecordDetailPanel page={page} record={selectedRecord} initialTab={initialTab} onClose={()=>{
+        return <RecordDetailPanel page={page} record={selectedRecord} initialTab={initialTab} onClose={(opts)=>{
           setInitialTab(null); setSelectedRecord(null);
+          // Opening a related record from this one: the return trip was handed to that record, so don't bounce back now.
+          if (opts?.navigatingAway) return;
           if (pendingReturnTo) {
             const rt = pendingReturnTo;
             setPendingReturnTo(null);

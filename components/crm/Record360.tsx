@@ -275,7 +275,7 @@ function Base360({ record, recordType, sections, onSubRecordOpen, onCreateFor })
           cols={active.cols}
           createLabel={active.createLabel}
           onOpen={row => onSubRecordOpen && onSubRecordOpen(active.page || tab, row)}
-          onCreate={active.createLabel ? () => onCreateFor && onCreateFor(tab) : undefined}
+          onCreate={active.createLabel && (!hasPermission || hasPermission(`${active.page || tab}_create`)) ? () => onCreateFor && onCreateFor(active.page || tab) : undefined}
         />
       ) : null}
       {/* Custom objects that look up to this record show up here too (zero-config related lists) */}

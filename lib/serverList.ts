@@ -78,6 +78,11 @@ const dayAfterISO = (d) => { const t = new Date(d + 'T00:00:00'); t.setDate(t.ge
 // A picked calendar day against a timestamp column ("created_at on 8 Oct") must cover the whole day in the
 // USER's timezone; against a plain date / jsonb text value it is a simple string range.
 const dayBound = (column, d) => (/_at$|^datetime_/.test(String(column)) ? new Date(d + 'T00:00:00').toISOString() : d);
+// Text comparisons are case-insensitive ("status = active" finds "Active"); ids, numbers, booleans and dates compare
+// exactly (ilike does not exist for uuid / numeric / date columns).
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const exactish = (v) => typeof v === 'number' || typeof v === 'boolean' || UUID_RE.test(String(v)) || /^-?\d+(\.\d+)?$/.test(String(v).trim()) || ISO_DAY.test(String(v)) || /^(true|false)$/i.test(String(v));
+const likeEsc = (v) => String(v ?? '').trim().replace(/[\\%_]/g, (m) => '\\' + m);
 function applyCond(q, f) {
   if (!f || !f.column) return q;
   if (ISO_DAY.test(String(f.value ?? ''))) {
@@ -86,15 +91,15 @@ function applyCond(q, f) {
     if (f.op === 'before') return q.lt(f.column, dayBound(f.column, f.value));
   }
   switch (f.op) {
-    case 'contains':       return q.ilike(f.column, `%${String(f.value ?? '').replace(/[%,]/g,'')}%`);
-    case 'equals':         return q.eq(f.column, f.value);
-    case 'not_equals':     return q.neq(f.column, f.value);
+    case 'contains':       return q.ilike(f.column, `%${likeEsc(f.value)}%`);
+    case 'equals':         return exactish(f.value) ? q.eq(f.column, f.value) : q.ilike(f.column, likeEsc(f.value));
+    case 'not_equals':     return exactish(f.value) ? q.neq(f.column, f.value) : q.not(f.column, 'ilike', likeEsc(f.value));
     case 'gt': case 'after':   return q.gt(f.column, f.value);
     case 'gte':            return q.gte(f.column, f.value);
     case 'lt': case 'before':  return q.lt(f.column, f.value);
     case 'lte':            return q.lte(f.column, f.value);
-    case 'eq': case 'on':  return q.eq(f.column, f.value);
-    case 'neq':            return q.neq(f.column, f.value);
+    case 'eq': case 'on':  return exactish(f.value) ? q.eq(f.column, f.value) : q.ilike(f.column, likeEsc(f.value));
+    case 'neq':            return exactish(f.value) ? q.neq(f.column, f.value) : q.not(f.column, 'ilike', likeEsc(f.value));
     case 'in':             return q.in(f.column, Array.isArray(f.value) ? f.value : [f.value]);
     case 'not_in': {       const vs = (Array.isArray(f.value) ? f.value : [f.value]).map(v => '"' + String(v).replace(/"/g, '') + '"'); return vs.length ? q.not(f.column, 'in', `(${vs.join(',')})`) : q; }
     case 'is_empty':       return q.or(`${f.column}.is.null,${f.column}.eq.`);
@@ -169,9 +174,13 @@ export async function fetchServerPage(supabase, opts) {
   q = applySecurityScope(q, security);
 
   if (searchTerm && searchTerm.trim() && searchColumns.length) {
-    const term = searchTerm.trim().replace(/[%,]/g, ''); // strip characters that would break the ilike/or syntax
+    const term = searchTerm.trim().replace(/[%,()"\\]/g, ' ').replace(/\s+/g, ' ').trim(); // characters that would break the or() syntax
     if (term) {
-      q = q.or(searchColumns.map(c => `${c}.ilike.%${term}%`).join(','));
+      const ors = searchColumns.map(c => `${c}.ilike.%${term}%`);
+      // A record number ("INV-00012", "12") also finds that record.
+      const num = (/^[A-Za-z]{2,6}-0*(\d{1,9})$/.exec(term) || /^0*(\d{1,9})$/.exec(term) || [])[1];
+      if (num && !opts.noNumberSearch) ors.push(`display_number.eq.${Number(num)}`);
+      q = q.or(ors.join(','));
     }
   }
 

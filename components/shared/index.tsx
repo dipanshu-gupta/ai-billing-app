@@ -1,6 +1,7 @@
 // @ts-nocheck
 'use client';
 
+import FloatMenu from '@/components/shared/FloatMenu';
 import { useState, useRef, useEffect } from 'react';
 import { getStatusColor } from '@/lib/utils';
 
@@ -26,11 +27,11 @@ export function ActionMenu({ actions, triggerClass }: { actions: Action[]; trigg
     <div ref={ref} className="relative inline-block">
       <button onClick={(e) => { e.stopPropagation(); setOpen(!open); }} className={triggerClass || 'w-10 h-10 rounded-full bg-[#0F172A] text-white hover:bg-blue-800 flex items-center justify-center text-xl font-bold shadow-lg'}>⋮</button>
       {open && (
-        <div className="absolute right-0 top-12 bg-[#0F172A] border border-blue-800 shadow-2xl rounded-2xl p-2 z-[999] min-w-[200px]">
+        <FloatMenu minWidth={200} className="bg-[#0F172A] border border-blue-800 shadow-2xl rounded-2xl p-2">
           {actions.filter(a => !a.hidden).map((a, i) => (
             <button key={i} onClick={(e) => { e.stopPropagation(); a.onClick(); setOpen(false); }} className={`w-full text-left px-4 py-3 rounded-xl text-sm font-medium transition-all ${a.danger ? 'hover:bg-red-500/20 text-red-300' : 'hover:bg-blue-800 text-white'}`}>{a.label}</button>
           ))}
-        </div>
+        </FloatMenu>
       )}
     </div>
   );

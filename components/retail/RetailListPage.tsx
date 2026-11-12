@@ -1,6 +1,7 @@
 // @ts-nocheck
 'use client';
 
+import FloatMenu from '@/components/shared/FloatMenu';
 import { isTemplateDefault, gatherTemplates, useTemplateDefaults } from '@/lib/defaultTemplates';
 import RedwoodSavedSearchBar from '@/components/shared/RedwoodSavedSearchBar';
 import RedwoodSkin from '@/components/shared/RedwoodSkin';
@@ -178,7 +179,7 @@ export const RETAIL_CONFIG = {
       { h: 'Loyalty Tier', v: r => r.loyalty_tier || 'Standard' },
       { h: 'Points', v: r => r.loyalty_points || 0, align:'right' },
     ],
-    searchFields: ['name','phone','email','customer_number'],
+    searchFields: ['name','phone','email','customer_number','city'],
     sections: [
       { icon:'🧑', title:'Customer Details', fields:[
         { key:'name', label:'Full Name', type:'text', required:true },
@@ -274,7 +275,7 @@ export const RETAIL_CONFIG = {
       { h: 'Date', v: r => r.activity_date || '-' },
       { h: 'Priority', v: r => r.priority || 'Medium' },
     ],
-    searchFields: ['subject','customer','activity_number'],
+    searchFields: ['subject','customer','customer_phone','activity_number'],
     sections: [
       { icon:'📅', title:'Activity Details', fields:[
         { key:'subject', label:'Subject', type:'text', required:true },
@@ -350,7 +351,7 @@ export const RETAIL_CONFIG = {
       { h: 'Date', v: r => r.invoice_date || '-' },
       { h: 'Total', v: r => formatCurrency(r.amount||0), align:'right' },
     ],
-    searchFields: ['invoice_number','customer','order_number'],
+    searchFields: ['invoice_number','customer','customer_phone','order_number'],
     sections: [
       { icon:'🧾', title:'Invoice Details', fields:[
         { key:'customer_id', label:'Customer', type:'retailCustomer', required:true },
@@ -3437,9 +3438,9 @@ function RetailSavedSearchPanel({ page, currentFilters, onApply, onClose }) {
             {applied ? 'Currently Applied' : 'Apply'}
           </button>
           {!applied && updateSavedSearch && <button onClick={()=>updateToCurrentFilters(s)} title="Update this search to match your current filters" className="bg-amber-100 text-amber-700 px-3 py-2 rounded-xl text-xs font-semibold hover:bg-amber-200">🔄</button>}
-          {!s.is_default && setDefaultSavedSearch && (
-            <button onClick={() => setDefaultSavedSearch(s.id, s.is_global_default)} title="Set as default"
-              className="bg-blue-100 text-blue-700 px-3 py-2 rounded-xl text-xs font-semibold hover:bg-blue-200">⭐</button>
+          {setDefaultSavedSearch && (
+            <button onClick={() => setDefaultSavedSearch(s.id, s.is_global_default)} title={s.is_default ? 'Remove as default' : 'Set as default'}
+              className={`px-3 py-2 rounded-xl text-xs font-semibold ${s.is_default ? 'bg-amber-100 text-amber-700 hover:bg-amber-200' : 'bg-blue-100 text-blue-700 hover:bg-blue-200'}`}>{s.is_default ? '★' : '⭐'}</button>
           )}
           <button onClick={()=>startRename(s)} title="Rename" className="bg-gray-100 text-gray-600 px-3 py-2 rounded-xl text-xs font-semibold hover:bg-gray-200">✎</button>
           {deleteSavedSearch && (
@@ -4164,7 +4165,7 @@ export default function RetailListPage({ page }) {
                       <button onClick={()=>setMenuOpenId(menuOpenId===r.id?null:r.id)}
                         className="w-8 h-8 rounded-full bg-[#0F172A] text-white hover:bg-blue-800 flex items-center justify-center text-lg font-bold shadow transition-all">⋮</button>
                       {menuOpenId===r.id && (
-                        <div className="absolute right-0 top-9 bg-[#0F172A] border border-blue-800 shadow-2xl rounded-2xl p-2 z-[999] min-w-[220px]">
+                        <FloatMenu minWidth={220} className="bg-[#0F172A] border border-blue-800 shadow-2xl rounded-2xl p-2">
                           <button onClick={()=>{setSelectedRecord(r);setMenuOpenId(null);}} className="w-full text-left px-4 py-3 rounded-xl text-sm font-medium hover:bg-blue-800 text-white">📄 Open Details</button>
                           {page==='retailCustomers' && (<>
                             <div className="border-t border-blue-800 my-1"/>
@@ -4183,7 +4184,7 @@ export default function RetailListPage({ page }) {
                               }
                             }} className="w-full text-left px-4 py-3 rounded-xl text-sm font-medium hover:bg-blue-800 text-white">🧾 {RL('Create Invoice')}</button>
                           )}
-                        </div>
+                        </FloatMenu>
                       )}
                     </div>
                   </td>

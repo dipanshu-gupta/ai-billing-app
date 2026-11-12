@@ -1170,6 +1170,18 @@ export default function QuotationsPage() {
           </div>
         </div>
       )}
+      {/* "+ Create Customer" inside Create Quotation: the quick-create dialog was never rendered on this screen, so
+          the button did nothing. */}
+      {quickCreate && (
+        <QuickCreateModal
+          objectType={quickCreate?.type}
+          open={!!quickCreate}
+          onClose={()=>setQuickCreate(null)}
+          prefill={quickCreate?.prefillName?{name:quickCreate.prefillName}:{}}
+          prefillExtra={quickCreate?.prefillExtra||{}}
+          onCreated={(id,name)=>{quickCreate?.onCreated?.(id,name);setQuickCreate(null);}}
+        />
+      )}
     </div>
   );
 }

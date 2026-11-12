@@ -9,34 +9,43 @@ import { ObjectIcon } from '@/lib/lineIcons';
 import { NavIcon } from '@/lib/icons';
 import { useTenant } from '@/context/TenantContext';
 import { fetchCustomObjectFields, formatCustomDisplayNumber } from '@/lib/customObjects';
+import { fetchServerPage } from '@/lib/serverList';
+import { tenantScope, formatDisplayNumber } from '@/lib/utils';
+import { useRbac } from '@/lib/useRbac';
+import { toCrmRecord } from '@/lib/crmRecordShape';
 
+// Searched in the DATABASE (not the first few hundred records held in memory), tenant-scoped, inside the user's
+// data-security scope, and only for objects their role may view. Record numbers (INV-00012, 12) match too.
 const B2B_SEARCH_CONFIG = [
-  { page:'customers',     icon:'👥', label:'Customers',    fields:['name','email','company','city'],            secondary: r => r.industry || r.email || r.city },
-  { page:'leads',         icon:'🎯', label:'Leads',        fields:['name','customer','source','email'],         secondary: r => `${r.customer||''} · ${r.status||''}` },
-  { page:'opportunities', icon:'💼', label:'Opportunities',fields:['name','customer','stage'],                  secondary: r => `${r.customer||''} · ${r.stage||''}` },
-  { page:'contacts',      icon:'📇', label:'Contacts',     fields:['name','email','customer','designation'],    secondary: r => `${r.customer||''} · ${r.designation||''}` },
-  { page:'activities',    icon:'📅', label:'Activities',   fields:['name','customer','subject','activityType'], secondary: r => `${r.customer||''} · ${r.activityType||''}` },
-  { page:'quotations',    icon:'📄', label:'Quotations',   fields:['name','customer','quote_number'],           secondary: r => `${r.customer||''} · ${r.status||''}` },
-  { page:'orders',        icon:'🛒', label:'Orders',       fields:['name','customer'],                         secondary: r => `${r.customer||''} · ${r.status||''}` },
-  { page:'invoices',      icon:'🧾', label:'Invoices',     fields:['name','customer'],                         secondary: r => `${r.customer||''} · ${r.status||''}` },
-  { page:'products',      icon:'📦', label:'Products',     fields:['name','category','productFamily'],         secondary: r => `${r.category||''} · ${r.productFamily||''}` },
+  { page:'customers',     table:'customers',     key:'customer_number',    prefix:'CUST', icon:'👥', label:'Customers',    cols:['name','email','phone','company','city','gst_number'], secondary: r => [r.industry, r.email || r.phone, r.city].filter(Boolean).join(' · ') },
+  { page:'leads',         table:'leads',         key:'lead_number',        prefix:'LEAD', icon:'🎯', label:'Leads',        cols:['name','customer','source','email','phone'],          secondary: r => `${r.customer||''} · ${r.status||''}` },
+  { page:'opportunities', table:'opportunities', key:'opportunity_number', prefix:'OPP',  icon:'💼', label:'Opportunities',cols:['name','customer','stage'],                          secondary: r => `${r.customer||''} · ${r.stage||''}` },
+  { page:'contacts',      table:'contacts',      key:'contact_number',     prefix:'CONT', icon:'📇', label:'Contacts',     cols:['name','email','phone','mobile','customer','designation'], secondary: r => `${r.customer||''} · ${r.designation||''}` },
+  { page:'activities',    table:'activities',    key:'activity_number',    prefix:'ACT',  icon:'📅', label:'Activities',   cols:['name','subject','customer','activity_type'],        secondary: r => `${r.customer||''} · ${r.activity_type||''}` },
+  { page:'quotations',    table:'quotations',    key:'quote_number',       prefix:'QUO',  icon:'📄', label:'Quotations',   cols:['name','customer','quote_number'],                   secondary: r => `${r.customer||''} · ${r.status||''}`, raw: true },
+  { page:'orders',        table:'orders',        key:'order_number',       prefix:'ORD',  icon:'🛒', label:'Orders',       cols:['name','customer','order_number'],                   secondary: r => `${r.customer||''} · ${r.status||''}` },
+  { page:'invoices',      table:'invoices',      key:'invoice_number',     prefix:'INV',  icon:'🧾', label:'Invoices',     cols:['name','customer','invoice_number'],                 secondary: r => `${r.customer||''} · ${r.status||''}` },
+  { page:'products',      table:'products',      key:'product_number',     prefix:'PROD', icon:'📦', label:'Products',     cols:['name','sku','category','product_family'],           secondary: r => `${r.category||''} · ${r.product_family||''}` },
 ];
 
 const B2C_SEARCH_CONFIG = [
-  { page:'retailCustomers',  icon:'🧑', label:'Customers',  fields:['name','email','phone','customer_number'], secondary: r => `${r.loyalty_tier||''} · ${r.status||''}` },
-  { page:'retailProducts',   icon:'📦', label:'Products',   fields:['name','sku','brand','category'],          secondary: r => `${r.brand||''} · ${r.category||''}` },
-  { page:'retailOrders',     icon:'🛒', label:'Orders',     fields:['customer','order_number','channel'],      secondary: r => `${r.customer||''} · ${r.status||''}` },
-  { page:'retailInvoices',   icon:'🧾', label:'Invoices',   fields:['customer','invoice_number'],              secondary: r => `${r.customer||''} · ${r.status||''}` },
-  { page:'retailActivities', icon:'📅', label:'Activities', fields:['subject','customer','activity_type'],     secondary: r => `${r.customer||''} · ${r.activity_type||''}` },
+  { page:'retailCustomers',  table:'retail_customers',  key:'customer_number', prefix:'RCUST', icon:'🧑', label:'Customers',  cols:['name','email','phone','customer_number','city'], secondary: r => [r.phone, r.loyalty_tier, r.status].filter(Boolean).join(' · ') },
+  { page:'retailProducts',   table:'retail_products',   key:'product_number',  prefix:'RPROD', icon:'📦', label:'Products',   cols:['name','sku','barcode','brand','category'],       secondary: r => `${r.brand||''} · ${r.category||''}` },
+  { page:'retailOrders',     table:'retail_orders',     key:'order_number',    prefix:'RORD',  icon:'🛒', label:'Orders',     cols:['customer','customer_phone','order_number','channel'], secondary: r => `${r.customer||''} · ${r.status||''}` },
+  { page:'retailInvoices',   table:'retail_invoices',   key:'invoice_number',  prefix:'RINV',  icon:'🧾', label:'Invoices',   cols:['customer','customer_phone','invoice_number'],    secondary: r => `${r.customer||''} · ${r.status||''}` },
+  { page:'retailActivities', table:'retail_activities', key:'activity_number', prefix:'RACT',  icon:'📅', label:'Activities', cols:['subject','customer','customer_phone','activity_type'], secondary: r => `${r.customer||''} · ${r.activity_type||''}` },
 ];
+
+const toRecord = (cfg, r) => toCrmRecord(cfg.page, r);
 
 export default function GlobalSearch({ onNavigate }) {
   const {
     customers, leads, opportunities, contacts, activities,
     quotations, orders, invoices, products,
     retailCustomers, retailProducts, retailOrders, retailInvoices, retailActivities,
-    appPreferences, customObjects, hasPermission, applyDataSecurity,
+    appPreferences, customObjects, hasPermission, applyDataSecurity, dataSecurityScope, permissionsLoaded,
   } = useApp();
+  const { can } = useRbac();
   const { supabase } = useTenant();
   const isB2C = appPreferences?.b2c_mode === true;
   const { getObjectLabel } = useObjectLabels();
@@ -51,57 +60,59 @@ export default function GlobalSearch({ onNavigate }) {
 
   const dataMap = { customers, leads, opportunities, contacts, activities, quotations, orders, invoices, products, retailCustomers, retailProducts, retailOrders, retailInvoices, retailActivities };
 
-  // Debounced search
+  // Debounced, server-side search
+  const [searching, setSearching] = useState(false);
   useEffect(() => {
-    if (!query.trim() || query.length < 2) { setResults([]); setOpen(false); return; }
-    // Check if any data is loaded
-    const totalItems = Object.values(dataMap).reduce((s, arr) => s + (arr?.length || 0), 0);
-    const hasCustom = (customObjects || []).length > 0;
-    if (totalItems === 0 && !hasCustom) { setResults([]); setOpen(true); return; } // show 'no data' state
+    if (!query.trim() || query.trim().length < 2) { setResults([]); setOpen(false); return; }
     let cancelled = false;
     const timer = setTimeout(async () => {
-      const q = query.toLowerCase();
+      if (!supabase) return;
+      setSearching(true);
+      const term = query.trim().replace(/[%,()"'\\]/g, ' ').trim();
       const found = [];
-      SEARCH_CONFIG.forEach(cfg => {
-        const items = dataMap[cfg.page] || [];
-        const matches = items.filter(r =>
-          cfg.fields.some(f => String(r[f] || '').toLowerCase().includes(q))
-        ).slice(0, 4);
-        if (matches.length) {
-          found.push({ ...cfg, label: getObjectLabel(cfg.page, cfg.label), matches });
-        }
-      });
-      // Custom objects: searched server-side (their records are not held in
-      // memory like the standard objects). Name, record number and the
-      // object's text-type fields are matched; only objects the user may view.
+      // "INV-00012" / "12" also finds the record with that number
+      const num = (/^[A-Za-z]{2,6}-0*(\d{1,9})$/.exec(term) || /^0*(\d{1,9})$/.exec(term) || [])[1];
+      const pfx = (/^([A-Za-z]{2,6})-/.exec(term) || [])[1]?.toUpperCase();
+      const allowed = SEARCH_CONFIG.filter(cfg => can(cfg.page, 'view'));
+      const groups = await Promise.all(allowed.map(async (cfg) => {
+        try {
+          const tasks = [fetchServerPage(supabase, { table: cfg.table, searchTerm: term, searchColumns: cfg.cols, pageSize: 5, security: dataSecurityScope })];
+          if (num && (!pfx || pfx === cfg.prefix)) tasks.push(fetchServerPage(supabase, { table: cfg.table, advFilters: [{ column: 'display_number', op: 'eq', value: Number(num) }], pageSize: 1, security: dataSecurityScope }));
+          const res = await Promise.all(tasks);
+          const rows = []; const seen = new Set();
+          res.reverse().forEach(r => (r.data || []).forEach(x => { if (!seen.has(x.id)) { seen.add(x.id); rows.push(x); } }));
+          if (!rows.length) return null;
+          return { ...cfg, label: getObjectLabel(cfg.page, cfg.label), matches: rows.slice(0, 5).map(r => toRecord(cfg, r)) };
+        } catch (e) { return null; }
+      }));
+      groups.filter(Boolean).forEach(g => found.push(g));
+      // Custom objects the user may view (tenant-scoped; RLS also applies).
       try {
-        const term = query.trim().replace(/[%,()]/g, '');
         const mode = isB2C ? 'b2c' : 'b2b';
-        const visible = (customObjects || []).filter(o => (o.module === 'both' || o.module === mode) && (!hasPermission || hasPermission(`custom_${o.api_name}_view`)));
-        if (supabase && term && visible.length) {
-          const groups = await Promise.all(visible.map(async (o) => {
+        const visible = (customObjects || []).filter(o => (o.module === 'both' || o.module === mode) && can(`custom_${o.api_name}`, 'view'));
+        if (term && visible.length) {
+          const cgroups = await Promise.all(visible.map(async (o) => {
             const fields = await fetchCustomObjectFields(o.id, 'header');
-            const textCols = fields.filter(f => ['text','email','url'].includes(f.field_type) && /^text_\d+$/.test(f.storage_column)).slice(0, 6).map(f => f.storage_column);
-            const ors = ['name', 'record_number', ...textCols].map(c => `${c}.ilike.%${term}%`).join(',');
-            const { data } = await supabase.from('custom_object_records').select('*').eq('custom_object_id', o.id).or(ors).order('created_at', { ascending: false }).limit(8);
-            const rows = (applyDataSecurity ? applyDataSecurity(data || []) : (data || [])).slice(0, 4);
-            if (!rows.length) return null;
+            const textCols = fields.filter(f => ['text','email','url','phone'].includes(f.field_type) && /^text_\d+$/.test(f.storage_column)).slice(0, 6).map(f => f.storage_column);
+            const { data } = await fetchServerPage(supabase, { table: 'custom_object_records', extraEq: { custom_object_id: o.id }, searchTerm: term, searchColumns: ['name', 'record_number', ...textCols], pageSize: 5, security: dataSecurityScope });
+            if (!data?.length) return null;
             return {
               page: `custom_${o.api_name}`, icon: o.icon, label: o.plural_label, isCustom: true,
-              fields: [], secondary: r => [formatCustomDisplayNumber(o, r.display_number), r.status].filter(Boolean).join(' · '),
-              matches: rows.map(r => ({ ...r, name: r.name || r.record_number })),
+              secondary: r => [formatCustomDisplayNumber(o, r.display_number), r.status].filter(Boolean).join(' · '),
+              matches: data.map(r => ({ ...r, name: r.name || r.record_number })),
             };
           }));
-          groups.filter(Boolean).forEach(g => found.push(g));
+          cgroups.filter(Boolean).forEach(g => found.push(g));
         }
       } catch (e) { console.error('[GlobalSearch custom objects]', e); }
       if (cancelled) return;
+      setSearching(false);
       setResults(found);
-      setOpen(found.length > 0);
+      setOpen(true);            // also open when nothing matched, so the user sees "No records found"
       setFocused(0);
-    }, 200);
+    }, 250);
     return () => { cancelled = true; clearTimeout(timer); };
-  }, [query, customObjects, supabase, customers, leads, opportunities, contacts, activities, quotations, orders, invoices, products, retailCustomers, retailProducts, retailOrders, retailInvoices, retailActivities, isB2C, getObjectLabel, getObjectLabel]);
+  }, [query, customObjects, supabase, isB2C, getObjectLabel, dataSecurityScope, permissionsLoaded]);
 
   // Close on outside click
   useEffect(() => {
@@ -191,7 +202,7 @@ export default function GlobalSearch({ onNavigate }) {
               {group.matches.map(record => {
                 const idx  = globalIdx++;
                 const isFocused = idx === focused;
-                const name = record.name || record.quote_number || record.id;
+                const name = record.name || record.subject || record.customer || record.quote_number || record.id;
                 const sec  = group.secondary(record);
                 return (
                   <button key={record.id || idx}
@@ -227,15 +238,15 @@ export default function GlobalSearch({ onNavigate }) {
 
       {/* No results */}
       {open && query.length >= 2 && results.length === 0 && (() => {
-        const totalItems = Object.values(dataMap).reduce((s, arr) => s + ((arr as any[])?.length || 0), 0);
+        const totalItems = searching ? 0 : 1;
         return (
           <div ref={panelRef} className="absolute top-full left-0 right-0 mt-2 bg-white rounded-[20px] shadow-2xl border border-blue-100 px-6 py-8 text-center z-[100]">
             <div className="text-3xl mb-2">{totalItems === 0 ? '⏳' : '🔍'}</div>
             <div className="text-sm font-semibold text-gray-600">
-              {totalItems === 0 ? 'Data is still loading…' : `No records found for "${query}"`}
+              {totalItems === 0 ? 'Searching…' : `No records found for "${query}"`}
             </div>
             <div className="text-xs text-gray-400 mt-1">
-              {totalItems === 0 ? 'Please wait a moment and try again' : 'Try a different keyword'}
+              {totalItems === 0 ? 'One moment' : 'Try a different keyword, a phone number, or a record number like INV-00012'}
             </div>
           </div>
         );

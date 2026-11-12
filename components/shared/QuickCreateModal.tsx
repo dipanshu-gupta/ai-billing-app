@@ -84,7 +84,7 @@ export default function QuickCreateModal({
   prefill = {}, // pre-fill some fields (e.g. customer name from search query)
   prefillExtra = {}, // extra hidden fields (e.g. customerId when creating a contact)
 }) {
-  const { createRecord, customers } = useApp();
+  const { createRecord, customers, hasPermission } = useApp();
   const [form, setForm]   = useState({});
   const [saving, setSaving] = useState(false);
   const [errors, setErrors] = useState({});
@@ -111,13 +111,17 @@ export default function QuickCreateModal({
     return Object.keys(errs).length === 0;
   };
 
+  const PAGE_MAP: Record<string,string> = {
+    customer:'customers', contact:'contacts', lead:'leads',
+    opportunity:'opportunities', activity:'activities',
+  };
+  // RBAC: "+ Create …" inside a picker must respect the role's create permission like the list pages do.
+  const mayCreate = !hasPermission || hasPermission(`${PAGE_MAP[objectType] || objectType}_create`);
+
   const handleSave = async () => {
+    if (!mayCreate) return;
     if (!validate()) return;
     setSaving(true);
-    const PAGE_MAP: Record<string,string> = {
-      customer:'customers', contact:'contacts', lead:'leads',
-      opportunity:'opportunities', activity:'activities',
-    };
     const result = await createRecord(PAGE_MAP[objectType] || objectType, form);
     setSaving(false);
     if (result) {
@@ -146,9 +150,10 @@ export default function QuickCreateModal({
           <button onClick={onClose} className="text-white/60 hover:text-white text-xl w-8 h-8 flex items-center justify-center rounded-full hover:bg-white/10">✕</button>
         </div>
 
+        {!mayCreate && <div className="m-6 mb-0 text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3">Your role does not allow creating {cfg.label.toLowerCase()} records. Ask your administrator to enable it in the Security Console.</div>}
         {/* Fields */}
         <div className="p-6 space-y-4">
-          {cfg.fields.map(field => (
+          {mayCreate && cfg.fields.map(field => (
             <div key={field.key}>
               <label className="text-xs font-bold uppercase tracking-wider text-gray-400 block mb-1.5">
                 {field.label}
@@ -180,7 +185,7 @@ export default function QuickCreateModal({
           <button onClick={onClose} className="flex-1 border border-gray-200 text-gray-600 py-3 rounded-2xl font-semibold text-sm hover:bg-gray-50">
             Cancel
           </button>
-          <button onClick={handleSave} disabled={saving}
+          <button onClick={handleSave} disabled={saving || !mayCreate}
             className="flex-1 bg-gradient-to-r from-[#0F172A] to-blue-800 text-white py-3 rounded-2xl font-bold text-sm disabled:opacity-50 shadow-lg hover:opacity-90">
             {saving ? 'Creating...' : `+ Create ${cfg.label}`}
           </button>
