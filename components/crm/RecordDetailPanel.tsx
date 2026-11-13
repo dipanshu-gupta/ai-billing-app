@@ -27,6 +27,9 @@ import EwayBillModal from '@/components/crm/EwayBillModal';
 import AISummary from '@/components/ai/AISummary';
 import CustomRelatedLists from '@/components/shared/CustomRelatedLists';
 import { useFieldMappingRules, applyFieldMapping } from '@/lib/useFieldMappingRules';
+import LineScanBar from '@/components/shared/LineScanBar';
+import BarcodeField from '@/components/shared/BarcodeField';
+import { scanIntoItems } from '@/lib/barcode';
 import RecordHighlights from '@/components/shared/RecordHighlights';
 import { useRelatedCols, withKeys, viewPermFor } from '@/components/shared/Related360';
 import ProductImages from '@/components/products/ProductImages';
@@ -112,8 +115,12 @@ function LineItemsTable({ items, setItems, products, page }) {
 
   const iCls = 'w-full border border-blue-200 rounded-xl px-3 py-2.5 text-sm text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-blue-400';
 
-  const add    = () => setItems(p => [...p, { _id:Date.now(), product:'', quantity:1, price:0, discount:0, configuration:{}, custom_data:{} }]);
+  const blankLine = () => ({ _id:Date.now()+Math.random(), product:'', quantity:1, price:0, discount:0, configuration:{}, custom_data:{} });
+  const add    = () => setItems(p => [...p, blankLine()]);
   const remove = (idx) => setItems(p => p.filter((_,i) => i !== idx));
+  // Barcode scan: same product -> +qty, otherwise a new (or the first empty) line priced like a manual pick.
+  const applyProduct = (u, pr) => { u.product = pr.name; u.price = Number(pr.price || 0); u.product_id = pr._uuid || pr.id || null; u.configuration = {}; if (p2lRules.length) applyFieldMapping(p2lRules, pr, u); return u; };
+  const onScanProduct = (pr, qty) => scanIntoItems({ setItems, product: pr, qty, makeBlank: blankLine, applyProduct, recompute: (u) => u, nameKey: 'product' });
   const upd    = (idx, field, raw) => setItems(p => p.map((r,i) => {
     if (i !== idx) return r;
     if (field === 'product') {
@@ -149,7 +156,10 @@ function LineItemsTable({ items, setItems, products, page }) {
       <div className="bg-white rounded-[24px] border border-blue-100 shadow-lg overflow-hidden">
         <div className="bg-gradient-to-r from-[#0F172A] to-blue-900 px-6 py-4 flex items-center justify-between">
           <div><h3 className="text-white font-bold text-lg">Line Items</h3><p className="text-blue-300 text-xs mt-0.5">Products · Discounts · Totals</p></div>
-          <button onClick={add} className="bg-white text-[#0F172A] px-4 py-2 rounded-xl text-sm font-bold hover:bg-blue-50">+ Add Item</button>
+          <div className="flex items-center gap-2">
+            <LineScanBar kind="b2b" products={products} onProduct={onScanProduct} />
+            <button onClick={add} className="bg-white text-[#0F172A] px-4 py-2 rounded-xl text-sm font-bold hover:bg-blue-50">+ Add Item</button>
+          </div>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
@@ -540,7 +550,7 @@ export default function RecordDetailPanel({ page, record, onClose, prefillCustom
     orders:       [{icon:'🛒',title:'Order Info',fields:['name','currency','paymentTerms','deliveryDate']},{icon:'🏢',title:'Relationship',fields:['customer','contact']},{icon:'👤',title:'Ownership',fields:['owner','status']},{icon:'💬',title:'Comments',fields:['comments']}],
     invoices:     [{icon:'🧾',title:'Invoice Info',fields:['name','dueDate','paymentTerms']},{icon:'🏢',title:'Relationship',fields:['customer','contact']},{icon:'👤',title:'Ownership',fields:['owner','status']},{icon:'💬',title:'Comments',fields:['comments']}],
     activities:   [{icon:'📅',title:'Activity Info',fields:['name','activityType','activityDate','dueDate','priority']},{icon:'🏢',title:'Relationship',fields:['customer','contact']},{icon:'👤',title:'Ownership',fields:['owner','status']},{icon:'💬',title:'Comments',fields:['comments']}],
-    products:     [{icon:'📦',title:'Product Info',fields:['name','productFamily','category','sku','unit']},{icon:'💰',title:'Pricing',fields:['price','cost','taxRate']},{icon:'📊',title:'Status',fields:['status']},{icon:'📥',title:'Availability',fields:['stock_quantity','reorder_level','track_inventory']},{icon:'💬',title:'Comments',fields:['comments']}],
+    products:     [{icon:'📦',title:'Product Info',fields:['name','productFamily','category','sku','barcode','unit']},{icon:'💰',title:'Pricing',fields:['price','cost','taxRate']},{icon:'📊',title:'Status',fields:['status']},{icon:'📥',title:'Availability',fields:['stock_quantity','reorder_level','track_inventory']},{icon:'💬',title:'Comments',fields:['comments']}],
   };
 
   const sections = PAGE_SECTIONS[page] || [{icon:'📋',title:'Details',fields:fields}];
@@ -556,7 +566,7 @@ export default function RecordDetailPanel({ page, record, onClose, prefillCustom
     dueDate:'Due Date', billingAddress:'Billing Address', shippingAddress:'Shipping Address',
     paymentTerms:'Payment Terms', deliveryDate:'Delivery Date', currency:'Currency',
     notes:'Notes', source:'Lead Source', productFamily:'Product Family', category:'Category',
-    sku:'SKU / Code', price:'Unit Price', cost:'Cost Price', taxRate:'Tax Rate (%)',
+    sku:'SKU / Code', barcode:'Barcode', price:'Unit Price', cost:'Cost Price', taxRate:'Tax Rate (%)',
     unit:'Unit of Measure', comments:'Comments',
     stock_quantity:'Stock on Hand', reorder_level:'Reorder Level', track_inventory:'Inventory Tracking',
   };
@@ -584,6 +594,7 @@ export default function RecordDetailPanel({ page, record, onClose, prefillCustom
 
   const renderField = (field) => {
     const v = edited[field];
+    if (field==='barcode' && page==='products') return <BarcodeField value={v} onChange={val=>set('barcode',val)} kind="b2b" productId={record._uuid || null} />;
     if (field==='status') return (
       <select value={v||''} onChange={async e=>{
         const newStatus = e.target.value;

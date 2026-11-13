@@ -7,7 +7,7 @@
  * order, sections) for the 'create' page scope.
  */
 import RedwoodSkin from '@/components/shared/RedwoodSkin';
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { useApp } from '@/context/AppContext';
 import { useTenant } from '@/context/TenantContext';
 import { useAlert } from '@/components/shared/AlertProvider';
@@ -24,13 +24,15 @@ import {
 } from '@/components/shared/CustomObjectForm';
 
 export default function CustomObjectCreateModal({ customObject, headerFields, lineFields, open, onClose, onCreated, prefill = null, lockedKeys = [] }) {
-  const { currentUser, enterpriseUsers, appearance, customObjects } = useApp();
+  const { currentUser, enterpriseUsers, appearance, customObjects, runAutomations } = useApp();
   const { supabase, tenant } = useTenant();
   const { showAlert } = useAlert();
   const lang = appearance?.language || 'en';
   const { fields: layout, sections: layoutSections } = useFieldLayout(`custom_${customObject.api_name}`);
   const lookups = useCustomLookups(headerFields);
-  const ctx = useMemo(() => ({ supabase, tenantId: tenant?.id, currentUser, showAlert }), [supabase, tenant?.id, currentUser]);
+  // Latest runAutomations (it closes over the current rule lists) behind a stable function, so ctx stays memoised.
+  const autoRef = useRef(runAutomations); autoRef.current = runAutomations;
+  const ctx = useMemo(() => ({ supabase, tenantId: tenant?.id, currentUser, showAlert, runAutomations: (...a) => autoRef.current?.(...a) }), [supabase, tenant?.id, currentUser]);
 
   const [values, setValues] = useState({});
   const [lineRows, setLineRows] = useState([]);

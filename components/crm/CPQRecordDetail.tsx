@@ -9,6 +9,8 @@ import { useTenant } from '@/context/TenantContext';
 import ApprovalBanner from '@/components/crm/ApprovalBanner';
 import QuickCreateModal from '@/components/shared/QuickCreateModal';
 import { useFieldMappingRules, applyFieldMapping } from '@/lib/useFieldMappingRules';
+import LineScanBar from '@/components/shared/LineScanBar';
+import { scanIntoItems } from '@/lib/barcode';
 import { getStatusOptions, getStatusColor, getPageLabel, formatDateTime, formatDisplayNumber, PAGE_DISPLAY_PREFIX } from '@/lib/utils';
 import AISummary from '@/components/ai/AISummary';
 import AddressSelector from '@/components/shared/AddressSelector';
@@ -81,7 +83,12 @@ export function CPQLineItems({ items, setItems, products, readOnly, currency, pa
     out.extended_price = net * (1 + Number(out.tax_pct || 0) / 100);
     return out;
   };
-  const add = () => !readOnly && setItems(p=>[...p,withLayoutDefaults({_id:Date.now(),product_name:'',product_code:'',description:'',quantity:1,price:0,list_price:0,discount:0,tax_pct:18,extended_price:0,custom_data:{}})]);
+  const blankLine = () => withLayoutDefaults({_id:Date.now()+Math.random(),product_name:'',product_code:'',description:'',quantity:1,price:0,list_price:0,discount:0,tax_pct:18,extended_price:0,custom_data:{}});
+  const add = () => !readOnly && setItems(p=>[...p,blankLine()]);
+  // Barcode scan: same product -> +qty, otherwise a new (or the first empty) line priced like a manual pick.
+  const applyProduct = (u, pr) => { u.product_name = pr.name; u.price = Number(pr.price || 0); u.list_price = Number(pr.price || 0); u.product_code = pr.sku || u.product_code || ''; u.product_id = String(pr._uuid ?? pr.id ?? ''); if (p2lRules.length) applyFieldMapping(p2lRules, pr, u); return u; };
+  const recalcLine = (u) => { const net = Number(u.quantity) * Number(u.price) * (1 - Number(u.discount || 0) / 100); u.extended_price = net * (1 + Number(u.tax_pct || 0) / 100); return u; };
+  const onScanProduct = (pr, qty) => !readOnly && scanIntoItems({ setItems, product: pr, qty, makeBlank: blankLine, applyProduct, recompute: recalcLine });
   const remove = idx => !readOnly && setItems(p=>p.filter((_,i)=>i!==idx));
   const upd = (idx,field,val) => {
     if (readOnly) return;
@@ -104,7 +111,10 @@ export function CPQLineItems({ items, setItems, products, readOnly, currency, pa
     <div className="bg-white rounded-[20px] border border-blue-100 shadow overflow-hidden">
       <div className="bg-gradient-to-r from-[#0F172A] to-blue-900 px-6 py-4 flex items-center justify-between">
         <div><h3 className="text-white font-bold text-lg">Line Items</h3><p className="text-blue-200 text-xs mt-0.5">Products · Qty · Pricing · Discounts · Tax</p></div>
-        {!readOnly && <button type="button" onClick={add} className="bg-white text-[#0F172A] px-5 py-2 rounded-xl text-sm font-bold hover:bg-blue-50 shadow-md">+ Add Line Item</button>}
+        {!readOnly && <div className="flex items-center gap-2">
+          <LineScanBar kind="b2b" products={products} onProduct={onScanProduct} />
+          <button type="button" onClick={add} className="bg-white text-[#0F172A] px-5 py-2 rounded-xl text-sm font-bold hover:bg-blue-50 shadow-md">+ Add Line Item</button>
+        </div>}
       </div>
       <div className="overflow-x-auto">
         <table className="w-full text-xs">

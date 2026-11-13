@@ -5,6 +5,7 @@ import { useApp } from '@/context/AppContext';
 import { useTenant } from '@/context/TenantContext';
 import { tenantScope } from '@/lib/utils';
 import { useObjectLabels } from '@/lib/useObjectLabels';
+import CustomObjectImportExport from '@/components/admin/CustomObjectImportExport';
 
 // Wraps any promise with a hard timeout — no single database call in this
 // file (import or export) can hang the whole operation indefinitely
@@ -106,6 +107,7 @@ const IMPORT_OBJECTS = {
       { key:'category',       label:'Category',        example:'Software' },
       { key:'product_family', label:'Product Family',  example:'SaaS' },
       { key:'sku',            label:'SKU',             example:'CRM-PRO-001' },
+      { key:'barcode',        label:'Barcode',         example:'8901234567890' },
       { key:'price',          label:'Price',           example:'9999' },
       { key:'cost',           label:'Cost',            example:'4999' },
       { key:'unit',           label:'Unit',            example:'Per License' },
@@ -461,7 +463,7 @@ const downloadCsv = (filename: string, content: string) => {
 
 // ─── Main Component ────────────────────────────────────────────────────────────
 export default function ImportExportPanel() {
-  const { currentUser, appPreferences, customers, retailCustomers, enterpriseUsers, orders, invoices, quotations, retailOrders, retailInvoices, applyDataSecurity, permissionsLoaded, statusOptionRows } = useApp() as any;
+  const { currentUser, appPreferences, customers, retailCustomers, enterpriseUsers, orders, invoices, quotations, retailOrders, retailInvoices, applyDataSecurity, permissionsLoaded, statusOptionRows, customObjects, hasPermission } = useApp() as any;
   const PARENT_LOOKUP: Record<string, any[]> = { orders, invoices, quotations, retail_orders: retailOrders, retail_invoices: retailInvoices };
   const { supabase }  = useTenant();
   const { getObjectLabel } = useObjectLabels();
@@ -1129,6 +1131,14 @@ export default function ImportExportPanel() {
   const b2cObjs = availableObjects.filter(([, c]) => c.group === 'B2C Retail');
   if (b2bObjs.length) objGroups['B2B Enterprise'] = b2bObjs;
   if (b2cObjs.length) objGroups['B2C Retail']     = b2cObjs;
+  // Custom objects of this workspace mode that the user can export or import.
+  const customImportObjs = (customObjects || []).filter((o: any) => {
+    const m = o.module || 'both';
+    if (!(m === 'both' || m === (isB2C ? 'b2c' : 'b2b'))) return false;
+    const pg = `custom_${o.api_name}`;
+    return hasPermission?.(`${pg}_view`) || hasPermission?.(`${pg}_export`) || hasPermission?.(`${pg}_create`);
+  });
+  const selCustom = String(selObj).startsWith('custom_') ? customImportObjs.find((o: any) => `custom_${o.api_name}` === selObj) : null;
 
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
@@ -1165,12 +1175,27 @@ export default function ImportExportPanel() {
                 ))}
               </div>
             ))}
+            {customImportObjs.length > 0 && (
+              <div className="contents">
+                <span className="w-full text-xs font-bold text-gray-400 uppercase tracking-wider pt-2">Custom Objects</span>
+                {customImportObjs.map((o: any) => (
+                  <button key={o.api_name} onClick={()=>{ setSelObj(`custom_${o.api_name}`); setExportDone(''); }}
+                    className={`flex items-center gap-2 px-4 py-2 rounded-2xl text-sm font-semibold border transition-all ${selObj===`custom_${o.api_name}` ? 'bg-[#0F172A] text-white border-transparent shadow' : 'bg-white text-gray-600 border-gray-200 hover:border-blue-400'}`}>
+                    <span>🗂️</span> {o.plural_label}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       )}
 
+      {selCustom && tab !== 'history' && (
+        <CustomObjectImportExport customObject={selCustom} tab={tab} onHistory={(action, obj, count, status) => addHistory(action, selCustom.plural_label, count, status)} />
+      )}
+
       {/* ── EXPORT TAB ── */}
-      {tab === 'export' && (
+      {tab === 'export' && cfg && (
         <div className="space-y-4">
           {/* Field selector */}
           <div className="bg-white rounded-[20px] border border-gray-200 shadow-sm p-5">
@@ -1299,7 +1324,7 @@ export default function ImportExportPanel() {
       )}
 
       {/* ── IMPORT TAB ── */}
-      {tab === 'import' && (
+      {tab === 'import' && cfg && (
         <div className="space-y-4">
 
           {/* Step indicator */}

@@ -15,7 +15,9 @@ import { generateId, formatDisplayNumber, withTimeout, todayLocalISO } from '@/l
 import { fetchFieldMappingRules, applyFieldMapping, fetchConversionRules, insertWithCopyMaps } from '@/lib/useFieldMappingRules';
 import { useAlert } from '@/components/shared/AlertProvider';
 import { waFetch } from '@/lib/waFetch';
-import { fetchCustomObjects as fetchPublishedCustomObjects } from '@/lib/customObjects';
+import { fetchCustomObjects as fetchPublishedCustomObjects, formatCustomDisplayNumber } from '@/lib/customObjects';
+import { isCustomType, customObjectFor, customFieldsFor, flattenForRules, columnFor, updatePayloadFor, fetchCustomLinesForRules } from '@/lib/customAutomation';
+import { unpackFieldValues as unpackLine } from '@/lib/customObjects';
 import { setStatusOverrides } from '@/lib/statusOptions';
 
 // ─── Enterprise-scale hardening ──────────────────────────────────────────────
@@ -159,6 +161,7 @@ interface AppContextValue {
   saveApprovalProcess: (data: any, steps: any[], editingId?: string) => Promise<void>;
   deleteApprovalProcess: (id: string) => Promise<void>;
   submitForApproval: (recordType: string, recordId: string, recordName: string) => Promise<void>;
+  runAutomations: (objectType: string, recordId: string, recordData: any, event: 'on_create' | 'on_update' | 'on_delete', previousData?: any) => Promise<void>;
   processApproval: (requestId: string, decision: 'Approved' | 'Rejected', comments: string) => Promise<void>;
 
   // Audit
@@ -1376,7 +1379,7 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     };
     delete payload.id; delete payload._uuid;
     const { data: inserted, error } = await withTimeout(supabase.from(cfg.table).insert([payload]).select().single(), 20000, 'Save');
-    if (error) { showAlert('Save failed: ' + error.message); return null; }
+    if (error) { showAlert(/barcode_unique/i.test(error.message || '') ? 'Save failed: that barcode is already used by another product in this workspace.' : 'Save failed: ' + error.message); return null; }
     if (cfg.lineItemTable && items.length) {
       const { error: liError } = await upsertRetailLineItems(cfg.lineItemTable as any, cfg.lineFK!, newId, items, payload.status);
       if (liError) { showAlert('Save failed: ' + liError.message, { variant:'danger', title:'Booking Conflict' }); return null; }
@@ -1458,7 +1461,7 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     }
 
     const { error } = await withTimeout(supabase.from(cfg.table).update(payload).eq(cfg.idField, record.id), 20000, 'Save');
-    if (error) { console.error(`update ${cfg.table}:`, error.message); showAlert('Save failed: ' + error.message); return; }
+    if (error) { console.error(`update ${cfg.table}:`, error.message); showAlert(/barcode_unique/i.test(error.message || '') ? 'Save failed: that barcode is already used by another product in this workspace.' : 'Save failed: ' + error.message); return; }
     if (cfg.lineItemTable) {
       const { error: liError } = await upsertRetailLineItems(cfg.lineItemTable as any, cfg.lineFK!, record.id, items, payload.status);
       if (liError) { showAlert('Save failed: ' + liError.message, { variant:'danger', title:'Booking Conflict' }); return; }
@@ -1490,7 +1493,10 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     if (!cfg) return;
     try {
       if (cfg.lineItemTable) await supabase.from(cfg.lineItemTable).delete().eq(cfg.lineFK!, recordId);
+      let prodUuid = null;
+      if (page === 'retailProducts') { const { data: pr } = await supabase.from(cfg.table).select('id').eq(cfg.idField, recordId).maybeSingle(); prodUuid = pr?.id || null; }
       await supabase.from(cfg.table).delete().eq(cfg.idField, recordId);
+      if (prodUuid) { try { await tScope(supabase.from('product_barcodes').delete()).eq('product_type', 'b2c').eq('product_id', String(prodUuid)); } catch {} }
       await cfg.fetch();
     } catch (e: any) {
       console.error('[deleteRetailRecord]', e);
@@ -2196,7 +2202,10 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
             tax_rate: Number(data.taxRate||data.tax_rate||0), hsn_code: data.hsn_code||'', gst_rate: data.gst_rate!=null?Number(data.gst_rate):null,
             taxable: data.taxable||'', tax_category: data.tax_category||'', vat_rate: data.vat_rate!=null?Number(data.vat_rate):null,
             description: data.description||'',
+            // Only sent when given, so product creation keeps working on a database that has not run sql/57 yet.
+            ...(data.barcode ? { barcode: String(data.barcode).trim() } : {}),
           }]).select().single();
+          if (error && /products_barcode_unique|duplicate key.*barcode/i.test(error.message || '')) throw new Error('That barcode is already used by another product in this workspace.');
           if (error) throw error;
           await runAutomations('products', insertedProd?.id ?? id, { ...data, id: insertedProd?.id, product_number: id }, 'on_create');
           await fetchProducts();
@@ -2428,8 +2437,12 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
         await runAutomations('contacts', record.id, record, 'on_update', previousData);
         await fetchContacts(); await fetchCustomers(); break; }
       case 'products': {
-        const { error: e_products } = await supabase.from('products').update({ ...sys, custom_data: record.custom_data||{}, name: record.name, product_family: record.productFamily||'', category: record.category||'', sku: record.sku||'', price: Number(record.price||0), cost: Number(record.cost||0), unit: record.unit||'', tax_rate: Number(record.taxRate||record.tax_rate||0), hsn_code: record.hsn_code||'', gst_rate: record.gst_rate!=null?Number(record.gst_rate):null, taxable: record.taxable||'', tax_category: record.tax_category||'', vat_rate: record.vat_rate!=null?Number(record.vat_rate):null, description: record.description||'', owner: record.owner||'', status: record.status, comments: record.comments||'', stock_quantity: Number(record.stock_quantity||0), reorder_level: Number(record.reorder_level ?? 10), track_inventory: record.track_inventory !== false }).eq('id', record._uuid || record.id);
-        if (e_products) { console.error('update products:', e_products.message); showAlert('Save failed: ' + e_products.message); return; }
+        const { error: e_products } = await supabase.from('products').update({ ...sys, custom_data: record.custom_data||{}, name: record.name, product_family: record.productFamily||'', category: record.category||'', sku: record.sku||'', price: Number(record.price||0), cost: Number(record.cost||0), unit: record.unit||'', tax_rate: Number(record.taxRate||record.tax_rate||0), hsn_code: record.hsn_code||'', gst_rate: record.gst_rate!=null?Number(record.gst_rate):null, taxable: record.taxable||'', tax_category: record.tax_category||'', vat_rate: record.vat_rate!=null?Number(record.vat_rate):null, description: record.description||'', owner: record.owner||'', status: record.status, comments: record.comments||'', stock_quantity: Number(record.stock_quantity||0), reorder_level: Number(record.reorder_level ?? 10), track_inventory: record.track_inventory !== false, ...(record.barcode !== undefined ? { barcode: String(record.barcode || '').trim() || null } : {}) }).eq('id', record._uuid || record.id);
+        if (e_products) {
+          console.error('update products:', e_products.message);
+          showAlert(/products_barcode_unique|duplicate key.*barcode/i.test(e_products.message || '') ? 'Save failed: that barcode is already used by another product in this workspace.' : 'Save failed: ' + e_products.message);
+          return;
+        }
         await runAutomations('products', record._uuid || record.id, record, 'on_update', previousData);
         await fetchProducts(); break; }
       case 'leads': {
@@ -3002,7 +3015,7 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
       retailOrders: { table:'retail_orders', idField:'order_number' },
       retailInvoices: { table:'retail_invoices', idField:'invoice_number' },
     };
-    const statusCfg = STATUS_TABLE_MAP[recordType];
+    const statusCfg = STATUS_TABLE_MAP[recordType] || (isCustomType(recordType) ? { table: 'custom_object_records', idField: 'id' } : null);
     if (statusCfg) {
       await supabase.from(statusCfg.table)
         .update({ status: 'Pending Approval', updated_at: new Date().toISOString() })
@@ -3032,6 +3045,7 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     };
     const submitRefetchFn = SUBMIT_REFETCH_MAP[recordType];
     if (submitRefetchFn) await submitRefetchFn();
+    if (isCustomType(recordType) && typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('custom-records-changed', { detail: { page: recordType, recordId } }));
 
     await fetchApprovalRequests();
     showAlert('Submitted for approval successfully.');
@@ -3060,10 +3074,14 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
       retailInvoices:  { table:'retail_invoices',  idField:'invoice_number',  approvedStatus:'Paid',     rejectedStatus:'Cancelled',pendingStatus:'Pending Approval' },
     };
 
+    if (isCustomType(request.record_type)) {
+      RECORD_TABLE_MAP[request.record_type] = { table: 'custom_object_records', idField: 'id', approvedStatus: 'Active', rejectedStatus: 'Draft', pendingStatus: 'Pending Approval' };
+    }
     const updateRecordStatus = async (status: string) => {
       const cfg = RECORD_TABLE_MAP[request.record_type];
       if (!cfg || !request.record_id) return;
       await supabase.from(cfg.table).update({ status, updated_at: new Date().toISOString() }).eq(cfg.idField, request.record_id);
+      if (isCustomType(request.record_type) && typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('custom-records-changed', { detail: { page: request.record_type, recordId: request.record_id } }));
     };
 
     // Record this step's decision
@@ -3170,6 +3188,30 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     quotations:     { table: 'quotation_line_items',      fk: 'quote_number' },
   };
 
+  // Line items for rule evaluation / notification tokens. Custom objects keep theirs in custom_object_line_items
+  // (keyed by the parent record's uuid) with named fields packed into storage columns, so they are unpacked to
+  // {api_name: value} first - rules are always written against field names.
+  const hasRuleLineItems = (objectType: string) => {
+    if (isCustomType(objectType)) return !!customObjectFor(objectType, customObjects)?.supports_line_items;
+    return !!LINE_ITEM_TABLE_CONFIG[objectType];
+  };
+  const fetchRuleLineItems = async (objectType: string, recordKey: string) => {
+    if (!supabase || !recordKey) return [];
+    if (isCustomType(objectType)) {
+      const obj = customObjectFor(objectType, customObjects);
+      if (!obj?.supports_line_items) return [];
+      const { line } = await customFieldsFor(obj);
+      return fetchCustomLinesForRules(supabase, line, recordKey);
+    }
+    const liConfig = LINE_ITEM_TABLE_CONFIG[objectType];
+    if (!liConfig) return [];
+    const { data } = await withTimeout(
+      supabase.from(liConfig.table).select('*').eq(liConfig.fk, recordKey).order('sort_order'),
+      10000, 'Fetch line items for automation'
+    );
+    return data || [];
+  };
+
   // Every object's *_number identifier field (lead_number, order_number,
   // etc.) is either a raw, non-human-friendly key (a timestamp-based value
   // for retail/order-type objects, kept unique after the generateId()
@@ -3244,15 +3286,10 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     const needsLineItems = conds.some((c: any) => c.scope === 'line_item');
     let lineItems: any[] = [];
     if (needsLineItems && supabase) {
-      const liConfig = LINE_ITEM_TABLE_CONFIG[objectType];
       const recordNumber = recordData.id || recordData[getObjectIdField(objectType)];
-      if (liConfig && recordNumber) {
+      if (hasRuleLineItems(objectType) && recordNumber) {
         try {
-          const { data } = await withTimeout(
-            supabase.from(liConfig.table).select('*').eq(liConfig.fk, recordNumber),
-            10000, 'Fetch line items for condition check'
-          );
-          lineItems = data || [];
+          lineItems = await fetchRuleLineItems(objectType, recordNumber);
         } catch (e) {
           console.warn('[evaluateConditionsWithLineItems] line item fetch failed:', e);
         }
@@ -3278,6 +3315,7 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
   };
 
   const getObjectTable = (objectType: string): string => {
+    if (isCustomType(objectType)) return 'custom_object_records';
     const map: Record<string,string> = {
       leads:'leads', opportunities:'opportunities', customers:'customers',
       contacts:'contacts', activities:'activities', orders:'orders',
@@ -3290,6 +3328,7 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
   };
 
   const getObjectIdField = (objectType: string): string => {
+    if (isCustomType(objectType)) return 'id';
     const map: Record<string,string> = {
       leads:'lead_number', opportunities:'opportunity_number',
       customers:'customer_number', contacts:'contact_number',
@@ -3403,15 +3442,13 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
           // one-line summary of every line item; {{li:<field>}} resolves a
           // specific line-item field against the FIRST line item (a single
           // {{}} token can't repeat per row).
-          const liConfig = LINE_ITEM_TABLE_CONFIG[objectType];
           const templateText = `${cfg.subject || ''} ${cfg.message || ''}`;
-          const needsLineItems = !!liConfig && (templateText.includes('{{line_items}}') || templateText.includes('{{li:'));
+          const needsLineItems = hasRuleLineItems(objectType) && (templateText.includes('{{line_items}}') || templateText.includes('{{li:'));
           let notifLineItems: any[] = [];
           if (needsLineItems) {
             const recordNumber = recordData.id || recordId;
             try {
-              const { data } = await supabase.from(liConfig.table).select('*').eq(liConfig.fk, recordNumber).order('sort_order');
-              notifLineItems = data || [];
+              notifLineItems = await fetchRuleLineItems(objectType, recordNumber);
             } catch (e) { console.warn('[Workflow] send_notification line-item fetch failed:', e); }
           }
           const lineItemsSummary = notifLineItems.length
@@ -3428,9 +3465,12 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
           // integer or nothing.
           const displayPrefix = DISPLAY_NUMBER_PREFIX[objectType];
           const rawDisplayNum = recordData.display_number ?? recordData.displayNumber;
-          const formattedDisplayNumber = (displayPrefix && rawDisplayNum != null)
-            ? formatDisplayNumber(displayPrefix, rawDisplayNum)
-            : String(recordData.name || recordId || '');
+          const customObj = customObjectFor(objectType, customObjects);
+          const formattedDisplayNumber = customObj && rawDisplayNum != null
+            ? formatCustomDisplayNumber(customObj, rawDisplayNum)
+            : (displayPrefix && rawDisplayNum != null)
+              ? formatDisplayNumber(displayPrefix, rawDisplayNum)
+              : String(recordData.name || recordId || '');
 
           // Merge field placeholders like {{name}}, {{status}}, {{amount}} into
           // subject/message. Uses the same field-resolution helper as
@@ -3450,8 +3490,9 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
             const val = getRuleFieldValue(recordData, key);
             return val !== undefined && val !== null ? String(val) : '';
           });
+          const objLabel = customObj ? customObj.singular_label : objectType;
           const subject = interpolate(cfg.subject) || `Workflow: ${rule.name}`;
-          const message = interpolate(cfg.message) || `Rule "${rule.name}" triggered on ${objectType} record "${recordData.name || recordId}".`;
+          const message = interpolate(cfg.message) || `Rule "${rule.name}" triggered on ${objLabel} record "${recordData.name || formattedDisplayNumber || recordId}".`;
 
           const emailSet = new Set<string>();
 
@@ -3499,7 +3540,16 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
             const table   = getObjectTable(objectType);
             const idField = getObjectIdField(objectType);
             let updatePayload: Record<string, any>;
-            if (cfg.field.startsWith('custom:')) {
+            if (isCustomType(objectType)) {
+              // Custom object: the rule names a field; write it to that field's storage column.
+              const obj = customObjectFor(objectType, customObjects);
+              const { header } = await customFieldsFor(obj);
+              const base = pendingCustomData ? { ...recordData, custom_data: pendingCustomData } : recordData;
+              const p = updatePayloadFor(header, cfg.field, cfg.value, base);
+              if (!p) { console.warn('[Workflow update_field] unknown field on', objectType, cfg.field); break; }
+              if (p.custom_data) pendingCustomData = p.custom_data;
+              updatePayload = { ...p, updated_at: new Date().toISOString() };
+            } else if (cfg.field.startsWith('custom:')) {
               // Custom fields live inside the custom_data JSONB column, not
               // as their own column — a naive `.update({ custom_data: {...} })`
               // with just the one key would silently wipe every other
@@ -3657,6 +3707,9 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
       };
       const refetchFn = REFETCH_MAP[objectType];
       if (refetchFn) await refetchFn();
+      if (isCustomType(objectType) && typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('custom-records-changed', { detail: { page: objectType, recordId } }));
+      }
       await fetchActivities(); // create_task always inserts into activities
     }
   };
@@ -3734,7 +3787,13 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     for (const rule of scheduledRules) {
       const offsetMs = (rule.schedule_offset_value || 1) * (rule.schedule_offset_unit === 'hours' ? 3600000 : 86400000);
       const [dueHour, dueMin] = (rule.schedule_due_time || '18:00').split(':').map(Number);
-      const liConfig = LINE_ITEM_TABLE_CONFIG[rule.object_type];
+      // Custom objects: records in custom_object_records (one object per custom_object_id), dates in storage columns.
+      const customObj = customObjectFor(rule.object_type, customObjects);
+      if (isCustomType(rule.object_type) && !customObj) continue; // object unpublished / deleted
+      const customFields = customObj ? await customFieldsFor(customObj) : null;
+      const liConfig = customObj
+        ? (customObj.supports_line_items ? { table: 'custom_object_line_items', fk: 'parent_record_id' } : undefined)
+        : LINE_ITEM_TABLE_CONFIG[rule.object_type];
       const isLineItemScoped = rule.schedule_date_scope === 'line_item' && !!liConfig;
 
       // "Date field to watch" lets the rule builder pick a custom field
@@ -3749,9 +3808,15 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
       // doesn't fire". A custom field now resolves to the JSONB path
       // operator PostgREST expects instead.
       const isCustomDateField = rule.schedule_date_field?.startsWith('custom:');
-      const queryDateField = isCustomDateField
+      let queryDateField = isCustomDateField
         ? `custom_data->>${rule.schedule_date_field.slice(7)}`
         : rule.schedule_date_field;
+      if (customObj) {
+        const fields = isLineItemScoped ? customFields.line : customFields.header;
+        const col = columnFor(fields, rule.schedule_date_field, isLineItemScoped ? 'line_item' : 'header');
+        const key = String(rule.schedule_date_field || '').replace(/^custom:/, '').replace(/^cf_/, '');
+        queryDateField = col || `custom_data->>${key}`;
+      }
 
       // Broad candidate fetch (next few days) — exact time-window
       // precision happens in JS below, since a date-only column can't
@@ -3760,15 +3825,19 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
       try {
         if (isLineItemScoped) {
           let q = supabase.from(liConfig!.table).select('*').gte(queryDateField, todayStr).lte(queryDateField, futureStr);
+          if (customObj) q = q.eq('custom_object_id', customObj.id);
           if (tid.id && !tid.db_url) q = q.eq('tenant_id', tid.id);
           const { data } = await withTimeout(q, 15000, 'Scheduled workflow candidate fetch');
           candidates = data || [];
+          if (customObj) candidates = candidates.map(r => ({ ...r, ...unpackLine(customFields.line, r) }));
         } else {
           const table = getObjectTable(rule.object_type);
           let q = supabase.from(table).select('*').gte(queryDateField, todayStr).lte(queryDateField, futureStr);
+          if (customObj) q = q.eq('custom_object_id', customObj.id);
           if (tid.id && !tid.db_url) q = q.eq('tenant_id', tid.id);
           const { data } = await withTimeout(q, 15000, 'Scheduled workflow candidate fetch');
           candidates = data || [];
+          if (customObj) candidates = candidates.map(r => flattenForRules(customObj, customFields.header, r));
         }
       } catch (e) { console.warn('[runScheduledWorkflowRules] candidate fetch failed:', e); continue; }
 
@@ -3810,6 +3879,7 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
           const idF = getObjectIdField(rule.object_type);
           const { data: parent } = await supabase.from(table).select('*').eq(idF, parentId).maybeSingle();
           parentRecord = parent ? { ...parent, id: parent[idF] } : { id: parentId };
+          if (customObj && parent) parentRecord = flattenForRules(customObj, customFields.header, parent);
         }
 
         const conditionsMet = await evaluateConditionsWithLineItems(rule.object_type, parentRecord, rule.conditions);
@@ -3870,6 +3940,12 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
   const checkMatchingApprovalProcess = async (objectType: string, recordData: any) => {
     if (!supabase) return null;
     const processes = approvalProcesses?.filter(p => p.object_type === objectType && p.is_active) || [];
+    if (isCustomType(objectType) && processes.length) {
+      const obj = customObjectFor(objectType, customObjects);
+      if (!obj) return null;
+      const { header } = await customFieldsFor(obj);
+      recordData = flattenForRules(obj, header, recordData);
+    }
 
     for (const process of processes) {
       const matches = await evaluateConditionsWithLineItems(
@@ -3890,6 +3966,14 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     previousData?: any
   ) => {
     try {
+      // Custom objects: rules are written against field NAMES, while the row holds generic storage columns.
+      if (isCustomType(objectType)) {
+        const obj = customObjectFor(objectType, customObjects);
+        if (!obj) return;
+        const { header } = await customFieldsFor(obj);
+        recordData = flattenForRules(obj, header, recordData);
+        if (previousData) previousData = flattenForRules(obj, header, previousData);
+      }
       await Promise.all([
         runWorkflowRules(objectType, recordId, recordData, event, previousData),
         // Assignment rules now fire on update too (e.g. reassign owner when
@@ -4977,6 +5061,8 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
       showAlert(/foreign key|violates/i.test(error.message) ? `"${label}" is still used by other records, so it cannot be deleted.` : `Delete failed: ${error.message}`, { variant:'danger' });
       return false;
     }
+    // A deleted product's pack barcodes go with it (best effort: the table exists only after sql/57).
+    if (page === 'products' && row?.id != null) { try { await tScope(supabase.from('product_barcodes').delete()).eq('product_type', 'b2b').eq('product_id', String(row.id)); } catch {} }
     await logAudit({ recordType:page, recordId:keyVal, recordName:label, action:'deleted' });
     const refs = { customers:fetchCustomers, leads:fetchLeads, opportunities:fetchOpportunities, orders:fetchOrders, invoices:fetchInvoices, contacts:fetchContacts, activities:fetchActivities, products:fetchProducts };
     await refs[page]?.();
@@ -5034,7 +5120,7 @@ export function AppProvider({ children, supabase = null, tenant = null }: { chil
     saveQuoteTemplate, deleteQuoteTemplate, setDefaultTemplate,
     saveWorkflowRule, deleteWorkflowRule, saveAssignmentRule, deleteAssignmentRule,
     saveSLAPolicy, deleteSLAPolicy, saveApprovalProcess, deleteApprovalProcess,
-    checkMatchingApprovalProcess, submitForApproval, processApproval,
+    checkMatchingApprovalProcess, submitForApproval, processApproval, runAutomations,
     logAudit, createNotification,
     appearance, saveAppearance, fetchAppearance,
     // NEW ADDITIONS

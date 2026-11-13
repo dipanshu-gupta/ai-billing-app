@@ -8,7 +8,7 @@
  * Information card.
  */
 import RedwoodSkin from '@/components/shared/RedwoodSkin';
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { useApp } from '@/context/AppContext';
 import { useTenant } from '@/context/TenantContext';
 import { useAlert } from '@/components/shared/AlertProvider';
@@ -24,10 +24,11 @@ import {
   useCustomLookups, CustomSectionsView, CustomLineItemsCard, buildCustomSections,
 } from '@/components/shared/CustomObjectForm';
 import RecordHighlights from '@/components/shared/RecordHighlights';
+import ApprovalBanner from '@/components/crm/ApprovalBanner';
 import CustomRelatedLists, { useRelatedTabs } from '@/components/shared/CustomRelatedLists';
 
 export default function CustomObjectDetailPanel({ customObject, headerFields, lineFields, record, onClose, onSaved, initialTab = null }) {
-  const { currentUser, hasPermission, enterpriseUsers, organizations, businessUnits, appearance } = useApp();
+  const { currentUser, hasPermission, enterpriseUsers, organizations, businessUnits, appearance, runAutomations, checkMatchingApprovalProcess, submitForApproval, approvalRequests } = useApp();
   const { supabase, tenant } = useTenant();
   const { showAlert, showConfirm } = useAlert();
   const lang = appearance?.language || 'en';
@@ -43,7 +44,9 @@ export default function CustomObjectDetailPanel({ customObject, headerFields, li
   // 'rel:<key>' = one tab per related object. Legacy '360' (returnTab) opens the first related tab.
   const wantedTab = tab === '360' ? (relatedTabs[0] ? `rel:${relatedTabs[0].key}` : 'details') : tab;
   const activeTab = wantedTab.startsWith('rel:') && relatedTabs.some(t => `rel:${t.key}` === wantedTab) ? wantedTab : 'details';
-  const ctx = useMemo(() => ({ supabase, tenantId: tenant?.id, currentUser, showAlert }), [supabase, tenant?.id, currentUser]);
+  // Latest runAutomations (it closes over the current rule lists) behind a stable function, so ctx stays memoised.
+  const autoRef = useRef(runAutomations); autoRef.current = runAutomations;
+  const ctx = useMemo(() => ({ supabase, tenantId: tenant?.id, currentUser, showAlert, runAutomations: (...a) => autoRef.current?.(...a) }), [supabase, tenant?.id, currentUser]);
 
   const initial = (rec) => ({
     ...unpackFieldValues(headerFields, rec),
@@ -67,6 +70,31 @@ export default function CustomObjectDetailPanel({ customObject, headerFields, li
       setLoadingLI(false);
     });
   }, [record.id]);
+
+  // Approvals: offer "Submit for Approval" when an active process for this object matches the saved record.
+  const [matchingProcess, setMatchingProcess] = useState(null);
+  const [submitting, setSubmitting] = useState(false);
+  const pendingApproval = (approvalRequests || []).some(r => r.record_type === objectType && String(r.record_id) === String(record.id) && r.status === 'Pending')
+    || current?.status === 'Pending Approval';
+  useEffect(() => {
+    let on = true;
+    if (!checkMatchingApprovalProcess || pendingApproval) { setMatchingProcess(null); return; }
+    checkMatchingApprovalProcess(objectType, current).then(p => { if (on) setMatchingProcess(p || null); }).catch(() => {});
+    return () => { on = false; };
+  }, [record.id, current?.updated_at, current?.status, pendingApproval]);
+  const submitApproval = async () => {
+    if (isDirty) { showAlert('Save your changes before submitting for approval.', { variant: 'warning' }); return; }
+    setSubmitting(true);
+    await submitForApproval(objectType, record.id, values.__name || numberLabelOf(current), matchingProcess);
+    const { data: fresh } = await supabase.from('custom_object_records').select('*').eq('id', record.id).maybeSingle();
+    if (fresh) { setCurrent(fresh); setValues(initial(fresh)); onSaved && onSaved(fresh); }
+    setMatchingProcess(null); setSubmitting(false);
+  };
+  const numberLabelOf = (rec) => formatCustomDisplayNumber(customObject, rec?.display_number) || rec?.record_number || '';
+  const reloadAfterDecision = async () => {
+    const { data: fresh } = await supabase.from('custom_object_records').select('*').eq('id', record.id).maybeSingle();
+    if (fresh) { setCurrent(fresh); setValues(initial(fresh)); onSaved && onSaved(fresh); }
+  };
 
   const patch = (p) => { if (!canEdit) return; setIsDirty(true); setValues(v => ({ ...v, ...p })); };
   const setRows = (updater) => { if (!canEdit) return; setIsDirty(true); setLineRows(updater); };
@@ -144,6 +172,13 @@ export default function CustomObjectDetailPanel({ customObject, headerFields, li
           <button onClick={close} className="flex items-center gap-2 text-sm text-gray-500 hover:text-[#0F172A] font-semibold transition-all">← Back to list</button>
           <div className="flex items-center gap-3">
             {saveSuccess && <span className="text-green-600 text-sm font-semibold flex items-center gap-1">✓ Saved</span>}
+            {matchingProcess && canEdit && (
+              <button onClick={submitApproval} disabled={submitting}
+                className="px-4 py-2 text-sm rounded-xl font-semibold bg-amber-500 hover:bg-amber-600 text-white disabled:opacity-50 shadow-sm"
+                title={`Approval process: ${matchingProcess.name}`}>
+                {submitting ? 'Submitting…' : '📤 Submit for Approval'}
+              </button>
+            )}
             <button onClick={close} className="px-4 py-2 text-sm rounded-xl font-semibold bg-white border border-gray-200 text-gray-600 hover:bg-gray-50">{t(lang, 'cancel')}</button>
             {canEdit && (<>
               <button onClick={() => handleSave(false)} disabled={saving || !isDirty}
@@ -191,6 +226,8 @@ export default function CustomObjectDetailPanel({ customObject, headerFields, li
               <div><p className="text-sm font-bold text-amber-800">This record is read-only</p><p className="text-xs text-amber-600">You don't have permission to edit {customObject.plural_label}.</p></div>
             </div>
           )}
+
+          <ApprovalBanner recordId={record.id} recordType={objectType} onDecision={reloadAfterDecision} />
 
           <div className="flex items-center gap-3 px-1">
             <span className="text-xs font-bold uppercase tracking-wider text-gray-400">{customObject.singular_label} Number</span>

@@ -10,6 +10,8 @@
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.105.4",
+    "@zxing/browser": "^0.1.4",
+    "@zxing/library": "^0.21.0",
     "html2canvas": "^1.4.1",
     "jspdf": "^4.2.1",
     "lucide-react": "^0.400.0",

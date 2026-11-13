@@ -50,7 +50,7 @@ export default function DynamicObjectPage({ customObject }) {
   const {
     currentUser, hasPermission, applyDataSecurity, dataSecurityScope, permissionsLoaded, appearance, appPreferences,
     customObjects, enterpriseUsers, organizations, businessUnits, savedSearches, fetchSavedSearches,
-    fetchListViewPrefs, saveListViewPrefs, pendingRecord, setPendingRecord, pendingReturnTo, setPendingReturnTo,
+    fetchListViewPrefs, saveListViewPrefs, pendingRecord, setPendingRecord, pendingReturnTo, setPendingReturnTo, runAutomations,
   } = useApp();
   const { supabase, tenant } = useTenant();
   const { showAlert, showConfirm } = useAlert();
@@ -61,7 +61,9 @@ export default function DynamicObjectPage({ customObject }) {
   const canCreate = hasPermission(`${page}_create`);
   const canEdit = hasPermission(`${page}_edit`);
   const canDelete = hasPermission(`${page}_delete`);
-  const ctx = useMemo(() => ({ supabase, tenantId: tenant?.id, currentUser, showAlert }), [supabase, tenant?.id, currentUser]);
+  // Latest runAutomations (it closes over the current rule lists) behind a stable function, so ctx stays memoised.
+  const autoRef = useRef(runAutomations); autoRef.current = runAutomations;
+  const ctx = useMemo(() => ({ supabase, tenantId: tenant?.id, currentUser, showAlert, runAutomations: (...a) => autoRef.current?.(...a) }), [supabase, tenant?.id, currentUser]);
   const layoutHook = useFieldLayout(page);
 
   const [headerFields, setHeaderFields] = useState([]);
@@ -115,6 +117,12 @@ export default function DynamicObjectPage({ customObject }) {
   const [createOpen, setCreateOpen] = useState(false);
   const [defaultLoaded, setDefaultLoaded] = useState(false);
   const [refreshTick, setRefreshTick] = useState(0);
+  // Workflow actions / approvals change records behind this page's back - reload when they touch this object.
+  useEffect(() => {
+    const h = (e) => { if (!e.detail?.page || e.detail.page === page) setRefreshTick(x => x + 1); };
+    window.addEventListener('custom-records-changed', h);
+    return () => window.removeEventListener('custom-records-changed', h);
+  }, [page]);
   const [viewMode, setViewMode] = useState('table');
   const [rows, setRows] = useState([]);
   const [total, setTotal] = useState(0);
@@ -160,9 +168,15 @@ export default function DynamicObjectPage({ customObject }) {
   // Record opened from global search / a link elsewhere.
   useEffect(() => {
     if (pendingRecord && pendingRecord.page === page && pendingRecord.record) {
-      setSelectedRecord(pendingRecord.record);
+      const rec = pendingRecord.record;
       setInitialTab(pendingRecord.tab || null);
       setPendingRecord(null);
+      if (rec.custom_object_id || !rec.id || !supabase) setSelectedRecord(rec);
+      else {
+        // Opened from a notification / approval with only the record id: load the full row (tenant + RLS scoped).
+        supabase.from('custom_object_records').select('*').eq('id', rec.id).eq('custom_object_id', customObject.id).maybeSingle()
+          .then(({ data }) => { if (data) setSelectedRecord(data); else showAlert('That record no longer exists or you no longer have access to it.', { variant: 'warning' }); });
+      }
     } else if (pendingRecord && pendingRecord.page === page && pendingRecord.openCreate) {
       setCreateOpen(true); setPendingRecord(null);
     }
@@ -337,7 +351,7 @@ export default function DynamicObjectPage({ customObject }) {
   const handleDelete = async (record) => {
     const ok = await showConfirm(`Delete "${record.name || record.record_number}"? This cannot be undone.`, { variant: 'danger', confirmLabel: 'Delete', title: 'Delete Record' });
     if (!ok) return;
-    await deleteCustomObjectRecord(ctx, record.id);
+    await deleteCustomObjectRecord(ctx, record.id, customObject);
     setRefreshTick(x => x + 1);
   };
 

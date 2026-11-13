@@ -78,6 +78,8 @@ function notificationTimeAgo(ts) {
 // that logic (and the id-field guessing it has to do, since notifications
 // only ever store one generic record_id) lives in exactly one place.
 function resolveNotificationTarget(n, recordArrays) {
+  // Custom objects: the page key is the record type itself; the page loads the full record by id.
+  if (String(n.record_type || '').startsWith('custom_') && n.record_id) return { page: n.record_type, record: { id: n.record_id } };
   const page = NOTIFICATION_PAGE_MAP[n.record_type];
   if (!page || !n.record_id) return null;
   if (page === 'approvals') return { page: 'approvals', record: null };
@@ -197,7 +199,7 @@ function NotificationBell() {
               <div className="rwc-empty"><Bell className="w-8 h-8 mx-auto mb-2"/>No notifications yet</div>
             ) : (
               visibleNotifications.slice(0, 20).map(n => {
-                const page = PAGE_MAP[n.record_type];
+                const page = PAGE_MAP[n.record_type] || (String(n.record_type || '').startsWith('custom_') ? n.record_type : null);
                 const isNavigable = page && n.record_id;
                 return <NotifItem key={n.id} n={n} isNavigable={isNavigable} IconCmp={TYPE_ICONS[n.type] || Bell} onClick={() => handleClick(n)} timeAgo={timeAgo}/>;
               })
@@ -283,7 +285,7 @@ function NotificationCenter({ onClose }) {
             <div className="rwc-empty"><Bell className="w-10 h-10 mx-auto mb-2"/>{tab === 'unread' ? 'No unread notifications' : 'No notifications yet'}</div>
           ) : (
             shown.map(n => {
-              const page = NOTIFICATION_PAGE_MAP[n.record_type];
+              const page = NOTIFICATION_PAGE_MAP[n.record_type] || (String(n.record_type || '').startsWith('custom_') ? n.record_type : null);
               const isNavigable = page && n.record_id;
               return <NotifItem key={n.id} n={n} isNavigable={isNavigable} IconCmp={NOTIFICATION_TYPE_ICONS[n.type] || Bell} onClick={() => handleClick(n)} timeAgo={notificationTimeAgo}/>;
             })

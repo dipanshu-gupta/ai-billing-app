@@ -55,7 +55,7 @@ export const STD_OBJECTS: Record<string, any> = {
                    search: ['subject', 'name', 'customer', 'activity_number'], status: 'status', statuses: ['Open', 'In Progress', 'Completed', 'Cancelled'],
                    fields: 'subject, customer, activity_type (Call/Meeting/Email/Task), activity_date (YYYY-MM-DD), due_date, priority (Low/Medium/High), status, notes' },
   products:      { mode: 'b2b', table: 'products', key: 'product_number', prefix: 'PROD', name: 'name', single: 'Product', plural: 'Products', amount: 'price', isProduct: true,
-                   search: ['name', 'sku', 'category', 'product_number', 'product_family'], status: 'status', statuses: ['Active', 'Inactive'],
+                   search: ['name', 'sku', 'barcode', 'category', 'product_number', 'product_family'], status: 'status', statuses: ['Active', 'Inactive'],
                    fields: 'name, category, product_family, sku, price, cost, unit, tax_rate, gst_rate, hsn_code, stock_quantity, reorder_level, status, description' },
   // B2C / retail
   retailCustomers:  { mode: 'b2c', table: 'retail_customers', key: 'customer_number', prefix: 'RCUST', name: 'name', single: 'Customer', plural: 'Customers',

@@ -7,7 +7,12 @@ import { useTenant } from '@/context/TenantContext';
 import { formatDateTime, getStatusColor, tenantScope } from '@/lib/utils';
 
 export default function ApprovalsInboxPage() {
-  const { currentUser, approvalRequests, processApproval, fetchApprovalRequests } = useApp();
+  const { currentUser, approvalRequests, processApproval, fetchApprovalRequests, customObjects } = useApp();
+  // Friendly object name: custom objects show their own label instead of the internal "custom_<api>" key.
+  const typeLabel = (t) => {
+    const co = String(t || '').startsWith('custom_') ? (customObjects || []).find(o => `custom_${o.api_name}` === t) : null;
+    return co ? co.singular_label : String(t || '').replace(/([a-z])([A-Z])/g, '$1 $2');
+  };
   const { supabase } = useTenant();
   const [myRequests,  setMyRequests]  = useState([]);
   const [allRequests, setAllRequests] = useState([]);
@@ -76,7 +81,7 @@ export default function ApprovalsInboxPage() {
                     {req.step&&<span className="bg-yellow-100 text-yellow-800 text-xs font-semibold px-3 py-1 rounded-full">Step {req.step.step_number}: {req.step.step_name}</span>}
                   </div>
                   <div className="flex flex-wrap gap-4 text-sm text-gray-500">
-                    <span>📁 <span className="font-medium text-[#0F172A] capitalize">{req.record_type}</span></span>
+                    <span>📁 <span className="font-medium text-[#0F172A] capitalize">{typeLabel(req.record_type)}</span></span>
                     <span>🔢 {req.request_number}</span>
                     <span>👤 Submitted by <span className="font-medium text-[#0F172A]">{req.submitted_by}</span></span>
                     <span>📅 {formatDateTime(req.submitted_at)}</span>
@@ -112,7 +117,7 @@ export default function ApprovalsInboxPage() {
                   <tr key={req.id} className="border-t border-blue-50 hover:bg-blue-50/40">
                     <td className="px-5 py-4 font-mono text-xs text-gray-400">{req.request_number}</td>
                     <td className="px-5 py-4 font-semibold text-[#0F172A]">{req.record_name}</td>
-                    <td className="px-5 py-4 capitalize text-gray-500">{req.record_type}</td>
+                    <td className="px-5 py-4 capitalize text-gray-500">{typeLabel(req.record_type)}</td>
                     <td className="px-5 py-4 text-gray-500">{formatDateTime(req.submitted_at)}</td>
                     <td className="px-5 py-4"><Pill status={req.status}/></td>
                   </tr>

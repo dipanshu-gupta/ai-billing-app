@@ -29,6 +29,8 @@ import { waFetch } from '@/lib/waFetch';
 import RedwoodSkin from '@/components/shared/RedwoodSkin';
 import { adminSectionKey, adminSectionCode } from '@/lib/rbacCatalog';
 import { getRetailFieldMeta, RETAIL_CONFIG } from '@/components/retail/RetailListPage';
+import { fetchCustomObjectFields, CUSTOM_STATUS_OPTIONS } from '@/lib/customObjects';
+import { resolveStatusOptions } from '@/lib/statusOptions';
 
 // ─── Shared styles ────────────────────────────────────────────────────────────
 const iCls = 'w-full border border-blue-200 rounded-xl px-3 py-2.5 text-[#0F172A] bg-white focus:outline-none focus:ring-2 focus:ring-blue-400 text-sm placeholder:text-gray-400';
@@ -451,6 +453,8 @@ const CONDITION_FIELDS: Record<string,{v:string,l:string}[]> = Object.fromEntrie
 // For a given object + field, return dropdown options (null = free text)
 const getFieldOptions = (objType, field) => {
   if (!field) return null;
+  // Custom objects carry their options on the field itself (set in the fields list built for them).
+  if (String(objType || '').startsWith('custom_')) return null;
   // Retail objects: use the field's own opts from the canonical field
   // registry when available (e.g. Country, Loyalty Tier) — this also covers
   // fields not explicitly special-cased below.
@@ -1169,6 +1173,8 @@ const withCustomFields = (standardFields: {v:string,l:string,type?:string}[], cu
 const getLineItemFieldsWithCustom = (
   objType: string, appPreferences: any, lineItemCustomFieldsByObject: Record<string, any[]>
 ): {v:string,l:string,type?:string,opts?:string[]}[] => {
+  // Custom object: its own line-item fields, keyed by the object type itself (see customObjectRuleMeta below).
+  if (String(objType || '').startsWith('custom_')) return lineItemCustomFieldsByObject?.[`${objType}::lines`] || [];
   const base = getLineItemFieldsFor(objType, appPreferences);
   const liType = LI_PARENT_TO_TYPE[objType];
   const custom = liType ? (lineItemCustomFieldsByObject?.[liType] || []) : [];
@@ -1301,7 +1307,8 @@ function ActionBuilder({ action, idx, users, fields, objectType, getLineItemFiel
   // "li:" (resolves against the record's FIRST line item; a single {{}}
   // token can't repeat per-row, so this covers the common "what did they
   // order" case without needing a template loop).
-  const hasLineItems = LINE_ITEM_OBJECTS.has(objectType);
+  const customLineFields = String(objectType || '').startsWith('custom_') && getLineItemFields ? getLineItemFields(objectType, appPreferences) : [];
+  const hasLineItems = LINE_ITEM_OBJECTS.has(objectType) || customLineFields.length > 0;
   const lineItemFields = hasLineItems && getLineItemFields ? getLineItemFields(objectType, appPreferences) : [];
   const notificationFieldGroups = [
     { label: 'Record Fields', options: [{ v: 'display_number', l: 'Record Display Number' }, ...fields] },
@@ -1728,14 +1735,14 @@ function WorkflowBuilderPanel({ objectList = ALL_OBJECTS, conditionFields = COND
                       className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-900 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400"
                     >
                       <option value="">Select date field...</option>
-                      {fields.filter(f => f.v.toLowerCase().includes('date')).length > 0 && (
+                      {fields.filter(f => (f as any).type === 'date' || f.v.toLowerCase().includes('date')).length > 0 && (
                         <optgroup label="Header Fields">
-                          {fields.filter(f => f.v.toLowerCase().includes('date')).map(f => <option key={f.v} value={f.v}>{f.l}</option>)}
+                          {fields.filter(f => (f as any).type === 'date' || f.v.toLowerCase().includes('date')).map(f => <option key={f.v} value={f.v}>{f.l}</option>)}
                         </optgroup>
                       )}
-                      {lineItemFieldsForObj.filter(f => f.v.toLowerCase().includes('date')).length > 0 && (
+                      {lineItemFieldsForObj.filter(f => (f as any).type === 'date' || f.v.toLowerCase().includes('date')).length > 0 && (
                         <optgroup label="Line Item Fields">
-                          {lineItemFieldsForObj.filter(f => f.v.toLowerCase().includes('date')).map(f => <option key={f.v} value={f.v}>{f.l}</option>)}
+                          {lineItemFieldsForObj.filter(f => (f as any).type === 'date' || f.v.toLowerCase().includes('date')).map(f => <option key={f.v} value={f.v}>{f.l}</option>)}
                         </optgroup>
                       )}
                     </select>
@@ -2404,19 +2411,76 @@ function useAdminToolsCustomFields() {
 export default function AdminToolsPage() {
   const [active, setActive] = useState(null);
   const [adminMode, setAdminMode] = useState('b2b'); // 'b2b' | 'b2c' | 'tenant' | 'import'
-  const { hasPermission, currentUserPermissions, permissionsLoaded, currentUser, appPreferences } = useApp();
+  const { hasPermission, currentUserPermissions, permissionsLoaded, currentUser, appPreferences, customObjects } = useApp();
   const { tenant } = useTenant();
   const customFieldsByObject = useAdminToolsCustomFields();
+  // ── Custom objects in Workflow / Assignment / SLA / Approvals ──────────────
+  // Every published custom object is a rule target like any standard object (object_type "custom_<api_name>").
+  // Its fields are offered by NAME (api_name); the engine (lib/customAutomation.ts) maps names to storage columns.
+  const [customObjectRuleMeta, setCustomObjectRuleMeta] = useState<Record<string, { header: any[]; line: any[] }>>({});
+  useEffect(() => {
+    let on = true;
+    (async () => {
+      const out: Record<string, any> = {};
+      for (const o of (customObjects || [])) {
+        const [header, line] = await Promise.all([
+          fetchCustomObjectFields(o.id, 'header'),
+          o.supports_line_items ? fetchCustomObjectFields(o.id, 'line_item') : Promise.resolve([]),
+        ]);
+        out[`custom_${o.api_name}`] = { header: header || [], line: line || [] };
+      }
+      if (on) setCustomObjectRuleMeta(out);
+    })().catch(e => console.warn('[AdminTools] custom object fields', e));
+    return () => { on = false; };
+  }, [customObjects]);
+  const customFieldOption = (f: any, systemKeys: Set<string>) => ({
+    v: systemKeys.has(f.api_name) ? `cf_${f.api_name}` : f.api_name,
+    l: f.label,
+    type: mapCustomFieldType(f.field_type),
+    opts: (f.field_type === 'single_select' || f.field_type === 'multi_select') && f.options?.length ? f.options
+        : f.field_type === 'checkbox' ? ['true', 'false'] : undefined,
+  });
+  const customConditionFields = useMemo(() => {
+    const SYS = new Set(['name', 'status', 'owner', 'id', 'display_number', 'created_at', 'created_by', 'updated_at', 'updated_by', 'organization_id', 'business_unit_id']);
+    const out: Record<string, any[]> = {};
+    for (const o of (customObjects || [])) {
+      const key = `custom_${o.api_name}`;
+      const meta = customObjectRuleMeta[key] || { header: [] };
+      out[key] = [
+        { v: 'name', l: 'Name' },
+        { v: 'status', l: 'Status', opts: resolveStatusOptions(key, CUSTOM_STATUS_OPTIONS) },
+        { v: 'owner', l: 'Owner' },
+        { v: 'created_by', l: 'Created By' },
+        { v: 'created_at', l: 'Created Date', type: 'date' },
+        ...meta.header.map(f => customFieldOption(f, SYS)),
+      ];
+    }
+    return out;
+  }, [customObjects, customObjectRuleMeta]);
+  const customLineFields = useMemo(() => {
+    const out: Record<string, any[]> = {};
+    for (const [key, meta] of Object.entries(customObjectRuleMeta)) {
+      if (meta.line?.length) out[`${key}::lines`] = meta.line.map(f => customFieldOption(f, new Set()));
+    }
+    return out;
+  }, [customObjectRuleMeta]);
+  const customKeysFor = (mode: 'b2b' | 'b2c') => (customObjects || [])
+    .filter(o => !o.module || o.module === 'both' || o.module === mode)
+    .map(o => `custom_${o.api_name}`);
+  const b2bObjectList = useMemo(() => [...ALL_OBJECTS, ...customKeysFor('b2b')], [customObjects]);
+  const b2cObjectList = useMemo(() => [...RETAIL_OBJECTS_LIST, ...customKeysFor('b2c')], [customObjects]);
   // Standard fields + each object's own custom fields (App Composer),
   // merged once here and threaded down to every rule-builder panel so
   // conditions, trigger fields, and update-field actions can all reference
   // a custom field alongside the standard ones.
-  const conditionFieldsWithCustom = useMemo(() => Object.fromEntries(
-    B2B_OBJECT_KEYS.map(obj => [obj, withCustomFields(CONDITION_FIELDS[obj] || [], customFieldsByObject[obj])])
-  ), [customFieldsByObject]);
-  const retailConditionFieldsWithCustom = useMemo(() => Object.fromEntries(
-    RETAIL_FIELD_KEYS.map(obj => [obj, withCustomFields(RETAIL_CONDITION_FIELDS[obj] || [], customFieldsByObject[obj])])
-  ), [customFieldsByObject]);
+  const conditionFieldsWithCustom = useMemo(() => ({
+    ...Object.fromEntries(B2B_OBJECT_KEYS.map(obj => [obj, withCustomFields(CONDITION_FIELDS[obj] || [], customFieldsByObject[obj])])),
+    ...customConditionFields,
+  }), [customFieldsByObject, customConditionFields]);
+  const retailConditionFieldsWithCustom = useMemo(() => ({
+    ...Object.fromEntries(RETAIL_FIELD_KEYS.map(obj => [obj, withCustomFields(RETAIL_CONDITION_FIELDS[obj] || [], customFieldsByObject[obj])])),
+    ...customConditionFields,
+  }), [customFieldsByObject, customConditionFields]);
   // Custom fields for the line-item pseudo-objects, keyed by THEIR OWN
   // object type (e.g. 'retailOrderLineItems') — getLineItemFieldsWithCustom
   // looks these up via LI_PARENT_TO_TYPE.
@@ -2426,7 +2490,8 @@ export default function AdminToolsPage() {
     quotationLineItems: customFieldsByObject.quotationLineItems,
     orderLineItems: customFieldsByObject.orderLineItems,
     invoiceLineItems: customFieldsByObject.invoiceLineItems,
-  }), [customFieldsByObject]);
+    ...customLineFields,
+  }), [customFieldsByObject, customLineFields]);
   const { getObjectLabel } = useObjectLabels();
   // One merged labels map (static defaults + any published rename)
   // covering every object, used by every admin panel below instead of the
@@ -2437,8 +2502,9 @@ export default function AdminToolsPage() {
   const dynamicObjectLabels = useMemo(() => {
     const merged: Record<string,string> = { ...RETAIL_OBJECT_LABELS, ...CRM_OBJECT_LABELS };
     Object.keys(merged).forEach(k => { merged[k] = getObjectLabel(k, merged[k]); });
+    (customObjects || []).forEach(o => { merged[`custom_${o.api_name}`] = o.plural_label || o.singular_label || o.api_name; });
     return merged;
-  }, [getObjectLabel]);
+  }, [getObjectLabel, customObjects]);
   const isB2CMode = appPreferences?.b2c_mode === true;
   const isB2BMode = appPreferences?.crm_enabled !== false && !isB2CMode;
   // Tenant Admin tab only visible on the master/demo workspace — never on client tenants
@@ -2511,10 +2577,10 @@ export default function AdminToolsPage() {
       case 'users':         return <UsersPanel/>;
       case 'groups':        return <UserGroupsPanel/>;
       case 'security':      return <SecurityConsole/>;
-      case 'workflow':      return <WorkflowBuilderPanel objectLabels={dynamicObjectLabels} conditionFields={conditionFieldsWithCustom} lineItemCustomFieldsByObject={lineItemCustomFieldsByObject}/>;
-      case 'assignment':    return <AssignmentRulesPanel objectLabels={dynamicObjectLabels} conditionFields={conditionFieldsWithCustom}/>;
-      case 'sla':           return <SLAPanel objectLabels={dynamicObjectLabels} conditionFields={conditionFieldsWithCustom} lineItemCustomFieldsByObject={lineItemCustomFieldsByObject}/>;
-      case 'approvals':     return <ApprovalProcessPanel objectLabels={dynamicObjectLabels} conditionFields={conditionFieldsWithCustom} lineItemCustomFieldsByObject={lineItemCustomFieldsByObject}/>;
+      case 'workflow':      return <WorkflowBuilderPanel objectList={b2bObjectList} objectLabels={dynamicObjectLabels} conditionFields={conditionFieldsWithCustom} lineItemCustomFieldsByObject={lineItemCustomFieldsByObject}/>;
+      case 'assignment':    return <AssignmentRulesPanel objectList={b2bObjectList} objectLabels={dynamicObjectLabels} conditionFields={conditionFieldsWithCustom}/>;
+      case 'sla':           return <SLAPanel objectList={b2bObjectList} objectLabels={dynamicObjectLabels} conditionFields={conditionFieldsWithCustom} lineItemCustomFieldsByObject={lineItemCustomFieldsByObject}/>;
+      case 'approvals':     return <ApprovalProcessPanel objectList={b2bObjectList} objectLabels={dynamicObjectLabels} conditionFields={conditionFieldsWithCustom} lineItemCustomFieldsByObject={lineItemCustomFieldsByObject}/>;
       case 'templates':        return <DocumentTemplateDesigner docType="quote"/>;
       case 'invoiceTemplates': return <DocumentTemplateDesigner docType="invoice"/>;
       case 'warehouses':       return <WarehousesPanel/>;
@@ -2534,10 +2600,10 @@ export default function AdminToolsPage() {
       case 'r_security':         return <RetailAdminWrapper title="Security Console" icon="🔐" desc="Retail roles, permissions and data access — shared with B2B Enterprise"><SecurityConsole/></RetailAdminWrapper>;
       case 'r_invoiceTemplates': return <RetailInvoiceDesigner/>;
       case 'r_bookingReceipts':  return <BookingReceiptDesigner/>;
-      case 'r_approvals':        return <RetailAdminWrapper title="Approval Processes" icon="✅" desc="Multi-step approvals for Retail Orders and Invoices"><ApprovalProcessPanel objectList={RETAIL_OBJECTS_LIST} conditionFields={retailConditionFieldsWithCustom} objectLabels={dynamicObjectLabels} lineItemCustomFieldsByObject={lineItemCustomFieldsByObject}/></RetailAdminWrapper>;
-      case 'r_workflow':         return <RetailAdminWrapper title="Workflow Builder" icon="⚙️" desc="Auto-trigger actions on Retail data object events"><WorkflowBuilderPanel objectList={RETAIL_OBJECTS_LIST} conditionFields={retailConditionFieldsWithCustom} objectLabels={dynamicObjectLabels} lineItemCustomFieldsByObject={lineItemCustomFieldsByObject}/></RetailAdminWrapper>;
-      case 'r_assignment':       return <RetailAdminWrapper title="Assignment Rules" icon="📋" desc="Auto-assign Retail records to users"><AssignmentRulesPanel objectList={RETAIL_OBJECTS_LIST} conditionFields={retailConditionFieldsWithCustom} objectLabels={dynamicObjectLabels}/></RetailAdminWrapper>;
-      case 'r_sla':              return <RetailAdminWrapper title="SLA Policies" icon="⏱️" desc="Response and resolution SLA for Retail objects"><SLAPanel objectList={RETAIL_OBJECTS_LIST} conditionFields={retailConditionFieldsWithCustom} objectLabels={dynamicObjectLabels} lineItemCustomFieldsByObject={lineItemCustomFieldsByObject}/></RetailAdminWrapper>;
+      case 'r_approvals':        return <RetailAdminWrapper title="Approval Processes" icon="✅" desc="Multi-step approvals for Retail Orders and Invoices"><ApprovalProcessPanel objectList={b2cObjectList} conditionFields={retailConditionFieldsWithCustom} objectLabels={dynamicObjectLabels} lineItemCustomFieldsByObject={lineItemCustomFieldsByObject}/></RetailAdminWrapper>;
+      case 'r_workflow':         return <RetailAdminWrapper title="Workflow Builder" icon="⚙️" desc="Auto-trigger actions on Retail data object events"><WorkflowBuilderPanel objectList={b2cObjectList} conditionFields={retailConditionFieldsWithCustom} objectLabels={dynamicObjectLabels} lineItemCustomFieldsByObject={lineItemCustomFieldsByObject}/></RetailAdminWrapper>;
+      case 'r_assignment':       return <RetailAdminWrapper title="Assignment Rules" icon="📋" desc="Auto-assign Retail records to users"><AssignmentRulesPanel objectList={b2cObjectList} conditionFields={retailConditionFieldsWithCustom} objectLabels={dynamicObjectLabels}/></RetailAdminWrapper>;
+      case 'r_sla':              return <RetailAdminWrapper title="SLA Policies" icon="⏱️" desc="Response and resolution SLA for Retail objects"><SLAPanel objectList={b2cObjectList} conditionFields={retailConditionFieldsWithCustom} objectLabels={dynamicObjectLabels} lineItemCustomFieldsByObject={lineItemCustomFieldsByObject}/></RetailAdminWrapper>;
       case 'r_appPrefs':         return <RetailAdminWrapper title="App Preferences" icon="⚙️" desc="Currency, date format and module settings"><AppPreferencesPanel/></RetailAdminWrapper>;
       case 'r_appearance':       return <RetailAdminWrapper title="Appearance" icon="🎨" desc="Theme, logo and branding — shared with B2B Enterprise"><AppearancePanel/></RetailAdminWrapper>;
       case 'r_composer':         return <AppComposer/>;

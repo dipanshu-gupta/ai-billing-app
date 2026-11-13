@@ -6,6 +6,7 @@
  * identically - and identically to the standard CRM detail/create screens
  * (same input classes, same section cards, same line-item card).
  */
+import LineScanBar from '@/components/shared/LineScanBar';
 import { useState, useEffect, useMemo } from 'react';
 import { useApp } from '@/context/AppContext';
 import { useTenant } from '@/context/TenantContext';
@@ -130,11 +131,31 @@ export function CustomLineItemsCard({ customObject, lineFields, rows, setRows, r
   const add = () => setRows(p => [...p, Object.fromEntries(lineFields.filter(f => f.default_value).map(f => [f.api_name, f.default_value]))]);
   const upd = (idx, k, v) => setRows(p => p.map((r, i) => i === idx ? { ...r, [k]: v } : r));
   const del = (idx) => setRows(p => p.filter((_, i) => i !== idx));
+  // Barcode scanning works when a line field is a Lookup to Products (B2B) or Retail Products: the scanned product
+  // fills that lookup, a "Qty/Quantity" number field is incremented on repeat scans, and a "Price/Rate" field gets
+  // the product's price when the line is created.
+  const prodField = lineFields.find(f => f.field_type === 'lookup' && f.lookup_target_type === 'standard' && ['products', 'retailProducts'].includes(f.lookup_target_object));
+  const isNum = (f) => ['number', 'currency'].includes(f.field_type);
+  const qtyField = lineFields.find(f => isNum(f) && /qty|quantity/i.test(`${f.api_name} ${f.label}`));
+  const priceField = lineFields.find(f => isNum(f) && f !== qtyField && /price|rate/i.test(`${f.api_name} ${f.label}`));
+  const onScanProduct = (pr, qty) => setRows(p => {
+    const key = pr.product_number || pr.id;
+    const i = p.findIndex(r => r[prodField.api_name] === key);
+    if (i >= 0 && qtyField) return p.map((r, k) => k === i ? { ...r, [qtyField.api_name]: Number(r[qtyField.api_name] || 0) + qty } : r);
+    const row = { ...Object.fromEntries(lineFields.filter(f => f.default_value).map(f => [f.api_name, f.default_value])), [prodField.api_name]: key };
+    if (qtyField) row[qtyField.api_name] = qty;
+    if (priceField && pr.price != null) row[priceField.api_name] = Number(pr.price);
+    const blank = p.findIndex(r => !r[prodField.api_name]);
+    return blank >= 0 ? p.map((r, k) => k === blank ? { ...r, ...row } : r) : [...p, row];
+  });
   return (
     <div className="bg-white rounded-[24px] border border-blue-100 shadow-lg overflow-hidden">
       <div className="bg-gradient-to-r from-[#0F172A] to-blue-900 px-6 py-4 flex items-center justify-between">
         <div><h3 className="text-white font-bold text-lg">{customObject.line_item_plural_label || 'Line Items'}</h3></div>
-        {!readOnly && <button onClick={add} className="bg-white text-[#0F172A] px-4 py-2 rounded-xl text-sm font-bold hover:bg-blue-50">+ Add {customObject.line_item_singular_label || 'Item'}</button>}
+        {!readOnly && <div className="flex items-center gap-2">
+          {prodField && <LineScanBar kind={prodField.lookup_target_object === 'retailProducts' ? 'b2c' : 'b2b'} products={[]} onProduct={onScanProduct} />}
+          <button onClick={add} className="bg-white text-[#0F172A] px-4 py-2 rounded-xl text-sm font-bold hover:bg-blue-50">+ Add {customObject.line_item_singular_label || 'Item'}</button>
+        </div>}
       </div>
       <div className="overflow-x-auto">
         <table className="w-full text-sm">

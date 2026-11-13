@@ -438,7 +438,7 @@ HOW TO ANSWER:
         const fields = await fetchCustomObjectFields(o.obj.id, 'header');
         const values = { __name: f.name || '', __status: f.status || 'Active' };
         fields.forEach(fd => { if (f[fd.api_name] !== undefined) values[fd.api_name] = f[fd.api_name]; });
-        const rec = await createCustomObjectRecord({ supabase, tenantId: tenant?.id, currentUser, showAlert }, o.obj, fields, values, [], []);
+        const rec = await createCustomObjectRecord({ supabase, tenantId: tenant?.id, currentUser, showAlert, runAutomations: app.runAutomations }, o.obj, fields, values, [], []);
         if (!rec) throw new Error('The record could not be saved.');
         created = rec;
       } else if (o.mode === 'b2c') {

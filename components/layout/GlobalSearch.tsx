@@ -25,7 +25,7 @@ const B2B_SEARCH_CONFIG = [
   { page:'quotations',    table:'quotations',    key:'quote_number',       prefix:'QUO',  icon:'📄', label:'Quotations',   cols:['name','customer','quote_number'],                   secondary: r => `${r.customer||''} · ${r.status||''}`, raw: true },
   { page:'orders',        table:'orders',        key:'order_number',       prefix:'ORD',  icon:'🛒', label:'Orders',       cols:['name','customer','order_number'],                   secondary: r => `${r.customer||''} · ${r.status||''}` },
   { page:'invoices',      table:'invoices',      key:'invoice_number',     prefix:'INV',  icon:'🧾', label:'Invoices',     cols:['name','customer','invoice_number'],                 secondary: r => `${r.customer||''} · ${r.status||''}` },
-  { page:'products',      table:'products',      key:'product_number',     prefix:'PROD', icon:'📦', label:'Products',     cols:['name','sku','category','product_family'],           secondary: r => `${r.category||''} · ${r.product_family||''}` },
+  { page:'products',      table:'products',      key:'product_number',     prefix:'PROD', icon:'📦', label:'Products',     cols:['name','sku','barcode','category','product_family'],           secondary: r => `${r.category||''} · ${r.product_family||''}` },
 ];
 
 const B2C_SEARCH_CONFIG = [

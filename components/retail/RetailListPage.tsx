@@ -16,6 +16,9 @@ import { useTenant } from '@/context/TenantContext';
 import { resolveStatusOptions, overrideStatusColor } from '@/lib/statusOptions';
 import { getTaxRegime, computeLineNet, computeLineGross } from '@/lib/taxConfig';
 import { useFieldMappingRules, applyFieldMapping } from '@/lib/useFieldMappingRules';
+import LineScanBar from '@/components/shared/LineScanBar';
+import BarcodeField from '@/components/shared/BarcodeField';
+import { scanIntoItems } from '@/lib/barcode';
 import SearchableSelect from '@/components/shared/SearchableSelect';
 import ProductImages from '@/components/products/ProductImages';
 import RentalBookingCalendar from '@/components/retail/RentalBookingCalendar';
@@ -80,7 +83,7 @@ const VALIDATORS = {
   },
   barcode: (v) => {
     if (!v) return null;
-    if (!/^[\d\-A-Z]{4,20}$/i.test(v)) return 'Barcode must be 4-20 alphanumeric characters';
+    if (!/^[\w\-./+]{3,48}$/.test(String(v).trim())) return 'Barcode can use letters, digits and - . / + _ (3-48 characters)';
     return null;
   },
   gstin: (v) => {
@@ -665,9 +668,10 @@ function RetailLineItems({ items, setItems, products, taxRegime, page, headerDis
     return rawValue;
   };
 
-  const add = () => setItems(p => {
+  const add = () => setItems(p => [...p, blankLine()]);
+  const blankLine = () => {
     const row: any = {
-      _id: Date.now(), product_name:'', product_id:null, description:'', quantity:1, unit_price:0, list_price:0, discount_pct:0,
+      _id: Date.now() + Math.random(), product_name:'', product_id:null, description:'', quantity:1, unit_price:0, list_price:0, discount_pct:0,
       extended_price:0, custom_data:{}, rental_start_date:'', rental_end_date:'',
       ...(taxRegime.regime==='india_gst' ? { hsn_code:'', gst_rate:18 } : {}),
       ...(taxRegime.regime==='us_sales_tax' ? { taxable:'Yes', sales_tax_rate:0 } : {}),
@@ -689,8 +693,8 @@ function RetailLineItems({ items, setItems, products, taxRegime, page, headerDis
       const resolved = resolveLineDefault(lineFieldTypeByKey[fr.field_key] || 'text', fr.default_value, row);
       if (resolved !== undefined) row[fr.field_key] = resolved;
     });
-    return [...p, row];
-  });
+    return row;
+  };
   const remove = (idx) => {
     setStockWarning(null);
     setRentalWarnings(w => { const n = { ...w }; delete n[idx]; return n; });
@@ -762,6 +766,40 @@ function RetailLineItems({ items, setItems, products, taxRegime, page, headerDis
     return () => { cancelled = true; timers.forEach(t => clearTimeout(t)); };
   }, [rentalCheckKey, rentalModeOn]);
 
+  // Puts a product on a line: price (or day rate for rentables), tax fields for the tenant's tax regime, Copy Maps.
+  // Shared by the product picker and barcode scanning so both price a line identically.
+  const applyProduct = (u: any, pr: any) => {
+    u.product_name = pr.name;
+    // Rentable products price by the day, not the regular sale price —
+    // rent_per_day is the per-day rate; falls back to the normal price
+    // if rent_per_day isn't set (e.g. marked rentable before a rate
+    // was configured), so this never silently prices at 0.
+    const fixedBasis = !!pr.is_rentable && pr.rental_pricing_basis === 'Fixed Price';
+    u.unit_price = (pr.is_rentable && !fixedBasis && pr.rent_per_day) ? Number(pr.rent_per_day) : Number(pr.price || 0);
+    u.custom_data = { ...(u.custom_data || {}) };
+    if (fixedBasis) u.custom_data.__fixed_price = true; else delete u.custom_data.__fixed_price;
+    u.list_price = Number(pr.price || 0); u.product_code = pr.sku || '';
+    u.product_id = pr._uuid || pr.id || null;
+    // Switching away from a rentable product (or to a non-rentable
+    // one) clears any stale booking dates rather than silently
+    // carrying them onto an item they no longer apply to.
+    if (!pr.is_rentable) { u.rental_start_date = ''; u.rental_end_date = ''; }
+    if (taxRegime.regime==='india_gst') { u.hsn_code = pr.hsn_code || ''; u.gst_rate = pr.gst_rate ?? 18; }
+    if (taxRegime.regime==='us_sales_tax') { u.taxable = pr.taxable || 'Yes'; }
+    if (taxRegime.regime==='uk_vat') { u.vat_rate = pr.vat_rate ?? 20; }
+    // Copy Maps — automatically copy any mapped product fields (e.g.
+    // a "Security Deposit" custom field) onto this line item.
+    if (productToLineItemRules.length > 0) applyFieldMapping(productToLineItemRules, pr, u);
+    if (taxRegime.regime==='generic') { u.tax_pct = pr.tax_rate ?? 0; }
+    return u;
+  };
+  // Barcode scan: same product -> +qty, otherwise the first empty line or a new one.
+  const onScanProduct = (pr: any, qty: number) => {
+    const stock = Number(pr.stock_quantity ?? 0), reorder = Number(pr.reorder_level ?? 10);
+    if (pr.stock_quantity !== undefined) setStockWarning(stock === 0 ? { product: pr.name, type: 'out', stock } : stock <= reorder ? { product: pr.name, type: 'low', stock, reorder } : null);
+    scanIntoItems({ setItems, product: pr, qty, makeBlank: blankLine, applyProduct, recompute: (u, key) => applyLineCascadeAndPricing(u, key) });
+  };
+
   const upd = (idx, field, val) => {
     // Compute stock warning OUTSIDE setItems to avoid setState-in-render error
     if (field === 'product_name') {
@@ -787,31 +825,8 @@ function RetailLineItems({ items, setItems, products, taxRegime, page, headerDis
       const u = { ...r, [field]: numFields.includes(field) ? Number(val) : val };
       if (field === 'product_name') {
         const pr = activeProducts.find(x => x.name === val);
-        if (pr) {
-          // Rentable products price by the day, not the regular sale price —
-          // rent_per_day is the per-day rate; falls back to the normal price
-          // if rent_per_day isn't set (e.g. marked rentable before a rate
-          // was configured), so this never silently prices at 0.
-          const fixedBasis = !!pr.is_rentable && pr.rental_pricing_basis === 'Fixed Price';
-          u.unit_price = (pr.is_rentable && !fixedBasis && pr.rent_per_day) ? Number(pr.rent_per_day) : pr.price;
-          u.custom_data = { ...(u.custom_data || {}) };
-          if (fixedBasis) u.custom_data.__fixed_price = true; else delete u.custom_data.__fixed_price;
-          u.list_price = pr.price; u.product_code = pr.sku || '';
-          u.product_id = pr._uuid || pr.id || null;
-          // Switching away from a rentable product (or to a non-rentable
-          // one) clears any stale booking dates rather than silently
-          // carrying them onto an item they no longer apply to.
-          if (!pr.is_rentable) { u.rental_start_date = ''; u.rental_end_date = ''; }
-          if (taxRegime.regime==='india_gst') { u.hsn_code = pr.hsn_code || ''; u.gst_rate = pr.gst_rate ?? 18; }
-          if (taxRegime.regime==='us_sales_tax') { u.taxable = pr.taxable || 'Yes'; }
-          if (taxRegime.regime==='uk_vat') { u.vat_rate = pr.vat_rate ?? 20; }
-          // Copy Maps — automatically copy any mapped product fields (e.g.
-          // a "Security Deposit" custom field) onto this line item.
-          if (productToLineItemRules.length > 0) applyFieldMapping(productToLineItemRules, pr, u);
-          if (taxRegime.regime==='generic') { u.tax_pct = pr.tax_rate ?? 0; }
-        } else {
-          u.product_id = null;
-        }
+        if (pr) applyProduct(u, pr);
+        else u.product_id = null;
       }
       // Cascade any field whose default references this one (plain day
       // offset or duration-field driven), then recompute pricing — shared
@@ -894,10 +909,13 @@ function RetailLineItems({ items, setItems, products, taxRegime, page, headerDis
           <h3 className="text-white font-bold text-sm">Line Items</h3>
           <p className="text-blue-300 text-xs mt-0.5">Products · Pricing · {taxRegime.shortLabel}</p>
         </div>
-        <button type="button" onClick={add}
-          className="bg-white text-[#0F172A] px-4 py-2 rounded-xl text-sm font-bold hover:bg-blue-50 transition-all">
-          + Add Item
-        </button>
+        <div className="flex items-center gap-2">
+          <LineScanBar kind="b2c" products={activeProducts} onProduct={onScanProduct} />
+          <button type="button" onClick={add}
+            className="bg-white text-[#0F172A] px-4 py-2 rounded-xl text-sm font-bold hover:bg-blue-50 transition-all">
+            + Add Item
+          </button>
+        </div>
       </div>
 
       {/* Stock warning banner */}
@@ -2120,6 +2138,7 @@ function RetailDetailPanel({ page, record, onClose, onSaved, pendingReturnTo, on
 
   const renderField = (field) => {
     const v = edited[field.key];
+    if (field.key === 'barcode' && page === 'retailProducts') return <BarcodeField value={v} onChange={val=>set('barcode',val)} kind="b2c" productId={record._uuid || null} readOnly={!!field._layoutReadOnly} />;
     if (field.type === 'status') return (
       isStatusDropdownLocked
         ? <div className={`${sCls} bg-gray-50 cursor-not-allowed flex items-center`}>
@@ -3169,6 +3188,7 @@ export function RetailCreateModal({ page, open, onClose, onCreated, prefill = nu
 
   const renderField = (field) => {
     const v = form[field.key];
+    if (field.key === 'barcode' && page === 'retailProducts') return <BarcodeField value={v} onChange={val=>s('barcode',val)} kind="b2c" showExtras={false} />;
     if (field.type === 'status') return (
       <select value={v||cfg.statusOptions[0]} onChange={e=>s(field.key,e.target.value)} className={sCls}>
         {cfg.statusOptions.map(o=><option key={o}>{o}</option>)}

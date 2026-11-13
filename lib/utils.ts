@@ -221,7 +221,7 @@ export const getObjectFields = (page: string): string[] => {
       return ['name','designation','department','email','phone','mobile',
               'customer','isPrimary','linkedIn','owner','status','description'];
     case 'products':
-      return ['name','productFamily','category','sku','price','cost',
+      return ['name','productFamily','category','sku','barcode','price','cost',
               'unit','taxRate','status','description','stock_quantity','reorder_level','track_inventory'];
     case 'leads':
       return ['name','customer','contact','email','phone',

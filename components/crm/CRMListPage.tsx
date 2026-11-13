@@ -382,7 +382,7 @@ const camelToSnakeCol = (s) => s.replace(/([A-Z])/g, '_$1').toLowerCase();
 // A CRM table's real database table name is identical to its page key for
 // every object CRMListPage handles (confirmed against LIST_PAGE_TABLE in
 // AppContext.tsx) — no separate mapping needed here, unlike retail objects.
-const CRM_SEARCH_CANDIDATES = ['name', 'customer', 'email', 'phone', 'mobile', 'subject', 'company', 'city', 'sku', 'source', 'designation'];
+const CRM_SEARCH_CANDIDATES = ['name', 'customer', 'email', 'phone', 'mobile', 'subject', 'company', 'city', 'sku', 'barcode', 'source', 'designation'];
 
 export default function CRMListPage({ page }) {
   const { supabase, tenant } = useTenant();

@@ -1,6 +1,7 @@
 // @ts-nocheck
 'use client';
 
+import BarcodeField from '@/components/shared/BarcodeField';
 import { confirmPrimarySwitch } from '@/lib/primaryContact';
 import { useTenant } from '@/context/TenantContext';
 import { useState, useEffect } from 'react';
@@ -111,6 +112,7 @@ const OBJECT_FIELDS = {
     { label:'Product Family', key:'productFamily',type:'select', opts:PRODUCT_FAMILIES },
     { label:'Category',       key:'category',    type:'text' },
     { label:'SKU / Code',     key:'sku',         type:'text' },
+    { label:'Barcode',        key:'barcode',     type:'barcode' },
     { label:'Unit Price',     key:'price',       type:'number' },
     { label:'Cost Price',     key:'cost',        type:'number' },
     { label:'Unit',           key:'unit',        type:'text' },
@@ -410,6 +412,7 @@ export default function CreateRecordModal({ page, open, prefillCustomer, prefill
       </label>
     );
 
+    if (type === 'barcode') return wrap(<BarcodeField value={v} onChange={val=>s(key,val)} kind="b2b" showExtras={false} />);
     if (type === 'date')   return wrap(<input type="date"   value={v||''} onChange={e=>s(key,e.target.value)} className={iCls}/>);
     if (type === 'number') return wrap(<input type="number" min={0} value={v||''} onChange={e=>s(key,parseFloat(e.target.value)||0)} className={iCls}/>);
     if (type === 'email')  return wrap(<input type="email"  value={v||''} onChange={e=>{s(key,e.target.value);if(errors[key])setErrors(p=>({...p,[key]:''}));}} className={`${iCls} ${errors[key]?'border-red-400':''}`} placeholder="name@company.com"/>);

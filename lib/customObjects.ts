@@ -303,6 +303,11 @@ export async function createCustomObjectRecord(ctx: any, customObject: any, head
       const { error: liErr } = await upsertCustomObjectLineItems(ctx, customObject, inserted.id, lineItems, lineFields);
       if (liErr) { showAlert?.('Save failed: ' + liErr.message); return null; }
     }
+    // Workflow / assignment / SLA rules (non-blocking for the caller: errors are logged inside runAutomations).
+    if (ctx.runAutomations) {
+      try { await ctx.runAutomations(`custom_${customObject.api_name}`, inserted.id, inserted, 'on_create'); }
+      catch (e) { console.warn('[createCustomObjectRecord] automations', e); }
+    }
     return inserted;
   } catch (e: any) {
     console.error('[createCustomObjectRecord]', e);
@@ -325,11 +330,23 @@ export async function updateCustomObjectRecord(ctx: any, customObject: any, reco
       updated_by: currentUser?.email,
       updated_at: new Date().toISOString(),
     };
+    // Snapshot before the save so "when field changes" rules can tell what changed.
+    let previous = null;
+    if (ctx.runAutomations) {
+      const { data } = await supabase.from('custom_object_records').select('*').eq('id', recordId).maybeSingle();
+      previous = data || null;
+    }
     const { error } = await supabase.from('custom_object_records').update(payload).eq('id', recordId);
     if (error) { showAlert?.('Save failed: ' + error.message); return null; }
     if (customObject.supports_line_items && lineItems !== null) {
       const { error: liErr } = await upsertCustomObjectLineItems(ctx, customObject, recordId, lineItems, lineFields);
       if (liErr) { showAlert?.('Save failed: ' + liErr.message); return null; }
+    }
+    if (ctx.runAutomations) {
+      try {
+        const { data: fresh } = await supabase.from('custom_object_records').select('*').eq('id', recordId).maybeSingle();
+        if (fresh) await ctx.runAutomations(`custom_${customObject.api_name}`, recordId, fresh, 'on_update', previous);
+      } catch (e) { console.warn('[updateCustomObjectRecord] automations', e); }
     }
     return true;
   } catch (e: any) {
@@ -355,15 +372,24 @@ export async function upsertCustomObjectLineItems(ctx: any, customObject: any, p
   return { error };
 }
 
-export async function deleteCustomObjectRecord(ctx: any, recordId: string) {
+export async function deleteCustomObjectRecord(ctx: any, recordId: string, customObject: any = null) {
   const { supabase, showAlert } = ctx;
-  if (!supabase) return;
+  if (!supabase) return false;
   try {
-    await supabase.from('custom_object_line_items').delete().eq('parent_record_id', recordId);
-    await supabase.from('custom_object_records').delete().eq('id', recordId);
+    const { data: before } = await supabase.from('custom_object_records').select('*').eq('id', recordId).maybeSingle();
+    const { error: le } = await supabase.from('custom_object_line_items').delete().eq('parent_record_id', recordId);
+    if (le) { showAlert?.('Delete failed: ' + le.message); return false; }
+    const { error } = await supabase.from('custom_object_records').delete().eq('id', recordId);
+    if (error) { showAlert?.('Delete failed: ' + error.message); return false; }
+    if (ctx.runAutomations && customObject && before) {
+      try { await ctx.runAutomations(`custom_${customObject.api_name}`, recordId, before, 'on_delete'); }
+      catch (e) { console.warn('[deleteCustomObjectRecord] automations', e); }
+    }
+    return true;
   } catch (e: any) {
     console.error('[deleteCustomObjectRecord]', e);
     showAlert?.('Delete failed: ' + (e?.message || 'Unexpected error.'));
+    return false;
   }
 }
 

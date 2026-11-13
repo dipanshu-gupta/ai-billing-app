@@ -18,6 +18,8 @@ import BalanceConversionModal from '@/components/shared/BalanceConversionModal';
 import { useAlert } from '@/components/shared/AlertProvider';
 import { useCustomFields } from '@/lib/useCustomFields';
 import { useFieldMappingRules, applyFieldMapping } from '@/lib/useFieldMappingRules';
+import LineScanBar from '@/components/shared/LineScanBar';
+import { scanIntoItems } from '@/lib/barcode';
 import { useFieldLayout, resolveFieldDisplay, resolveFieldRow, effectiveRows, resolveLayoutDefault, cfKey } from '@/lib/useFieldLayout';
 import OrderedRow from '@/components/shared/OrderedRow';
 import { useLineLayout, createGridEnabled } from '@/lib/lineLayout';
@@ -176,7 +178,12 @@ function QuoteLineItems({ items, setItems, products, currency, scope = 'detail' 
     out.extended_price = net * (1 + Number(out.tax_pct || 0) / 100);
     return out;
   };
-  const add    = () => setItems(p => [...p, withLayoutDefaults({ _id:Date.now(), product_name:'', product_code:'', description:'', quantity:1, unit_price:0, list_price:0, discount_pct:0, tax_pct:18, extended_price:0, configuration:{}, custom_data:{} })]);
+  const blankLine = () => withLayoutDefaults({ _id:Date.now()+Math.random(), product_name:'', product_code:'', description:'', quantity:1, unit_price:0, list_price:0, discount_pct:0, tax_pct:18, extended_price:0, configuration:{}, custom_data:{} });
+  const add    = () => setItems(p => [...p, blankLine()]);
+  // Barcode scan: same product -> +qty, otherwise a new (or the first empty) line priced like a manual pick.
+  const applyProduct = (u, pr) => { u.product_name = pr.name; u.unit_price = Number(pr.price || 0); u.list_price = Number(pr.price || 0); u.product_code = pr.sku || u.product_code || ''; u.product_id = String(pr._uuid ?? pr.id ?? ''); if (p2lRules.length) applyFieldMapping(p2lRules, pr, u); return u; };
+  const recalcLine = (u) => { const net = Number(u.quantity) * Number(u.unit_price) * (1 - Number(u.discount_pct || 0) / 100); u.extended_price = net * (1 + Number(u.tax_pct || 0) / 100); return u; };
+  const onScanProduct = (pr, qty) => scanIntoItems({ setItems, product: pr, qty, makeBlank: blankLine, applyProduct, recompute: recalcLine });
   const updCustom = (idx, apiName, val) => setItems(p => p.map((r,i) => i!==idx ? r : { ...r, custom_data: { ...(r.custom_data||{}), [apiName]: val } }));
   // Live availability lookup — always reads the current products array rather
   // than a stored snapshot, so stock changes elsewhere reflect immediately.
@@ -216,7 +223,10 @@ function QuoteLineItems({ items, setItems, products, currency, scope = 'detail' 
     <div className="bg-white rounded-[20px] border border-blue-100 shadow overflow-hidden">
       <div className="bg-gradient-to-r from-[#0F172A] to-blue-900 px-5 py-3.5 flex items-center justify-between">
         <div><h3 className="text-white font-bold">Line Items</h3><p className="text-blue-300 text-xs mt-0.5">Products · Pricing · Discounts · Tax</p></div>
-        <button type="button" onClick={add} className="bg-white text-[#0F172A] px-4 py-1.5 rounded-xl text-sm font-bold hover:bg-blue-50">+ Add Line</button>
+        <div className="flex items-center gap-2">
+          <LineScanBar kind="b2b" products={products} onProduct={onScanProduct} compact />
+          <button type="button" onClick={add} className="bg-white text-[#0F172A] px-4 py-1.5 rounded-xl text-sm font-bold hover:bg-blue-50">+ Add Line</button>
+        </div>
       </div>
       <div className="overflow-x-auto">
         <table className="w-full text-xs">
